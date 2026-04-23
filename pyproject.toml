@@ -22,13 +22,13 @@ dependencies = [
 ]
 
 [project.scripts]
-drl-autoresearch = "drl_autoresearch.cli:main"
+nxl = "nxl.cli:main"
 
 [tool.setuptools.package-data]
-"drl_autoresearch" = ["plugins/**/*", "dashboard/static/**/*"]
+"nxl" = ["plugins/**/*", "dashboard/static/**/*"]
 
 [tool.setuptools.packages.find]
-include = ["drl_autoresearch*"]
+include = ["nxl*"]
 
 [project.optional-dependencies]
 dashboard = ["aiohttp>=3.9.0"]

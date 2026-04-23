@@ -1,4 +1,4 @@
-# DRL AutoResearch
+# NexusLoop
 
 Autonomous DRL research workflow manager with orchestrator-led agent loops, hard-rule guardrails, structured logs, and a local dashboard.
 
@@ -18,11 +18,11 @@ The main research/training orchestration logic remains centered on the original 
 
 ### 1. Orchestrator-controlled agent loop
 
-- `drl-autoresearch run` is orchestrator-first and continuous by default.
+- `nxl run` is orchestrator-first and continuous by default.
 - `run` launches Codex or Claude Code as the execution backend for each cycle.
 - Orchestrator selects the next experiment candidate.
 - If orchestrator cannot produce one, local fallback generation is used.
-- Phase and loop state are persisted in `.drl_autoresearch/state.json`.
+- Phase and loop state are persisted in `.nxl/state.json`.
 
 ### 2. Init mode selection (`build` vs `improve`)
 
@@ -46,7 +46,7 @@ During init, users choose one skill-pack strategy:
   - Keep the provided compact DRL skill pack in project scope.
 - `custom`:
   - Remove bundled DRL skills in the target project.
-  - Install `.drl_autoresearch/backend/skill_generator.md` to generate domain-specific compact skills from user spec/rules.
+  - Install `.nxl/backend/skill_generator.md` to generate domain-specific compact skills from user spec/rules.
 
 Skill generation policy for custom pack:
 - Keep generated skills compact (token-efficient).
@@ -64,14 +64,14 @@ Init onboarding captures key inputs including:
 - permission policy
 - hard rules and non-negotiables
 
-These settings are saved into `.drl_autoresearch/` and reused by init/run/doctor flows.
+These settings are saved into `.nxl/` and reused by init/run/doctor flows.
 
 ### 5. Automatic compact spec indexing (token-saving)
 
 After init, the system auto-generates:
 
-- `.drl_autoresearch/spec_compact.md` (compact navigator)
-- `.drl_autoresearch/spec_index.json` (machine-readable pointer index)
+- `.nxl/spec_compact.md` (compact navigator)
+- `.nxl/spec_index.json` (machine-readable pointer index)
 
 Design intent:
 - structure is source-driven (derived from the actual spec/rules document structure), not a fixed hard-coded schema
@@ -81,8 +81,8 @@ Design intent:
 
 ### 6. Environment doctor with auto-fix path
 
-- `drl-autoresearch doctor` validates runtime health.
-- `drl-autoresearch doctor --fix` attempts remediation automatically:
+- `nxl doctor` validates runtime health.
+- `nxl doctor --fix` attempts remediation automatically:
   - uses onboarding env preferences
   - creates/uses project venv when needed
   - installs missing dependencies
@@ -126,31 +126,31 @@ cd autoresearch-RL
 pipx install --force .
 ```
 
-This installs `drl-autoresearch` once for your user account so it can be run
+This installs `nxl` once for your user account so it can be run
 from any directory.
 
 Verify CLI:
 
 ```bash
-which drl-autoresearch
-drl-autoresearch --help
+which nxl
+nxl --help
 ```
 
-If `which drl-autoresearch` returns nothing after install, open a new shell once
+If `which nxl` returns nothing after install, open a new shell once
 or run `source ~/.bashrc`.
 
 Recommended verification that the installed command is using the expected package:
 
 ```bash
-PIPX_PY="$(head -n 1 "$(which drl-autoresearch)" | sed 's/^#!//')"
+PIPX_PY="$(head -n 1 "$(which nxl)" | sed 's/^#!//')"
 "$PIPX_PY" - <<'PY'
-import drl_autoresearch, drl_autoresearch.core.onboarding as ob
-print(drl_autoresearch.__file__)
+import nxl, nxl.core.onboarding as ob
+print(nxl.__file__)
 print(ob.__file__)
 PY
 ```
 
-Use plain `python3 -c 'import drl_autoresearch'` only if you installed the
+Use plain `python3 -c 'import nxl'` only if you installed the
 package into that same Python environment. A cloned repo and an installed CLI
 are separate copies.
 
@@ -194,12 +194,12 @@ python3 -m pip install --user -e .
 
 ```bash
 cd /path/to/your-project
-drl-autoresearch init
+nxl init
 ```
 
 Init flow:
 
-1. Creates baseline structure (`.drl_autoresearch/`, `logs/`, `skills/`, config files).
+1. Creates baseline structure (`.nxl/`, `logs/`, `skills/`, config files).
 2. Runs onboarding questionnaire (unless skipped).
 3. Captures skill-pack choice (`drl` or `custom`).
 4. Captures project mode (`build` or `improve`).
@@ -211,13 +211,13 @@ Init flow:
 Non-interactive examples:
 
 ```bash
-drl-autoresearch init --auto
-drl-autoresearch init --project-mode build --skill-pack custom --plugin codex --skip-onboarding
-drl-autoresearch init --refresh
+nxl init --auto
+nxl init --project-mode build --skill-pack custom --plugin codex --skip-onboarding
+nxl init --refresh
 ```
 
 Refresh behavior:
-- `drl-autoresearch init --refresh` removes DRL AutoResearch-managed config,
+- `nxl init --refresh` removes NexusLoop-managed config,
   runtime state, skill-pack files, and plugin scaffolding from the target
   project, then runs init again from scratch.
 - It does not delete your source code or arbitrary project files.
@@ -225,8 +225,8 @@ Refresh behavior:
 ### Step 2: Validate/fix environment
 
 ```bash
-drl-autoresearch doctor
-drl-autoresearch doctor --fix
+nxl doctor
+nxl doctor --fix
 ```
 
 Use `--fix` if dependencies/interpreter setup are not healthy.
@@ -234,7 +234,7 @@ Use `--fix` if dependencies/interpreter setup are not healthy.
 ### Step 3: Start orchestrated loop
 
 ```bash
-drl-autoresearch run
+nxl run
 ```
 
 Behavior summary:
@@ -254,21 +254,21 @@ Runtime notes:
 - Use `--once` if you want a single cycle and exit.
 - Use `--agent-backend codex` or `--agent-backend claude` to force one backend.
 - Autonomous runs require onboarding permission policy `open`, `project-only`, or `bootstrap-only`.
-- During autonomous cycles, risky actions must go through `drl-autoresearch check`.
+- During autonomous cycles, risky actions must go through `nxl check`.
 - Registry/journal/incidents/handoffs are expected to be written through the project helper APIs, not raw file edits.
 
 ### Step 4: Monitor and intervene when needed
 
 ```bash
-drl-autoresearch status
-drl-autoresearch plan --refresh
-drl-autoresearch research
+nxl status
+nxl plan --refresh
+nxl research
 ```
 
 If your agent session drops or you start a new session, use one-line resume:
 
 ```bash
-drl-autoresearch resume --project-dir .
+nxl resume --project-dir .
 ```
 
 This performs compact sync (status + tail windows of registry/journal/handoffs)
@@ -282,7 +282,7 @@ should be promoted to registry/dashboard; the rest should keep raw outputs in
 If you want to add fresh guidance during resume, pass a one-shot message:
 
 ```bash
-drl-autoresearch resume --project-dir . --message "Keep the current plan, but prioritize fixing the data loader first."
+nxl resume --project-dir . --message "Keep the current plan, but prioritize fixing the data loader first."
 ```
 
 The resume message is merged as additional guidance unless it conflicts with stale
@@ -291,7 +291,7 @@ queued intent, in which case the new human instruction wins.
 ### Step 5: Open dashboard
 
 ```bash
-drl-autoresearch dashboard --port 8765
+nxl dashboard --port 8765
 ```
 
 Open `http://localhost:8765`.
@@ -299,7 +299,7 @@ Open `http://localhost:8765`.
 If you want to blank dashboard backend data while preserving all logs:
 
 ```bash
-drl-autoresearch dashboard --project-dir . --clear-offline
+nxl dashboard --project-dir . --clear-offline
 ```
 
 ## Plugin Artifacts Installed by Init
@@ -324,7 +324,7 @@ Installs to `.claude/commands/`:
 ### Init
 
 ```bash
-drl-autoresearch init \
+nxl init \
   [--project-dir DIR] \
   [--skip-onboarding] \
   [--auto] \
@@ -336,30 +336,30 @@ drl-autoresearch init \
 ### Doctor
 
 ```bash
-drl-autoresearch doctor [--project-dir DIR] [--fix]
+nxl doctor [--project-dir DIR] [--fix]
 ```
 
 ### Run
 
 ```bash
-drl-autoresearch run [--project-dir DIR] [--parallel N] [--dry-run] [--once] [--agent-backend {auto,codex,claude}]
+nxl run [--project-dir DIR] [--parallel N] [--dry-run] [--once] [--agent-backend {auto,codex,claude}]
 ```
 
 ### Resume
 
 ```bash
-drl-autoresearch resume [--project-dir DIR] [--parallel N] [--dry-run] [--no-run] [--message TEXT]
+nxl resume [--project-dir DIR] [--parallel N] [--dry-run] [--no-run] [--message TEXT]
 ```
 
 ### Other core commands
 
 ```bash
-drl-autoresearch status    [--project-dir DIR]
-drl-autoresearch plan      [--project-dir DIR] [--refresh]
-drl-autoresearch research  [--project-dir DIR]
-drl-autoresearch resume    [--project-dir DIR] [--parallel N] [--dry-run] [--no-run] [--message TEXT]
-drl-autoresearch check     --action ACTION [--details JSON] [--project-dir DIR]
-drl-autoresearch dashboard [--project-dir DIR] [--port PORT] [--clear-offline]
+nxl status    [--project-dir DIR]
+nxl plan      [--project-dir DIR] [--refresh]
+nxl research  [--project-dir DIR]
+nxl resume    [--project-dir DIR] [--parallel N] [--dry-run] [--no-run] [--message TEXT]
+nxl check     --action ACTION [--details JSON] [--project-dir DIR]
+nxl dashboard [--project-dir DIR] [--port PORT] [--clear-offline]
 ```
 
 ## Token-Efficiency and Stability Notes
@@ -367,7 +367,7 @@ drl-autoresearch dashboard [--project-dir DIR] [--port PORT] [--clear-offline]
 - Build bootstrap plans are intentionally compact and temporary.
 - Stuck refresh is cooldown-controlled to prevent repetitive research churn.
 - Custom skills are designed to be concise and technique-oriented, not verbose implementation documents.
-- Existing backbone files remain the source of truth: `.drl_autoresearch/`, `logs/`, `skills/`, compact spec files, dashboard artifacts, and `NON_NEGOTIABLE_RULES.md`.
+- Existing backbone files remain the source of truth: `.nxl/`, `logs/`, `skills/`, compact spec files, dashboard artifacts, and `NON_NEGOTIABLE_RULES.md`.
 
 ## Known Limits
 

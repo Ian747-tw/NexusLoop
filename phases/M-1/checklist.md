@@ -1,7 +1,7 @@
 # M-1 Checklist
 
 - [x] 1. Bootstrap repo
-- [ ] 2. Move + rename
+- [x] 2. Move + rename
 - [ ] 3. Delete fork leftovers
 - [ ] 4. Fix pyproject.toml
 - [ ] 5. CI workflow
