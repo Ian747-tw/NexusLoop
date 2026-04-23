@@ -100,11 +100,11 @@
 
 ### M0.5 Step 1 — ProjectSpec
 
-- [ ] **Test written first**: `tests/unit/spec/test_model.py` — example project.yaml loads, dumps, reloads → byte-identical
-- [ ] **nxl_core/spec/model.py** — `ProjectSpec` Pydantic model matching project.yaml schema; round-trips through YAML
-- [ ] `pytest tests/unit/spec/test_model.py -v` passes
-- [ ] `scripts/verify_step.sh M0 18` exits 0
-- [ ] Commit: `M0.5.1: ProjectSpec Pydantic model with YAML round-trip`
+- [x] **Test written first**: `tests/unit/spec/test_model.py` — example project.yaml loads, dumps, reloads → byte-identical
+- [x] **nxl_core/spec/model.py** — `ProjectSpec` Pydantic model matching project.yaml schema; round-trips through YAML
+- [x] `pytest tests/unit/spec/test_model.py -v` passes
+- [x] `scripts/verify_step.sh M0 18` exits 0
+- [x] Commit: `M0.5.1: ProjectSpec Pydantic model with YAML round-trip`
 
 ### M0.5 Step 2 — Compact + index generators
 
