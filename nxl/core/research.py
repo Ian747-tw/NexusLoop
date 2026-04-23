@@ -113,7 +113,7 @@ def _run_research_skills(project_dir: Path) -> List[Dict[str, Any]]:
                 env={**os.environ},
             )
             if completed.returncode == 0:
-                lines = [l for l in completed.stdout.strip().splitlines() if l.strip()]
+                lines = [line for line in completed.stdout.strip().splitlines() if line.strip()]
                 for line in lines:
                     try:
                         obj = json.loads(line)

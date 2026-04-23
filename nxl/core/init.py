@@ -31,6 +31,7 @@ from pathlib import Path
 from nxl.cli import console
 from nxl.core.onboarding import OnboardingFlow
 from nxl.core.state import ProjectState
+from nxl.logging.registry import COLUMNS as _REGISTRY_COLUMNS
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +172,6 @@ _BUNDLED_SKILL_FILES = (
     "mid_training_research.md",
 )
 
-from nxl.logging.registry import COLUMNS as _REGISTRY_COLUMNS
 _REGISTRY_HEADER = "\t".join(_REGISTRY_COLUMNS) + "\n"
 
 

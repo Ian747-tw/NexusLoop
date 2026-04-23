@@ -9,7 +9,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from nxl.cli import console
 from nxl.core.state import ProjectState
@@ -93,7 +93,7 @@ def run(project_dir: Path) -> int:
     # Header.
     print()
     print("=" * 60)
-    print(f"  NexusLoop — Project Status")
+    print("  NexusLoop — Project Status")
     print(f"  {project_dir}")
     print("=" * 60)
 

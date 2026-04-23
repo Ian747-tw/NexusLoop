@@ -24,7 +24,6 @@ import argparse
 import json
 import math
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
@@ -404,7 +403,7 @@ def main() -> None:
     print(f"  Best eval_reward_mean : {state.best_metric_value}")
     print(f"  Best run              : {state.best_run_id}")
     print(f"  Phase                 : {state.current_phase}")
-    print(f"  Dashboard             : http://localhost:8765")
+    print("  Dashboard             : http://localhost:8765")
     print("=" * 60)
 
 

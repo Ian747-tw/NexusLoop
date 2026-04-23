@@ -511,7 +511,7 @@ def _execute_experiment(experiment: Dict[str, Any], project_dir: Path) -> Dict[s
             )
             if completed.returncode == 0:
                 # Expect skill to print JSON result on last line of stdout.
-                lines = [l for l in completed.stdout.strip().splitlines() if l.strip()]
+                lines = [line for line in completed.stdout.strip().splitlines() if line.strip()]
                 result_json: dict = {}
                 if lines:
                     try:
@@ -1181,7 +1181,7 @@ def run(
                     metric_value = None
                 level = "success" if outcome == "keep" else "warning" if outcome == "discard" else "error"
                 console(
-                    f"Run {str(row.get('run_id', '?'))[:8]}: status={status}  keep={keep_decision or 'discard'}  metric={metric_value if metric_value is not None else 'N/A'}",
+                    f"Run {str(row.get('run_id', '?'))[:8]}: status={status}  keep={keep_decision or 'discard'}  {metric_name}={metric_value if metric_value is not None else 'N/A'}",
                     level,
                 )
 
@@ -1263,7 +1263,7 @@ def _run_sequential(
         console(f"  Running {exp.get('run_id', '?')[:8]} — {exp.get('hypothesis', '')}", "info")
         try:
             result = _execute_experiment(exp, project_dir)
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             result = {
                 "run_id": exp.get("run_id", str(uuid.uuid4())),
                 "hypothesis": exp.get("hypothesis", ""),

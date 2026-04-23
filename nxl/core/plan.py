@@ -33,7 +33,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from nxl.cli import console
 from nxl.core.state import ProjectState
@@ -125,7 +125,7 @@ def _display_plan(plan: Dict[str, Any]) -> None:
     """Pretty-print the plan to stdout."""
     print()
     print("=" * 60)
-    print(f"  NexusLoop — Research Plan")
+    print("  NexusLoop — Research Plan")
     print(f"  Generated : {plan.get('generated_at', 'unknown')[:19]}")
     print(f"  Phase     : {plan.get('phase', 'unknown')}")
     best_val = plan.get("best_metric_value")

@@ -5,11 +5,10 @@ All writes are atomic (tmp-then-rename or locked-append).
 
 from __future__ import annotations
 
-import os
 import random
 import string
 import time
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional

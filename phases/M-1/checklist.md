@@ -9,4 +9,4 @@
 - [x] 7. CLAUDE.md
 - [x] 8. Phase skeletons
 - [x] 9. Generate FROZEN.lock
-- [ ] 10. Final smoke test
+- [x] 10. Final smoke test

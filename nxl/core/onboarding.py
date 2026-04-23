@@ -526,7 +526,6 @@ def _detect_active_venv() -> Optional[str]:
 
 
 def _detect_python_version() -> str:
-    import sys
     return f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 

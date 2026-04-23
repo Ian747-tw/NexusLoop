@@ -18,7 +18,7 @@ except ImportError:
     _YAML_AVAILABLE = False
 
 from nxl.core.state import ProjectState, VALID_PHASES
-from nxl.core.policy import PolicyEngine, PolicyDecision
+from nxl.core.policy import PolicyEngine
 
 CONFIG_DIR = ".nxl"
 POLICY_FILE = "policy.yaml"

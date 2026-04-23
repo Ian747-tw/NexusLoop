@@ -4,10 +4,8 @@ PolicyEngine — enforces hard rules and permission modes for NexusLoop.
 
 from __future__ import annotations
 
-import logging
 import os
 import re
-import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -341,7 +339,7 @@ class PolicyEngine:
             return PolicyDecision(
                 allowed=True,
                 requires_confirmation=False,
-                reason=f"Mode 'open': all actions permitted.",
+                reason="Mode 'open': all actions permitted.",
                 mode=mode,
             )
 
