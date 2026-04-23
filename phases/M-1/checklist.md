@@ -5,7 +5,7 @@
 - [x] 3. Delete fork leftovers
 - [x] 4. Fix pyproject.toml
 - [x] 5. CI workflow
-- [ ] 6. Verifier scaffolding
+- [x] 6. Verifier scaffolding
 - [ ] 7. CLAUDE.md
 - [ ] 8. Phase skeletons
 - [ ] 9. Generate FROZEN.lock
