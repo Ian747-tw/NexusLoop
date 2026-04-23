@@ -72,11 +72,11 @@
 
 ### M0.4 Step 1 — ResumeCapsule deterministic builder
 
-- [ ] **Test written first**: `tests/unit/capsule/test_resume.py` — same cursor → byte-identical capsule (run 10×, assert all equal)
-- [ ] **nxl_core/capsule/resume.py** — `ResumeCapsule` (10 sections, ≤2000t), `build(event_cursor)` pure function
-- [ ] `pytest tests/unit/capsule/test_resume.py -v` passes
-- [ ] `scripts/verify_step.sh M0 15` exits 0
-- [ ] Commit: `M0.4.1: ResumeCapsule deterministic builder`
+- [x] **Test written first**: `tests/unit/capsule/test_resume.py` — same cursor → byte-identical capsule (run 10×, assert all equal)
+- [x] **nxl_core/capsule/resume.py** — `ResumeCapsule` (10 sections, ≤2000t), `build(event_cursor)` pure function
+- [x] `pytest tests/unit/capsule/test_resume.py -v` passes
+- [x] `scripts/verify_step.sh M0 15` exits 0
+- [x] Commit: `M0.4.1: ResumeCapsule deterministic builder`
 
 ### M0.4 Step 2 — HandoffRecord
 
