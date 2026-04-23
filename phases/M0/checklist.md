@@ -10,11 +10,11 @@
 
 ## M0.1 Step 2 — EventLog append-only
 
-- [ ] **Test written first**: `tests/integration/events/test_log_concurrent.py` — 10-thread concurrent append, assert no corruption + correct order
-- [ ] **nxl_core/events/log.py** — `EventLog` class with portalocker-locked append, cursor management, `read_from()` iterator
-- [ ] `pytest tests/integration/events/test_log_concurrent.py -v` passes
-- [ ] `scripts/verify_step.sh M0 2` exits 0
-- [ ] Commit: `M0.1.2: EventLog with file-locked append and cursor-based read`
+- [x] **Test written first**: `tests/integration/events/test_log_concurrent.py` — 10-thread concurrent append, assert no corruption + correct order
+- [x] **nxl_core/events/log.py** — `EventLog` class with portalocker-locked append, cursor management, `read_from()` iterator
+- [x] `pytest tests/integration/events/test_log_concurrent.py -v` passes
+- [x] `scripts/verify_step.sh M0 2` exits 0
+- [x] Commit: `M0.1.2: EventLog with file-locked append and cursor-based read`
 
 ## M0.1 Step 3 — Deterministic replay
 
