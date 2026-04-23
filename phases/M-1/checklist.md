@@ -4,7 +4,7 @@
 - [x] 2. Move + rename
 - [x] 3. Delete fork leftovers
 - [x] 4. Fix pyproject.toml
-- [ ] 5. CI workflow
+- [x] 5. CI workflow
 - [ ] 6. Verifier scaffolding
 - [ ] 7. CLAUDE.md
 - [ ] 8. Phase skeletons
