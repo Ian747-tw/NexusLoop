@@ -108,11 +108,11 @@
 
 ### M0.5 Step 2 — Compact + index generators
 
-- [ ] **Test written first**: `tests/unit/spec/test_index.py` — golden file diff test for spec_compact.md and spec_index.json
-- [ ] **nxl_core/spec/index.py** — `spec_compact.md` + `spec_index.json` generators from typed spec
-- [ ] `pytest tests/unit/spec/test_index.py -v` passes
-- [ ] `scripts/verify_step.sh M0 19` exits 0
-- [ ] Commit: `M0.5.2: Compact and index generators from ProjectSpec`
+- [x] **Test written first**: `tests/unit/spec/test_index.py` — golden file diff test for spec_compact.md and spec_index.json
+- [x] **nxl_core/spec/index.py** — `spec_compact.md` + `spec_index.json` generators from typed spec
+- [x] `pytest tests/unit/spec/test_index.py -v` passes
+- [x] `scripts/verify_step.sh M0 19` exits 0
+- [x] Commit: `M0.5.2: Compact and index generators from ProjectSpec`
 
 ---
 
