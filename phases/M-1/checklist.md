@@ -3,7 +3,7 @@
 - [x] 1. Bootstrap repo
 - [x] 2. Move + rename
 - [x] 3. Delete fork leftovers
-- [ ] 4. Fix pyproject.toml
+- [x] 4. Fix pyproject.toml
 - [ ] 5. CI workflow
 - [ ] 6. Verifier scaffolding
 - [ ] 7. CLAUDE.md
