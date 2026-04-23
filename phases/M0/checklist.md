@@ -18,11 +18,11 @@
 
 ## M0.1 Step 3 — Deterministic replay
 
-- [ ] **Test written first**: `tests/integration/events/test_replay_deterministic.py` — replay 1000-event fixture twice, assert byte-identical state
-- [ ] **nxl_core/events/replay.py** — `project(events) → State` pure fold, no I/O, no time, no randomness
-- [ ] `pytest tests/integration/events/test_replay_deterministic.py -v` passes
-- [ ] `scripts/verify_step.sh M0 3` exits 0
-- [ ] Commit: `M0.1.3: Deterministic replay — same events produce byte-identical state`
+- [x] **Test written first**: `tests/integration/events/test_replay_deterministic.py` — replay 1000-event fixture twice, assert byte-identical state
+- [x] **nxl_core/events/replay.py** — `project(events) → State` pure fold, no I/O, no time, no randomness
+- [x] `pytest tests/integration/events/test_replay_deterministic.py -v` passes
+- [x] `scripts/verify_step.sh M0 3` exits 0
+- [x] Commit: `M0.1.3: Deterministic replay — same events produce byte-identical state`
 
 ## M0.1 Step 4 — Migrate existing logging modules
 
