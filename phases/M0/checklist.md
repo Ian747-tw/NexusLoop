@@ -80,11 +80,11 @@
 
 ### M0.4 Step 2 — HandoffRecord
 
-- [ ] **Test written first**: `tests/unit/capsule/test_handoff.py` — token counts enforced at construction
-- [ ] **nxl_core/capsule/handoff.py** — `HandoffRecord` ({from_agent, to_agent, reason, summary ≤500t, hints ≤200t})
-- [ ] `pytest tests/unit/capsule/test_handoff.py -v` passes
-- [ ] `scripts/verify_step.sh M0 16` exits 0
-- [ ] Commit: `M0.4.2: HandoffRecord with token count enforcement`
+- [x] **Test written first**: `tests/unit/capsule/test_handoff.py` — token counts enforced at construction
+- [x] **nxl_core/capsule/handoff.py** — `HandoffRecord` ({from_agent, to_agent, reason, summary ≤500t, hints ≤200t})
+- [x] `pytest tests/unit/capsule/test_handoff.py -v` passes
+- [x] `scripts/verify_step.sh M0 16` exits 0
+- [x] Commit: `M0.4.2: HandoffRecord with token count enforcement`
 
 ### M0.4 Step 3 — Three-tier compaction
 
