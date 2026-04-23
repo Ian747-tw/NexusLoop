@@ -29,7 +29,7 @@ case "${phase}:${step}" in
     echo "Checking fork leftover root markdown files are removed"
     root_md="$(find . -maxdepth 1 -type f -name '*.md' -printf '%f\n' | sort | tr '\n' ' ')"
     echo "Root markdown files: ${root_md}"
-    test "${root_md}" = "ACKNOWLEDGEMENTS.md CLAUDE.md NON_NEGOTIABLE_RULES.md NON_NEGOTIABLE_RULES_dev.md README.md "
+    test "${root_md}" = "ACKNOWLEDGEMENTS.md AGENTS.md CLAUDE.md NON_NEGOTIABLE_RULES.md NON_NEGOTIABLE_RULES_dev.md README.md "
     ;;
   M-1:4)
     echo "Checking package metadata and CLI entrypoint"

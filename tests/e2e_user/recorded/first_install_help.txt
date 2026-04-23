@@ -1,0 +1,35 @@
+$ cd <SANDBOX>
+$ nxl --help
+exit_code=0
+--- stdout ---
+usage: nxl [-h] [--version] COMMAND ...
+
+NexusLoop — autonomous deep reinforcement learning research workflow manager.
+
+options:
+  -h, --help   show this help message and exit
+  --version    show program's version number and exit
+
+Available commands:
+  COMMAND
+    install    Print install confirmation and usage tips.
+    init       Scaffold a new NexusLoop project.
+    doctor     Check environment, hardware, and config validity.
+    dashboard  Start the local web dashboard.
+    run        Start the autonomous experiment loop.
+    status     Print current project status summary.
+    plan       Show or refresh the implementation plan.
+    research   Trigger a mid-training literature/research refresh.
+    resume     Recover a dropped session with compact sync, then continue run
+               loop.
+    stop       Request the autonomous gateway to stop and save a compact
+               resume brief.
+    check      Check whether an agent action violates the hard rules.
+
+Examples:
+  nxl init --project-dir ~/my-drl-project
+  nxl doctor
+  nxl run --parallel 4
+  nxl dashboard --port 8765
+--- stderr ---
+

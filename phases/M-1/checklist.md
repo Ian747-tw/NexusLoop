@@ -10,3 +10,5 @@
 - [x] 8. Phase skeletons
 - [x] 9. Generate FROZEN.lock
 - [x] 10. Final smoke test
+- [x] User-simulation E2E tests for this phase's features written, tagged `phase_m_minus_1`, passing
+- [ ] Manually verified the feature by following README instructions on a fresh sandbox (not just running tests)

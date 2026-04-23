@@ -1,0 +1,7 @@
+$ cd <SANDBOX>
+$ nxl --version
+exit_code=0
+--- stdout ---
+nxl 0.1.0
+--- stderr ---
+
