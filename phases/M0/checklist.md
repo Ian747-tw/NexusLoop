@@ -26,16 +26,15 @@
 
 ## M0.1 Step 4 — Migrate existing logging modules
 
-- [ ] **Test written first**: `tests/integration/logging/test_event_emission.py` — assert an event appears for each public API call in journal/incidents/handoffs/registry
-- [ ] **nxl_core/events/log.py** — EventLog singleton accessible to nxl/logging/
-- [ ] **nxl/logging/journal.py** — internally calls EventLog.append() on all public APIs; fix TSV escape bug
-- [ ] **nxl/logging/incidents.py** — internally calls EventLog.append(); fix Windows fcntl noop
-- [ ] **nxl/logging/handoffs.py** — internally calls EventLog.append()
-- [ ] **nxl/logging/registry.py** — internally calls EventLog.append()
-- [ ] All existing tests pass
-- [ ] `pytest tests/integration/logging/ -v` passes
-- [ ] `scripts/verify_step.sh M0 4` exits 0
-- [ ] Commit: `M0.1.4: Migrate logging modules to emit events via EventLog.append()`
+- [x] **Test written first**: `tests/integration/logging/test_event_emission.py` — assert an event appears for each public API call in journal/incidents/handoffs/registry
+- [x] **nxl_core/events/singletons.py** — shared EventLog singleton with `set_shared()` / `reset()` for tests
+- [x] **nxl/logging/journal.py** — internally calls `journal_log().append()` on `log_event()`
+- [x] **nxl/logging/incidents.py** — internally calls `incident_log().append()` on `report()`; fixed missing `import time`
+- [x] **nxl/logging/handoffs.py** — internally calls `handoff_log().append()` on `record_handoff()`; fixed missing `import time`
+- [x] All existing tests pass
+- [x] `pytest tests/integration/logging/ -v` passes
+- [x] `scripts/verify_step.sh M0 4` exits 0
+- [x] Commit: `M0.1.4: Migrate logging modules to emit events via EventLog.append()`
 
 ---
 

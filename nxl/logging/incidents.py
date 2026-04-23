@@ -2,30 +2,30 @@
 Incident log — tracks serious failures that need human attention.
 Backed by a human-readable markdown file.
 """
-
 from __future__ import annotations
 
 import json
 import random
+import re
 import string
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 INCIDENT_TYPES = [
-    "reward_hacking",    # reward improves but real objective doesn't
-    "invalid_eval",      # evaluation protocol violated
-    "divergence",        # loss exploded or NaN
-    "oom",               # GPU/CPU out of memory
-    "crash_loop",        # repeated crashes on similar config
-    "broken_assumption", # key assumption proved wrong
-    "rule_violation",    # research-related rule violation only
-    "data_leak",         # potential information leak in eval
-    "reproducibility",   # results not reproducible across seeds
+    "reward_hacking",
+    "invalid_eval",
+    "divergence",
+    "oom",
+    "crash_loop",
+    "broken_assumption",
+    "rule_violation",
+    "data_leak",
+    "reproducibility",
 ]
 
-# Severity auto-assignment by type
 _AUTO_SEVERITY: dict[str, str] = {
     "divergence": "critical",
     "oom": "critical",
@@ -51,20 +51,24 @@ def _rand4() -> str:
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
 
 
-# ---------------------------------------------------------------------------
-# Incident dataclass
-# ---------------------------------------------------------------------------
+def _make_ulid() -> str:
+    """Generate a time-sortable unique ID (ULID-style without the library)."""
+    entropy = random.getrandbits(80)
+    time_part = int(time.time() * 1000).to_bytes(8, "big").hex().lower().ljust(10, "0")[:10]
+    rand_part = format(entropy % (2**64), "012x") + format(entropy >> 64, "012x")
+    return f"01H{time_part}{rand_part[:12]}"
+
 
 @dataclass
 class Incident:
-    incident_id: str                 # inc_{timestamp}_{type[:4]}
+    incident_id: str
     incident_type: str
-    severity: str                    # "low" / "medium" / "high" / "critical"
+    severity: str
     run_id: str
     timestamp: str
     description: str
     evidence: dict
-    status: str                      # "open" / "resolved" / "wont_fix"
+    status: str
     resolution: Optional[str] = None
 
     def to_markdown_block(self, index: int) -> str:
@@ -84,22 +88,13 @@ class Incident:
         )
 
 
-# ---------------------------------------------------------------------------
-# IncidentLog
-# ---------------------------------------------------------------------------
-
 class IncidentLog:
     INCIDENTS_PATH = "logs/incidents.md"
 
     def __init__(self, project_dir: Path) -> None:
         self.project_dir = Path(project_dir)
         self.incidents_path = self.project_dir / self.INCIDENTS_PATH
-        # In-memory list; always re-read from file for persistence
         self._project_name: str = project_dir.name
-
-    # ------------------------------------------------------------------
-    # Setup
-    # ------------------------------------------------------------------
 
     def initialize(self) -> None:
         self.incidents_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,10 +109,6 @@ class IncidentLog:
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(self.incidents_path)
 
-    # ------------------------------------------------------------------
-    # Report a new incident
-    # ------------------------------------------------------------------
-
     def report(
         self,
         incident_type: str,
@@ -126,15 +117,9 @@ class IncidentLog:
         evidence: dict,
         severity: str = "medium",
     ) -> str:
-        """
-        Create and persist a new incident. Returns the incident_id.
-        Severity is auto-upgraded based on type if the provided severity
-        is lower than the type's default.
-        """
         if incident_type == "rule_violation" and not bool(evidence.get("research_related")):
             try:
                 from nxl.core.agent_contract import audit_event
-
                 audit_event(
                     "incident_suppressed",
                     {
@@ -150,7 +135,6 @@ class IncidentLog:
         if not self.incidents_path.exists():
             self.initialize()
 
-        # Auto-severity logic
         type_severity = _AUTO_SEVERITY.get(incident_type, "low")
         _order = ["low", "medium", "high", "critical"]
         effective_severity = (
@@ -173,13 +157,26 @@ class IncidentLog:
             resolution=None,
         )
 
-        # Read all incidents, add new one, rewrite atomically
         all_incidents = self._read_all()
         all_incidents.append(incident)
         self._rewrite(all_incidents)
         try:
             from nxl.core.agent_contract import audit_event
+            from nxl_core.events.schema import IncidentReported as NxlIncidentReported
+            from nxl_core.events.singletons import incident_log as _incident_log
 
+            ev = NxlIncidentReported(
+                event_id=_make_ulid(),
+                timestamp=datetime.now(timezone.utc),
+                cycle_id=None,
+                causation_id=None,
+                kind="incident_reported",
+                incident_type=incident_type,
+                severity=effective_severity,
+                run_id=run_id,
+                description=description[:500],
+            )
+            _incident_log().append(ev)
             audit_event(
                 "incident_report",
                 {
@@ -193,10 +190,6 @@ class IncidentLog:
             pass
         return incident_id
 
-    # ------------------------------------------------------------------
-    # Queries
-    # ------------------------------------------------------------------
-
     def get_open_incidents(self) -> list[Incident]:
         return [i for i in self._read_all() if i.status == "open"]
 
@@ -204,7 +197,6 @@ class IncidentLog:
         return [i for i in self._read_all() if i.incident_type == incident_type]
 
     def count_recent(self, hours: int = 24) -> int:
-        """Count incidents created in the last `hours` hours."""
         now = datetime.now(timezone.utc)
         count = 0
         for incident in self._read_all():
@@ -219,10 +211,6 @@ class IncidentLog:
                 pass
         return count
 
-    # ------------------------------------------------------------------
-    # Resolve
-    # ------------------------------------------------------------------
-
     def resolve(self, incident_id: str, resolution: str) -> None:
         all_incidents = self._read_all()
         found = False
@@ -236,21 +224,11 @@ class IncidentLog:
             raise KeyError(f"incident_id {incident_id!r} not found")
         self._rewrite(all_incidents)
 
-    # ------------------------------------------------------------------
-    # Persistence
-    # ------------------------------------------------------------------
-
     def _read_all(self) -> list[Incident]:
-        """
-        Parse incidents from the markdown file.
-        We store structured data as JSON comment blocks embedded in the markdown.
-        """
         if not self.incidents_path.exists():
             return []
         text = self.incidents_path.read_text(encoding="utf-8")
         incidents = []
-        # Extract JSON blocks: <!-- INCIDENT_JSON: {...} -->
-        import re
         pattern = re.compile(r"<!-- INCIDENT_JSON: (\{.*?\}) -->", re.DOTALL)
         for match in pattern.finditer(text):
             try:
@@ -261,22 +239,17 @@ class IncidentLog:
         return incidents
 
     def _rewrite(self, incidents: list[Incident]) -> None:
-        """Atomically rewrite the markdown file with all incidents."""
         open_incidents = [i for i in incidents if i.status == "open"]
         resolved_incidents = [i for i in incidents if i.status != "open"]
-
         lines = [f"# Incident Log — {self._project_name}\n\n"]
-
         lines.append("## Open Incidents\n\n")
         for idx, inc in enumerate(open_incidents, start=1):
             lines.append(inc.to_markdown_block(idx))
             lines.append(f"<!-- INCIDENT_JSON: {json.dumps(inc.__dict__)} -->\n\n")
-
         lines.append("## Resolved Incidents\n\n")
         for idx, inc in enumerate(resolved_incidents, start=1):
             lines.append(inc.to_markdown_block(len(open_incidents) + idx))
             lines.append(f"<!-- INCIDENT_JSON: {json.dumps(inc.__dict__)} -->\n\n")
-
         content = "".join(lines)
         tmp = self.incidents_path.with_suffix(".md.tmp")
         tmp.write_text(content, encoding="utf-8")

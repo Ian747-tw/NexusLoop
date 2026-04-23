@@ -2,11 +2,12 @@
 Handoff log — tracks agent handoffs so multiple agents can work over time
 without losing context.
 """
-
 from __future__ import annotations
 
 import json
+import random
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,23 +18,26 @@ def _now_human() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-# ---------------------------------------------------------------------------
-# HandoffRecord dataclass
-# ---------------------------------------------------------------------------
+def _make_ulid() -> str:
+    entropy = random.getrandbits(80)
+    time_part = int(time.time() * 1000).to_bytes(8, "big").hex().lower().ljust(10, "0")[:10]
+    rand_part = format(entropy % (2**64), "012x") + format(entropy >> 64, "012x")
+    return f"01H{time_part}{rand_part[:12]}"
+
 
 @dataclass
 class HandoffRecord:
     handoff_id: str
     timestamp: str
     from_agent: str
-    to_agent: str                   # "any" if unspecified
-    what_changed: str               # What was modified this session
-    why: str                        # Rationale for changes
-    what_happened: str              # Results / outcomes
-    do_not_retry: list[str]         # Experiments that failed and should not be repeated
-    next_steps: list[str]           # Recommended next experiments
-    current_best: str               # Best run ID and metric
-    open_questions: list[str]       # Unanswered questions
+    to_agent: str
+    what_changed: str
+    why: str
+    what_happened: str
+    do_not_retry: list[str]
+    next_steps: list[str]
+    current_best: str
+    open_questions: list[str]
 
     def to_markdown_section(self, n: int) -> str:
         def bullets(lst: list[str]) -> str:
@@ -54,10 +58,6 @@ class HandoffRecord:
         )
 
 
-# ---------------------------------------------------------------------------
-# HandoffLog
-# ---------------------------------------------------------------------------
-
 class HandoffLog:
     HANDOFFS_PATH = "logs/handoffs.md"
 
@@ -65,10 +65,6 @@ class HandoffLog:
         self.project_dir = Path(project_dir)
         self.handoffs_path = self.project_dir / self.HANDOFFS_PATH
         self._project_name: str = project_dir.name
-
-    # ------------------------------------------------------------------
-    # Setup
-    # ------------------------------------------------------------------
 
     def initialize(self) -> None:
         self.handoffs_path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,21 +75,28 @@ class HandoffLog:
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(self.handoffs_path)
 
-    # ------------------------------------------------------------------
-    # Write
-    # ------------------------------------------------------------------
-
     def record_handoff(self, handoff: HandoffRecord) -> None:
-        """Append a new handoff to the file atomically."""
         if not self.handoffs_path.exists():
             self.initialize()
-
         existing = self._read_all()
         existing.append(handoff)
         self._rewrite(existing)
         try:
             from nxl.core.agent_contract import audit_event
+            from nxl_core.events.schema import HandoffRecorded
+            from nxl_core.events.singletons import handoff_log as _handoff_log
 
+            ev = HandoffRecorded(
+                event_id=_make_ulid(),
+                timestamp=datetime.now(timezone.utc),
+                cycle_id=None,
+                causation_id=None,
+                kind="handoff_recorded",
+                handoff_id=handoff.handoff_id,
+                from_agent=handoff.from_agent,
+                to_agent=handoff.to_agent,
+            )
+            _handoff_log().append(ev)
             audit_event(
                 "handoff_record",
                 {
@@ -105,10 +108,6 @@ class HandoffLog:
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # Read
-    # ------------------------------------------------------------------
-
     def get_latest(self) -> Optional[HandoffRecord]:
         all_handoffs = self._read_all()
         return all_handoffs[-1] if all_handoffs else None
@@ -116,14 +115,7 @@ class HandoffLog:
     def get_all(self) -> list[HandoffRecord]:
         return self._read_all()
 
-    # ------------------------------------------------------------------
-    # Persistence
-    # ------------------------------------------------------------------
-
     def _read_all(self) -> list[HandoffRecord]:
-        """
-        Parse handoffs from the markdown file using embedded JSON comment blocks.
-        """
         if not self.handoffs_path.exists():
             return []
         text = self.handoffs_path.read_text(encoding="utf-8")
@@ -138,14 +130,12 @@ class HandoffLog:
         return handoffs
 
     def _rewrite(self, handoffs: list[HandoffRecord]) -> None:
-        """Atomically rewrite the full handoffs file."""
         lines = [f"# Agent Handoffs — {self._project_name}\n\n"]
         for n, handoff in enumerate(handoffs, start=1):
             lines.append("---\n\n")
             lines.append(handoff.to_markdown_section(n))
             lines.append(f"\n<!-- HANDOFF_JSON: {json.dumps(handoff.__dict__)} -->\n\n")
         lines.append("---\n")
-
         content = "".join(lines)
         tmp = self.handoffs_path.with_suffix(".md.tmp")
         tmp.write_text(content, encoding="utf-8")

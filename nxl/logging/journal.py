@@ -23,6 +23,20 @@ def _now_human() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _make_ulid() -> str:
+    """Generate a time-sortable unique ID (ULID-style without the library)."""
+    import time
+    import random
+    entropy = random.getrandbits(80)
+    time_part = int(time.time() * 1000).to_bytes(8, "big").hex().lower().ljust(10, "0")[:10]
+    rand_part = format(entropy % (2**64), "012x") + format(entropy >> 64, "012x")
+    return f"01H{time_part}{rand_part[:12]}"
+
+
 class ProjectJournal:
     JOURNAL_PATH = "logs/project_journal.md"
 
@@ -94,14 +108,21 @@ class ProjectJournal:
         self._append_to_section("## Experiment Log", "".join(lines))
         try:
             from nxl.core.agent_contract import audit_event
+            from nxl_core.events.schema import IncidentReported
+            from nxl_core.events.singletons import journal_log
 
-            audit_event(
-                "journal_event",
-                {
-                    "event_type": event_type,
-                    "has_metadata": bool(metadata),
-                },
+            ev = IncidentReported(
+                event_id=_make_ulid(),
+                timestamp=_utc_now(),
+                cycle_id=None,
+                causation_id=None,
+                kind="incident_reported",
+                incident_type=event_type,
+                severity="low",
+                run_id="journal",
+                description=content[:200],
             )
+            journal_log().append(ev)
         except Exception:
             pass
 
