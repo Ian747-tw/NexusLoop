@@ -6,7 +6,7 @@
 - [x] 4. Fix pyproject.toml
 - [x] 5. CI workflow
 - [x] 6. Verifier scaffolding
-- [ ] 7. CLAUDE.md
+- [x] 7. CLAUDE.md
 - [ ] 8. Phase skeletons
 - [ ] 9. Generate FROZEN.lock
 - [ ] 10. Final smoke test
