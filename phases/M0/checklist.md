@@ -12,45 +12,15 @@
 
 ## M0.2: Research primitives (days 4–7)
 
-### M0.2 Step 1 — Hypothesis with canonical hash
+### M0.2 Step 1 — Hypothesis with canonical hash ✓
 
-- [ ] **Test written first**: `tests/unit/research/test_hypothesis_hash.py` — two hypotheses with same axis content but reordered keys → same hash
-- [ ] **nxl_core/research/hypothesis.py** — `Hypothesis` with `compute_hash()` validator (canonical hash of axis_family, hyperparam_diff sorted, evaluator, dataset_rev)
-- [ ] `pytest tests/unit/research/test_hypothesis_hash.py -v` passes
-- [ ] `scripts/verify_step.sh M0 5` exits 0
-- [ ] Commit: `M0.2.1: Hypothesis with canonical hash for duplicate detection`
+### M0.2 Step 2 — Polymorphic Trial (9 kinds) ✓
 
-### M0.2 Step 2 — Polymorphic Trial (9 kinds)
+### M0.2 Step 3 — Polymorphic Evidence + closure rules ✓
 
-- [ ] **Test written first**: `tests/unit/research/test_trial.py` — each of 9 kinds round-trips; invalid kind rejected at parse time
-- [ ] **nxl_core/research/trial.py** — discriminated union `Trial` with 9 kinds (baseline, ablation, diversification, surrogate, etc.)
-- [ ] `pytest tests/unit/research/test_trial.py -v` passes
-- [ ] `scripts/verify_step.sh M0 6` exits 0
-- [ ] Commit: `M0.2.2: Polymorphic Trial — 9 discriminated union kinds`
+### M0.2 Step 4 — ScoreVector + ParetoRanker ✓
 
-### M0.2 Step 3 — Polymorphic Evidence + closure rules
-
-- [ ] **Test written first**: `tests/unit/research/test_evidence.py` — matrix: all 6 evidence kinds × support / refute / inconclusive outcomes
-- [ ] **nxl_core/research/evidence.py** — 6 evidence kinds + `closure_<kind>(evidence, hypothesis) → ClosureDecision`
-- [ ] `pytest tests/unit/research/test_evidence.py -v` passes
-- [ ] `scripts/verify_step.sh M0 7` exits 0
-- [ ] Commit: `M0.2.3: Polymorphic Evidence with closure rules`
-
-### M0.2 Step 4 — ScoreVector + ParetoRanker
-
-- [ ] **Test written first**: `tests/unit/research/test_score.py` — known Pareto fixtures → expected frontier; each of 4 rankers
-- [ ] **nxl_core/research/score.py** — `ScoreVector` (8-dim), `dominates(a, b)`, `frontier(scores)`, 4 pluggable rankers (weighted_sum, lex, elo, constraint)
-- [ ] `pytest tests/unit/research/test_score.py -v` passes
-- [ ] `scripts/verify_step.sh M0 8` exits 0
-- [ ] Commit: `M0.2.4: ScoreVector with ParetoRanker and 4 pluggable rankers`
-
-### M0.2 Step 5 — Noise floor estimator
-
-- [ ] **Test written first**: `tests/unit/research/test_noise_floor.py` — synthetic data with known noise → estimator within 10% of true σ
-- [ ] **nxl_core/research/noise_floor.py** — MAD-based σ estimate; `is_signal(delta, sigma, k=3) → bool`
-- [ ] `pytest tests/unit/research/test_noise_floor.py -v` passes
-- [ ] `scripts/verify_step.sh M0 9` exits 0
-- [ ] Commit: `M0.2.5: MAD-based noise floor estimator with k·σ signal rule`
+### M0.2 Step 5 — Noise floor estimator ✓
 
 ---
 
