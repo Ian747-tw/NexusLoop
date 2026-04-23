@@ -120,13 +120,13 @@
 
 ### M0.6 Step 1 — Boundary event emission
 
-- [ ] **Test written first**: `tests/integration/test_run_event_emission.py` — 1-cycle smoke run → events.jsonl has ≥10 expected events
-- [ ] **nxl/core/run.py** — inject `EventLog.append()` at bootstrap start/end, subprocess agent invocation start/end, policy decisions
-- [ ] `nxl run --once --dry-run` smoke test passes
-- [ ] `.nxl/events.jsonl` exists and has ≥10 events
-- [ ] `pytest tests/integration/test_run_event_emission.py -v` passes
-- [ ] `scripts/verify_step.sh M0 20` exits 0
-- [ ] Commit: `M0.6.1: Wire run.py to emit boundary events to events.jsonl`
+- [x] **Test written first**: `tests/integration/test_run_event_emission.py` — 1-cycle smoke run → events.jsonl has ≥10 expected events
+- [x] **nxl/core/run.py** — inject `EventLog.append()` at bootstrap start/end, subprocess agent invocation start/end, policy decisions
+- [x] `nxl run --once --dry-run` smoke test passes
+- [x] `.nxl/events.jsonl` exists and has ≥10 events
+- [x] `pytest tests/integration/test_run_event_emission.py -v` passes
+- [x] `scripts/verify_step.sh M0 20` exits 0
+- [x] Commit: `M0.6.1: Wire run.py to emit boundary events to events.jsonl`
 
 ---
 

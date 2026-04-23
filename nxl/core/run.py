@@ -40,6 +40,15 @@ from nxl.core.state import ProjectState, VALID_PHASES
 from nxl.logging.incidents import IncidentLog
 from nxl.logging.journal import ProjectJournal
 from nxl.logging.registry import ExperimentRegistry, RunRecord
+from nxl_core.events.schema import (
+    CycleCompleted,
+    CycleFailed,
+    CycleStarted,
+    PolicyDecision,
+    ZoneEntered,
+    ZoneExited,
+)
+from nxl_core.events.singletons import configure as _configure_event_log, journal_log
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +76,96 @@ _CONSECUTIVE_CRASH_FORCE_STOP_THRESHOLD = 5
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _emit_run_cycle_event(
+    project_dir: Path,
+    run_id: str,
+    experiment: dict,
+    started: bool = True,
+) -> None:
+    """Emit cycle boundary event to events.jsonl via singleton."""
+    try:
+        log = journal_log()
+        brief = experiment.get("hypothesis", "") or ""
+        hyp_id = experiment.get("run_id", run_id)
+        event_id = uuid.uuid4().hex[:26]
+        if started:
+            ev = CycleStarted(
+                event_id=event_id,
+                timestamp=datetime.now(timezone.utc),
+                cycle_id=run_id,
+                causation_id=None,
+                brief_hash=brief[:32],
+                hypothesis_id=hyp_id,
+            )
+        else:
+            ev = CycleCompleted(
+                event_id=event_id,
+                timestamp=datetime.now(timezone.utc),
+                cycle_id=run_id,
+                causation_id=None,
+                brief_hash=brief[:32],
+                hypothesis_id=hyp_id,
+                summary_tokens=0,
+            )
+        log.append(ev)
+    except Exception:
+        pass
+
+
+def _emit_policy_event(
+    action: str,
+    decision: str,
+    reason: str,
+) -> None:
+    """Emit a PolicyDecision event to events.jsonl."""
+    try:
+        log = journal_log()
+        ev = PolicyDecision(
+            event_id=uuid.uuid4().hex[:26],
+            timestamp=datetime.now(timezone.utc),
+            cycle_id=None,
+            causation_id=None,
+            action=action,
+            decision=decision,
+            reason=reason,
+        )
+        log.append(ev)
+    except Exception:
+        pass
+
+
+def _emit_zone_event(
+    zone: str,
+    reason: str,
+    exiting: bool = False,
+) -> None:
+    """Emit a zone transition event to events.jsonl."""
+    try:
+        log = journal_log()
+        event_id = uuid.uuid4().hex[:26]
+        if exiting:
+            ev = ZoneExited(
+                event_id=event_id,
+                timestamp=datetime.now(timezone.utc),
+                cycle_id=None,
+                causation_id=None,
+                zone=zone,  # type: ignore[arg-type]
+                reason=reason,
+            )
+        else:
+            ev = ZoneEntered(
+                event_id=event_id,
+                timestamp=datetime.now(timezone.utc),
+                cycle_id=None,
+                causation_id=None,
+                zone=zone,  # type: ignore[arg-type]
+                reason=reason,
+            )
+        log.append(ev)
+    except Exception:
+        pass
 
 
 def _registry_path(project_dir: Path) -> Path:
@@ -961,6 +1060,9 @@ def run(
         )
         return 1
 
+    # Configure event log singleton for boundary event emission
+    _configure_event_log(config_dir / "events.jsonl")
+
     state = ProjectState.load(project_dir)
     orchestrator: Optional[Orchestrator] = None
     try:
@@ -980,11 +1082,13 @@ def run(
     if detected_backend is None:
         if dry_run:
             backend = "dry-run"
+            _emit_policy_event("backend_detection", "allow", "dry_run_mode_selected")
             console(
                 "No supported coding-agent CLI detected; continuing because --dry-run was requested.",
                 "warning",
             )
         else:
+            _emit_policy_event("backend_detection", "deny", "no_supported_agent_cli")
             console(
                 "No supported coding-agent CLI detected for this project. Install Codex or Claude Code.",
                 "error",
@@ -992,12 +1096,15 @@ def run(
             return 1
     else:
         backend = detected_backend
+        _emit_policy_event("backend_detection", "allow", f"detected={backend}")
     if not autonomous_policy_allowed(project_dir):
+        _emit_policy_event("autonomous_policy", "deny", "policy_not_open")
         console(
             "Autonomous run requires onboarding permission policy `open`, `project-only`, or `bootstrap-only`.",
             "error",
         )
         return 1
+    _emit_policy_event("autonomous_policy", "allow", "policy_check_passed")
     if parallel > 1:
         console(
             "Agent-driven runtime currently executes one autonomous cycle at a time; ignoring --parallel > 1.",
@@ -1015,6 +1122,7 @@ def run(
     old_handler = signal.signal(signal.SIGINT, _handle_sigint)
     journal = ProjectJournal(project_dir)
     journal.initialize(project_name=state.project_name, spec={})
+    _emit_zone_event("A", "run_started")
 
     try:
         cycle_count = 0
@@ -1052,6 +1160,7 @@ def run(
                 break
 
             experiment = experiments[0]
+            run_id = str(experiment.get("run_id", str(uuid.uuid4())))
             console(
                 f"Autonomous cycle {cycle_count + 1}  |  backend={backend}  |  run={str(experiment.get('run_id', '?'))[:8]}",
                 "info",
@@ -1062,6 +1171,12 @@ def run(
             )
 
             if dry_run:
+                _emit_zone_event("B", "dry_run_cycle_start")
+                _emit_policy_event("dry_run", "allow", "dry_run_mode_approved")
+                _emit_policy_event("once_mode", "allow", f"once={once}")
+                _emit_run_cycle_event(project_dir, run_id, experiment, started=True)
+                _emit_run_cycle_event(project_dir, run_id, experiment, started=False)
+                _emit_zone_event("B", "dry_run_cycle_end", exiting=True)
                 console("Dry-run mode — autonomous agent will not be launched.", "warning")
                 print(
                     f"  [{experiment.get('run_id', '?')[:8]}] "
@@ -1070,7 +1185,7 @@ def run(
                 )
                 break
 
-            run_id = str(experiment.get("run_id", str(uuid.uuid4())))
+
             resume_override_message = str(
                 state.flags.pop("resume_override_message", "") or ""
             ).strip()
@@ -1106,6 +1221,7 @@ def run(
                 project_mode=project_mode,
                 resume_override_message=resume_override_message,
             )
+            _emit_run_cycle_event(project_dir, run_id, experiment, started=True)
             agent_result = run_agent_cycle(
                 project_dir=project_dir,
                 backend=backend,
@@ -1118,6 +1234,13 @@ def run(
                 },
                 dangerous=True,
             )
+
+            # Emit cycle completed event
+            try:
+                experiment["_agent_exit_code"] = agent_result.exit_code
+            except Exception:
+                pass
+            _emit_run_cycle_event(project_dir, run_id, experiment, started=False)
 
             violations, contract_details = _validate_agent_contract(
                 project_dir=project_dir,
@@ -1244,6 +1367,7 @@ def run(
                 break
             time.sleep(_AGENT_LOOP_SLEEP_SECONDS)
     finally:
+        _emit_zone_event("A", "run_completed", exiting=True)
         signal.signal(signal.SIGINT, old_handler)
         state = ProjectState.load(project_dir)
         _sync_state_from_registry(state, project_dir)
