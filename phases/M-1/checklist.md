@@ -8,5 +8,5 @@
 - [x] 6. Verifier scaffolding
 - [x] 7. CLAUDE.md
 - [x] 8. Phase skeletons
-- [ ] 9. Generate FROZEN.lock
+- [x] 9. Generate FROZEN.lock
 - [ ] 10. Final smoke test
