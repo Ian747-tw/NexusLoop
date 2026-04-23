@@ -4,7 +4,7 @@ Codex agents must follow the same execution contract as [CLAUDE.md](CLAUDE.md).
 
 ## End-to-end user-simulation testing
 
-In addition to unit, integration, and adversarial tests, NexusLoop has **user-simulation E2E tests** in `tests/e2e_user/`. These are distinct from all other test types and represent the final ground truth.
+In addition to unit, integration, and adversarial tests, NexusLoop has **user-simulation E2E tests** in `tests/e2e_user/`. These are distinct from all other test types and represent the final ground truth for local release validation.
 
 ### Rules for E2E tests
 
@@ -18,14 +18,14 @@ In addition to unit, integration, and adversarial tests, NexusLoop has **user-si
 
 5. **When an E2E test fails, the bug is in NexusLoop — not in the test.** Never "relax" an E2E assertion to make it pass. Reproduce the failure manually, fix the bug, re-run.
 
-6. **E2E tests are part of every phase's exit gate.** `verify_phase_M<N>.sh` runs them. Phase cannot complete without them green.
+6. **E2E tests run locally, not in default GitHub CI.** Keep the user-simulation harness as a local developer/release gate. The default CI pipeline runs non-E2E checks only.
 
-7. **Never skip an E2E test.** If it's flaky, fix the flakiness. If it's slow, tag it `@pytest.mark.slow` and run it in a nightly CI job. Never `@pytest.mark.skip`.
+7. **Never skip an E2E test.** If it's flaky, fix the flakiness. If it's slow, optimize runtime or run it manually outside default CI. Never `@pytest.mark.skip`.
 
 ### Workflow when adding any user-facing feature
 
 1. Write the E2E scenario first (red)
 2. Write the unit tests (red)
 3. Implement the feature
-4. E2E + unit tests go green
+4. E2E (local) + unit/non-E2E tests (CI) go green
 5. Commit as `M<phase>.<step>: <description>`

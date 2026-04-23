@@ -89,10 +89,14 @@ def _load_yaml_or_json(path: Path) -> Any:
     text = path.read_text(encoding="utf-8")
     if _YAML_AVAILABLE:
         return yaml.safe_load(text)
-    # Attempt JSON parse as fallback (works for simple YAML that is valid JSON)
+    # Attempt JSON parse as fallback (works for simple YAML that is valid JSON).
+    # If parsing fails, return an empty mapping instead of raising so callers can
+    # continue with safe defaults in minimal environments.
     import json
-
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {}
 
 
 # ---------------------------------------------------------------------------

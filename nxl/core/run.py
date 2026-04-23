@@ -976,13 +976,22 @@ def run(
         "info",
     )
 
-    backend = detect_backend(project_dir, preferred=agent_backend)
-    if backend is None:
-        console(
-            "No supported coding-agent CLI detected for this project. Install Codex or Claude Code.",
-            "error",
-        )
-        return 1
+    detected_backend = detect_backend(project_dir, preferred=agent_backend)
+    if detected_backend is None:
+        if dry_run:
+            backend = "dry-run"
+            console(
+                "No supported coding-agent CLI detected; continuing because --dry-run was requested.",
+                "warning",
+            )
+        else:
+            console(
+                "No supported coding-agent CLI detected for this project. Install Codex or Claude Code.",
+                "error",
+            )
+            return 1
+    else:
+        backend = detected_backend
     if not autonomous_policy_allowed(project_dir):
         console(
             "Autonomous run requires onboarding permission policy `open`, `project-only`, or `bootstrap-only`.",

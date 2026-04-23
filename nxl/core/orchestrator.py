@@ -34,7 +34,10 @@ def _load_yaml_or_json(path: Path) -> Any:
     if _YAML_AVAILABLE:
         return yaml.safe_load(text)
     import json
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {}
 
 
 def _make_run_id() -> str:

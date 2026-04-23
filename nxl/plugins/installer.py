@@ -110,6 +110,14 @@ def _install_cc(project_dir: Path) -> bool:
             console(f"Installed: .claude/commands/{md_file.name}", "success")
             count += 1
 
+    # Backward compatibility: older projects/tests still expect nxl-init.md.
+    legacy_init = dst / "nxl-init.md"
+    new_init = dst / "drl-init.md"
+    if not legacy_init.exists() and new_init.exists():
+        shutil.copy2(new_init, legacy_init)
+        console("Installed: .claude/commands/nxl-init.md", "success")
+        count += 1
+
     if count:
         console(
             f"Claude Code plugin ready — {count} slash commands installed in "
