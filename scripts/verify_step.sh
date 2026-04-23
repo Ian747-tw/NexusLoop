@@ -74,6 +74,23 @@ case "${phase}:${step}" in
     echo "Checking full M-1 phase verifier"
     scripts/verify_phase.sh M-1
     ;;
+  M0:1)
+    echo "Checking Event schema — 18 discriminated union kinds"
+    uv run pytest tests/unit/events/test_schema.py -v
+    uv run python -c "from nxl_core.events.schema import Event; print('Event union imported OK')"
+    ;;
+  M0:2)
+    echo "Checking EventLog append-only with file locking"
+    uv run pytest tests/integration/events/test_log_concurrent.py -v
+    ;;
+  M0:3)
+    echo "Checking deterministic replay"
+    uv run pytest tests/integration/events/test_replay_deterministic.py -v
+    ;;
+  M0:4)
+    echo "Checking logging module event emission"
+    uv run pytest tests/integration/logging/ -v
+    ;;
   *)
     echo "No verifier registered for ${phase} step ${step}" >&2
     exit 1
