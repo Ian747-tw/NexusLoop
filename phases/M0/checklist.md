@@ -88,11 +88,11 @@
 
 ### M0.4 Step 3 — Three-tier compaction
 
-- [ ] **Test written first**: `tests/unit/capsule/test_compact.py` — 500-event stream → ≤3 hard, ≤1 clear; no critical events lost
-- [ ] **nxl_core/capsule/compact.py** — `soft_trim()`, `hard_regen()`, `clear_handoff()` — each emits typed event
-- [ ] `pytest tests/unit/capsule/test_compact.py -v` passes
-- [ ] `scripts/verify_step.sh M0 17` exits 0
-- [ ] Commit: `M0.4.3: Three-tier compaction (soft_trim, hard_regen, clear_handoff)`
+- [x] **Test written first**: `tests/unit/capsule/test_compact.py` — 500-event stream → ≤3 hard, ≤1 clear; no critical events lost
+- [x] **nxl_core/capsule/compact.py** — `soft_trim()`, `hard_regen()`, `clear_handoff()` — each emits typed event
+- [x] `pytest tests/unit/capsule/test_compact.py -v` passes
+- [x] `scripts/verify_step.sh M0 17` exits 0
+- [x] Commit: `M0.4.3: Three-tier compaction (soft_trim, hard_regen, clear_handoff)`
 
 ---
 
