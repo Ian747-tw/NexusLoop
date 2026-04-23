@@ -60,11 +60,11 @@
 
 ### M0.3 Step 5 — Adversarial test suite
 
-- [ ] **Test written first**: `tests/adversarial/test_rule_violations.py` — 100 synthetic hallucination scenarios, table-driven
-- [ ] All 100 scenarios blocked by PolicyEngine
-- [ ] `pytest tests/adversarial/ -v` → 100 pass, 0 grant-throughs
-- [ ] `scripts/verify_step.sh M0 14` exits 0
-- [ ] Commit: `M0.3.5: Adversarial test suite — 100 rule violation scenarios blocked`
+- [x] **Test written first**: `tests/adversarial/test_rule_violations.py` — 100 synthetic hallucination scenarios, table-driven
+- [x] All 100 scenarios blocked by PolicyEngine
+- [x] `pytest tests/adversarial/ -v` → 100 pass, 0 grant-throughs
+- [x] `scripts/verify_step.sh M0 14` exits 0
+- [x] Commit: `M0.3.5: Adversarial test suite — 100 rule violation scenarios blocked`
 
 ---
 
