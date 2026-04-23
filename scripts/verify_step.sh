@@ -91,6 +91,71 @@ case "${phase}:${step}" in
     echo "Checking logging module event emission"
     uv run pytest tests/integration/logging/ -v
     ;;
+  M0:5)
+    echo "Checking Hypothesis canonical hash"
+    uv run pytest tests/unit/research/test_hypothesis_hash.py -v
+    uv run python -c "from nxl_core.research.hypothesis import Hypothesis; print('Hypothesis imported OK')"
+    ;;
+  M0:6)
+    echo "Checking Polymorphic Trial (9 kinds)"
+    uv run pytest tests/unit/research/test_trial.py -v
+    ;;
+  M0:7)
+    echo "Checking Polymorphic Evidence + closure rules"
+    uv run pytest tests/unit/research/test_evidence.py -v
+    ;;
+  M0:8)
+    echo "Checking ScoreVector + ParetoRanker"
+    uv run pytest tests/unit/research/test_score.py -v
+    ;;
+  M0:9)
+    echo "Checking noise floor estimator"
+    uv run pytest tests/unit/research/test_noise_floor.py -v
+    ;;
+  M0:10)
+    echo "Checking Typed Rule objects"
+    uv run pytest tests/unit/policy/test_rules.py -v
+    ;;
+  M0:11)
+    echo "Checking PolicyEngine.check()"
+    uv run pytest tests/unit/policy/test_engine.py -v
+    ;;
+  M0:12)
+    echo "Checking CapabilityToken machinery"
+    uv run pytest tests/unit/policy/test_tokens.py -v
+    ;;
+  M0:13)
+    echo "Checking Zone A/B/C transitions"
+    uv run pytest tests/unit/policy/test_zones.py -v
+    ;;
+  M0:14)
+    echo "Checking adversarial test suite (100 rule violations)"
+    uv run pytest tests/adversarial/ -v
+    ;;
+  M0:15)
+    echo "Checking ResumeCapsule deterministic builder"
+    uv run pytest tests/unit/capsule/test_resume.py -v
+    ;;
+  M0:16)
+    echo "Checking HandoffRecord"
+    uv run pytest tests/unit/capsule/test_handoff.py -v
+    ;;
+  M0:17)
+    echo "Checking three-tier compaction"
+    uv run pytest tests/unit/capsule/test_compact.py -v
+    ;;
+  M0:18)
+    echo "Checking ProjectSpec"
+    uv run pytest tests/unit/spec/test_model.py -v
+    ;;
+  M0:19)
+    echo "Checking compact + index generators"
+    uv run pytest tests/unit/spec/test_index.py -v
+    ;;
+  M0:20)
+    echo "Checking run.py event emission boundary"
+    uv run pytest tests/integration/test_run_event_emission.py -v
+    ;;
   *)
     echo "No verifier registered for ${phase} step ${step}" >&2
     exit 1
