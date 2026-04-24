@@ -1,0 +1,1 @@
+# agentcore - OpenCode fork for NexusLoop

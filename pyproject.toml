@@ -50,7 +50,7 @@ nxl = "nxl.cli:main"
 "nxl" = ["plugins/**/*", "dashboard/static/**/*"]
 
 [tool.setuptools.packages.find]
-include = ["nxl*"]
+include = ["nxl*", "agentcore*"]
 
 [dependency-groups]
 dev = [

@@ -10,7 +10,7 @@ Run: pytest agentcore/tests/test_protocol_contract.py
 """
 import json
 
-from nxl_core.policy.protocol import (
+from agentcore.client_py.protocol import (
     CapsuleResponse,
     CompactRequest,
     CompactResponse,
