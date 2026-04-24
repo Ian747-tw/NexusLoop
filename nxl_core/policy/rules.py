@@ -294,10 +294,107 @@ _R14 = Rule(
 
 
 # ---------------------------------------------------------------------------
+# Rule 15: pkg.install — scope must be pypi only unless allowlisted
+# ---------------------------------------------------------------------------
+
+_R15 = Rule(
+    id="pkg_install_scope_pypi_only",
+    scope_pattern=r"(?i)\bpkg\.add\b",
+    predicate=lambda ctx: (
+        ctx.get("action") == "pkg.add"
+        and ctx.get("registry") not in (None, "", "pypi")
+        and ctx.get("registry") not in ctx.get("allowlisted_registries", [])
+    ),
+    effect=RuleEffect.DENY,
+    reason_template="Rule 15: Only pypi registry is allowed for package installation.",
+    priority=10,
+)
+
+
+# ---------------------------------------------------------------------------
+# Rule 16: pkg.install — project venv only, never global
+# ---------------------------------------------------------------------------
+
+_R16 = Rule(
+    id="pkg_install_no_global",
+    scope_pattern=r"(?i)\bpkg\.add\b",
+    predicate=lambda ctx: (
+        ctx.get("action") == "pkg.add"
+        and ctx.get("scope") == "global"
+    ),
+    effect=RuleEffect.DENY,
+    reason_template="Rule 16: Global package installs are forbidden. Use project venv only.",
+    priority=10,
+)
+
+
+# ---------------------------------------------------------------------------
+# Rule 17: fs.delete — always deny rm/unlink, only archive is allowed
+# ---------------------------------------------------------------------------
+
+_R17 = Rule(
+    id="fs_delete_always_deny",
+    scope_pattern=r"(?i)\b(fs\.delete|fs\.rm|fs\.unlink)\b",
+    predicate=lambda ctx: ctx.get("action") in ("fs.delete", "fs.rm", "fs.unlink"),
+    effect=RuleEffect.DENY,
+    reason_template="Rule 17: File deletion via rm/unlink is forbidden. Use fs.archive instead.",
+    priority=10,
+)
+
+
+# ---------------------------------------------------------------------------
+# Rule 18: shell.exec — cwd must be inside scratch/* or on allowlist
+# ---------------------------------------------------------------------------
+
+_ALLOWLISTED_CMDS = frozenset({"nvidia-smi", "df", "ps", "uv pip list", "git status"})
+
+
+def _is_shell_cwd_allowed(ctx: dict[str, Any]) -> bool:
+    cwd = ctx.get("cwd", "")
+    if cwd.startswith("scratch/"):
+        return True
+    cmd = ctx.get("cmd", "")
+    return any(cmd.strip().startswith(allowed) for allowed in _ALLOWLISTED_CMDS)
+
+
+_R18 = Rule(
+    id="shell_exec_cwd_must_be_scratch_or_allowlisted",
+    scope_pattern=r"(?i)\bshell\.exec\b",
+    predicate=lambda ctx: (
+        ctx.get("action") == "shell.exec"
+        and not _is_shell_cwd_allowed(ctx)
+    ),
+    effect=RuleEffect.DENY,
+    reason_template="Rule 18: shell.exec cwd must be inside scratch/* or an allowlisted command.",
+    priority=10,
+)
+
+
+# ---------------------------------------------------------------------------
+# Rule 19: shell.exec — TTL must be <= 300s
+# ---------------------------------------------------------------------------
+
+_R19 = Rule(
+    id="shell_exec_ttl_max_300s",
+    scope_pattern=r"(?i)\bshell\.exec\b",
+    predicate=lambda ctx: (
+        ctx.get("action") == "shell.exec"
+        and ctx.get("ttl", 0) > 300
+    ),
+    effect=RuleEffect.DENY,
+    reason_template="Rule 19: shell.exec TTL must be at most 300 seconds.",
+    priority=10,
+)
+
+
+# ---------------------------------------------------------------------------
 # All rules (ordered by priority descending)
 # ---------------------------------------------------------------------------
 
 ALL_RULES: list[Rule] = sorted(
-    [_R1, _R2, _R3, _R4, _R5, _R6, _R7, _R8, _R9, _R10, _R11, _R12, _R13, _R14],
+    [
+        _R1, _R2, _R3, _R4, _R5, _R6, _R7, _R8, _R9, _R10,
+        _R11, _R12, _R13, _R14, _R15, _R16, _R17, _R18, _R19,
+    ],
     key=lambda r: -r.priority,
 )
