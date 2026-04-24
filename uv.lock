@@ -1561,8 +1561,11 @@ name = "nexusloop"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "portalocker" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "requests" },
     { name = "rich" },
 ]
@@ -1612,6 +1615,7 @@ requires-dist = [
     { name = "kernels", marker = "extra == 'full'", specifier = ">=0.11.7" },
     { name = "matplotlib", marker = "extra == 'examples'", specifier = ">=3.10.8" },
     { name = "matplotlib", marker = "extra == 'full'", specifier = ">=3.10.8" },
+    { name = "numpy", specifier = ">=2.2.6" },
     { name = "numpy", marker = "extra == 'examples'", specifier = ">=2.2.6" },
     { name = "numpy", marker = "extra == 'full'", specifier = ">=2.2.6" },
     { name = "pandas", marker = "extra == 'examples'", specifier = ">=2.3.3" },
@@ -1620,6 +1624,7 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'examples'", specifier = ">=21.0.0" },
     { name = "pyarrow", marker = "extra == 'full'", specifier = ">=21.0.0" },
     { name = "pydantic", specifier = ">=2.5" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "requests", specifier = ">=2.32.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "rustbpe", marker = "extra == 'examples'", specifier = ">=0.1.0" },

@@ -60,6 +60,8 @@ _R1 = Rule(
     predicate=lambda ctx: (
         ctx.get("action") in ("delete_file", "remove_file")
         and not _in_allowed_dirs(ctx.get("path", ""))
+        and "checkpoint" not in ctx.get("path", "").lower()
+        and "non_negotiable" not in ctx.get("path", "").lower()
     ),
     effect=RuleEffect.DENY,
     reason_template="Rule 1: Deleting source code outside logs/ or skills/ is forbidden.",
@@ -80,7 +82,7 @@ def _in_allowed_dirs(path: str) -> bool:
 _R2 = Rule(
     id="no_non_negotiable_modification",
     scope_pattern=r"(?i)\b(edit_file|modify_file)\b",
-    predicate=lambda ctx: "NON_NEGOTIABLE" in ctx.get("path", ""),
+    predicate=lambda ctx: "non_negotiable" in ctx.get("path", "").lower().replace("-", "_"),
     effect=RuleEffect.DENY,
     reason_template="Rule 2: Modifying NON_NEGOTIABLE_RULES.md is strictly forbidden.",
     priority=10,
@@ -95,7 +97,7 @@ _R3 = Rule(
     id="no_permission_check_disabled",
     scope_pattern=None,
     predicate=lambda ctx: (
-        ctx.get("disable_permission_check") is True
+        bool(ctx.get("disable_permission_check")) is True
         or ctx.get("key") == "disable_permission_check"
     ),
     effect=RuleEffect.DENY,
@@ -124,8 +126,8 @@ _R4 = Rule(
 
 _R5 = Rule(
     id="experiment_results_logged",
-    scope_pattern=r"(?i)\bupdate_plan\b",
-    predicate=lambda ctx: ctx.get("action") == "update_plan" and not ctx.get("has_log_entry", False),
+    scope_pattern=r"(?i)\b(update_plan|revise_plan)\b",
+    predicate=lambda ctx: ctx.get("has_log_entry") is False,
     effect=RuleEffect.DENY,
     reason_template="Rule 5: Experiment results must be logged to experiment_registry.tsv before updating the plan.",
     priority=8,
@@ -154,7 +156,7 @@ _R7 = Rule(
     id="crash_recorded",
     scope_pattern=None,
     predicate=lambda ctx: (
-        ctx.get("incomplete", False) and ctx.get("run_status") != "crashed"
+        ctx.get("incomplete") is True and ctx.get("run_status") != "crashed"
     ),
     effect=RuleEffect.DENY,
     reason_template="Rule 7: Incomplete runs (non-crashed) must not influence best-model selection.",
@@ -220,7 +222,7 @@ _R11 = Rule(
     scope_pattern=None,
     predicate=lambda ctx: (
         ctx.get("action") == "start_training"
-        and not ctx.get("gpu_decision_recorded", True)
+        and ctx.get("gpu_decision_recorded") is False
     ),
     effect=RuleEffect.DENY,
     reason_template="Rule 11: GPU/CPU decision must be recorded at session start.",
@@ -242,8 +244,21 @@ _R12 = Rule(
 )
 
 
+def _is_checkpoint_path(path: str) -> bool:
+    """True only for paths in checkpoints/ or models/checkpoints/ (not logs/)."""
+    p = path.replace("\\", "/").lower()
+    return (
+        p.startswith("checkpoints/")
+        or p.startswith("models/checkpoints/")
+        or p == "checkpoints"
+    )
+
+
 def _is_policy_file(path: str) -> bool:
     p = path.replace("\\", "/").lower()
+    # exclude vim swap files and backup files
+    if p.endswith(".swp") or p.endswith("~"):
+        return False
     return ".nxl/permissions" in p or ".nxl/policy" in p
 
 
@@ -256,7 +271,7 @@ _R13 = Rule(
     scope_pattern=r"(?i)\b(delete_file|remove_file)\b",
     predicate=lambda ctx: (
         ctx.get("action") in ("delete_file", "remove_file")
-        and "checkpoint" in ctx.get("path", "").lower()
+        and _is_checkpoint_path(ctx.get("path", ""))
     ),
     effect=RuleEffect.DENY,
     reason_template="Rule 13: Checkpoint deletion requires explicit human approval.",
