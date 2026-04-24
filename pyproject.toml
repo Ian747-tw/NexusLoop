@@ -50,12 +50,13 @@ nxl = "nxl.cli:main"
 "nxl" = ["plugins/**/*", "dashboard/static/**/*"]
 
 [tool.setuptools.packages.find]
-include = ["nxl*", "agentcore*"]
+include = ["nxl*", "agentcore*", "mcps*"]
 
 [dependency-groups]
 dev = [
     "mypy>=1.10",
     "pytest>=8.0",
+    "pytest-asyncio>=1.3.0",
     "ruff>=0.5",
 ]
 
@@ -69,7 +70,7 @@ per-file-ignores = { "tests/**" = ["F821", "F401"] }
 [tool.mypy]
 python_version = "3.13"
 strict = true
-files = ["nxl"]
+files = ["nxl", "mcps"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
