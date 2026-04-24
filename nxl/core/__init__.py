@@ -6,7 +6,7 @@ from nxl.core import (
     run,
     state,
     policy,
-    orchestrator,
+    orchestrator_core,
 )
 
-__all__ = ["init", "doctor", "run", "state", "policy", "orchestrator"]
+__all__ = ["init", "doctor", "run", "state", "policy", "orchestrator_core"]
