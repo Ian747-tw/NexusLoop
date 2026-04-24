@@ -2,3 +2,13 @@ CLAUDE.md
 NON_NEGOTIABLE_RULES.md
 NON_NEGOTIABLE_RULES_dev.md
 pyproject.toml
+
+# M2.2: shared MCP infrastructure
+mcps/_shared/base.py
+mcps/_shared/types.py
+mcps/__init__.py
+agentcore/server-fork/src/seams/mcp-gate.ts
+
+# M1 frozen contracts
+agentcore/SEAM_CONTRACT.md
+agentcore/PROTOCOL.md
