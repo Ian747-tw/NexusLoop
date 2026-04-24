@@ -9,17 +9,6 @@ from pathlib import Path
 # Add project to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-
-def _make_server(cls, *args, **kwargs):
-    """Instantiate a server class, catching init failures gracefully."""
-    try:
-        return cls(*args, **kwargs)
-    except TypeError as e:
-        # Classes that don't properly call super().__init__ can't be instantiated
-        return None
-
-
-# Import all server classes
 from mcps.spec.server import SpecMCPServer
 from mcps.journal.server import JournalMCPServer
 from mcps.inbox.server import InboxMCPServer
@@ -30,6 +19,15 @@ from mcps.compute.server import ComputeServer
 from mcps.code.server import CodeMCP
 from mcps.web.server import WebMCP
 from mcps.literature.server import LiteratureMCP
+
+
+def _make_server(cls, *args, **kwargs):
+    """Instantiate a server class, catching init failures gracefully."""
+    try:
+        return cls(*args, **kwargs)
+    except TypeError:
+        # Classes that don't properly call super().__init__ can't be instantiated
+        return None
 
 # Build registry of instantiable servers
 _MCP_SERVERS: dict[str, object] = {}
@@ -135,7 +133,7 @@ def fuzz():
             # (e.g., spec.get_project with empty args should be allowed)
 
     # Report
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Total calls: {iterations}")
     print(f"  Servers tested: {len(_MCP_SERVERS)}")
     print(f"  Allowed calls: {allowed_calls}")

@@ -23,7 +23,7 @@ def test_mcp_code_read_edit_no_rm(sandbox) -> None:
         "name: test-project\nmode: explore\nmetric: reward\n"
     )
 
-    result = sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=300)
+    sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=300)
 
     events = sandbox.list_events(project)
 

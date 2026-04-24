@@ -9,7 +9,7 @@ def test_12h_overnight_smoke(sandbox) -> None:
 
     Validates: cycles >=10, handoffs >=2, 0 violations, >=3 capability flows.
     """
-    install = sandbox.install_from_current_repo()
+    sandbox.install_from_current_repo()
     project = sandbox.init_project(mode="improve")
 
     # Run accelerated overnight (10 min with forced handoffs)

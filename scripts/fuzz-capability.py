@@ -8,12 +8,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from nxl_core.elasticity.capability import capability
-from nxl_core.elasticity.elastic_txn import elastic_txn, PostconditionFailed
-from pydantic import Field
 
 
 async def fuzz_one():
-    token_id = f"cap-{random.randint(100000, 999999)}"
     scope = random.choice(["pkg.install", "fs.archive", "shell.exec"])
 
     try:
@@ -23,7 +20,7 @@ async def fuzz_one():
             ttl_seconds=300,
             reason="fuzz test",
             expected_postcondition="true",  # always succeeds
-        ) as token:
+        ):
             pass  # committed
     except Exception:
         pass  # rolled back

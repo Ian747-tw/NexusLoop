@@ -35,7 +35,6 @@ class TestCapabilityTokenExpiresAfterTTL:
             reason="Short-lived token",
             expected_postcondition="true",
         ) as token:
-            token_id = token.id
             created_at = token.created_at
 
         # Simulate time passage by modifying token state

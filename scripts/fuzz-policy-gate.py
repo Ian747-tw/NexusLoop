@@ -2,9 +2,8 @@
 """Adversarial fuzz test: 10,000 random tool calls, 0 bypasses."""
 import sys
 import random
-from typing import get_origin
 
-from nxl_core.policy.protocol import ToolCallRequest, SessionCtx, PolicyDecision
+from nxl_core.policy.protocol import ToolCallRequest, SessionCtx
 
 TOOLS = [
     'read_file', 'write_file', 'glob', 'grep', 'edit', 'bash',
@@ -27,7 +26,6 @@ def random_tool_call() -> ToolCallRequest:
 
 def main():
     iterations = int(sys.argv[1]) if len(sys.argv) > 1 else 10000
-    bypasses = 0
 
     # Simulate 10k random calls through policy engine
     for i in range(iterations):

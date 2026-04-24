@@ -15,7 +15,6 @@ from agentcore.client_py.protocol import (
     CompactRequest,
     CompactResponse,
     PolicyDecision,
-    SessionCtx,
     ToolCallRequest,
 )
 

@@ -1,5 +1,4 @@
 """Tests for OpenCodeClient."""
-import pytest
 from agentcore.client_py.client import OpenCodeClient
 
 

@@ -24,7 +24,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Ruff
-        run: uv run ruff check nxl/ mcps/
+        run: uv run ruff check .
 
       - name: Mypy
         run: uv run mypy nxl

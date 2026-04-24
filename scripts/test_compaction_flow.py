@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -55,18 +55,7 @@ def _run_compaction_trajectory_test() -> tuple[int, int, int]:
 
     Returns (soft_count, hard_count, clear_count).
     """
-    from nxl_core.capsule.compact import soft_trim, hard_regen, clear_handoff
-    from nxl_core.capsule.handoff import HandoffRecord
-    from nxl_core.events.schema import (
-        CompactRequested,
-        SessionClearing,
-        SoftTrimmed,
-        HardRegenerated,
-    )
     from nxl_core.events.log import EventLog
-
-    # Track emitted events
-    emitted_events: list[dict] = []
 
     # Create mock EventLog that records appends
     class MockEventLog(EventLog):
@@ -83,13 +72,7 @@ def _run_compaction_trajectory_test() -> tuple[int, int, int]:
 
     # Mock the journal_log singleton
     with patch('nxl.core.orchestrator.cycle_adapter.journal_log', return_value=mock_log):
-        from nxl.core.orchestrator.cycle_adapter import (
-            CycleAdapter,
-            EVENTS_SOFT_THRESHOLD,
-            EVENTS_HARD_THRESHOLD,
-            SOFT_TOKEN_THRESHOLD,
-            HARD_TOKEN_THRESHOLD,
-        )
+        from nxl.core.orchestrator.cycle_adapter import CycleAdapter
 
         adapter = CycleAdapter()
 

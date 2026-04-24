@@ -23,7 +23,7 @@ def test_mcp_hypothesis_crud(sandbox) -> None:
     )
 
     # Run a cycle that triggers hypothesis MCP
-    result = sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=300)
+    sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=300)
 
     events = sandbox.list_events(project)
 

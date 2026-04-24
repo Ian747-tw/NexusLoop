@@ -1,7 +1,4 @@
 """Test compact responders via Python IPC server."""
-import json
-import subprocess
-import tempfile
 from nxl_core.capsule.compact import soft_trim, hard_regen, clear_handoff
 
 

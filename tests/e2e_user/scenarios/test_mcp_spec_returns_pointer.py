@@ -27,7 +27,7 @@ def test_mcp_spec_returns_pointer(sandbox) -> None:
         "  default_provider: anthropic\n"
     )
 
-    result = sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=300)
+    sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=300)
 
     # Exit code 0 means the run completed (even in dry-run mode)
     # The spec MCP should have been called to read project.yaml
