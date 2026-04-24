@@ -25,3 +25,9 @@ agentcore/server-fork/ ← overlay workspace
 3. **Path aliases in server-fork tsconfig.json**
    - `@opencode/*` aliases point to `../upstream/packages/opencode/src/`
    - Allows seams to import upstream types without duplication
+
+4. **Protocol documentation (M1.2 freeze)**
+   - `PROTOCOL.md` — defines 9 IPC message types (frozen after M1.1)
+   - `SEAM_CONTRACT.md` — freezes 4 seam APIs (8 public functions)
+   - `INTERVENTION_ALGEBRA.md` — defines 12 canonical intervention verbs
+   - These docs are read-only after M1.1 phase gate
