@@ -1,0 +1,80 @@
+# =============================================================================
+# Skill Schema Reference — nxl_core.skills.schema.SkillDef
+# =============================================================================
+#
+# This file is a human-readable guide for skill authors.
+# It is NOT enforced by code — see nxl_core/skills/schema.py for validators.
+#
+# -----------------------------------------------------------------------------
+# TOP-LEVEL FIELDS
+# -----------------------------------------------------------------------------
+#
+# name        : str   — must match the filename stem (e.g. "foo_bar.yaml" → name: foo_bar)
+# description : str   — plain English description of what the skill does
+# triggers    : list  — when this skill may be invoked. Valid values:
+#                        • manual          — triggered explicitly by user or caller
+#                        • auto_on_plateau — triggered automatically when training plateaus
+#                        • auto_on_failure — triggered automatically on training failure
+# inputs      : dict  — input parameters as {name: type_string}. e.g. {num_repeats: int, metric_name: str}
+# outputs     : dict  — output parameters as {name: type_string}. e.g. {noise_sigma: float, mean: float}
+# steps       : list  — ordered list of Step objects (see below). Maximum 40 steps.
+# budgets     : dict  — optional budget allocations. Defaults to {}.
+#
+# -----------------------------------------------------------------------------
+# TRIGGERS (enum)
+# -----------------------------------------------------------------------------
+#
+#   manual           — The default. Use when a human or outer system decides when to run.
+#   auto_on_plateau  — Automatically trigger when training metrics stop improving.
+#   auto_on_failure  — Automatically trigger when training crashes or diverges.
+#
+# -----------------------------------------------------------------------------
+# STEP FORMAT
+# -----------------------------------------------------------------------------
+#
+# Each entry in the `steps` list must be a mapping with these fields:
+#
+#   action      : str  — The action/function to call. Should be a clear verb phrase.
+#   args        : dict — Key-value arguments to pass to the action. Values are strings.
+#   description : str  — Human-readable description of what this step does (optional but recommended).
+#
+# Example:
+#   - action: compute_statistics
+#     args:
+#       metric_name: "{inputs.metric_name}"
+#     description: Compute mean and standard deviation of the specified metric
+#
+# -----------------------------------------------------------------------------
+# CONSTRAINTS
+# -----------------------------------------------------------------------------
+#
+# • Maximum 40 steps per skill (enforced by SkillDef.validate_step_count)
+# • Steps are ordered — later steps may depend on earlier results
+# • Use general-ML language (avoid DRL jargon: "agent", "environment",
+#   "reward signal", "policy", "environment", "deep reinforcement learning")
+#
+# -----------------------------------------------------------------------------
+# MINIMAL EXAMPLE
+# -----------------------------------------------------------------------------
+#
+# # skills/hello_world.yaml
+# name: hello_world
+# description: Return a greeting and the current timestamp.
+# triggers:
+#   - manual
+# inputs:
+#   name: str
+# outputs:
+#   greeting: str
+#   timestamp: float
+# steps:
+#   - action: get_timestamp
+#     args: {}
+#     description: Retrieve the current wall-clock time in seconds since epoch
+#   - action: format_greeting
+#     args:
+#       name: "{inputs.name}"
+#       timestamp: "{steps.get_timestamp.timestamp}"
+#     description: Build a friendly greeting string
+#
+# =============================================================================

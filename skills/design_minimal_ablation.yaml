@@ -1,0 +1,84 @@
+# skills/design_minimal_ablation.yaml
+# Propose the smallest ablation (least-change experiment) from current best config.
+name: design_minimal_ablation
+description: >
+  Analyze the current best configuration and propose the minimal ablation
+  — the smallest change to a single hyperparameter or component that is
+  most likely to yield an improvement. Useful when trying to identify
+  which factors matter most in a training run.
+triggers:
+  - manual
+inputs:
+  current_best_metric: float
+  available_dims: list[str]
+outputs:
+  ablation_plan: dict
+  expected_delta: float
+  confidence: float
+steps:
+  - action: validate_current_best
+    args:
+      current_best_metric: "{inputs.current_best_metric}"
+    description: Confirm the current best metric is a valid number
+  - action: validate_available_dims
+    args:
+      available_dims: "{inputs.available_dims}"
+    description: Ensure the available dimensions list is non-empty
+  - action: enumerate_ablation_candidates
+    args:
+      available_dims: "{inputs.available_dims}"
+    description: List all candidate dimensions that could be modified
+  - action: classify_dimension_types
+    args:
+      available_dims: "{inputs.available_dims}"
+    description: Categorize each dimension (numerical vs categorical vs structural)
+  - action: estimate_baseline_sensitivity
+    args:
+      current_best_metric: "{inputs.current_best_metric}"
+    description: Estimate how sensitive the metric is to each dimension
+  - action: compute_minimal_delta
+    args:
+      available_dims: "{inputs.available_dims}"
+    description: Determine the minimum change possible for each dimension
+  - action: score_ablation_likelihood
+    args:
+      current_best_metric: "{inputs.current_best_metric}"
+      available_dims: "{inputs.available_dims}"
+    description: Score each candidate by expected improvement likelihood
+  - action: filter_low_impact_candidates
+    args:
+      available_dims: "{inputs.available_dims}"
+    description: Discard candidates with negligible expected impact
+  - action: rank_candidates_by_delta
+    args:
+      available_dims: "{inputs.available_dims}"
+    description: Sort remaining candidates by the size of their minimum delta
+  - action: select_smallest_delta_candidate
+    args:
+      ranked_candidates: "{steps.rank_candidates_by_delta.sorted_candidates}"
+    description: Choose the candidate with the smallest change that still has impact
+  - action: propose_ablation_value
+    args:
+      selected_dim: "{steps.select_smallest_delta_candidate.dimension}"
+    description: Determine the new value to use for the chosen dimension
+  - action: estimate_expected_delta
+    args:
+      selected_dim: "{steps.select_smallest_delta_candidate.dimension}"
+      current_best_metric: "{inputs.current_best_metric}"
+    description: Estimate how much the metric will improve (or change) with this ablation
+  - action: compute_confidence_score
+    args:
+      selected_dim: "{steps.select_smallest_delta_candidate.dimension}"
+    description: Assess confidence in this ablation based on historical data
+  - action: generate_ablation_plan
+    args:
+      selected_dim: "{steps.select_smallest_delta_candidate.dimension}"
+      proposed_value: "{steps.propose_ablation_value.proposed_value}"
+      expected_delta: "{steps.estimate_expected_delta.expected_delta}"
+      confidence: "{steps.compute_confidence_score.confidence}"
+    description: Package the ablation plan into a structured output dictionary
+  - action: summarize_ablation_rationale
+    args:
+      selected_dim: "{steps.select_smallest_delta_candidate.dimension}"
+      expected_delta: "{steps.estimate_expected_delta.expected_delta}"
+    description: Write a human-readable summary of why this ablation was chosen

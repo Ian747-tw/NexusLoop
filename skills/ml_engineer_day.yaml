@@ -1,0 +1,95 @@
+# skills/ml_engineer_day.yaml
+# Composes the four ML research skills into a single representative day.
+name: ml_engineer_day
+description: >
+  A representative ML research workflow composing four specialized skills:
+  noise floor estimation, minimal ablation design, plateau triage, and
+  hypothesis refutation. Demonstrates skill composition via step-level
+  calls to other skills.
+triggers:
+  - manual
+inputs:
+  current_best_metric: float
+  available_dims: list[str]
+  recent_loss_trajectory: list[float]
+  step: int
+  research_question: str
+  evidence: list[str]
+outputs:
+  workflow_summary: dict
+  final_verdict: str
+  recommendations: list[str]
+steps:
+  - action: check_baseline_noise
+    args:
+      num_repeats: "5"
+      metric_name: validation_loss
+    description: >
+      Invoke noise_floor_estimate to determine whether current metric
+      improvements are above the measurement noise floor. Run 5 repeats
+      on validation_loss to get noise_sigma and mean.
+  - action: evaluate_noise_floor_result
+    args:
+      noise_sigma: "{steps.check_baseline_noise.noise_sigma}"
+      mean: "{steps.check_baseline_noise.mean}"
+    description: >
+      Check if the noise floor is small relative to the current_best_metric
+      to determine if further optimization is meaningful.
+  - action: design_ablation_study
+    args:
+      current_best_metric: "{inputs.current_best_metric}"
+      available_dims: "{inputs.available_dims}"
+    description: >
+      Invoke design_minimal_ablation to propose the smallest-change
+      experiment from the current best configuration.
+  - action: review_ablation_plan
+    args:
+      ablation_plan: "{steps.design_ablation_study.ablation_plan}"
+      expected_delta: "{steps.design_ablation_study.expected_delta}"
+    description: >
+      Review the proposed ablation plan and decide whether to proceed
+      based on expected delta and confidence.
+  - action: run_plateau_triage
+    args:
+      recent_loss_trajectory: "{inputs.recent_loss_trajectory}"
+      step: "{inputs.step}"
+    description: >
+      Invoke plateau_triage to diagnose any training stagnation and
+      produce recommended interventions.
+  - action: apply_plateau_recommendations
+    args:
+      recommended_actions: "{steps.run_plateau_triage.recommended_actions}"
+    description: >
+      Apply the highest-priority interventions from the plateau triage
+      results to the training setup.
+  - action: evaluate_research_hypothesis
+    args:
+      hypothesis_text: "{inputs.research_question}"
+      evidence: "{inputs.evidence}"
+    description: >
+      Invoke refute_or_support to formally evaluate the current research
+      hypothesis against the gathered evidence.
+  - action: review_verdict
+    args:
+      verdict: "{steps.evaluate_research_hypothesis.verdict}"
+      confidence: "{steps.evaluate_research_hypothesis.confidence}"
+    description: >
+      Review the hypothesis verdict and confidence. If inconclusive,
+      flag what additional evidence is needed.
+  - action: compile_workflow_summary
+    args:
+      noise_result: "{steps.check_baseline_noise.noise_sigma}"
+      ablation_plan: "{steps.design_ablation_study.ablation_plan}"
+      plateau_diagnosis: "{steps.run_plateau_triage.diagnosis}"
+      hypothesis_verdict: "{steps.evaluate_research_hypothesis.verdict}"
+    description: >
+      Package outcomes from all four skill invocations into a structured
+      workflow summary.
+  - action: generate_next_recommendations
+    args:
+      verdict: "{steps.evaluate_research_hypothesis.verdict}"
+      ablation_plan: "{steps.design_ablation_study.ablation_plan}"
+      plateau_actions: "{steps.run_plateau_triage.recommended_actions}"
+    description: >
+      Produce a consolidated ranked list of recommended next actions
+      based on all skill outputs.

@@ -1,0 +1,78 @@
+# skills/noise_floor_estimate.yaml
+# Estimate measurement noise floor from repeated runs via MAD-based sigma.
+name: noise_floor_estimate
+description: >
+  Estimate the noise floor of a metric by running repeated measurements
+  and computing a robust MAD-based standard deviation. Useful for
+  determining whether improvements in training are above the noise floor.
+triggers:
+  - manual
+inputs:
+  num_repeats: int
+  metric_name: str
+outputs:
+  noise_sigma: float
+  mean: float
+steps:
+  - action: validate_num_repeats
+    args:
+      num_repeats: "{inputs.num_repeats}"
+    description: Ensure num_repeats is a positive integer
+  - action: compute_sample_size
+    args:
+      num_repeats: "{inputs.num_repeats}"
+    description: Calculate how many measurements are needed
+  - action: propose_experiment_config
+    args:
+      num_repeats: "{inputs.num_repeats}"
+      metric_name: "{inputs.metric_name}"
+    description: Generate the configuration for the repeated measurement experiment
+  - action: run_repeated_trials
+    args:
+      num_repeats: "{inputs.num_repeats}"
+      metric_name: "{inputs.metric_name}"
+    description: Execute the experiment num_repeats times and collect raw values
+  - action: detect_outliers
+    args:
+      metric_name: "{inputs.metric_name}"
+    description: Apply outlier detection to remove-trial anomalous measurements
+  - action: compute_median
+    args:
+      metric_name: "{inputs.metric_name}"
+    description: Calculate the median of collected measurements
+  - action: compute_mad
+    args:
+      metric_name: "{inputs.metric_name}"
+    description: Compute Median Absolute Deviation from the measurements
+  - action: convert_mad_to_sigma
+    args:
+      metric_name: "{inputs.metric_name}"
+    description: Convert MAD value to an estimate of standard deviation (sigma)
+  - action: compute_mean
+    args:
+      metric_name: "{inputs.metric_name}"
+    description: Calculate arithmetic mean of the measurements
+  - action: compute_variance
+    args:
+      metric_name: "{inputs.metric_name}"
+    description: Calculate variance for comparison with MAD-based estimate
+  - action: compute_standard_error
+    args:
+      num_repeats: "{inputs.num_repeats}"
+      noise_sigma: "{steps.convert_mad_to_sigma.noise_sigma}"
+    description: Compute standard error of the mean
+  - action: compute_confidence_interval
+    args:
+      mean: "{steps.compute_mean.mean}"
+      standard_error: "{steps.compute_standard_error.standard_error}"
+    description: Compute 95% confidence interval for the noise floor estimate
+  - action: compare_to_baseline
+    args:
+      noise_sigma: "{steps.convert_mad_to_sigma.noise_sigma}"
+    description: Compare noise floor to any known historical baseline
+  - action: produce_noise_summary
+    args:
+      mean: "{steps.compute_mean.mean}"
+      noise_sigma: "{steps.convert_mad_to_sigma.noise_sigma}"
+      confidence_interval: "{steps.compute_confidence_interval.confidence_interval}"
+    description: Compile all results into a structured noise floor report

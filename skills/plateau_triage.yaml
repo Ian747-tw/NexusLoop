@@ -1,0 +1,113 @@
+# skills/plateau_triage.yaml
+# Diagnostic workflow when training metrics stop improving.
+name: plateau_triage
+description: >
+  Perform structured diagnostics when a training loss trajectory reaches
+  a plateau. Analyzes the loss curve, gradient norms, learning rate, and
+  data quality to identify likely causes and propose interventions.
+triggers:
+  - manual
+inputs:
+  recent_loss_trajectory: list[float]
+  step: int
+outputs:
+  diagnosis: str
+  recommended_actions: list[str]
+  confidence: float
+steps:
+  - action: validate_loss_trajectory
+    args:
+      recent_loss_trajectory: "{inputs.recent_loss_trajectory}"
+    description: Ensure the loss trajectory has enough data points for analysis
+  - action: compute_plateau_metrics
+    args:
+      recent_loss_trajectory: "{inputs.recent_loss_trajectory}"
+    description: Calculate plateau depth, plateau length, and recent slope
+  - action: detect_plateau_pattern
+    args:
+      recent_loss_trajectory: "{inputs.recent_loss_trajectory}"
+    description: Identify whether the plateau is sharp, gradual, or oscillatory
+  - action: compute_loss_trend
+    args:
+      recent_loss_trajectory: "{inputs.recent_loss_trajectory}"
+    description: Fit a simple trend line to estimate current slope
+  - action: compare_to_improvement_rate
+    args:
+      recent_loss_trajectory: "{inputs.recent_loss_trajectory}"
+    description: Compare current slope to historical improvement rate
+  - action: check_gradient_norms
+    args:
+      step: "{inputs.step}"
+    description: Retrieve and analyze gradient norms for vanishing/exploding signs
+  - action: check_gradient_health
+    args:
+      step: "{inputs.step}"
+    description: Assess whether gradients show pathological behavior
+  - action: check_learning_rate
+    args:
+      step: "{inputs.step}"
+    description: Query the current learning rate setting
+  - action: assess_learning_rate_adequacy
+    args:
+      step: "{inputs.step}"
+      plateau_depth: "{steps.compute_plateau_metrics.plateau_depth}"
+    description: Determine if the current LR is too high, too low, or appropriate
+  - action: check_data_quality
+    args:
+      step: "{inputs.step}"
+    description: Analyze data pipeline for signs of corruption, leakage, or noise
+  - action: check_dataset_balance
+    args:
+      step: "{inputs.step}"
+    description: Verify that dataset classes/batches are balanced
+  - action: check_feature_drift
+    args:
+      step: "{inputs.step}"
+    description: Detect distribution shift between training and validation features
+  - action: compare_to_baseline_plateau
+    args:
+      step: "{inputs.step}"
+    description: Compare current plateau behavior to known baseline patterns
+  - action: identify_likely_causes
+    args:
+      gradient_health: "{steps.check_gradient_health.gradient_health}"
+      learning_rate_adequacy: "{steps.assess_learning_rate_adequacy.adequacy}"
+      data_quality: "{steps.check_data_quality.quality}"
+    description: Combine all diagnostic signals to produce a ranked list of likely causes
+  - action: rank_causes_by_likelihood
+    args:
+      gradient_health: "{steps.check_gradient_health.gradient_health}"
+      learning_rate_adequacy: "{steps.assess_learning_rate_adequacy.adequacy}"
+      data_quality: "{steps.check_data_quality.quality}"
+    description: Sort causes by most likely to least likely based on diagnostic evidence
+  - action: propose_lr_schedule_change
+    args:
+      learning_rate_adequacy: "{steps.assess_learning_rate_adequacy.adequacy}"
+    description: If LR is suspect, propose a schedule adjustment
+  - action: propose_gradient_clipping
+    args:
+      gradient_health: "{steps.check_gradient_health.gradient_health}"
+    description: If gradients are exploding, recommend gradient clipping
+  - action: propose_data_augmentation
+    args:
+      data_quality: "{steps.check_data_quality.quality}"
+    description: If data quality is suspect, suggest augmentation or cleaning steps
+  - action: propose_early_stopping
+    args:
+      plateau_length: "{steps.compute_plateau_metrics.plateau_length}"
+    description: If plateau is long and severe, suggest early stopping or restart
+  - action: compile_recommended_actions
+    args:
+      plateau_length: "{steps.compute_plateau_metrics.plateau_length}"
+    description: Assemble all proposed interventions into a ranked action list
+  - action: compute_diagnosis_confidence
+    args:
+      plateau_depth: "{steps.compute_plateau_metrics.plateau_depth}"
+      num_diagnostics: "22"
+    description: Compute confidence in diagnosis based on diagnostic coverage
+  - action: produce_diagnosis_summary
+    args:
+      primary_cause: "{steps.identify_likely_causes.primary_cause}"
+      secondary_causes: "{steps.identify_likely_causes.secondary_causes}"
+      confidence: "{steps.compute_diagnosis_confidence.confidence}"
+    description: Package diagnosis into a structured output with confidence score

@@ -1,0 +1,112 @@
+# skills/refute_or_support.yaml
+# Formal hypothesis testing to produce a verdict with confidence.
+name: refute_or_support
+description: >
+  Evaluate a hypothesis against a body of evidence to produce a structured
+  verdict. Checks for confounds, assesses causality, and assigns a confidence
+  score. Used to formally close out research questions before committing to
+  a direction.
+triggers:
+  - manual
+inputs:
+  hypothesis_text: str
+  evidence: list[str]
+outputs:
+  verdict: str
+  confidence: float
+  reasoning: str
+steps:
+  - action: parse_hypothesis
+    args:
+      hypothesis_text: "{inputs.hypothesis_text}"
+    description: Extract the core claim and any conditions from the hypothesis
+  - action: identify_variables
+    args:
+      hypothesis_text: "{inputs.hypothesis_text}"
+    description: Identify independent and dependent variables in the hypothesis
+  - action: classify_hypothesis_type
+    args:
+      hypothesis_text: "{inputs.hypothesis_text}"
+    description: Determine if the hypothesis is causal, correlational, or comparative
+  - action: validate_evidence_format
+    args:
+      evidence: "{inputs.evidence}"
+    description: Ensure each evidence item is a non-empty string
+  - action: tally_evidence_items
+    args:
+      evidence: "{inputs.evidence}"
+    description: Count the number of evidence items provided
+  - action: match_evidence_to_claim
+    args:
+      hypothesis_text: "{inputs.hypothesis_text}"
+      evidence: "{inputs.evidence}"
+    description: Align each evidence item with the specific claim it supports or contradicts
+  - action: score_supporting_evidence
+    args:
+      evidence: "{inputs.evidence}"
+    description: Rate each piece of evidence for strength and relevance
+  - action: score_contradicting_evidence
+    args:
+      evidence: "{inputs.evidence}"
+    description: Identify and rate any evidence that contradicts the hypothesis
+  - action: enumerate_potential_confounds
+    args:
+      hypothesis_text: "{inputs.hypothesis_text}"
+    description: List alternative explanations that could produce the observed evidence
+  - action: assess_confound_presence
+    args:
+      hypothesis_text: "{inputs.hypothesis_text}"
+      evidence: "{inputs.evidence}"
+    description: Check whether any identified confounds are likely present in the evidence
+  - action: rate_confound_severity
+    args:
+      confounds: "{steps.enumerate_potential_confounds.confounds}"
+    description: Evaluate how much each confound could bias the conclusion
+  - action: check_causal_documentation
+    args:
+      hypothesis_text: "{inputs.hypothesis_text}"
+    description: Verify whether the hypothesis has documented causal mechanism
+  - action: assess_causal_strength
+    args:
+      hypothesis_text: "{inputs.hypothesis_text}"
+      evidence: "{inputs.evidence}"
+    description: Evaluate the strength of causal evidence vs correlational evidence
+  - action: compute_support_score
+    args:
+      supporting_evidence: "{steps.score_supporting_evidence.scores}"
+    description: Aggregate supporting evidence into a 0-1 score
+  - action: compute_contradiction_score
+    args:
+      contradicting_evidence: "{steps.score_contradicting_evidence.scores}"
+    description: Aggregate contradicting evidence into a 0-1 score
+  - action: compute_confound_penalty
+    args:
+      confound_severity: "{steps.rate_confound_severity.severity}"
+    description: Compute the penalty to apply based on confound severity
+  - action: compute_net_evidence
+    args:
+      support_score: "{steps.compute_support_score.support_score}"
+      contradiction_score: "{steps.compute_contradiction_score.contradiction_score}"
+      confound_penalty: "{steps.compute_confound_penalty.penalty}"
+    description: Combine support, contradiction, and confound penalty into net evidence
+  - action: apply_verdict_thresholds
+    args:
+      net_evidence: "{steps.compute_net_evidence.net_evidence}"
+    description: Map net evidence score to a verdict category
+  - action: compute_verdict_confidence
+    args:
+      evidence_count: "{steps.tally_evidence_items.count}"
+      confound_severity: "{steps.rate_confound_severity.severity}"
+    description: Adjust confidence based on evidence quantity and confound absence
+  - action: generate_reasoning_text
+    args:
+      hypothesis_text: "{inputs.hypothesis_text}"
+      net_evidence: "{steps.compute_net_evidence.net_evidence}"
+      verdict: "{steps.apply_verdict_thresholds.verdict}"
+    description: Write a human-readable explanation of the verdict
+  - action: produce_final_verdict
+    args:
+      verdict: "{steps.apply_verdict_thresholds.verdict}"
+      confidence: "{steps.compute_verdict_confidence.confidence}"
+      reasoning: "{steps.generate_reasoning_text.reasoning}"
+    description: Package the verdict, confidence, and reasoning into structured outputs
