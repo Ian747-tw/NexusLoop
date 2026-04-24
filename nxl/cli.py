@@ -154,6 +154,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         once=getattr(args, "once", False),
         agent_backend=getattr(args, "agent_backend", "auto"),
+        provider=getattr(args, "provider", None),
     )
 
 
@@ -419,6 +420,13 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["auto", "codex", "claude"],
         default="auto",
         help="Which coding-agent CLI to use for autonomous cycles (default: auto).",
+    )
+    p_run.add_argument(
+        "--provider",
+        choices=["anthropic", "openai", "ollama"],
+        default=None,
+        metavar="PROVIDER",
+        help="AI provider backend (default: read from .nxl/project.yaml or NXL_PROVIDER env).",
     )
     p_run.set_defaults(func=_cmd_run)
 

@@ -29,13 +29,27 @@ class OpenCodeClient:
     def run_cycle(
         self,
         brief: str,
-        policy_endpoint: str,
-        events_endpoint: str,
+        provider: str | None = None,
+        policy_endpoint: str = "",
+        events_endpoint: str = "",
     ) -> CycleResult:
-        """Drive one full cycle through the TS server."""
+        """Drive one full cycle through the TS server.
+
+        Parameters
+        ----------
+        brief:
+            Cycle brief description.
+        provider:
+            AI provider: "anthropic", "openai", or "ollama".
+            Passed to the TS server via CycleControl so it can select the
+            appropriate native adapter before the first tool call.
+        """
         self._process.start()
-        # Send CycleControl start
-        self._send_control(CycleControl(action='start'))
+        # Send CycleControl start with provider so TS selects correct adapter
+        self._send_control(CycleControl(
+            action='start',
+            provider=provider,
+        ))
         # Stream events until cycle completes
         events = []
         tool_calls = 0

@@ -154,6 +154,7 @@ class CycleControl(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     action: Literal["start", "pause", "resume", "halt"]
+    provider: Literal["anthropic", "openai", "ollama"] | None = None
 
 
 # ---------------------------------------------------------------------------

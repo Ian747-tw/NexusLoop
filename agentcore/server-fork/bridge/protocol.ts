@@ -66,6 +66,7 @@ export type Intervention = z.infer<typeof Intervention>;
 // Cycle lifecycle control
 export const CycleControl = z.object({
   action: z.enum(['start', 'pause', 'resume', 'halt']),
+  provider: z.enum(['anthropic', 'openai', 'ollama']).optional(),
 });
 export type CycleControl = z.infer<typeof CycleControl>;
 

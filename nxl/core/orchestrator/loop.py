@@ -8,5 +8,5 @@ class OrchestrationLoop:
     def __init__(self, adapter: CycleAdapter):
         self._adapter = adapter
 
-    def run_cycle(self, brief: str) -> dict:
-        return self._adapter.run_cycle(brief)
+    def run_cycle(self, brief: str, provider: str | None = None) -> dict:
+        return self._adapter.run_cycle(brief, provider=provider)

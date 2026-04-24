@@ -8,5 +8,5 @@ class CycleAdapter:
     def __init__(self):
         self._client = OpenCodeClient()
 
-    def run_cycle(self, brief: str) -> dict:
-        return self._client.run_cycle(brief, policy_endpoint='', events_endpoint='')
+    def run_cycle(self, brief: str, provider: str | None = None) -> dict:
+        return self._client.run_cycle(brief, provider=provider, policy_endpoint='', events_endpoint='')
