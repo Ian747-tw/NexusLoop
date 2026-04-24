@@ -11,7 +11,26 @@ Fork OpenCode (`anomalyco/opencode`, MIT) into `agentcore/` at pinned commit `v1
 
 ---
 
-## 2. Vendor Boundary
+## 2. Ownership Model (frozen at end of M1.1)
+
+| Concern | Owner |
+|---------|-------|
+| Provider auth, LLM calls, streaming | TS server |
+| Tool execution, MCP traffic | TS server |
+| Compaction detection | TS server (preserved) |
+| Policy decisions | Python harness |
+| Capability tokens | Python harness |
+| Event log | Python harness |
+| Hypotheses / Trials / Scores | Python harness |
+| Capsule assembly | Python harness |
+| Compaction production (soft_trim, hard_regen, clear_handoff) | Python harness |
+| Interventions | Python harness |
+
+**IPC at logical boundaries only**: tool-call decision, turn boundary, intervention, capsule request, compact request. Never per-token.
+
+---
+
+## 3. Vendor Boundary
 
 ```
 agentcore/
@@ -47,17 +66,24 @@ agentcore/
 ### 3.1 Message Types
 
 ```typescript
-// Python → TS
-type PolicyDecision = "allow" | "deny" | "ask" | { verb: string; narrow_args: Record<string, unknown> }
-type ToolCallRequest  = { id: string; name: string; args: Record<string, unknown>; ctx: SessionCtx }
-type CapsuleRequest   = { cycle_id: string }
+// Python → TS  (decisions and state)
+type PolicyDecision =
+  | { kind: "allow" }
+  | { kind: "deny"; reason: string }
+  | { kind: "ask"; verb: string; payload: unknown }
+  | { kind: "narrow"; narrowed_args: Record<string, unknown>; reason: string }
+
+type CapsuleResponse  = { prefix: string; cache_break: string }
+type CompactResponse  = { new_prefix: string; new_cache_break: string; events_emitted: number }
+type Intervention     = { verb: InterventionVerb; payload: unknown }
 type CycleControl     = { action: "start" | "pause" | "resume" | "halt" }
 
-// TS → Python
-type ToolCallResult   = { id: string; allowed: boolean; result?: unknown; error?: string }
-type Intervention     = { verb: string; payload: unknown }
+// TS → Python  (requests and events)
+type ToolCallRequest  = { id: string; name: string; args: Record<string, unknown>; ctx: SessionCtx }
+type CapsuleRequest   = { cycle_id: string }
+type CompactRequest   = { cycle_id: string; tier_hint: "soft"|"hard"|"clear"; current_token_count: number; reason: string }
 type EventEmission    = { event: Record<string, unknown> }
-type CapsuleResponse  = { prefix: string; cache_break: string }
+type ToolCallResult   = { id: string; allowed: boolean; result?: unknown; error?: string }
 ```
 
 ### 3.2 Session Context
@@ -100,16 +126,18 @@ class CycleResult:
 - **Replaces**: `packages/opencode/src/permission/` (evaluate.ts, index.ts)
 - **Behavior**: Receives typed `Intervention` messages from Python via IPC, stores them in a queue
 - **Safe-point scheduler** (called from `cycle-driver.ts`): drains queue between turns
-- **Verbs**: `ask`, `warn`, `narrow`, `deny`, `escalate`, `trap`, `scaffold`, `redirect`, `explain`, `guide`, `review`, `confirm` (the 12-verb algebra)
+- **Verbs**: 12-verb canonical algebra from `agentcore/INTERVENTION_ALGEBRA.md`: `ask`, `warn`, `narrow`, `deny`, `escalate`, `trap`, `scaffold`, `redirect`, `explain`, `guide`, `review`, `confirm`
 - **Emits**: `InterventionApplied` event for each verb consumed
 
 ### 4.3 `capsule-session.ts`
 
 - **Replaces**: `packages/opencode/src/session/session.ts`, `session/llm.ts`
 - **Behavior**:
-  - Disables OpenCode's built-in context summarization/compaction
-  - Before each cycle, issues `CapsuleRequest` → receives `CapsuleResponse` with pre-rendered prefix
+  - Preserves OpenCode's compaction **detector** (it fires when context exceeds threshold)
+  - At upstream compaction trigger: issues `CompactRequest` → receives `CompactResponse` with new prefix; does not run upstream summarizer
+  - At cycle start: `CapsuleRequest` → receives `CapsuleResponse` with pre-rendered prefix
   - Inserts `cache_break` marker at end of prefix (provider-specific: Anthropic honors it)
+  - Emits `CompactionApplied` event when new prefix is swapped in
 - **Cache verification**: When provider=anthropic, assert ≥80% cache hit rate on turns 2+ via provider adapter logs; skip when provider doesn't support caching
 
 ### 4.4 `cycle-driver.ts`
@@ -205,6 +233,8 @@ nxl/core/
 | 4.1 | Implement `intervention-hook.ts` |
 | 4.2 | Safe-point scheduler in `cycle-driver.ts` |
 | 5.1 | Implement `capsule-session.ts` |
+| 5.1a | Add `CompactRequest`/`CompactResponse` to PROTOCOL.md; contract tests |
+| 5.1b | Wire Python `nxl_core.capsule.compact.{soft_trim, hard_regen, clear_handoff}` as responders |
 | 5.2 | Cache hit rate verification |
 | 6.1 | Implement `cycle-driver.ts` |
 | 7.1 | `client-py/process.py` |
@@ -224,24 +254,59 @@ nxl/core/
 test -d agentcore/upstream
 test -f agentcore/PROTOCOL.md
 test -f agentcore/SEAM_CONTRACT.md
+test -f agentcore/INTERVENTION_ALGEBRA.md   # frozen 12-verb canonical list
 test -f agentcore/LICENSE.OPENCODE
 (cd agentcore/server-fork && bun run typecheck)
 mypy --strict agentcore/client-py/ nxl_core/ nxl/
 pytest agentcore/tests/ --cov-fail-under=85
-python scripts/fuzz-policy-gate.py 10000  # 0 bypasses
+
+# Adversarial
+python scripts/fuzz-policy-gate.py 10000           # 0 bypasses
+
+# Compaction trajectory
+python scripts/test_compaction_flow.py             # upstream detector → nxl production, bounded
+
+# E2E across providers
 nxl run --once --provider anthropic --dry-run
-nxl run --once --provider openai --dry-run
-nxl run --once --provider ollama --dry-run
+nxl run --once --provider openai   --dry-run
+nxl run --once --provider ollama   --dry-run
+
+# Structural
 test "$(wc -l < nxl/core/run.py)" -le 80
+
+# Rebase drill
 bash scripts/rebase-upstream.sh --dry
+
+echo "M1 exit gate: PASS"
 ```
 
 ---
 
-## 11. Open Questions
+## 12. Documents to Freeze at End of M1
+
+These documents are frozen at end of M1.1 and never expanded:
+
+| Document | Purpose |
+|----------|---------|
+| `agentcore/VENDOR_BOUNDARY.md` | Pinned commit, why anomalyco |
+| `agentcore/SEAM_CONTRACT.md` | 4 public functions, no additions |
+| `agentcore/PROTOCOL.md` | All 9 message types, no additions |
+| `agentcore/INTERVENTION_ALGEBRA.md` | Canonical 12 verbs with definitions |
+| `agentcore/REBASE_JOURNAL.md` | Initial drill timing recorded |
+
+**Anti-hallucination guards**:
+- SEAM_CONTRACT.md is the frozen truth; CI fails if any new public function appears in `client-py/client.py` that isn't listed there
+- PROTOCOL.md is single-sourced; TS Zod schemas and Python Pydantic models kept in lockstep via CI check
+- Grep check: no TS file outside `seams/` and `bridge/` may import `@anthropic-ai/*` or any provider-specific SDK directly
+- Rebase journal records every drill; phase cannot exit if any drill exceeded 1 day
+
+---
+
+## 13. Open Questions
 
 None — all resolved during design.
 
 ---
 
 *Written: 2026-04-24*
+*Updated: 2026-04-24 (user corrections applied — PolicyDecision discriminated union, delegation not disable for compaction, INTERVENTION_ALGEBRA.md added)*
