@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --frozen
@@ -29,5 +29,8 @@ jobs:
       - name: Mypy
         run: uv run mypy nxl
 
-      - name: Pytest (non-E2E)
+      - name: Pytest (unit + integration + adversarial)
+        run: uv run pytest tests/unit tests/integration tests/adversarial -q
+
+      - name: Pytest (smoke)
         run: uv run pytest tests/smoke -q
