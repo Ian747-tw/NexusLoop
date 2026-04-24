@@ -7,7 +7,7 @@ from nxl_core.capsule.compact import (
     soft_trim,
 )
 from nxl_core.capsule.handoff import HandoffRecord
-from nxl_core.capsule.resume import ResumeCapsule, build
+from nxl_core.capsule.resume import ResumeCapsule, build, _reconstruct_capsule
 
 __all__ = [
     "clear_handoff",
@@ -18,4 +18,5 @@ __all__ = [
     "ResumeCapsule",
     "soft_trim",
     "build",
+    "_reconstruct_capsule",
 ]

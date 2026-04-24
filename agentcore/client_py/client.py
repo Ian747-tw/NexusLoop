@@ -6,14 +6,10 @@ from typing import AsyncIterator
 
 from agentcore.client_py.process import ServerProcess
 from agentcore.client_py.protocol import (
-    CapsuleRequest,
-    CapsuleResponse,
     CycleControl,
     CycleResult,
     EventEmission,
     Intervention,
-    ToolCallRequest,
-    ToolCallResult,
 )
 
 

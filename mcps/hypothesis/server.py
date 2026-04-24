@@ -9,7 +9,6 @@ from mcps.hypothesis.requests import (
     HypothesisCloseRequest,
     HypothesisCreateRequest,
     HypothesisGetRequest,
-    HypothesisListRequest,
 )
 from mcps.hypothesis.responses import (
     HypothesisCloseResponse,

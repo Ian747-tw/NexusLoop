@@ -1,7 +1,7 @@
 """mcps.pkg.responses — Response models for pkg MCP."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Any
 
 

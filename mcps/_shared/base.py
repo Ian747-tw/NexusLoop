@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from nxl_core.policy.engine import PolicyEngine
 
 if TYPE_CHECKING:
-    from nxl_core.events.log import EventLog
+    pass
 
 
 class BaseMCPServer(ABC):

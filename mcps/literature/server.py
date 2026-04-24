@@ -6,7 +6,6 @@ from typing import Any
 from mcps._shared.base import BaseMCPServer
 
 from .requests import LiteratureGet, LiteratureList, LiteraturePut, LiteratureSearch
-from .responses import GetResponse, ListResponse, PutResponse, SearchResponse
 
 
 class LiteratureMCP(BaseMCPServer):

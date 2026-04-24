@@ -6,7 +6,6 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from mcps._shared.base import BaseMCPServer
-from mcps._shared.types import MCPToolDefinition
 
 
 class GetProjectRequest(BaseModel):

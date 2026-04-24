@@ -8,12 +8,6 @@ from typing import Any
 from mcps._shared.base import BaseMCPServer
 
 from .requests import CodeEditFile, CodeListFiles, CodeReadFile, CodeSearch
-from .responses import (
-    EditFileResponse,
-    ListFilesResponse,
-    ReadFileResponse,
-    SearchResponse,
-)
 
 
 class CodeMCP(BaseMCPServer):

@@ -1,7 +1,6 @@
 """nxl_core/elasticity.elastic_txn — snapshot+rollback envelope."""
 from __future__ import annotations
 
-import os
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path

@@ -8,7 +8,7 @@ import yaml
 import pytest
 from pydantic import ValidationError
 
-from nxl_core.skills.schema import SkillDef, SkillStep
+from nxl_core.skills.schema import SkillDef
 
 
 # ---------------------------------------------------------------------------

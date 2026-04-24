@@ -3,7 +3,6 @@ M2.1.2: SkillRegistry tests.
 """
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest

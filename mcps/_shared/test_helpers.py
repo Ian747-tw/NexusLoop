@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from nxl_core.events.log import EventLog
 

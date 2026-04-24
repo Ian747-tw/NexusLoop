@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Callable
 
 from nxl.cli import console
-from nxl.core.state import ProjectState
 from nxl_core.events.singletons import configure as _configure_event_log
 
 

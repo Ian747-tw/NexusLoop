@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from mcps.pkg.server import PkgMCP
 from nxl_core.policy.engine import PolicyDecision
+
 
 
 @pytest.fixture
@@ -79,6 +80,3 @@ class TestPkgPolicyGate:
                 result = await pkg_mcp.handle_tool(tool, args)
                 assert result["ok"] is False
                 assert "Policy denied" in result["error"]
-
-
-from unittest.mock import MagicMock

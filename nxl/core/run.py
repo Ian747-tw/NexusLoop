@@ -42,7 +42,7 @@ def main(provider: str | None = None) -> int:
     loop = OrchestrationLoop(adapter)
 
     brief = state.flags.get("brief", "")
-    result = loop.run_cycle(brief, provider=provider)
+    loop.run_cycle(brief, provider=provider)
 
     signal.signal(signal.SIGINT, old_handler)
     return 0

@@ -6,7 +6,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from mcps.program.server import ProgramMCPServer, get_state, get_queue
 

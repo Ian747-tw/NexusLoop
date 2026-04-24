@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from agentcore.client_py.client import OpenCodeClient
 from nxl_core.events.log import EventLog

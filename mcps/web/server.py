@@ -9,7 +9,7 @@ import requests
 from mcps._shared.base import BaseMCPServer
 
 from .requests import WebFetch, WebSearch
-from .responses import FetchResponse, SearchResponse, SearchResult
+from .responses import SearchResult
 
 
 class WebMCP(BaseMCPServer):

@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
-import pytest
 
 from mcps.spec.server import SpecMCPServer
 

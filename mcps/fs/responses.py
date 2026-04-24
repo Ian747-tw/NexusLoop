@@ -1,8 +1,7 @@
 """mcps.fs.responses — Response models for fs MCP."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-from typing import Any
+from pydantic import BaseModel
 
 
 class MoveResponse(BaseModel):

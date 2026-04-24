@@ -124,8 +124,9 @@ class CycleAdapter:
             )
         )
 
-        # Write HandoffRecord (validated model, can be serialized)
-        handoff = HandoffRecord(
+        # HandoffRecord is a validated Pydantic model — in production this
+        # would be persisted to a handoff store; here we just validate it
+        _ = HandoffRecord(
             from_agent="nexusloop",
             to_agent="nexusloop-next",
             reason=reason,

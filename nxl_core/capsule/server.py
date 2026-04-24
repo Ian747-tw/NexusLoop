@@ -4,10 +4,9 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Union
 
-from nxl_core.capsule.compact import soft_trim, hard_regen, clear_handoff, CompactionEvent
-from nxl_core.capsule.resume import build as build_capsule_impl, ResumeCapsule
+from nxl_core.capsule.compact import soft_trim, hard_regen, clear_handoff
+from nxl_core.capsule.resume import build as build_capsule_impl
 
 
 # Wrap build to return a capsule-like object with prefix/cache_break
@@ -21,8 +20,6 @@ def build_capsule(cycle_id: str) -> tuple[str, str]:
     """
     # cycle_id is treated as a lightweight key; we construct a minimal
     # in-memory cursor for the build function
-    from io import StringIO
-    cursor_file = Path("/dev/stdin")  # placeholder; build() reads a Path
     # Actually use a temp file approach to avoid stdin issues in IPC
     import tempfile
     with tempfile.NamedTemporaryFile(mode='w', suffix='.evtcursor', delete=False) as f:

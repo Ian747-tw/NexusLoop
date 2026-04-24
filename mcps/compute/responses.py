@@ -1,7 +1,7 @@
 """mcps.compute.responses — Pydantic response models for compute MCP."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ComputeGPUStatusResponse(BaseModel):

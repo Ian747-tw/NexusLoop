@@ -7,10 +7,7 @@ from typing import Any
 
 from mcps._shared.base import BaseMCPServer
 from mcps.compute.requests import (
-    ComputeBudgetStatusRequest,
-    ComputeCPUStatusRequest,
     ComputeDiskStatusRequest,
-    ComputeGPUStatusRequest,
 )
 from mcps.compute.responses import (
     ComputeBudgetStatusResponse,

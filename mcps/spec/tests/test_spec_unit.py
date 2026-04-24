@@ -4,7 +4,6 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from mcps.spec.server import SpecMCPServer, get_project, get_operations
 
