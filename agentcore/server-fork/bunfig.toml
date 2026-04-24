@@ -1,0 +1,6 @@
+[install]
+exact = true
+
+[install.workspaces]
+# server-fork is a standalone overlay, not part of upstream workspaces
+enabled = false
