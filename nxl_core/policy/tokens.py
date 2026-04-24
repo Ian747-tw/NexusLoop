@@ -9,7 +9,6 @@ expire(token) → bool (True if TTL exceeded and token not yet used)
 """
 from __future__ import annotations
 
-import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable

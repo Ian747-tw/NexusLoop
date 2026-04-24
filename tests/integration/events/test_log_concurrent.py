@@ -10,20 +10,15 @@ Tests:
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 import threading
 from pathlib import Path
-from typing import Iterator
 
-import pytest
-from pydantic import TypeAdapter
 
 from nxl_core.events.log import EventLog
-from nxl_core.events.schema import Event, CycleStarted
+from nxl_core.events.schema import CycleStarted
 
 
-def _utc_now() -> "datetime":
+def _utc_now():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc)
 
@@ -130,7 +125,7 @@ class TestEventLogConcurrent:
         file_ids = set()
         for line in lines:
             file_ids.add(json.loads(line)["event_id"])
-        assert len(file_ids) == total_expected, f"Duplicate event_ids detected"
+        assert len(file_ids) == total_expected, "Duplicate event_ids detected"
 
         # Check order preserved for each thread
         for thread_idx, ids in enumerate(results):

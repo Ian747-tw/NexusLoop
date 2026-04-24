@@ -8,7 +8,7 @@ Token estimate: len(text) // 4 (≈4 chars/token).
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, model_validator
 
 
 class HandoffRecord(BaseModel):

@@ -6,10 +6,8 @@ with byte-identical output.
 """
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
-import pytest
 
 from nxl_core.spec.model import ProjectSpec
 

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -66,7 +65,7 @@ class TestRunEventEmission:
         )
 
         # Must have ≥10 events
-        lines = [l for l in events_path.read_text().strip().split("\n") if l]
+        lines = [ln for ln in events_path.read_text().strip().split("\n") if ln]
         assert len(lines) >= 10, (
             f"Expected ≥10 events, got {len(lines)}. "
             f"Content: {events_path.read_text()[:500]}"

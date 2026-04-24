@@ -11,8 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TypeVar
 
-import pytest
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter
 
 from nxl_core.research.trial import Trial
 

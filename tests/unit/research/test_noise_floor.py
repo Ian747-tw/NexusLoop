@@ -6,10 +6,8 @@ Estimator must be within 10% of true σ on synthetic Gaussian data.
 """
 from __future__ import annotations
 
-import statistics
 
 import numpy as np
-import pytest
 
 from nxl_core.research.noise_floor import MADNoiseFloor, is_signal
 

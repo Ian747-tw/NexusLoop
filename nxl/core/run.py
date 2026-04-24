@@ -42,7 +42,6 @@ from nxl.logging.journal import ProjectJournal
 from nxl.logging.registry import ExperimentRegistry, RunRecord
 from nxl_core.events.schema import (
     CycleCompleted,
-    CycleFailed,
     CycleStarted,
     PolicyDecision,
     ZoneEntered,

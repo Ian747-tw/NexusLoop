@@ -9,14 +9,12 @@ EventLog.append() via nxl_core.events.singletons.
 """
 from __future__ import annotations
 
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 from nxl_core.events.log import EventLog
-from nxl_core.events.singletons import configure, reset, get_shared, set_shared
+from nxl_core.events.singletons import reset, set_shared
 
 
 def _utc_now() -> datetime:

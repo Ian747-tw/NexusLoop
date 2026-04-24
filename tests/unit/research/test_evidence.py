@@ -14,8 +14,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TypeVar
 
-import pytest
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter
 
 from nxl_core.research.evidence import Evidence, ClosureDecision
 

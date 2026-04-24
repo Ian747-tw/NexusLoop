@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 from nxl_core.policy.engine import PolicyEngine
-from nxl_core.policy.rules import ALL_RULES
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +165,7 @@ class TestPolicyEngineCheck:
     ) -> None:
         """PolicyEngine.check() returns correct decision for each fixture."""
         from pathlib import Path
-        import tempfile, os
+        import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create minimal NON_NEGOTIABLE_RULES.md so engine loads

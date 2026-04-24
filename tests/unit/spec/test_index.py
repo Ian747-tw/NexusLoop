@@ -9,7 +9,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from nxl_core.spec.index import spec_compact_md, spec_index_json
 from nxl_core.spec.model import ProjectSpec

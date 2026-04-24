@@ -15,7 +15,6 @@ import random
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 from nxl_core.events.log import EventLog
 from nxl_core.events.replay import project

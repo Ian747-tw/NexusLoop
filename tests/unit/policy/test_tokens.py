@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
 
 from nxl_core.policy.tokens import CapabilityToken, mint, consume, expire
 

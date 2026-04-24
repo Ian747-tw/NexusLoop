@@ -12,10 +12,8 @@ Test: each rule has its own test case; synthetic violation triggers correct rule
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
-import pytest
 
 from nxl_core.policy.rules import Rule, RuleEffect, ALL_RULES
 

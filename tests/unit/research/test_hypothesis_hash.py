@@ -9,10 +9,7 @@ Tests:
 """
 from __future__ import annotations
 
-import json
 
-import pytest
-from pydantic import ValidationError
 
 from nxl_core.research.hypothesis import Hypothesis, HypothesisStatus
 

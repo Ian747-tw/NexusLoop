@@ -8,9 +8,7 @@ frontier(scores) returns the Pareto frontier.
 """
 from __future__ import annotations
 
-import math
 
-import pytest
 
 from nxl_core.research.score import (
     ScoreVector,

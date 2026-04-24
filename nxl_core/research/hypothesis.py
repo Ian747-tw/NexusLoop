@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from enum import Enum
-from typing import Annotated, Literal, Union
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 

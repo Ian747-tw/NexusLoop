@@ -107,7 +107,6 @@ class ProjectJournal:
         lines.append("\n---\n")
         self._append_to_section("## Experiment Log", "".join(lines))
         try:
-            from nxl.core.agent_contract import audit_event
             from nxl_core.events.schema import IncidentReported
             from nxl_core.events.singletons import journal_log
 

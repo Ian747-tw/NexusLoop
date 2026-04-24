@@ -80,7 +80,6 @@ def hard_regen(events: list[dict]) -> CompactionEvent:
 
     Capped at 3 per 500 events (hard limit enforcement).
     """
-    MAX_PER_500 = 3
     MAX_EVENTS = 3 * (len(events) // 500 + 1)
 
     preserved: list[dict] = []

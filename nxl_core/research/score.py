@@ -6,9 +6,8 @@ ScoreVector (8-dim), dominates(), frontier(), and 4 ParetoRankers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ScoreVector(BaseModel):

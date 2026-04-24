@@ -7,7 +7,6 @@ No critical events lost after compaction.
 """
 from __future__ import annotations
 
-import pytest
 
 from nxl_core.capsule.compact import (
     soft_trim,

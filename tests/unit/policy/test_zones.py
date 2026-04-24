@@ -10,7 +10,6 @@ transitions between zones follow explicit rules.
 """
 from __future__ import annotations
 
-import pytest
 
 from nxl_core.policy.zones import (
     Zone,
