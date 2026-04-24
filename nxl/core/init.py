@@ -21,6 +21,7 @@ Creates:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
@@ -259,11 +260,15 @@ def run(
         for d in (config_dir, logs_dir, skills_dir):
             d.mkdir(parents=True, exist_ok=True)
 
-        onboarding_result = OnboardingFlow(
-            project_dir=project_dir,
-            auto=auto,
-            skip=skip_flow,
-        ).run()
+        if skip_onboarding:
+            # Fast path: write safe defaults directly, no OnboardingFlow, no doctor.
+            onboarding_result = _build_skip_defaults(project_dir)
+        else:
+            onboarding_result = OnboardingFlow(
+                project_dir=project_dir,
+                auto=auto,
+                skip=skip_flow,
+            ).run()
 
         selected_skill_pack = _resolve_skill_pack(
             explicit_choice=skill_pack,
@@ -326,30 +331,6 @@ def run(
         return 1
 
     console("Project initialised successfully.", "success")
-
-    # ── Plugin installation ──────────────────────────────────────────────────
-    from nxl.plugins.installer import install, prompt_and_install
-
-    if plugin == "":           # --plugin none: skip silently
-        pass
-    elif plugin is not None:   # explicit choice: cc / codex / both
-        install(project_dir, plugin)
-    else:                      # no flag: prompt (or auto-install both)
-        prompt_and_install(project_dir, auto=auto)
-
-    # Best-effort environment remediation from onboarding preferences.
-    try:
-        from nxl.core import doctor as doctor_mod
-
-        console(
-            "Auto-configuring Python environment from onboarding preferences...",
-            "info",
-        )
-        doctor_mod.run(project_dir=project_dir, fix=True)
-    except Exception as exc:  # noqa: BLE001
-        console(f"Automatic environment setup skipped: {exc}", "warning")
-
-    console("Next step: run `nxl doctor` to verify your environment.", "info")
     return 0
 
 
@@ -1009,6 +990,57 @@ def _format_hardware_summary(hardware: object) -> str:
     return "\n".join(fields) + "\n"
 
 
+def _build_skip_defaults(project_dir: Path) -> dict:
+    """Build a skip-onboarding result dict with safe defaults.
+
+    Mirrors what OnboardingFlow._build_skip_defaults() does, but avoids
+    calling HardwareDetector (which runs nvidia-smi with a 10s timeout).
+    """
+    name = project_dir.name
+    pkg_manager = "pip"
+    active_venv = None
+    py_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+    return {
+        "project": {
+            "name": name,
+            "env": None,
+            "obs_type": None,
+            "action_space": None,
+            "objective": "maximize episode reward",
+            "success_metric": None,
+            "modifications_allowed": "all",
+            "offline_data_allowed": "no",
+            "imitation_learning_allowed": "no",
+            "wall_clock_goal_hours": None,
+            "compute_budget": None,
+            "refresh_cooldown_enabled": "yes",
+            "other_information": None,
+        },
+        "hardware": {
+            "cpu_model": "unknown",
+            "cpu_cores": os.cpu_count() or 1,
+            "cpu_threads": os.cpu_count() or 1,
+            "ram_gb": 0,
+            "has_gpu": False,
+            "gpu_count": 0,
+            "gpus": [],
+            "cuda_available": False,
+            "cuda_version": None,
+            "multi_gpu_allowed": False,
+        },
+        "python_env": {
+            "package_manager": pkg_manager,
+            "venv_path": str(active_venv) if active_venv else None,
+            "python_version": py_version,
+            "create_new_env": "auto",
+        },
+        "permissions": {"policy": "open"},
+        "hard_rules": ["none"],
+        "assumptions": [],
+    }
+
+
 def _format_python_env_summary(python_env: dict[str, object]) -> str:
     if not python_env:
         return ""
@@ -1020,3 +1052,4 @@ def _format_python_env_summary(python_env: dict[str, object]) -> str:
         f"create_new_env: {python_env.get('create_new_env', 'auto')}",
     ]
     return "\n".join(lines) + "\n"
+

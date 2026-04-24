@@ -99,10 +99,36 @@ def run(
     provider: str | None = None,
 ) -> int:
     """CLI entry point for `nxl run` subcommand."""
+    project_dir = Path.cwd()
+
+    config_dir = project_dir / ".nxl"
+    if not config_dir.is_dir():
+        console("Project not initialised. Run `nxl init` first.", "error")
+        return 1
+
+    provider = _resolve_provider(provider, config_dir)
+
+    bootstrap(config_dir)
+
+    _, old_handler = setup_sigint_handler()
+
     if dry_run:
+        from nxl_core.events.singletons import _shared_log
+
         console("Dry-run: would execute one cycle with provider.", "info")
         console("  (actual execution skipped — no experiment started)", "info")
+        if _shared_log is not None:
+            from nxl_core.events.log import Event
+            from datetime import datetime, timezone
+
+            _shared_log.append(Event(
+                kind="DryRunRequested",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                data={},
+            ))
+        signal.signal(signal.SIGINT, old_handler)
         return 0
+
     return main(provider=provider)
 
 
