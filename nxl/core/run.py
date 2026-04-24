@@ -2,6 +2,7 @@
 """nxl.core.run — entry point only (≤80 lines)."""
 from __future__ import annotations
 
+import signal
 import sys
 from pathlib import Path
 

@@ -27,9 +27,9 @@ class AgentRunResult:
 class OpenCodeBackend:
     """Polymorphic backend: OpenCode as primary."""
 
-    def __init__(self):
+    def __init__(self, events_path: Path):
         self._client = OpenCodeClient()
-        self._event_log = EventLog()
+        self._event_log = EventLog(events_path)
 
     def run_cycle(self, brief: str) -> dict:
         result = self._client.run_cycle(
@@ -52,10 +52,11 @@ def detect_backend() -> str:
     return 'opencode'
 
 
-def run_agent_cycle(brief: str, backend: str = 'opencode') -> dict:
+def run_agent_cycle(brief: str, backend: str = 'opencode', events_path: Path | None = None) -> dict:
     """Run a single agent cycle using the specified backend."""
     if backend == 'opencode':
-        return OpenCodeBackend().run_cycle(brief)
+        path = events_path or Path(".nxl/events.jsonl")
+        return OpenCodeBackend(path).run_cycle(brief)
     raise ValueError(f'Unknown backend: {backend}')
 
 

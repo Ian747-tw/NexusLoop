@@ -81,12 +81,12 @@ class PolicyDecision(BaseModel):
     Validation dispatches to concrete subclasses based on `kind`.
     Round-trip encode/decode is guaranteed by model_dump override.
     """
-    model_config = ConfigDict(populate_by_name=True, discriminated=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     kind: Literal["allow", "deny", "ask", "narrow"]
 
     @classmethod
-    def model_validate(cls, data: dict[str, Any] | "PolicyDecision", **kwargs: Any) -> "PolicyDecision":
+    def model_validate(cls, data: Any, **kwargs: Any) -> "PolicyDecision":  # type: ignore[override]
         if isinstance(data, PolicyDecision):
             return data
         kind = data.get("kind") if isinstance(data, dict) else None
@@ -99,9 +99,9 @@ class PolicyDecision(BaseModel):
         return PolicyDecisionAllow.model_validate(data, **kwargs)
 
     @classmethod
-    def model_validate_json(cls, b: bytes | str, **kwargs: Any) -> "PolicyDecision":
+    def model_validate_json(cls, json_data: str | bytes | bytearray, **kwargs: Any) -> "PolicyDecision":  # type: ignore[override]
         import json
-        return cls.model_validate(json.loads(b), **kwargs)
+        return cls.model_validate(json.loads(json_data), **kwargs)
 
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         if self.kind == "allow":
