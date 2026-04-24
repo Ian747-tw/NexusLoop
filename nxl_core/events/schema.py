@@ -24,8 +24,19 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+def _ulid() -> str:
+    """Generate a ULID-formatted string (time-sortable, URL-safe)."""
+    import time
+    import random
+
+    entropy = random.getrandbits(80)
+    time_part = int(time.time() * 1000).to_bytes(8, "big").hex().lower().ljust(10, "0")[:10]
+    rand_part = format(entropy % (2**64), "012x") + format(entropy >> 64, "012x")
+    return f"01H{time_part}{rand_part[:12]}"
+
+
 class _BaseEvent(BaseModel):
-    event_id: str = Field(description="ULID-formatted event identifier")
+    event_id: str = Field(default_factory=_ulid, description="ULID-formatted event identifier")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     cycle_id: str | None = Field(default=None, description="Cycle that produced this event")
     causation_id: str | None = Field(
@@ -199,6 +210,17 @@ class HandoffRecorded(_BaseEvent):
 
 
 # ---------------------------------------------------------------------------
+# Skill events
+# ---------------------------------------------------------------------------
+
+
+class SkillRegistered(_BaseEvent):
+    kind: Literal["skill_registered"] = "skill_registered"
+    skill_name: str = Field(description="Name of the registered skill")
+    skill_def: dict = Field(description="The SkillDef dictionary")
+
+
+# ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
 
@@ -222,6 +244,7 @@ Event = Annotated[
         CapsuleResumed,
         IncidentReported,
         HandoffRecorded,
+        SkillRegistered,
     ],
     Field(discriminator="kind"),
 ]
