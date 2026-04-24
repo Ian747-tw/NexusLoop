@@ -35,11 +35,22 @@ class BaseMCPServer(ABC):
     def emit_tool_requested(self, tool_name: str, args: dict[str, Any]) -> None:
         """Emit ToolRequested event via EventLog."""
         from nxl_core.events.singletons import journal_log
+        from nxl_core.events.schema import ToolRequested
+
+        def _make_hashable(v: Any) -> Any:
+            if isinstance(v, dict):
+                return tuple((k, _make_hashable(v2)) for k, v2 in sorted(v.items()))
+            if isinstance(v, list):
+                return tuple(_make_hashable(x) for x in v)
+            return v
+
+        # Convert args.items() to a stable, hashable tuple
+        items_tuple = tuple((k, _make_hashable(v)) for k, v in sorted(args.items(), key=str))
+        args_hash = str(hash(items_tuple))
 
         event_log = journal_log()
-        event_log.append({
-            "kind": "tool_requested",
-            "tool_name": tool_name,
-            "args_hash": str(hash(frozenset(args.items()))),
-            "requesting_skill": None,
-        })
+        event_log.append(ToolRequested(
+            tool_name=tool_name,
+            args_hash=args_hash,
+            requesting_skill=None,
+        ))
