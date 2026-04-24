@@ -89,6 +89,33 @@ interface CompactRequest {
 interface EventEmission {
   event: Record<string, unknown>
 }
+
+// Skill registration (Python → TS): register a skill with its metadata
+interface SkillRegistration {
+  name: string
+  description: string
+  triggers: string[]          // slash commands and tool names that trigger this skill
+  inputs: Record<string, string>   // input name → type string
+  outputs: Record<string, string>  // output name → type string
+  steps_count: number         // number of steps in the skill
+  budgets?: Record<string, unknown>  // optional resource budgets
+}
+
+// Skill invocation notification (TS → Python)
+interface SkillInvoked {
+  skill_name: string
+  invocation_id: string        // unique per invocation
+  args: Record<string, unknown>  // arguments passed to the skill
+}
+
+// Skill completion notification (TS → Python)
+interface SkillCompleted {
+  skill_name: string
+  invocation_id: string
+  success: boolean
+  result?: unknown           // skill return value on success
+  error?: string             // error message on failure
+}
 ```
 
 ## Protocol Contract Tests

@@ -11,6 +11,7 @@ Run round-trip tests:
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -209,3 +210,75 @@ class CycleResult(BaseModel):
     final_state: bytes = b""
     tool_calls: int = 0
     blocked: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Skill IPC (Python ↔ TS)
+# ---------------------------------------------------------------------------
+
+
+class SkillRegistration(BaseModel):
+    """Python → TS: register a skill with its metadata and handler."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    description: str
+    triggers: list[str] = Field(default_factory=list)
+    inputs: dict[str, str] = Field(default_factory=dict)
+    outputs: dict[str, str] = Field(default_factory=dict)
+    steps_count: int = Field(ge=0, description="Number of steps in the skill")
+    budgets: dict[str, object] = Field(default_factory=dict)
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        result = super().model_dump(**kwargs)
+        # Drop keys with falsy values to match TS omits-empty-object behavior
+        for key in ("budgets", "args"):
+            if result.get(key) is not None and not result[key]:
+                del result[key]
+        return result
+
+    def model_dump_json(self, **kwargs: Any) -> str:
+        return json.dumps(self.model_dump())
+
+
+class SkillInvoked(BaseModel):
+    """TS → Python: notification that a skill was invoked."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    skill_name: str
+    invocation_id: str
+    args: dict[str, object] = Field(default_factory=dict)
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        result = super().model_dump(**kwargs)
+        if "args" in result and result["args"] is None:
+            del result["args"]
+        return result
+
+    def model_dump_json(self, **kwargs: Any) -> str:
+        return json.dumps(self.model_dump())
+
+
+class SkillCompleted(BaseModel):
+    """TS → Python: notification that a skill finished."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    skill_name: str
+    invocation_id: str
+    success: bool
+    result: object | None = None
+    error: str | None = None
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        result = super().model_dump(**kwargs)
+        if "result" in result and result["result"] is None:
+            del result["result"]
+        if "error" in result and result["error"] is None:
+            del result["error"]
+        return result
+
+    def model_dump_json(self, **kwargs: Any) -> str:
+        return json.dumps(self.model_dump())

@@ -112,3 +112,34 @@ export const EventEmission = z.object({
   event: z.record(z.string(), z.unknown()),
 });
 export type EventEmission = z.infer<typeof EventEmission>;
+
+// ---------------------------------------------------------------------------
+// Skill IPC (Python ↔ TS)
+// ---------------------------------------------------------------------------
+
+export const SkillRegistration = z.object({
+  name: z.string(),
+  description: z.string(),
+  triggers: z.array(z.string()),
+  inputs: z.record(z.string(), z.string()),
+  outputs: z.record(z.string(), z.string()),
+  steps_count: z.number().int().nonnegative(),
+  budgets: z.record(z.string(), z.unknown()).optional(),
+});
+export type SkillRegistration = z.infer<typeof SkillRegistration>;
+
+export const SkillInvoked = z.object({
+  skill_name: z.string(),
+  invocation_id: z.string(),
+  args: z.record(z.string(), z.unknown()).optional(),
+});
+export type SkillInvoked = z.infer<typeof SkillInvoked>;
+
+export const SkillCompleted = z.object({
+  skill_name: z.string(),
+  invocation_id: z.string(),
+  success: z.boolean(),
+  result: z.unknown().optional(),
+  error: z.string().optional(),
+});
+export type SkillCompleted = z.infer<typeof SkillCompleted>;
