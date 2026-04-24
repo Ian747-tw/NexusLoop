@@ -221,6 +221,49 @@ class SkillRegistered(_BaseEvent):
 
 
 # ---------------------------------------------------------------------------
+# Compaction events (M2.5)
+# ---------------------------------------------------------------------------
+
+
+class CompactRequested(_BaseEvent):
+    """Emitted when a compaction threshold is reached."""
+    kind: Literal["compact_requested"] = "compact_requested"
+    tier_hint: Literal["soft", "hard", "clear"] = Field(
+        description="Compaction urgency tier"
+    )
+    reason: str = Field(default="", description="Why compaction is being requested")
+    events_since_compact: int = Field(
+        default=0, description="Number of events since last compaction"
+    )
+    token_estimate: float = Field(
+        default=0.0, description="Estimated token usage ratio (0.0-1.0)"
+    )
+
+
+class SoftTrimmed(_BaseEvent):
+    """Emitted after a soft trim compaction."""
+    kind: Literal["soft_trimmed"] = "soft_trimmed"
+    preserved_count: int = Field(description="Number of events preserved")
+    trimmed_count: int = Field(description="Number of events trimmed")
+
+
+class HardRegenerated(_BaseEvent):
+    """Emitted after a hard regen compaction."""
+    kind: Literal["hard_regenerated"] = "hard_regenerated"
+    preserved_count: int = Field(description="Number of critical events preserved")
+    summary_tokens: int = Field(default=0, description="Token count of regeneration summary")
+
+
+class SessionClearing(_BaseEvent):
+    """Emitted when session is being cleared for handoff."""
+    kind: Literal["session_clearing"] = "session_clearing"
+    handoff_id: str = Field(description="Unique handoff identifier")
+    reason: str = Field(default="", description="Why session is being cleared")
+    from_agent: str = Field(default="", description="Agent handing off")
+    to_agent: str = Field(default="", description="Agent receiving handoff")
+
+
+# ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
 
@@ -245,7 +288,11 @@ Event = Annotated[
         IncidentReported,
         HandoffRecorded,
         SkillRegistered,
+        CompactRequested,
+        SoftTrimmed,
+        HardRegenerated,
+        SessionClearing,
     ],
     Field(discriminator="kind"),
 ]
-"""The top-level Event type — a discriminated union of all 18 event kinds."""
+"""The top-level Event type — a discriminated union of all event kinds."""
