@@ -11,3 +11,4 @@ build/
 htmlcov/
 events.jsonl
 state.json
+.worktrees/
