@@ -51,6 +51,11 @@ export const CompactResponse = z.object({
 });
 export type CompactResponse = z.infer<typeof CompactResponse>;
 
+// Intervention verb vocabulary — single source of truth for the 12-verb algebra
+export type InterventionVerb =
+  | 'ask' | 'warn' | 'narrow' | 'deny' | 'escalate' | 'trap'
+  | 'scaffold' | 'redirect' | 'explain' | 'guide' | 'review' | 'confirm';
+
 // Intervention queued by Python side
 export const Intervention = z.object({
   verb: z.string(),
