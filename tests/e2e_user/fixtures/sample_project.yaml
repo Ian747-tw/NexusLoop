@@ -1,3 +1,4 @@
-name: demo-project
-mode: improve
-metric: reward
+project:
+  name: demo-project
+  mode: improve
+  metric: reward

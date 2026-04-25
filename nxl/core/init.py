@@ -313,6 +313,11 @@ def run(
         _sync_onboarding_docs(project_dir=project_dir, onboarding_result=onboarding_result)
         _write_compact_spec_artifacts(project_dir=project_dir)
 
+        # Install Claude Code / Codex plugin if requested.
+        if plugin:
+            from nxl.plugins.installer import install as _install_plugins
+            _install_plugins(project_dir, plugin)
+
         # Initialise / update state.json.
         state = ProjectState.load(project_dir)
         state.flags["project_mode"] = selected_project_mode

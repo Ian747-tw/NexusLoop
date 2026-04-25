@@ -1,7 +1,7 @@
 """
-M0.1 Step 1: 18-event discriminated union schema round-trip tests.
+M0.1 Step 1: 21-event discriminated union schema round-trip tests.
 
-Each of the 18 event kinds must:
+Each of the 21 event kinds must:
 1. Construct correctly with required fields
 2. Serialize to JSON via model_dump_json()
 3. Deserialize back via TypeAdapter(Event).validate_json() to the same object
@@ -151,10 +151,28 @@ class TestHandoffRecorded:
         _assert_roundtrip(e)
 
 
-class TestAll18KindsPresent:
-    """Meta-test: ensure all 18 kinds are reachable via the union."""
+class TestChangeIntentRecorded:
+    def test_roundtrip(self) -> None:
+        e = _make_change_intent_recorded()
+        _assert_roundtrip(e)
 
-    def test_event_union_has_18_variants(self) -> None:
+
+class TestFreeFormTrialStarted:
+    def test_roundtrip(self) -> None:
+        e = _make_free_form_trial_started()
+        _assert_roundtrip(e)
+
+
+class TestCompactionTierEntered:
+    def test_roundtrip(self) -> None:
+        e = _make_compaction_tier_entered()
+        _assert_roundtrip(e)
+
+
+class TestAll21KindsPresent:
+    """Meta-test: ensure all 21 kinds are reachable via the union."""
+
+    def test_event_union_has_21_variants(self) -> None:
         # Exercise every discriminator value by parsing a valid blob per kind
         fixtures: dict[str, str] = {
             "cycle_started": '{"kind": "cycle_started", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "brief_hash": "h", "hypothesis_id": "hyp"}',
@@ -175,8 +193,11 @@ class TestAll18KindsPresent:
             "capsule_resumed": '{"kind": "capsule_resumed", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "capsule_id": "c", "cursor": "01HYYYY"}',
             "incident_reported": '{"kind": "incident_reported", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "incident_type": "div", "severity": "low", "run_id": "r", "description": "d"}',
             "handoff_recorded": '{"kind": "handoff_recorded", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "handoff_id": "h", "from_agent": "a", "to_agent": "b"}',
+            "change_intent_recorded": '{"kind": "change_intent_recorded", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "hypothesis_id": "h", "intent_text": "try larger model", "rationale": "acc too low"}',
+            "free_form_trial_started": '{"kind": "free_form_trial_started", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "hypothesis_id": "h", "description": "exploring LR space", "notes": []}',
+            "compaction_tier_entered": '{"kind": "compaction_tier_entered", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "tier": "hard", "reason": "token limit", "events_active": 100}',
         }
-        assert len(fixtures) == 18, f"Expected 18 fixture blobs, got {len(fixtures)}"
+        assert len(fixtures) == 21, f"Expected 21 fixture blobs, got {len(fixtures)}"
         for kind, blob in fixtures.items():
             parsed = TypeAdapter(Event).validate_json(blob)
             assert parsed.kind == kind
@@ -431,4 +452,46 @@ def _make_handoff_recorded() -> "nxl_core.events.schema.HandoffRecorded":
         handoff_id="hand_001",
         from_agent="agent_001",
         to_agent="agent_002",
+    )
+
+
+def _make_change_intent_recorded() -> "nxl_core.events.schema.ChangeIntentRecorded":
+    from nxl_core.events.schema import ChangeIntentRecorded
+    return ChangeIntentRecorded(
+        event_id="01HXXXXXXXXXXXX",
+        timestamp=_utc_now(),
+        cycle_id="cycle_001",
+        causation_id=None,
+        kind="change_intent_recorded",
+        hypothesis_id="hyp_001",
+        intent_text="Switch to larger batch size",
+        rationale="Reward plateau observed",
+    )
+
+
+def _make_free_form_trial_started() -> "nxl_core.events.schema.FreeFormTrialStarted":
+    from nxl_core.events.schema import FreeFormTrialStarted
+    return FreeFormTrialStarted(
+        event_id="01HXXXXXXXXXXXX",
+        timestamp=_utc_now(),
+        cycle_id="cycle_001",
+        causation_id=None,
+        kind="free_form_trial_started",
+        hypothesis_id="hyp_001",
+        description="Exploring learning rate space around 0.01",
+        notes=["initial scan", "found peak at 0.008"],
+    )
+
+
+def _make_compaction_tier_entered() -> "nxl_core.events.schema.CompactionTierEntered":
+    from nxl_core.events.schema import CompactionTierEntered
+    return CompactionTierEntered(
+        event_id="01HXXXXXXXXXXXX",
+        timestamp=_utc_now(),
+        cycle_id="cycle_001",
+        causation_id=None,
+        kind="compaction_tier_entered",
+        tier="hard",
+        reason="token budget exceeded",
+        events_active=150,
     )

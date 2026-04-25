@@ -1,7 +1,7 @@
 """
-M0.2 Step 2: Polymorphic Trial (9 kinds) round-trip tests.
+M0.2 Step 2: Polymorphic Trial (11 kinds) round-trip tests.
 
-Each of 9 Trial kinds must:
+Each of 11 Trial kinds must:
 1. Construct with required fields
 2. Serialize to JSON and deserialize back to same object
 3. Reject invalid kind strings at parse time
@@ -77,8 +77,18 @@ class TestReplayTrial:
         _assert_roundtrip(_make_replay())
 
 
-class TestAll9KindsPresent:
-    def test_trial_union_has_9_variants(self) -> None:
+class TestChangeIntentTrial:
+    def test_roundtrip(self) -> None:
+        _assert_roundtrip(_make_change_intent())
+
+
+class TestFreeFormTrial:
+    def test_roundtrip(self) -> None:
+        _assert_roundtrip(_make_free_form())
+
+
+class TestAll11KindsPresent:
+    def test_trial_union_has_11_variants(self) -> None:
         fixtures = {
             "baseline": '{"kind": "baseline", "trial_id": "t1", "hypothesis_id": "h1", "config": {}, "created_at": "2026-01-01T00:00:00Z"}',
             "ablation": '{"kind": "ablation", "trial_id": "t2", "hypothesis_id": "h1", "config": {}, "removed_components": [], "created_at": "2026-01-01T00:00:00Z"}',
@@ -89,8 +99,10 @@ class TestAll9KindsPresent:
             "transfer": '{"kind": "transfer", "trial_id": "t7", "hypothesis_id": "h1", "config": {}, "source_dataset": "src1", "target_dataset": "tgt1", "created_at": "2026-01-01T00:00:00Z"}',
             "meta": '{"kind": "meta", "trial_id": "t8", "hypothesis_id": "h1", "config": {}, "meta_method": "hyperband", "created_at": "2026-01-01T00:00:00Z"}',
             "replay": '{"kind": "replay", "trial_id": "t9", "hypothesis_id": "h1", "config": {}, "replay_trial_id": "orig1", "created_at": "2026-01-01T00:00:00Z"}',
+            "change_intent": '{"kind": "change_intent", "trial_id": "t10", "hypothesis_id": "h1", "config": {}, "intent_text": "switch to larger model", "rationale": "improve accuracy", "created_at": "2026-01-01T00:00:00Z"}',
+            "free_form": '{"kind": "free_form", "trial_id": "t11", "hypothesis_id": "h1", "config": {}, "description": "exploring hyperparameters", "notes": [], "created_at": "2026-01-01T00:00:00Z"}',
         }
-        assert len(fixtures) == 9
+        assert len(fixtures) == 11
         for kind, blob in fixtures.items():
             parsed = TypeAdapter(Trial).validate_json(blob)
             assert parsed.kind == kind
@@ -197,5 +209,29 @@ def _make_replay() -> "nxl_core.research.trial.ReplayTrial":
         hypothesis_id="hyp_001",
         config={},
         replay_trial_id="trial_original",
+        created_at=_utc_now(),
+    )
+
+
+def _make_change_intent() -> "nxl_core.research.trial.ChangeIntent":
+    from nxl_core.research.trial import ChangeIntent
+    return ChangeIntent(
+        trial_id="trial_010",
+        hypothesis_id="hyp_001",
+        config={},
+        intent_text="Switch to larger model batch",
+        rationale="Baseline accuracy below threshold",
+        created_at=_utc_now(),
+    )
+
+
+def _make_free_form() -> "nxl_core.research.trial.FreeFormTrial":
+    from nxl_core.research.trial import FreeFormTrial
+    return FreeFormTrial(
+        trial_id="trial_011",
+        hypothesis_id="hyp_001",
+        config={},
+        description="Exploring learning rate space",
+        notes=["initial exploration", "found plateau at 0.01"],
         created_at=_utc_now(),
     )

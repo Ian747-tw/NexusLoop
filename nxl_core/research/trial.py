@@ -70,6 +70,24 @@ class ReplayTrial(_BaseTrial):
     replay_trial_id: str
 
 
+class ChangeIntent(_BaseTrial):
+    """Free-form research decision intent — no enforced structure.
+
+    The LLM records what it decided to try and why, in its own words.
+    Captured at cycle boundaries via ``cycle_mcp.start(hypothesis_id)``.
+    """
+    kind: Literal["change_intent"] = "change_intent"
+    intent_text: str
+    rationale: str = ""
+
+
+class FreeFormTrial(_BaseTrial):
+    """Catch-all for LLM-native research modes that don't fit other types."""
+    kind: Literal["free_form"] = "free_form"
+    description: str
+    notes: list[str] = Field(default_factory=list)
+
+
 Trial = Annotated[
     Union[
         BaselineTrial,
@@ -81,6 +99,8 @@ Trial = Annotated[
         TransferTrial,
         MetaTrial,
         ReplayTrial,
+        ChangeIntent,
+        FreeFormTrial,
     ],
     Field(discriminator="kind"),
 ]
