@@ -34,53 +34,72 @@ agentcore/server-fork/ ← overlay workspace
 
 ## Fork-Level Modifications (the work the fork actually does)
 
+Counts and statuses on this page are verified by `scripts/audit-fork-depth.sh`.
+A modification is "implemented" only if its file exists on disk with substantive
+content. See `SEAM_INVENTORY.md` for the audit trail.
+
 This is the complete list of upstream OpenCode behavior we modify.
 Plug-ins cannot do any of these. If a future change adds another
 fork-level modification, append here and bump the rebase impact estimate.
 
-### Named seams (defined at M1)
+### Implemented fork-level modifications
 
 1. `seams/gated-dispatch.ts` — intercepts every tool call before execution
 2. `seams/intervention-hook.ts` — replaces upstream's permission UI with the 12-verb algebra
 3. `seams/capsule-session.ts` — provides capsule-as-prefix + cache breakpoint + compaction delegation
 4. `seams/cycle-driver.ts` — emits typed events at turn lifecycle points (evolving to "boundary observer" pattern in M3; see ADR-005)
+5. `seams/skill-dispatcher.ts` — at fork startup, NexusLoop's YAML skills are registered as OpenCode slash commands via fork-modified registration
+6. `seams/mcp-gate.ts` — wraps OpenCode MCP registry with PolicyEngine; intercepts every MCP tool call before dispatching
 
-### Additional fork-level modifications
+### Planned but not yet implemented
 
-5. Provider call instrumentation — wraps provider adapter to record:
+7. `seams/provider-instrumentation.ts` — wraps provider adapter to record:
    - prompt_bytes, response_bytes, tokens_used, cache_hit, latency_ms,
      model_version, temperature
    - Required for replay determinism and cost accounting.
-   - File: `seams/provider-instrumentation.ts`
+   - STATUS: planned (file does not exist)
 
-6. Session storage swap — upstream's message-list session store is replaced
+8. `seams/session-storage.ts` — upstream's message-list session store is replaced
    by a thin pointer into events.jsonl. Source of truth is the event log.
-   - File: `seams/session-storage.ts`
+   - STATUS: planned (file does not exist)
 
-7. Lifecycle flush hooks — graceful shutdown ensures all pending events
+9. `seams/lifecycle-hooks.ts` — graceful shutdown ensures all pending events
    are flushed to events.jsonl before exit. SIGTERM, SIGINT both honored.
-   - File: `seams/lifecycle-hooks.ts`
+   - STATUS: planned (file does not exist)
 
-8. Subagent context firewall — when a subagent is spawned with isolation=true,
-   upstream's subagent setup is intercepted to enforce no parent context leak.
-   - File: `seams/subagent-isolation.ts`
+10. `seams/subagent-isolation.ts` — when a subagent is spawned with isolation=true,
+    upstream's subagent setup is intercepted to enforce no parent context leak.
+    - STATUS: planned (file does not exist)
 
-9. Skill registration mechanism — at fork startup, NexusLoop's YAML skills
-   are registered as OpenCode slash commands via fork-modified registration.
-   - File: `seams/skill-registration.ts`
-
-10. Tripwire dispatch integration — when a tripwire is fired, the gate refuses
+11. `seams/tripwire-gate.ts` — when a tripwire is fired, the gate refuses
     next tool call until acknowledged. Fork-level integration with the gate.
-    - File: `seams/tripwire-gate.ts` (added in M4)
+    - STATUS: planned (file does not exist)
 
-11. `--allow-edit-without-approval` policy gating — flags that would bypass
-    approval are themselves policy-gated.
-    - File: `seams/mode-flag-gate.ts` (added in M4)
+12. `seams/mode-flag-gate.ts` — `--allow-edit-without-approval` policy gating —
+    flags that would bypass approval are themselves policy-gated.
+    - STATUS: planned (file does not exist)
+
+### Tier 2 — Research seams (post-M1.1, see ADR-006)
+
+13. `seams/research-state.ts` — extends OpenCode session schema with a
+    `research:` namespace (current_cycle, program_state, registry_projection,
+    tier_state, capsule_cursor, scheduler_queue). Schema locked in ADR-008.
+    Populated on session start by reading events.jsonl from cursor.
+    STATUS: planned (P2).
+
+14. `seams/scheduler-integration.ts` — outer scheduler. TS class holding
+    scheduler_queue, picks next cycle via priority + budget gates.
+    Calls registered callbacks on cycle-driver.ts for cycle_end events.
+    Never enqueues from TS — proposal authority stays with the LLM.
+    STATUS: planned (P2).
 
 ### Rebase impact
 
-Each modification adds ~1–3 hours to a rebase. Total rebase budget after
-all 11 modifications: <1 day target (M4 exit gate).
+Each modification adds ~1–3 hours to a rebase. Total rebase budget:
+- 6 implemented modifications: ~18 hours (already absorbed)
+- 6 planned-but-missing (entries 7-12): ~18 hours budget reserved
+- 2 tier-2 planned (entries 13-14): ~6 hours budget reserved
+- <1 day target for full fork integration (M4 exit gate)
 
 ## Pinned commit
 
