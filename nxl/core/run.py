@@ -106,8 +106,6 @@ def run(
         console("Project not initialised. Run `nxl init` first.", "error")
         return 1
 
-    provider = _resolve_provider(provider, config_dir)
-
     bootstrap(config_dir)
 
     _, old_handler = setup_sigint_handler()
@@ -117,18 +115,12 @@ def run(
 
         console("Dry-run: would execute one cycle with provider.", "info")
         console("  (actual execution skipped — no experiment started)", "info")
-        if _shared_log is not None:
-            from nxl_core.events.log import Event
-            from datetime import datetime, timezone
-
-            _shared_log.append(Event(
-                kind="DryRunRequested",
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                data={},
-            ))
+        # Note: Do not emit a DryRunRequested event — DryRunRequested is not
+        # yet in the Event schema (added in Phase C). Dry-run is informational.
         signal.signal(signal.SIGINT, old_handler)
         return 0
 
+    provider = _resolve_provider(provider, config_dir)
     return main(provider=provider)
 
 
