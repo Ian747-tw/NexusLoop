@@ -264,6 +264,35 @@ class SessionClearing(_BaseEvent):
 
 
 # ---------------------------------------------------------------------------
+# Research-mode events (M3)
+# ---------------------------------------------------------------------------
+
+
+class ChangeIntentRecorded(_BaseEvent):
+    """Emitted when LLM records a ChangeIntent at a cycle boundary."""
+    kind: Literal["change_intent_recorded"] = "change_intent_recorded"
+    hypothesis_id: str = Field(description="Hypothesis being modified")
+    intent_text: str = Field(description="What the LLM intends to try")
+    rationale: str = Field(default="", description="Why this change is expected to help")
+
+
+class FreeFormTrialStarted(_BaseEvent):
+    """Emitted when LLM begins a free-form exploration trial."""
+    kind: Literal["free_form_trial_started"] = "free_form_trial_started"
+    hypothesis_id: str
+    description: str = Field(description="What the LLM is exploring")
+    notes: list[str] = Field(default_factory=list, description="Initial observations")
+
+
+class CompactionTierEntered(_BaseEvent):
+    """Emitted when a new compaction tier is activated."""
+    kind: Literal["compaction_tier_entered"] = "compaction_tier_entered"
+    tier: Literal["soft", "hard", "clear"] = Field(description="Tier activated")
+    reason: str = Field(default="", description="Why this tier was entered")
+    events_active: int = Field(default=0, description="Events in memory when tier entered")
+
+
+# ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
 
@@ -292,6 +321,9 @@ Event = Annotated[
         SoftTrimmed,
         HardRegenerated,
         SessionClearing,
+        ChangeIntentRecorded,
+        FreeFormTrialStarted,
+        CompactionTierEntered,
     ],
     Field(discriminator="kind"),
 ]
