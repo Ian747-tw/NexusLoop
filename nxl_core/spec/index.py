@@ -1,7 +1,9 @@
 """
-nxl_core.spec.index
-------------------
-Generators: spec_compact_md() and spec_index_json() from ProjectSpec.
+M0.5 Step 2: Compact + index generators.
+
+spec_compact.md and spec_index.json generators from typed ProjectSpec.
+
+Phase C.1: Extended to use typed sections (project, budgets, operations, context).
 """
 from __future__ import annotations
 
@@ -14,10 +16,10 @@ from nxl_core.spec.model import ProjectSpec
 def spec_compact_md(spec: ProjectSpec) -> str:
     """Generate a compact markdown summary from ProjectSpec."""
     lines = [
-        f"# {spec.name}",
+        f"# {spec.project.name}",
         "",
-        f"**Mode:** {spec.mode}",
-        f"**Metric:** {spec.metric}",
+        f"**Mode:** {spec.project.mode}",
+        f"**Metric:** {spec.project.metric}",
     ]
     return "\n".join(lines)
 
@@ -30,9 +32,9 @@ def spec_index_json(spec: ProjectSpec, *, out_path: Path | None = None) -> str:
     Returns the JSON string.
     """
     data = {
-        "name": spec.name,
-        "mode": spec.mode,
-        "metric": spec.metric,
+        "name": spec.project.name,
+        "mode": spec.project.mode,
+        "metric": spec.project.metric,
     }
     output = json.dumps(data, indent=2)
     if out_path is not None:
