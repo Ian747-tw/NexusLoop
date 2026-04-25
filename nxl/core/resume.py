@@ -1,7 +1,6 @@
 """nxl/core/resume.py — thin wrapper over HandoffRecord + ResumeCapsule."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from nxl.cli import console
 from nxl_core.capsule.handoff import HandoffRecord
