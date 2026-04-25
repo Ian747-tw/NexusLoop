@@ -23,7 +23,7 @@ echo "== Frozen files untouched =="
 # Compare against the merge-base on main (or HEAD~6 as fallback)
 BASE=$(git merge-base HEAD main 2>/dev/null || git rev-parse HEAD~6)
 for f in CLAUDE.md agentcore/SEAM_CONTRACT.md agentcore/PROTOCOL.md NON_NEGOTIABLE_RULES.md NON_NEGOTIABLE_RULES_dev.md; do
-  if git diff --quiet "$BASE" -- "$f" 2>/dev/null; then
+  if [[ -n "$BASE" ]] && git diff --quiet "$BASE" -- "$f" 2>/dev/null; then
     echo "  OK  $f unchanged"
   else
     echo "  FAIL $f modified (frozen)"; fail=1

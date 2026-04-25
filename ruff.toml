@@ -1,0 +1,6 @@
+# Local ruff configuration
+# Extends pyproject.toml for local development only
+
+extend = "pyproject.toml"
+
+extend-exclude = [".claude/worktrees/**"]

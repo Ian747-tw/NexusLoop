@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import yaml
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -102,7 +103,7 @@ class BudgetMCPServer(BaseMCPServer):
             },
         ]
 
-    async def handle_tool(self, tool_name: str, args: dict[str, object]) -> dict[str, object]:
+    async def handle_tool(self, tool_name: str, args: dict[str, object]) -> dict[str, Any]:
         self.emit_tool_requested(tool_name, args)
         decision = self._policy.check(tool_name, args)
         if not decision.allowed:
@@ -110,9 +111,9 @@ class BudgetMCPServer(BaseMCPServer):
         if tool_name == "budget.get":
             return {"ok": True, "data": self._get_budget()}
         elif tool_name == "budget.check_spend":
-            return {"ok": True, "data": self._check_spend(args["resource"])}  # type: ignore[index]
+            return {"ok": True, "data": self._check_spend(args["resource"])}
         elif tool_name == "budget.record_spend":
-            return {"ok": True, "data": self._record_spend(args["resource"], args["amount"])}  # type: ignore[index]
+            return {"ok": True, "data": self._record_spend(args["resource"], args["amount"])}
         else:
             return {"ok": False, "error": f"Unknown tool: {tool_name}"}
 

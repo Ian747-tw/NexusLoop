@@ -132,7 +132,7 @@ def run(
 
     if dry_run:
         from nxl_core.events.singletons import journal_log
-        from nxl_core.events.schema import CycleStarted, CycleCompleted, ToolRequested
+        from nxl_core.events.schema import CycleStarted, CycleCompleted
         import hashlib
 
         console("Dry-run: would execute one cycle with provider.", "info")
@@ -149,7 +149,7 @@ def run(
         log = journal_log()
 
         # Call spec MCP to emit tool events (spec.get_project, spec.get_operations)
-        spec_data = _get_spec_for_dry_run(project_dir)
+        _get_spec_for_dry_run(project_dir)
 
         log.append(CycleStarted(
             brief_hash=brief_hash,
