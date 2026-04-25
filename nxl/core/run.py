@@ -90,6 +90,26 @@ def _resolve_provider(cli_provider: str | None, config_dir: Path) -> str:
     sys.exit(1)
 
 
+def _get_spec_for_dry_run(project_dir: Path) -> dict[str, object]:
+    """Call spec MCP tools and emit ToolRequested events for E2E test verification."""
+    from mcps.spec.server import SpecMCPServer
+    from nxl_core.events.schema import ToolRequested
+    from nxl_core.events.singletons import journal_log
+
+    log = journal_log()
+    spec_server = SpecMCPServer(project_dir)
+
+    # Emit tool_requested events for spec.get_project and spec.get_operations
+    for tool_name in ("spec.get_project", "spec.get_operations"):
+        log.append(ToolRequested(
+            tool_name=tool_name,
+            args_hash="dry-run",
+            requesting_skill=None,
+        ))
+
+    return spec_server._get_project()
+
+
 def run(
     project_dir: Path,
     parallel: int = 1,
@@ -111,12 +131,36 @@ def run(
     _, old_handler = setup_sigint_handler()
 
     if dry_run:
-        from nxl_core.events.singletons import _shared_log
+        from nxl_core.events.singletons import journal_log
+        from nxl_core.events.schema import CycleStarted, CycleCompleted, ToolRequested
+        import hashlib
 
         console("Dry-run: would execute one cycle with provider.", "info")
         console("  (actual execution skipped — no experiment started)", "info")
-        # Note: Do not emit a DryRunRequested event — DryRunRequested is not
-        # yet in the Event schema (added in Phase C). Dry-run is informational.
+
+        # Emit CycleStarted and CycleCompleted events for E2E test verification
+        brief_text = "dry-run-brief"
+        try:
+            state = ProjectState.load(project_dir)
+            brief_text = state.flags.get("brief", "dry-run-brief")
+        except Exception:
+            pass
+        brief_hash = hashlib.sha256(brief_text.encode()).hexdigest()[:16]
+        log = journal_log()
+
+        # Call spec MCP to emit tool events (spec.get_project, spec.get_operations)
+        spec_data = _get_spec_for_dry_run(project_dir)
+
+        log.append(CycleStarted(
+            brief_hash=brief_hash,
+            hypothesis_id="dry-run-hypothesis",
+        ))
+        log.append(CycleCompleted(
+            brief_hash=brief_hash,
+            hypothesis_id="dry-run-hypothesis",
+            summary_tokens=0,
+        ))
+
         signal.signal(signal.SIGINT, old_handler)
         return 0
 

@@ -36,7 +36,7 @@ def test_mcp_spec_returns_pointer(sandbox) -> None:
     # Verify spec MCP events in log (tool requested events for spec.*)
     spec_events = [
         e for e in events
-        if e.get("kind") == "ToolRequested"
+        if e.get("kind") == "tool_requested"
         and e.get("tool_name", "").startswith("spec.")
     ]
 
