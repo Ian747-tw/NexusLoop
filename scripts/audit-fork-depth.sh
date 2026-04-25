@@ -22,9 +22,9 @@ extract_section() {
   ' "$VB"
 }
 
-implemented=$(extract_section '^### Implemented fork-level modifications' | grep -oE 'seams/[a-z-]+\.ts' | sort -u)
-planned=$(extract_section '^### Planned but not yet implemented' | grep -oE 'seams/[a-z-]+\.ts' | sort -u)
-tier2=$(extract_section '^### Tier 2 — Research seams' | grep -oE 'seams/[a-z-]+\.ts' | sort -u)
+implemented=$(extract_section '^### Implemented fork-level modifications' | grep -oE 'seams/[a-z-]+\.ts' | sort -u || true)
+planned=$(extract_section '^### Planned but not yet implemented' | grep -oE 'seams/[a-z-]+\.ts' | sort -u || true)
+tier2=$(extract_section '^### Tier 2 — Research seams' | grep -oE 'seams/[a-z-]+\.ts' | sort -u || true)
 
 fail=0
 
