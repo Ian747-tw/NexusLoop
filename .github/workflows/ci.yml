@@ -7,10 +7,8 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -20,17 +18,39 @@ jobs:
         with:
           python-version: "3.13"
 
+      # --frozen is brittle when contributors edit pyproject.toml.
+      # Use a non-frozen sync; CI still pins by lockfile, just regenerates if drifted.
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync
+
+      - name: Verify lockfile up to date
+        run: |
+          uv lock --check || {
+            echo "::error::pyproject.toml changed without updating uv.lock. Run 'uv lock' locally and commit."
+            exit 1
+          }
 
       - name: Ruff
-        run: uv run ruff check .
+        run: uv run ruff check . --exclude '.claude/worktrees/**'
 
-      - name: Mypy
-        run: uv run mypy nxl
+      - name: Mypy (matches pyproject scope)
+        run: uv run mypy
 
-      - name: Pytest (unit + integration + adversarial)
-        run: uv run pytest tests/unit tests/integration tests/adversarial -q --ignore=tests/integration/test_run_event_emission.py
+      - name: Pytest — unit + integration + adversarial
+        run: uv run pytest tests/unit tests/integration tests/adversarial -q
 
-      - name: Pytest (smoke)
+      - name: Pytest — smoke
         run: uv run pytest tests/smoke -q
+
+      - name: Pytest — MCPs
+        run: uv run pytest mcps -q
+
+      - name: Pytest — agentcore Python tests
+        run: uv run pytest agentcore/tests -q -k "not test_ts"
+
+      - name: Audit fork depth
+        run: bash scripts/audit-fork-depth.sh || echo "audit reports planned seams as expected"
+        # Non-blocking until P2 ships seams 12-13. Re-enable as blocking after P2.
+
+      - name: Verify Priority 1 docs
+        run: bash scripts/verify_priority_1.sh
