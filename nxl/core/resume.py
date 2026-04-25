@@ -6,6 +6,7 @@ from nxl.cli import console
 from nxl_core.capsule.handoff import HandoffRecord
 from nxl_core.capsule.resume import ResumeCapsule
 
+
 def run(
     project_dir: Path,
     parallel: int = 1,
@@ -35,14 +36,14 @@ def run(
 
     # Step 2: Verify spec_hash matches current project.yaml
     project_yaml = project_dir / "project.yaml"
-    if project_yaml.exists():
-        if not handoff.verify_spec(project_yaml):
-            console(
-                "Spec mismatch: project.yaml has changed since last session.\n"
-                "Run `nxl run` to start fresh, or resolve the spec conflict.",
-                "error",
-            )
-            return 1
+    verified = handoff.verify_spec(project_yaml)
+    if not verified:
+        console(
+            "Spec mismatch: project.yaml has changed since last session.\n"
+            "Run `nxl run` to start fresh, or resolve the spec conflict.",
+            "error",
+        )
+        return 1
 
     # Step 3: Regenerate ResumeCapsule from handoff.event_cursor
     capsule = ResumeCapsule.regenerate(handoff.event_cursor)
@@ -64,6 +65,6 @@ def run(
 
 def _merge_message(capsule: ResumeCapsule, message: str) -> ResumeCapsule:
     """Append --message to volatile tail; conflict → new wins."""
-    # Append message to volatile_tail
-    capsule.volatile_tail = (capsule.volatile_tail or "") + "\n" + message
-    return capsule
+    import dataclasses
+
+    return dataclasses.replace(capsule, volatile_tail=message)
