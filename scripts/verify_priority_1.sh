@@ -48,11 +48,11 @@ check "grep -q 'Planned but not yet implemented'      agentcore/VENDOR_BOUNDARY.
 
 echo
 echo "== audit-fork-depth.sh =="
-# It should pass (exit 0) since all 6 documented implemented seams have files
-# and the 8 planned seams (6 from M1-M3 + 2 tier-2) are correctly marked as planned
+# audit-fork-depth.sh should pass: all implemented seams have files, tier-2 seams
+# (research-state, scheduler-integration) are now implemented (moved from Tier-2 section)
 out=$(bash scripts/audit-fork-depth.sh 2>&1 || true)
-check "echo \"$out\" | grep -q 'planned seams/research-state.ts'"        "audit reports research-state planned"
-check "echo \"$out\" | grep -q 'planned seams/scheduler-integration.ts'" "audit reports scheduler-integration planned"
+check "echo \"$out\" | grep -q 'OK.*seams/research-state.ts'"        "audit reports research-state implemented"
+check "echo \"$out\" | grep -q 'OK.*seams/scheduler-integration.ts'" "audit reports scheduler-integration implemented"
 
 echo
 echo "== Tier 1 contract not mutated =="

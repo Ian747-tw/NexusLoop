@@ -1,4 +1,4 @@
-import type { Intervention, InterventionVerb } from '../bridge/protocol';
+import type { Intervention, InterventionVerb } from '../../bridge/protocol';
 
 const VALID_VERBS: InterventionVerb[] = [
   'ask', 'warn', 'narrow', 'deny', 'escalate', 'trap',
@@ -9,7 +9,7 @@ const _interventionQueue: Intervention[] = [];
 const _syntheticQueue: string[] = [];
 
 export function enqueueIntervention(v: Intervention): void {
-  if (!VALID_VERBS.includes(v.verb)) {
+  if (!VALID_VERBS.includes(v.verb as InterventionVerb)) {
     throw new Error(`Invalid intervention verb: ${v.verb}`);
   }
   _interventionQueue.push(v);

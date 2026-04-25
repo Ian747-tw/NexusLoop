@@ -22,7 +22,7 @@ class TestRunEventEmission:
     def test_nxl_run_once_dry_run_emits_events(self, tmp_path: Path) -> None:
         """
         `nxl run --once --dry-run` in an initialised project emits
-        at least 10 events to .nxl/events.jsonl.
+        at least 4 events to .nxl/events.jsonl.
         """
         # Create a minimal project structure
         project_dir = tmp_path / "project"
