@@ -57,6 +57,7 @@ class ResumeCapsule:
     decision_log: str = ""
     quality_notes: str = ""
     synthesis: str = ""
+    volatile_tail: str = ""
 
     def to_bytes(self) -> bytes:
         """Serialize capsule to bytes (for deterministic comparison)."""
@@ -81,6 +82,7 @@ class ResumeCapsule:
             decision_log=capsule.decision_log or "(none)",
             quality_notes=capsule.quality_notes or "(none)",
             synthesis=capsule.synthesis or "(not synthesized)",
+            volatile_tail=capsule.volatile_tail or "",
         )
 
 

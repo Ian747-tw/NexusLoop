@@ -1,0 +1,586 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.12, pytest-9.0.3, pluggy-1.6.0 -- /home/ianchen951011/projects/NexusLoop/.claude/worktrees/consolidated-fixes/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/ianchen951011/projects/NexusLoop/.claude/worktrees/consolidated-fixes
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+plugins: asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 47 items
+
+tests/e2e_user/scenarios/test_12h_overnight_smoke.py::test_12h_overnight_smoke FAILED [  2%]
+tests/e2e_user/scenarios/test_capability_postcondition_fail_rolls_back.py::TestCapabilityPostconditionFailRollsBack::test_postcondition_failure_raises_exception PASSED [  4%]
+tests/e2e_user/scenarios/test_capability_postcondition_fail_rolls_back.py::TestCapabilityPostconditionFailRollsBack::test_successful_postcondition_commits PASSED [  6%]
+tests/e2e_user/scenarios/test_capability_postcondition_fail_rolls_back.py::TestCapabilityPostconditionFailRollsBack::test_exception_during_action_triggers_rollback PASSED [  8%]
+tests/e2e_user/scenarios/test_capability_postcondition_fail_rolls_back.py::TestCapabilityPostconditionFailRollsBack::test_rollback_preserves_git_state PASSED [ 10%]
+tests/e2e_user/scenarios/test_capability_postcondition_fail_rolls_back.py::TestCapabilityPostconditionFailRollsBack::test_capability_token_is_passed_to_elastic_txn PASSED [ 12%]
+tests/e2e_user/scenarios/test_capability_token_expires_after_ttl.py::TestCapabilityTokenExpiresAfterTTL::test_capability_token_has_ttl PASSED [ 14%]
+tests/e2e_user/scenarios/test_capability_token_expires_after_ttl.py::TestCapabilityTokenExpiresAfterTTL::test_capability_token_expires_after_ttl PASSED [ 17%]
+tests/e2e_user/scenarios/test_capability_token_expires_after_ttl.py::TestCapabilityTokenExpiresAfterTTL::test_token_not_expired_within_ttl PASSED [ 19%]
+tests/e2e_user/scenarios/test_capability_token_expires_after_ttl.py::TestCapabilityTokenExpiresAfterTTL::test_token_has_unique_id PASSED [ 21%]
+tests/e2e_user/scenarios/test_dashboard_launches.py::test_dashboard_serves_locally FAILED [ 23%]
+tests/e2e_user/scenarios/test_first_install.py::test_user_can_install_and_see_help PASSED [ 25%]
+tests/e2e_user/scenarios/test_first_install.py::test_user_sees_version PASSED [ 27%]
+tests/e2e_user/scenarios/test_fs_archive_and_restore.py::TestFsArchiveAndRestore::test_archive_and_restore_roundtrip PASSED [ 29%]
+tests/e2e_user/scenarios/test_fs_archive_and_restore.py::TestFsArchiveAndRestore::test_archive_without_capability_denied PASSED [ 31%]
+tests/e2e_user/scenarios/test_fs_archive_and_restore.py::TestFsArchiveAndRestore::test_workspace_new_creates_scratch_structure PASSED [ 34%]
+tests/e2e_user/scenarios/test_hard_compact_produces_deterministic_capsule.py::test_hard_compact_produces_deterministic_capsule PASSED [ 36%]
+tests/e2e_user/scenarios/test_hard_compact_produces_deterministic_capsule.py::test_hard_compact_triggers_at_threshold PASSED [ 38%]
+tests/e2e_user/scenarios/test_hard_compact_produces_deterministic_capsule.py::test_hard_compact_respects_max_per_500_events PASSED [ 40%]
+tests/e2e_user/scenarios/test_init_build_mode.py::test_user_inits_empty_project_in_build_mode FAILED [ 42%]
+tests/e2e_user/scenarios/test_init_improve_mode.py::test_user_inits_existing_project_in_improve_mode PASSED [ 44%]
+tests/e2e_user/scenarios/test_irreplaceable_demos.py::test_irreplaceable_demo_status_flow PASSED [ 46%]
+tests/e2e_user/scenarios/test_mcp_code_read_edit_no_rm.py::test_mcp_code_read_edit_no_rm FAILED [ 48%]
+tests/e2e_user/scenarios/test_mcp_hypothesis_crud.py::test_mcp_hypothesis_crud FAILED [ 51%]
+tests/e2e_user/scenarios/test_mcp_policy_denies_on_rule_violation.py::test_mcp_policy_denies_on_rule_violation FAILED [ 53%]
+tests/e2e_user/scenarios/test_mcp_spec_returns_pointer.py::test_mcp_spec_returns_pointer FAILED [ 55%]
+tests/e2e_user/scenarios/test_package_install_via_pkg_mcp.py::test_user_can_install_package_through_documented_cli_surface PASSED [ 57%]
+tests/e2e_user/scenarios/test_pkg_install_with_capability_token.py::TestPkgInstallWithCapabilityToken::test_pkg_add_with_valid_capability_token PASSED [ 59%]
+tests/e2e_user/scenarios/test_pkg_install_with_capability_token.py::TestPkgInstallWithCapabilityToken::test_pkg_add_without_capability_token_denied PASSED [ 61%]
+tests/e2e_user/scenarios/test_pkg_install_with_capability_token.py::TestPkgInstallWithCapabilityToken::test_pkg_remove_with_capability_token PASSED [ 63%]
+tests/e2e_user/scenarios/test_policy_blocks_bad_action.py::test_policy_engine_blocks_rule_violation PASSED [ 65%]
+tests/e2e_user/scenarios/test_provider_anthropic_dry_run.py::test_provider_anthropic_dry_run FAILED [ 68%]
+tests/e2e_user/scenarios/test_provider_ollama_dry_run.py::test_provider_ollama_dry_run FAILED [ 70%]
+tests/e2e_user/scenarios/test_provider_openai_dry_run.py::test_provider_openai_dry_run FAILED [ 72%]
+tests/e2e_user/scenarios/test_resume_across_sessions.py::test_user_can_resume_after_session_death FAILED [ 74%]
+tests/e2e_user/scenarios/test_resume_loads_handoff_and_continues.py::test_resume_loads_handoff_and_continues PASSED [ 76%]
+tests/e2e_user/scenarios/test_resume_loads_handoff_and_continues.py::test_resume_rejects_spec_hash_mismatch FAILED [ 78%]
+tests/e2e_user/scenarios/test_resume_loads_handoff_and_continues.py::test_resume_with_message_merges_guidance FAILED [ 80%]
+tests/e2e_user/scenarios/test_run_once.py::test_user_can_run_once_dry_run FAILED [ 82%]
+tests/e2e_user/scenarios/test_shell_denies_write_outside_scratch.py::TestShellDeniesWriteOutsideScratch::test_shell_exec_in_scratch_allowed PASSED [ 85%]
+tests/e2e_user/scenarios/test_shell_denies_write_outside_scratch.py::TestShellDeniesWriteOutsideScratch::test_shell_exec_dangerous_cwd_denied PASSED [ 87%]
+tests/e2e_user/scenarios/test_shell_denies_write_outside_scratch.py::TestShellDeniesWriteOutsideScratch::test_shell_exec_ttl_exceeds_limit_denied PASSED [ 89%]
+tests/e2e_user/scenarios/test_shell_denies_write_outside_scratch.py::TestShellDeniesWriteOutsideScratch::test_shell_exec_allowlisted_commands_work PASSED [ 91%]
+tests/e2e_user/scenarios/test_skill_dispatch_slash_command.py::test_skill_dispatch_slash_command FAILED [ 93%]
+tests/e2e_user/scenarios/test_soft_compact_emits_event_at_threshold.py::test_soft_compact_emits_event_at_threshold PASSED [ 95%]
+tests/e2e_user/scenarios/test_soft_compact_emits_event_at_threshold.py::test_soft_compact_triggers_on_token_threshold PASSED [ 97%]
+tests/e2e_user/scenarios/test_soft_compact_emits_event_at_threshold.py::test_soft_compact_does_not_fire_below_threshold PASSED [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_12h_overnight_smoke ___________________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e57e1d30>
+
+    @pytest.mark.phase_m2
+    @pytest.mark.slow
+    def test_12h_overnight_smoke(sandbox) -> None:
+        """Accelerated version: forces handoffs every 2 minutes, runs 10 minutes.
+    
+        Validates: cycles >=10, handoffs >=2, 0 violations, >=3 capability flows.
+        """
+        sandbox.install_from_current_repo()
+        project = sandbox.init_project(mode="improve")
+    
+        # Run accelerated overnight (10 min with forced handoffs)
+        result = sandbox.run_cli(
+            ["run", "--once", "--dry-run"],  # dry-run for CI safety
+            cwd=project,
+            timeout=600,
+        )
+>       assert result.exit_code == 0
+E       AssertionError: assert 1 == 0
+E        +  where 1 = CommandResult(args=['run', '--once', '--dry-run'], cwd=PosixPath('/tmp/nxl-e2e-_pzjyj5t/demo_proj'), exit_code=1, stdout='[✗] nxl run: no provider selected. Options:\n  --provider anthropic|openai|ollama\n  NXL_PROVIDER=anthropic|openai|ollama\n  operations.default_provider in project.yaml\n', stderr='').exit_code
+
+tests/e2e_user/scenarios/test_12h_overnight_smoke.py:21: AssertionError
+________________________ test_dashboard_serves_locally _________________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e576a990>
+
+    @pytest.mark.phase_m3
+    def test_dashboard_serves_locally(sandbox) -> None:
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.init_project(mode="improve")
+    
+        with sandbox.run_cli_background(
+            ["dashboard", "--project-dir", str(project), "--port", "18765"],
+            cwd=project,
+        ):
+            sandbox.wait_for_port(18765, timeout=30)
+            response = sandbox.http_get("http://127.0.0.1:18765/")
+    
+        assert response.status_code == 200
+        assert "Live" in response.text
+>       assert "Leaderboard" in response.text
+E       assert 'Leaderboard' in '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n  <title>NexusLoop Dashboard</title>\n  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>\n  <style>\n    /* ── CSS Variables ──────────────────────────────────────────── */\n    :root {\n      --bg:         #0d1117;\n      --card-bg:    #161b22;\n      --border:     #30363d;\n      --text:       #e6edf3;\n      --text-muted: #8b949e;\n      --green:      #3fb950;\n      --red:        #f85149;\n      --yellow:     #d29922;\n      --blue:       #388bfd;\n      --purple:     #a5a5ff;\n      --radius:     8px;\n      --gap:        16px;\n    }\n\n    /* ── Reset ──────────────────────────────────────────────────── */\n    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n\n    body {\n      background: var(--bg);\n      color: var(--text);\n      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;\n      font-size: 14px;\n      line-height: 1.5;\n      min-height: 100vh;\n    }\n\n    /* ── Layout helpers ─────────────────────────────────────────── */\n   ..._es = new EventSource(\'/events\');\n\n  _es.addEventListener(\'update\', (e) => {\n    try {\n      const data = JSON.parse(e.data);\n      setConnected(true);\n      updateDashboard(data);\n    } catch (err) {\n      console.warn(\'Dashboard parse error:\', err);\n    }\n  });\n\n  _es.addEventListener(\'ping\', () => {\n    setConnected(true);\n  });\n\n  _es.addEventListener(\'error\', () => {\n    setConnected(false);\n    _es.close();\n    _es = null;\n    _reconnectTimer = setTimeout(connect, 3000);\n  });\n\n  // Generic message fallback (event type "message")\n  _es.onmessage = (e) => {\n    try {\n      const data = JSON.parse(e.data);\n      setConnected(true);\n      updateDashboard(data);\n    } catch (_) {}\n  };\n}\n\n/* ═══════════════════════════════════════════════════════════════════\n   Bootstrap: also fetch initial data via REST so we\'re not blank\n════════════════════════════════════════════════════════════════════ */\nfunction fetchInitialData() {\n  fetch(\'/api/data\')\n    .then(r => r.ok ? r.json() : null)\n    .then(data => { if (data) updateDashboard(data); })\n    .catch(() => {});\n}\n\nfetchInitialData();\nconnect();\n</script>\n</body>\n</html>\n'
+E        +  where '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n  <title>NexusLoop Dashboard</title>\n  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>\n  <style>\n    /* ── CSS Variables ──────────────────────────────────────────── */\n    :root {\n      --bg:         #0d1117;\n      --card-bg:    #161b22;\n      --border:     #30363d;\n      --text:       #e6edf3;\n      --text-muted: #8b949e;\n      --green:      #3fb950;\n      --red:        #f85149;\n      --yellow:     #d29922;\n      --blue:       #388bfd;\n      --purple:     #a5a5ff;\n      --radius:     8px;\n      --gap:        16px;\n    }\n\n    /* ── Reset ──────────────────────────────────────────────────── */\n    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n\n    body {\n      background: var(--bg);\n      color: var(--text);\n      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;\n      font-size: 14px;\n      line-height: 1.5;\n      min-height: 100vh;\n    }\n\n    /* ── Layout helpers ─────────────────────────────────────────── */\n   ..._es = new EventSource(\'/events\');\n\n  _es.addEventListener(\'update\', (e) => {\n    try {\n      const data = JSON.parse(e.data);\n      setConnected(true);\n      updateDashboard(data);\n    } catch (err) {\n      console.warn(\'Dashboard parse error:\', err);\n    }\n  });\n\n  _es.addEventListener(\'ping\', () => {\n    setConnected(true);\n  });\n\n  _es.addEventListener(\'error\', () => {\n    setConnected(false);\n    _es.close();\n    _es = null;\n    _reconnectTimer = setTimeout(connect, 3000);\n  });\n\n  // Generic message fallback (event type "message")\n  _es.onmessage = (e) => {\n    try {\n      const data = JSON.parse(e.data);\n      setConnected(true);\n      updateDashboard(data);\n    } catch (_) {}\n  };\n}\n\n/* ═══════════════════════════════════════════════════════════════════\n   Bootstrap: also fetch initial data via REST so we\'re not blank\n════════════════════════════════════════════════════════════════════ */\nfunction fetchInitialData() {\n  fetch(\'/api/data\')\n    .then(r => r.ok ? r.json() : null)\n    .then(data => { if (data) updateDashboard(data); })\n    .catch(() => {});\n}\n\nfetchInitialData();\nconnect();\n</script>\n</body>\n</html>\n' = HttpResponse(status_code=200, text='<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n  <title>NexusLoop Dashboard</title>\n  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>\n  <style>\n    /* ── CSS Variables ──────────────────────────────────────────── */\n    :root {\n      --bg:         #0d1117;\n      --card-bg:    #161b22;\n      --border:     #30363d;\n      --text:       #e6edf3;\n      --text-muted: #8b949e;\n      --green:      #3fb950;\n      --red:        #f85149;\n      --yellow:     #d29922;\n      --blue:       #388bfd;\n      --purple:     #a5a5ff;\n      --radius:     8px;\n      --gap:        16px;\n    }\n\n    /* ── Reset ──────────────────────────────────────────────────── */\n    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n\n    body {\n      background: var(--bg);\n      color: var(--text);\n      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;\n      font-size: 14px;\n      line-height: 1.5;\n      min-height: 100vh;\n    }\n\n    /* ── Layout helpers ────────────────...es = new EventSource(\'/events\');\n\n  _es.addEventListener(\'update\', (e) => {\n    try {\n      const data = JSON.parse(e.data);\n      setConnected(true);\n      updateDashboard(data);\n    } catch (err) {\n      console.warn(\'Dashboard parse error:\', err);\n    }\n  });\n\n  _es.addEventListener(\'ping\', () => {\n    setConnected(true);\n  });\n\n  _es.addEventListener(\'error\', () => {\n    setConnected(false);\n    _es.close();\n    _es = null;\n    _reconnectTimer = setTimeout(connect, 3000);\n  });\n\n  // Generic message fallback (event type "message")\n  _es.onmessage = (e) => {\n    try {\n      const data = JSON.parse(e.data);\n      setConnected(true);\n      updateDashboard(data);\n    } catch (_) {}\n  };\n}\n\n/* ═══════════════════════════════════════════════════════════════════\n   Bootstrap: also fetch initial data via REST so we\'re not blank\n════════════════════════════════════════════════════════════════════ */\nfunction fetchInitialData() {\n  fetch(\'/api/data\')\n    .then(r => r.ok ? r.json() : null)\n    .then(data => { if (data) updateDashboard(data); })\n    .catch(() => {});\n}\n\nfetchInitialData();\nconnect();\n</script>\n</body>\n</html>\n').text
+
+tests/e2e_user/scenarios/test_dashboard_launches.py:21: AssertionError
+_________________ test_user_inits_empty_project_in_build_mode __________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e5686b10>
+
+    @pytest.mark.phase_m0
+    def test_user_inits_empty_project_in_build_mode(sandbox) -> None:
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.make_empty_project_dir()
+    
+        result = sandbox.run_cli(
+            [
+                "init",
+                "--auto",
+                "--project-mode",
+                "build",
+                "--skill-pack",
+                "drl",
+                "--plugin",
+                "cc",
+            ],
+            cwd=project,
+        )
+    
+        assert result.exit_code == 0, result.stdout + result.stderr
+        sandbox.assert_file_exists(project / ".nxl" / "state.json")
+        sandbox.assert_file_exists(project / ".nxl" / "spec_compact.md")
+>       sandbox.assert_file_exists(project / ".claude" / "commands" / "nxl-init.md")
+
+tests/e2e_user/scenarios/test_init_build_mode.py:29: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <e2e_user.sandbox.Sandbox object at 0x7ff3e5686b10>
+path = PosixPath('/tmp/nxl-e2e-yr740f66/demo_proj/.claude/commands/nxl-init.md')
+
+    def assert_file_exists(self, path: Path) -> None:
+>       assert path.exists(), f"Expected file to exist: {path}"
+               ^^^^^^^^^^^^^
+E       AssertionError: Expected file to exist: /tmp/nxl-e2e-yr740f66/demo_proj/.claude/commands/nxl-init.md
+
+tests/e2e_user/sandbox.py:158: AssertionError
+________________________ test_mcp_code_read_edit_no_rm _________________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e55219d0>
+
+    @pytest.mark.phase_m2
+    def test_mcp_code_read_edit_no_rm(sandbox) -> None:
+        """Verify code MCP exposes only read/list/search/edit — no delete/rm operations.
+    
+        The code MCP is read-first: it allows reading files, listing files by glob,
+        searching file contents, and editing files (replace). It must never expose
+        delete, rm, or write operations that could destroy project files.
+        """
+        # Install NexusLoop
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+    
+        project = sandbox.init_project(mode="improve")
+    
+        # Create a minimal project.yaml
+        (project / "project.yaml").write_text(
+            "name: test-project\nmode: explore\nmetric: reward\n"
+        )
+    
+        sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=300)
+    
+        events = sandbox.list_events(project)
+    
+        # Check for code MCP tool events
+        code_events = [
+            e for e in events
+            if e.get("kind") == "ToolRequested"
+            and e.get("tool_name", "").startswith("code.")
+        ]
+    
+        code_tool_names = {e.get("tool_name") for e in code_events}
+    
+        # Verify allowed operations are present
+        allowed_ops = {"code.read_file", "code.list_files", "code.search", "code.edit_file"}
+        present_allowed = code_tool_names & allowed_ops
+    
+>       assert len(present_allowed) >= 1, (
+            f"Expected at least one allowed code MCP operation, "
+            f"got tools={code_tool_names}. Last 3 events: {events[-3:]}"
+        )
+E       AssertionError: Expected at least one allowed code MCP operation, got tools=set(). Last 3 events: []
+E       assert 0 >= 1
+E        +  where 0 = len(set())
+
+tests/e2e_user/scenarios/test_mcp_code_read_edit_no_rm.py:43: AssertionError
+___________________________ test_mcp_hypothesis_crud ___________________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e5637850>
+
+    @pytest.mark.phase_m2
+    def test_mcp_hypothesis_crud(sandbox) -> None:
+        """Verify hypothesis MCP supports full CRUD cycle: create, list, get, close.
+    
+        The hypothesis MCP manages experimental hypotheses with create/list/get/close
+        operations. This test verifies these operations work via the policy-gated
+        MCP interface.
+        """
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+    
+        project = sandbox.init_project(mode="improve")
+    
+        # Create a minimal project.yaml
+        (project / "project.yaml").write_text(
+            "name: test-project\nmode: explore\nmetric: reward\n"
+        )
+    
+        # Run a cycle that triggers hypothesis MCP
+        sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=300)
+    
+        events = sandbox.list_events(project)
+    
+        # Check for hypothesis tool events (create, list, get, close)
+        hypo_events = [
+            e for e in events
+            if e.get("kind") == "ToolRequested"
+            and e.get("tool_name", "").startswith("hypothesis.")
+        ]
+    
+        # Verify at least hypothesis.create and hypothesis.list were invoked
+        hypo_tool_names = {e.get("tool_name") for e in hypo_events}
+    
+>       assert "hypothesis.create" in hypo_tool_names or len(hypo_events) >= 1, (
+            f"Expected hypothesis MCP tool events, got tool_names={hypo_tool_names}. "
+            f"Last 3 events: {events[-3:]}"
+        )
+E       AssertionError: Expected hypothesis MCP tool events, got tool_names=set(). Last 3 events: []
+E       assert ('hypothesis.create' in set() or 0 >= 1)
+E        +  where 0 = len([])
+
+tests/e2e_user/scenarios/test_mcp_hypothesis_crud.py:40: AssertionError
+___________________ test_mcp_policy_denies_on_rule_violation ___________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e5544050>
+
+    @pytest.mark.phase_m2
+    def test_mcp_policy_denies_on_rule_violation(sandbox) -> None:
+        """Verify policy engine denies shell.exec with ttl > 300 and cwd outside scratch.
+    
+        Two policy rules must be enforced:
+        1. shell.exec with ttl > 300 must be denied (TTL limit)
+        2. shell.exec with cwd outside scratch directory must be denied (path restriction)
+    
+        These are core NON_NEGOTIABLE constraints that the policy engine must enforce.
+        """
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+    
+        project = sandbox.init_project(mode="improve")
+    
+        # Create a minimal project.yaml
+        (project / "project.yaml").write_text(
+            "name: test-project\nmode: explore\nmetric: reward\n"
+        )
+    
+        # Test 1: shell.exec with ttl > 300 should be denied
+        # (This tests the TTL limit rule)
+        result_ttl = sandbox.run_cli(
+            [
+                "check",
+                "--action",
+                "shell.exec",
+                "--details",
+                '{"ttl": 400, "cmd": "echo test"}',
+            ],
+            cwd=project,
+        )
+>       assert result_ttl.exit_code != 0, (
+            f"shell.exec with ttl=400 should be denied, but got exit_code={result_ttl.exit_code}. "
+            f"stdout: {result_ttl.stdout}, stderr: {result_ttl.stderr}"
+        )
+E       AssertionError: shell.exec with ttl=400 should be denied, but got exit_code=0. stdout: [✓] ALLOWED  action='shell.exec'  mode='open'
+E           Reason: Mode 'open': all actions permitted.
+E         , stderr: 
+E       assert 0 != 0
+E        +  where 0 = CommandResult(args=['check', '--action', 'shell.exec', '--details', '{"ttl": 400, "cmd": "echo test"}'], cwd=PosixPath('/tmp/nxl-e2e-bun8qxzq/demo_proj'), exit_code=0, stdout="[✓] ALLOWED  action='shell.exec'  mode='open'\n  Reason: Mode 'open': all actions permitted.\n", stderr='').exit_code
+
+tests/e2e_user/scenarios/test_mcp_policy_denies_on_rule_violation.py:39: AssertionError
+________________________ test_mcp_spec_returns_pointer _________________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e5548500>
+
+    @pytest.mark.phase_m2
+    def test_mcp_spec_returns_pointer(sandbox) -> None:
+        """Verify spec MCP is invoked during run --once and emits ToolRequested events.
+    
+        The spec MCP (spec.get_project, spec.get_operations) is a read-first MCP
+        that reads project.yaml and returns pointers. This test verifies the MCP
+        is called during a dry-run cycle and its events appear in the event log.
+        """
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+    
+        project = sandbox.init_project(mode="improve")
+    
+        # Create a minimal project.yaml with required fields
+        project_yaml = project / "project.yaml"
+        project_yaml.write_text(
+            "name: test-project\n"
+            "mode: explore\n"
+            "metric: reward\n"
+            "operations:\n"
+            "  default_provider: anthropic\n"
+        )
+    
+        sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=300)
+    
+        # Exit code 0 means the run completed (even in dry-run mode)
+        # The spec MCP should have been called to read project.yaml
+        events = sandbox.list_events(project)
+    
+        # Verify spec MCP events in log (tool requested events for spec.*)
+        spec_events = [
+            e for e in events
+            if e.get("kind") == "ToolRequested"
+            and e.get("tool_name", "").startswith("spec.")
+        ]
+    
+>       assert len(spec_events) >= 1, (
+            f"Expected at least 1 spec MCP ToolRequested event, got {len(spec_events)} events. "
+            f"Last 3 events: {events[-3:]}"
+        )
+E       AssertionError: Expected at least 1 spec MCP ToolRequested event, got 0 events. Last 3 events: []
+E       assert 0 >= 1
+E        +  where 0 = len([])
+
+tests/e2e_user/scenarios/test_mcp_spec_returns_pointer.py:43: AssertionError
+_______________________ test_provider_anthropic_dry_run ________________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e5589e10>
+
+    @pytest.mark.phase_m2
+    def test_provider_anthropic_dry_run(sandbox) -> None:
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.init_project(mode="improve")
+    
+        result = sandbox.run_cli(
+            ["run", "--once", "--provider", "anthropic", "--dry-run"],
+            cwd=project,
+            timeout=300,
+        )
+>       assert result.exit_code == 0, result.stdout + result.stderr
+E       AssertionError: [~] Dry-run: would execute one cycle with provider.
+E         [~]   (actual execution skipped — no experiment started)
+E         [✗] Unexpected error: Cannot instantiate typing.Union
+E         
+E       assert 1 == 0
+E        +  where 1 = CommandResult(args=['run', '--once', '--provider', 'anthropic', '--dry-run'], cwd=PosixPath('/tmp/nxl-e2e-6fykyu30/demo_proj'), exit_code=1, stdout='[~] Dry-run: would execute one cycle with provider.\n[~]   (actual execution skipped — no experiment started)\n[✗] Unexpected error: Cannot instantiate typing.Union\n', stderr='').exit_code
+
+tests/e2e_user/scenarios/test_provider_anthropic_dry_run.py:18: AssertionError
+_________________________ test_provider_ollama_dry_run _________________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e5585d90>
+
+    @pytest.mark.phase_m2
+    def test_provider_ollama_dry_run(sandbox) -> None:
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.init_project(mode="improve")
+    
+        result = sandbox.run_cli(
+            ["run", "--once", "--provider", "ollama", "--dry-run"],
+            cwd=project,
+            timeout=300,
+        )
+>       assert result.exit_code == 0, result.stdout + result.stderr
+E       AssertionError: [~] Dry-run: would execute one cycle with provider.
+E         [~]   (actual execution skipped — no experiment started)
+E         [✗] Unexpected error: Cannot instantiate typing.Union
+E         
+E       assert 1 == 0
+E        +  where 1 = CommandResult(args=['run', '--once', '--provider', 'ollama', '--dry-run'], cwd=PosixPath('/tmp/nxl-e2e-nwdl4kji/demo_proj'), exit_code=1, stdout='[~] Dry-run: would execute one cycle with provider.\n[~]   (actual execution skipped — no experiment started)\n[✗] Unexpected error: Cannot instantiate typing.Union\n', stderr='').exit_code
+
+tests/e2e_user/scenarios/test_provider_ollama_dry_run.py:18: AssertionError
+_________________________ test_provider_openai_dry_run _________________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e56b2f90>
+
+    @pytest.mark.phase_m2
+    def test_provider_openai_dry_run(sandbox) -> None:
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.init_project(mode="improve")
+    
+        result = sandbox.run_cli(
+            ["run", "--once", "--provider", "openai", "--dry-run"],
+            cwd=project,
+            timeout=300,
+        )
+>       assert result.exit_code == 0, result.stdout + result.stderr
+E       AssertionError: [~] Dry-run: would execute one cycle with provider.
+E         [~]   (actual execution skipped — no experiment started)
+E         [✗] Unexpected error: Cannot instantiate typing.Union
+E         
+E       assert 1 == 0
+E        +  where 1 = CommandResult(args=['run', '--once', '--provider', 'openai', '--dry-run'], cwd=PosixPath('/tmp/nxl-e2e-y7dcrwif/demo_proj'), exit_code=1, stdout='[~] Dry-run: would execute one cycle with provider.\n[~]   (actual execution skipped — no experiment started)\n[✗] Unexpected error: Cannot instantiate typing.Union\n', stderr='').exit_code
+
+tests/e2e_user/scenarios/test_provider_openai_dry_run.py:18: AssertionError
+___________________ test_user_can_resume_after_session_death ___________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e55010d0>
+
+    @pytest.mark.phase_m1
+    def test_user_can_resume_after_session_death(sandbox) -> None:
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.init_project(mode="improve")
+    
+        before = sandbox.run_cli(["status"], cwd=project)
+        assert before.exit_code == 0, before.stdout + before.stderr
+    
+        result = sandbox.run_cli(["resume", "--project-dir", str(project), "--no-run"], cwd=project)
+>       assert result.exit_code == 0, result.stdout + result.stderr
+E       AssertionError: [✗] No events.jsonl found. Cannot resume.
+E         
+E       assert 1 == 0
+E        +  where 1 = CommandResult(args=['resume', '--project-dir', '/tmp/nxl-e2e-usun4kd_/demo_proj', '--no-run'], cwd=PosixPath('/tmp/nxl-e2e-usun4kd_/demo_proj'), exit_code=1, stdout='[✗] No events.jsonl found. Cannot resume.\n', stderr='').exit_code
+
+tests/e2e_user/scenarios/test_resume_across_sessions.py:16: AssertionError
+____________________ test_resume_rejects_spec_hash_mismatch ____________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e55994f0>
+
+    @pytest.mark.phase_m2
+    def test_resume_rejects_spec_hash_mismatch(sandbox) -> None:
+        """Resume should reject when project.yaml changed since handoff."""
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.init_project(mode="improve")
+    
+        # Write a HandoffRecorded event with spec_hash that won't match
+        events_path = project / ".nxl" / "events.jsonl"
+        handoff_event = {
+            "event_id": "01HAABBCCDD011122334455",
+            "timestamp": "2026-04-24T00:00:00Z",
+            "kind": "handoff_recorded",
+            "data": {
+                "handoff_id": "handoff-001",
+                "from_agent": "agent-1",
+                "to_agent": "agent-2",
+            },
+            "spec_hash": 99999,  # Different from current project.yaml hash
+            "event_cursor": [],
+        }
+        events_path.write_text(json.dumps(handoff_event) + "\n")
+    
+        # Run resume --no-run
+        result = sandbox.run_cli(
+            ["resume", "--project-dir", str(project), "--no-run"],
+            cwd=project,
+        )
+>       assert result.exit_code != 0, result.stdout + result.stderr
+E       AssertionError: [~] Handoff handoff-001 loaded. Resume capsule regenerated.
+E         
+E       assert 0 != 0
+E        +  where 0 = CommandResult(args=['resume', '--project-dir', '/tmp/nxl-e2e-sjvanm9d/demo_proj', '--no-run'], cwd=PosixPath('/tmp/nxl-e2e-sjvanm9d/demo_proj'), exit_code=0, stdout='[~] Handoff handoff-001 loaded. Resume capsule regenerated.\n', stderr='').exit_code
+
+tests/e2e_user/scenarios/test_resume_loads_handoff_and_continues.py:71: AssertionError
+___________________ test_resume_with_message_merges_guidance ___________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e55551d0>
+
+    @pytest.mark.phase_m2
+    def test_resume_with_message_merges_guidance(sandbox) -> None:
+        """Resume with --message should merge the message into volatile_tail."""
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.init_project(mode="improve")
+    
+        # Write a HandoffRecorded event with some event_cursor
+        events_path = project / ".nxl" / "events.jsonl"
+        handoff_event = {
+            "event_id": "01HAABBCCDD011122334455",
+            "timestamp": "2026-04-24T00:00:00Z",
+            "kind": "handoff_recorded",
+            "data": {
+                "handoff_id": "handoff-001",
+                "from_agent": "agent-1",
+                "to_agent": "agent-2",
+            },
+            "spec_hash": 0,
+            "event_cursor": [
+                {"kind": "MissionDeclared", "data": {"mission": "Test mission"}},
+            ],
+        }
+        events_path.write_text(json.dumps(handoff_event) + "\n")
+    
+        # Run resume --no-run with --message
+        result = sandbox.run_cli(
+            [
+                "resume",
+                "--project-dir", str(project),
+                "--no-run",
+                "--message", "Focus on the synthesis section",
+            ],
+            cwd=project,
+        )
+>       assert result.exit_code == 0, result.stdout + result.stderr
+E       AssertionError: [✗] Unexpected error: 'ResumeCapsule' object has no attribute 'volatile_tail'
+E         
+E       assert 1 == 0
+E        +  where 1 = CommandResult(args=['resume', '--project-dir', '/tmp/nxl-e2e-ijme17l5/demo_proj', '--no-run', '--message', 'Focus on the synthesis section'], cwd=PosixPath('/tmp/nxl-e2e-ijme17l5/demo_proj'), exit_code=1, stdout="[✗] Unexpected error: 'ResumeCapsule' object has no attribute 'volatile_tail'\n", stderr='').exit_code
+
+tests/e2e_user/scenarios/test_resume_loads_handoff_and_continues.py:110: AssertionError
+________________________ test_user_can_run_once_dry_run ________________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e5524050>
+
+    @pytest.mark.phase_m1
+    def test_user_can_run_once_dry_run(sandbox) -> None:
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.init_project(mode="improve")
+    
+        result = sandbox.run_cli(["run", "--once", "--dry-run"], cwd=project, timeout=600)
+    
+>       assert result.exit_code == 0, result.stdout + result.stderr
+E       AssertionError: [✗] nxl run: no provider selected. Options:
+E           --provider anthropic|openai|ollama
+E           NXL_PROVIDER=anthropic|openai|ollama
+E           operations.default_provider in project.yaml
+E         
+E       assert 1 == 0
+E        +  where 1 = CommandResult(args=['run', '--once', '--dry-run'], cwd=PosixPath('/tmp/nxl-e2e-pj1_jxx8/demo_proj'), exit_code=1, stdout='[✗] nxl run: no provider selected. Options:\n  --provider anthropic|openai|ollama\n  NXL_PROVIDER=anthropic|openai|ollama\n  operations.default_provider in project.yaml\n', stderr='').exit_code
+
+tests/e2e_user/scenarios/test_run_once.py:14: AssertionError
+______________________ test_skill_dispatch_slash_command _______________________
+
+sandbox = <e2e_user.sandbox.Sandbox object at 0x7ff3e5539b50>
+
+    @pytest.mark.phase_m2
+    def test_skill_dispatch_slash_command(sandbox) -> None:
+        """Install NexusLoop, init project, run cycle that triggers /noise_floor_estimate.
+    
+        Verifies SkillInvoked and SkillCompleted events appear in events.jsonl.
+        """
+        install = sandbox.install_from_current_repo()
+        assert install.exit_code == 0, install.stdout + install.stderr
+        project = sandbox.init_project(mode="improve")
+    
+        # Run nxl run --once with skill-loaded project
+        result = sandbox.run_cli(
+            ["run", "--once", "--dry-run"],
+            cwd=project,
+            timeout=300,
+        )
+>       assert result.exit_code == 0, result.stdout + result.stderr
+E       AssertionError: [✗] nxl run: no provider selected. Options:
+E           --provider anthropic|openai|ollama
+E           NXL_PROVIDER=anthropic|openai|ollama
+E           operations.default_provider in project.yaml
+E         
+E       assert 1 == 0
+E        +  where 1 = CommandResult(args=['run', '--once', '--dry-run'], cwd=PosixPath('/tmp/nxl-e2e-fehg6y25/demo_proj'), exit_code=1, stdout='[✗] nxl run: no provider selected. Options:\n  --provider anthropic|openai|ollama\n  NXL_PROVIDER=anthropic|openai|ollama\n  operations.default_provider in project.yaml\n', stderr='').exit_code
+
+tests/e2e_user/scenarios/test_skill_dispatch_slash_command.py:23: AssertionError
+=========================== short test summary info ============================
+FAILED tests/e2e_user/scenarios/test_12h_overnight_smoke.py::test_12h_overnight_smoke
+FAILED tests/e2e_user/scenarios/test_dashboard_launches.py::test_dashboard_serves_locally
+FAILED tests/e2e_user/scenarios/test_init_build_mode.py::test_user_inits_empty_project_in_build_mode
+FAILED tests/e2e_user/scenarios/test_mcp_code_read_edit_no_rm.py::test_mcp_code_read_edit_no_rm
+FAILED tests/e2e_user/scenarios/test_mcp_hypothesis_crud.py::test_mcp_hypothesis_crud
+FAILED tests/e2e_user/scenarios/test_mcp_policy_denies_on_rule_violation.py::test_mcp_policy_denies_on_rule_violation
+FAILED tests/e2e_user/scenarios/test_mcp_spec_returns_pointer.py::test_mcp_spec_returns_pointer
+FAILED tests/e2e_user/scenarios/test_provider_anthropic_dry_run.py::test_provider_anthropic_dry_run
+FAILED tests/e2e_user/scenarios/test_provider_ollama_dry_run.py::test_provider_ollama_dry_run
+FAILED tests/e2e_user/scenarios/test_provider_openai_dry_run.py::test_provider_openai_dry_run
+FAILED tests/e2e_user/scenarios/test_resume_across_sessions.py::test_user_can_resume_after_session_death
+FAILED tests/e2e_user/scenarios/test_resume_loads_handoff_and_continues.py::test_resume_rejects_spec_hash_mismatch
+FAILED tests/e2e_user/scenarios/test_resume_loads_handoff_and_continues.py::test_resume_with_message_merges_guidance
+FAILED tests/e2e_user/scenarios/test_run_once.py::test_user_can_run_once_dry_run
+FAILED tests/e2e_user/scenarios/test_skill_dispatch_slash_command.py::test_skill_dispatch_slash_command
+================== 15 failed, 32 passed in 209.12s (0:03:29) ===================

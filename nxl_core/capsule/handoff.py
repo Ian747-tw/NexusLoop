@@ -67,7 +67,9 @@ class HandoffRecord(BaseModel):
     def verify_spec(self, project_yaml: Path) -> bool:
         """Verify project.yaml spec_hash matches this HandoffRecord's spec_hash."""
         if not project_yaml.exists():
-            return True  # No spec to verify
+            if self.spec_hash == 0:
+                return True  # spec_hash=0 means no project.yaml was used at handoff time
+            return False  # spec_hash != 0 but project.yaml gone → treat as mismatch
         data = yaml.safe_load(project_yaml.read_text())
         spec_hash = hash(yaml.dump(data, sort_keys=True))
         return spec_hash == self.spec_hash

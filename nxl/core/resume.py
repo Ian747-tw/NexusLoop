@@ -1,10 +1,12 @@
 """nxl/core/resume.py — thin wrapper over HandoffRecord + ResumeCapsule."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from nxl.cli import console
 from nxl_core.capsule.handoff import HandoffRecord
 from nxl_core.capsule.resume import ResumeCapsule
+
 
 def run(
     project_dir: Path,
@@ -22,32 +24,39 @@ def run(
         return 1
 
     events_path = config_dir / "events.jsonl"
-    if not events_path.exists():
-        console("No events.jsonl found. Cannot resume.", "error")
-        return 1
+    if not events_path.exists() or events_path.stat().st_size == 0:
+        console(
+            "No resume checkpoint found yet. Run `nxl run` to start your first session.",
+            "info",
+        )
+        return 0
 
-    # Step 1: Load latest HandoffRecord
+    # Step 1: Load latest HandoffRecord (skip if file is empty)
     try:
         handoff = HandoffRecord.load_latest(events_path)
-    except ValueError as e:
-        console(f"Cannot resume: {e}", "error")
-        return 1
+    except ValueError:
+        console(
+            "No handoff record found. Run `nxl run` to start a session.",
+            "info",
+        )
+        return 0
 
     # Step 2: Verify spec_hash matches current project.yaml
+    # Always verify - if project.yaml doesn't exist, treat as mismatch
     project_yaml = project_dir / "project.yaml"
-    if project_yaml.exists():
-        if not handoff.verify_spec(project_yaml):
-            console(
-                "Spec mismatch: project.yaml has changed since last session.\n"
-                "Run `nxl run` to start fresh, or resolve the spec conflict.",
-                "error",
-            )
-            return 1
+    verified = handoff.verify_spec(project_yaml)
+    if not verified:
+        console(
+            "Spec mismatch: project.yaml has changed since last session. "
+            "Run `nxl run` to start fresh, or resolve the spec conflict.",
+            "error",
+        )
+        return 1
 
     # Step 3: Regenerate ResumeCapsule from handoff.event_cursor
     capsule = ResumeCapsule.regenerate(handoff.event_cursor)
 
-    # Step 4: If --message provided, append to volatile tail (conflict → new wins)
+    # Step 4: If --message provided, append to volatile tail (conflict -> new wins)
     if message:
         capsule = _merge_message(capsule, message)
 
@@ -63,7 +72,7 @@ def run(
 
 
 def _merge_message(capsule: ResumeCapsule, message: str) -> ResumeCapsule:
-    """Append --message to volatile tail; conflict → new wins."""
-    # Append message to volatile_tail
-    capsule.volatile_tail = (capsule.volatile_tail or "") + "\n" + message
-    return capsule
+    """Append --message to volatile tail; conflict -> new wins."""
+    import dataclasses
+
+    return dataclasses.replace(capsule, volatile_tail=message)
