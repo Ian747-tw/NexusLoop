@@ -51,7 +51,7 @@ jobs:
         run: uv run pytest mcps -q
 
       - name: Pytest — agentcore Python tests
-        run: uv run pytest agentcore/tests -q -k "not (test_ts or portalocker or ts_blocks)"
+        run: uv run pytest agentcore/tests -q -k "not test_ts"
 
       - name: Audit fork depth
         run: bash scripts/audit-fork-depth.sh || echo "audit reports planned seams as expected"
@@ -64,13 +64,7 @@ jobs:
         run: cd agentcore/server-fork && bun install
 
       - name: Single-writer perf budget
-        run: |
-          # Skipped: event-emitter.test.ts has a known Bun-specific issue where
-          # proper-lockfile reports ELOCKED immediately on first acquisition.
-          # This is a pre-existing test environment issue, not a runtime regression.
-          # The lock coordination itself (portalocker vs proper-lockfile) is known
-          # incompatible and documented as a known limitation.
-          echo "Single-writer perf budget: SKIPPED (known Bun test environment issue)"
+        run: bun test tests/event-emitter.test.ts --timeout=30000
 
       - name: Verify Priority 1 docs
         run: bash scripts/verify_priority_1.sh

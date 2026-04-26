@@ -1,7 +1,7 @@
 import { openSync, writeSync, fsyncSync, closeSync, existsSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
 import { resolve } from 'path';
-import * as properLockfile from 'proper-lockfile';
+import { withFlock } from '../src/util/posix-flock';
 
 /** Generate a ULID-formatted string (monotonic, URL-safe). */
 function _ulid(): string {
@@ -14,24 +14,16 @@ function _ulid(): string {
 export function emitEvent(event: Record<string, unknown>): void {
   const EVENT_LOG_PATH = resolve(process.cwd(), 'events.jsonl');
   const LOCK_PATH = EVENT_LOG_PATH + '.lock';
-  // Ensure the lock file exists (proper-lockfile uses mkdir which requires the path to not exist)
   if (!existsSync(LOCK_PATH)) {
     writeFileSync(LOCK_PATH, '');
   }
-  // Inject event_id and timestamp into the inner event when wrapped
   if (event.event && typeof event.event === 'object') {
     const inner = event.event as Record<string, unknown>;
     if (!inner.event_id) inner.event_id = _ulid();
     if (!inner.timestamp) inner.timestamp = new Date().toISOString();
   }
   const line = JSON.stringify(event) + '\n';
-  // Use lockfilePath so proper-lockfile locks the SAME file portalocker uses (events.jsonl.lock)
-  const release = properLockfile.lockSync(LOCK_PATH, {
-    lockfilePath: LOCK_PATH,
-    stale: 1,
-    updateAgeWhenOpening: true,
-  });
-  try {
+  withFlock(LOCK_PATH, () => {
     const fd = openSync(EVENT_LOG_PATH, 'a');
     try {
       writeSync(fd, line, undefined, 'utf-8');
@@ -39,9 +31,7 @@ export function emitEvent(event: Record<string, unknown>): void {
     } finally {
       closeSync(fd);
     }
-  } finally {
-    release();
-  }
+  });
 }
 
 export function emitEventBatch(
@@ -54,12 +44,7 @@ export function emitEventBatch(
     writeFileSync(LOCK_PATH, '');
   }
   const lines = events.map((e) => JSON.stringify(e) + '\n').join('');
-  const release = properLockfile.lockSync(LOCK_PATH, {
-    lockfilePath: LOCK_PATH,
-    stale: 1,
-    updateAgeWhenOpening: true,
-  });
-  try {
+  withFlock(LOCK_PATH, () => {
     const fd = openSync(EVENT_LOG_PATH, 'a');
     try {
       writeSync(fd, lines, undefined, 'utf-8');
@@ -67,7 +52,5 @@ export function emitEventBatch(
     } finally {
       closeSync(fd);
     }
-  } finally {
-    release();
-  }
+  });
 }

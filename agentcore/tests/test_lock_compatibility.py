@@ -1,11 +1,11 @@
 """
 agentcore/tests/test_lock_compatibility.py
 -----------------------------------------
-Lock-file parity test: verify proper-lockfile (TS) and portalocker (Python)
+Lock-file parity test: verify flock (TS via posix-flock) and portalocker (Python)
 coordinate on the same events.jsonl.lock companion file.
 
 Only if both lock implementations lock the same file can the single-writer
-invariant hold at runtime when the fork (proper-lockfile) and Python fallback
+invariant hold at runtime when the fork (flock) and Python fallback
 paths both attempt concurrent writes.
 
 Run: uv run pytest agentcore/tests/test_lock_compatibility.py -v
@@ -49,15 +49,14 @@ class TestLockCompatibility:
         lock_path_str = str(self.lock_path)
         with open(script_path, "w") as f:
             f.write(f"""
-import {{ lockSync, unlockSync }} from '{server_fork}/node_modules/proper-lockfile/index.js';
+import {{ withFlock }} from '{server_fork}/src/util/posix-flock.js';
 const lockPath = '{lock_path_str}';
-const release = lockSync(lockPath, {{ stale: 1 }});
 console.log('TS_LOCK_ACQUIRED');
-setTimeout(() => {{
-    try {{ unlockSync(release); }} catch (e) {{}}
-    console.log('TS_LOCK_RELEASED');
-    process.exit(0);
-}}, {duration_s * 1000});
+withFlock(lockPath, () => {{
+    Bun.sleepSync({duration_s * 1000});
+}});
+console.log('TS_LOCK_RELEASED');
+process.exit(0);
 """)
         self._ts_proc = subprocess.Popen(
             ["bun", "run", script_path],
@@ -143,11 +142,11 @@ setTimeout(() => {{
         script_path = str(self.events_path.parent / "_ts_lock_test.mjs")
         with open(script_path, "w") as f:
             f.write(f"""
-import {{ lockSync }} from '{server_fork}/node_modules/proper-lockfile/index.js';
+import {{ withFlock }} from '{server_fork}/src/util/posix-flock.js';
 const lockPath = '{lock_path_str}';
 const start = Date.now();
 try {{
-    lockSync(lockPath, {{ stale: 1, timeout: 500 }});
+    withFlock(lockPath, () => {{}}, false);
     console.log('TS_ACQUIRED_AFTER_' + (Date.now() - start) + 'ms');
 }} catch (e) {{
     console.log('TS_FAILED:' + e.code);

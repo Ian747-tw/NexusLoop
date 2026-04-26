@@ -65,3 +65,14 @@ design must change before merge.
    whose name is not the fork binary AND not a test pid, raise
    `RuntimeError("only fork may write events.jsonl at runtime")`. Test harness
    flag bypasses.
+
+## Implementation notes (P3.5e)
+
+The original decision assumed `proper-lockfile` as the TS lock. However,
+`proper-lockfile` uses mkdir-based locking which cannot coordinate with
+portalocker's flock(2). Both sides must call the same OS primitive.
+
+Resolution: TS now calls `flock(2)` directly via `bun:ffi` (see
+`server-fork/src/util/posix-flock.ts`). Python portalocker and TS flock now
+coordinate on `events.jsonl.lock`. The test `test_lock_compatibility.py`
+verifies both directions block correctly.
