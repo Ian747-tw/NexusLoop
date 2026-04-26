@@ -1,5 +1,6 @@
 import { PolicyClient } from '../../bridge/policy-client';
 import type { PolicyDecision, ToolCallRequest, ToolCallResult } from '../../bridge/protocol';
+import { isDraining, onCallStarted, onCallEnded } from './lifecycle-hooks';
 
 const policyClient = new PolicyClient();
 const TOOL_TIMEOUT_MS = 5000;
@@ -19,7 +20,13 @@ export async function dispatchWithPolicy(
   req: ToolCallRequest,
   executor: (name: string, args: Record<string, unknown>) => Promise<unknown>
 ): Promise<ToolCallResult> {
+  // Block new calls during drain
+  if (isDraining()) {
+    return { id: req.id, allowed: false, error: 'server_shutting_down' };
+  }
+
   try {
+    onCallStarted(req.id);
     const decision = await checkToolPolicy(req);
     switch (decision.kind) {
       case 'allow':
@@ -37,6 +44,8 @@ export async function dispatchWithPolicy(
     }
   } catch (err) {
     return { id: req.id, allowed: false, error: String(err) };
+  } finally {
+    onCallEnded(req.id);
   }
 }
 

@@ -53,15 +53,12 @@ fork-level modification, append here and bump the rebase impact estimate.
 7. `seams/research-state.ts` — extends OpenCode session schema with a `research:` namespace (current_cycle, program_state, registry_projection, tier_state, capsule_cursor, scheduler_queue). Schema locked in ADR-008. Populated on session start by reading events.jsonl from cursor.
 8. `seams/scheduler-integration.ts` — outer scheduler. TS class holding scheduler_queue, picks next cycle via priority + budget gates. Calls registered callbacks on cycle-driver.ts for cycle_end events. Never enqueues from TS — proposal authority stays with the LLM.
 9. `seams/provider-instrumentation.ts` — wraps provider adapter to record per-call telemetry: prompt_bytes, response_bytes, tokens_used, cache_hit, latency_ms, model_version, temperature. Emits ProviderCalled event on every LLM call.
+10. `seams/lifecycle-hooks.ts` — graceful shutdown ensures all pending events are flushed to events.jsonl before exit. SIGTERM, SIGINT, SIGHUP all handled. Draining flag blocks new tool calls; in-flight calls wait up to 5s before forced exit. Emits session_shutdown synchronously before handler returns. Idempotent pidfile release via rm(force=true).
 
 ### Planned but not yet implemented
 
-10. `seams/session-storage.ts` — upstream's message-list session store is replaced
+11. `seams/session-storage.ts` — upstream's message-list session store is replaced
     by a thin pointer into events.jsonl. Source of truth is the event log.
-    - STATUS: planned (file does not exist)
-
-11. `seams/lifecycle-hooks.ts` — graceful shutdown ensures all pending events
-    are flushed to events.jsonl before exit. SIGTERM, SIGINT both honored.
     - STATUS: planned (file does not exist)
 
 12. `seams/subagent-isolation.ts` — when a subagent is spawned with isolation=true,
@@ -79,8 +76,8 @@ fork-level modification, append here and bump the rebase impact estimate.
 ### Rebase impact
 
 Each modification adds ~1–3 hours to a rebase. Total rebase budget:
-- 9 implemented modifications: ~27 hours (already absorbed)
-- 5 planned-but-missing (entries 10-14): ~15 hours budget reserved
+- 10 implemented modifications: ~30 hours (already absorbed)
+- 4 planned-but-missing (entries 11-14): ~12 hours budget reserved
 - <1 day target for full fork integration (M4 exit gate)
 
 ## Pinned commit

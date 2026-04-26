@@ -6,7 +6,7 @@ Disk: `agentcore/server-fork/src/seams/`
 
 ## Summary
 
-**7 of 11 documented fork modifications are implemented; 5 are planned-but-missing; 1 additional implemented seam (mcp-gate.ts) is not yet documented.**
+**8 of 11 documented fork modifications are implemented; 4 are planned-but-missing; 1 additional implemented seam (mcp-gate.ts) is not yet documented.**
 
 ## Implemented seams
 
@@ -18,14 +18,14 @@ Disk: `agentcore/server-fork/src/seams/`
 | 4 | `seams/cycle-driver.ts` | IMPLEMENTED | 55 lines; emits typed events at turn lifecycle points |
 | 9 | `seams/skill-dispatcher.ts` | IMPLEMENTED | 40 lines; covers "skill-registration" (entry 9) — YAML skills registered as slash commands |
 | 9 | `seams/provider-instrumentation.ts` | IMPLEMENTED | wraps provider adapter to record per-call telemetry (P4.1) |
+| 10 | `seams/lifecycle-hooks.ts` | IMPLEMENTED | 148 lines; SIGTERM/SIGINT/SIGHUP handlers, draining flag, in-flight counter, 5s drain timeout, idempotent pidfile release (P4.2) |
 | — | `seams/mcp-gate.ts` | IMPLEMENTED | 67 lines; NOT in VENDOR_BOUNDARY.md — wraps MCP registry with PolicyEngine |
 
 ## Planned but not yet implemented
 
 | # | File | Status | Description from VENDOR_BOUNDARY.md |
 |---|------|--------|-------------------------------------|
-| 10 | `seams/session-storage.ts` | MISSING | Upstream's message-list session store replaced by pointer into events.jsonl |
-| 11 | `seams/lifecycle-hooks.ts` | MISSING | Graceful shutdown flushes pending events to events.jsonl; SIGTERM, SIGINT honored |
+| 11 | `seams/session-storage.ts` | MISSING | Upstream's message-list session store replaced by pointer into events.jsonl |
 | 12 | `seams/subagent-isolation.ts` | MISSING | Intercepts subagent setup when isolation=true to enforce no parent context leak |
 | 13 | `seams/tripwire-gate.ts` | MISSING | When tripwire fires, gate refuses next tool call until acknowledged (M4) |
 | 14 | `seams/mode-flag-gate.ts` | MISSING | Flags that would bypass approval are themselves policy-gated (M4) |
