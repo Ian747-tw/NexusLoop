@@ -148,7 +148,7 @@ class TestSingleWriterInvariant:
             assert ack.get("error") is None
 
             # Verify event was actually written
-            lines = [l.strip() for line in events_path.read_text().splitlines() if line.strip()]
+            lines = [line.strip() for line in events_path.read_text().splitlines() if line.strip()]
             assert len(lines) == 1
             parsed = json.loads(lines[0])
             assert parsed["event_id"] == "ev-001"
@@ -180,7 +180,7 @@ class TestSingleWriterInvariant:
             fork.stop()
 
             # Verify all 100 lines are valid JSON with correct event_ids
-            lines = [l.strip() for line in events_path.read_text().splitlines() if line.strip()]
+            lines = [line.strip() for line in events_path.read_text().splitlines() if line.strip()]
             assert len(lines) == 100, f"expected 100 lines, got {len(lines)}"
 
             written_ids = []
@@ -300,7 +300,7 @@ class TestSingleWriterInvariant:
             eid = log.append(CycleStarted(brief_hash="xyz", hypothesis_id="h2", started_at=0))
             assert eid and isinstance(eid, str)
             # Verify it was actually written
-            lines = [l.strip() for line in events_path.read_text().splitlines() if line.strip()]
+            lines = [line.strip() for line in events_path.read_text().splitlines() if line.strip()]
             assert len(lines) == 1
             assert json.loads(lines[0])["event_id"] == eid
         finally:
