@@ -97,12 +97,3 @@ class TestComputeServer:
         assert result["ok"] is False
         assert "denied" in result["error"]
 
-    @pytest.mark.asyncio
-    async def test_emit_tool_requested_is_called(self, server: ComputeServer) -> None:
-        with patch.object(server, "_emit") as mock_emit:
-            with patch(
-                "mcps.compute.server._get_gpu_info",
-                return_value=(False, "", 0),
-            ):
-                await server.handle_tool("compute.gpu_status", {})
-            mock_emit.assert_called_once_with("compute.gpu_status", {})

@@ -77,7 +77,9 @@ class CycleFailed(_BaseEvent):
 class ToolRequested(_BaseEvent):
     kind: Literal["tool_requested"] = "tool_requested"
     tool_name: str = Field(description="Name of the tool being invoked")
-    args_hash: str = Field(description="Hash of the tool arguments (no secrets)")
+    args_hash: str = Field(
+        description="SHA-256 hex of canonical JSON args (sorted keys, first 16 chars)"
+    )
     requesting_skill: str | None = Field(
         default=None, description="Skill that requested this tool, if any"
     )

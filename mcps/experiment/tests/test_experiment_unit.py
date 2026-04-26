@@ -134,14 +134,3 @@ class TestExperimentServer:
         assert result["ok"] is False
         assert "denied" in result["error"]
 
-    @pytest.mark.asyncio
-    async def test_emit_tool_requested_is_called(self, server: ExperimentServer) -> None:
-        with patch.object(server, "_emit") as mock_emit:
-            await server.handle_tool(
-                "experiment.submit",
-                {"config": {"lr": 0.001}},
-            )
-            mock_emit.assert_called_once_with(
-                "experiment.submit",
-                {"config": {"lr": 0.001}},
-            )

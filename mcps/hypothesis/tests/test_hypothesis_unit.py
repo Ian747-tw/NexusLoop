@@ -131,14 +131,3 @@ class TestHypothesisServer:
         assert result["ok"] is False
         assert "not found" in result["error"]
 
-    @pytest.mark.asyncio
-    async def test_emit_tool_requested_is_called(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit") as mock_emit:
-            await server.handle_tool(
-                "hypothesis.create",
-                {"text": "Test emit", "confidence": 0.5},
-            )
-            mock_emit.assert_called_once_with(
-                "hypothesis.create",
-                {"text": "Test emit", "confidence": 0.5},
-            )

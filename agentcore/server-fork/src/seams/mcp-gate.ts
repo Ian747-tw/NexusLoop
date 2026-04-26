@@ -5,6 +5,7 @@
  * underlying FastMCP server. Calls gated-dispatch.ts → policy-client.ts → Python PolicyEngine.
  * On allow: forwards to FastMCP. On deny: returns error. On ask: triggers intervention-hook.
  */
+import { createHash } from 'crypto';
 import { checkToolPolicy } from './gated-dispatch';
 import { enqueueIntervention } from './intervention-hook';
 import { emitEvent } from '../../bridge/event-emitter';
@@ -19,6 +20,15 @@ export interface MCPToolDefinition {
 const _mcpRegistry = new Map<string, MCPToolDefinition[]>();
 const _mcpHandlers = new Map<string, (name: string, args: Record<string, unknown>) => Promise<unknown>>();
 
+/**
+ * Compute a deterministic SHA-256 args hash (hex, first 16 chars).
+ * Canonical JSON: sorted keys, no extra whitespace.
+ */
+function computeArgsHash(args: Record<string, unknown>): string {
+  const canonical = JSON.stringify(Object.keys(args).sort().map((k) => [k, args[k]]));
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+}
+
 export function registerMCP(name: string, tools: MCPToolDefinition[], handler: (name: string, args: Record<string, unknown>) => Promise<unknown>): void {
   _mcpRegistry.set(name, tools);
   _mcpHandlers.set(name, handler);
@@ -32,6 +42,16 @@ export async function dispatchMCP(mcp: string, tool: string, args: Record<string
     args,
     ctx: {} as any,  // ctx is required by ToolCallRequest but MCP calls may not have full session ctx
   };
+
+  // Emit ToolRequested from fork side (single-writer invariant)
+  void emitEvent({
+    event: {
+      kind: 'tool_requested',
+      tool_name: `${mcp}.${tool}`,
+      args_hash: computeArgsHash(args),
+      requesting_skill: null,
+    },
+  });
 
   try {
     const decision = await checkToolPolicy(req);
