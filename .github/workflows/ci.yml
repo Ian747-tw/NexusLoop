@@ -54,5 +54,11 @@ jobs:
         run: bash scripts/audit-fork-depth.sh || echo "audit reports planned seams as expected"
         # Non-blocking until P2 ships seams 12-13. Re-enable as blocking after P2.
 
+      - name: Single-writer CI gate
+        run: bash scripts/verify_single_writer.sh
+
+      - name: Single-writer perf budget
+        run: uv run python scripts/verify_single_writer_perf.py
+
       - name: Verify Priority 1 docs
         run: bash scripts/verify_priority_1.sh
