@@ -60,6 +60,9 @@ jobs:
       - name: Single-writer CI gate
         run: bash scripts/verify_single_writer.sh
 
+      - name: Install agentcore dependencies
+        run: cd agentcore/server-fork && bun install
+
       - name: Single-writer perf budget
         run: uv run python scripts/verify_single_writer_perf.py
 
