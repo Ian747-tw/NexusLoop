@@ -1,11 +1,15 @@
 """mcps/conftest.py — shared pytest fixtures for all MCP tests."""
 from __future__ import annotations
 
+import os
 import pytest
 from pathlib import Path
 
 from nxl_core.events.log import EventLog
 from nxl_core.events.singletons import set_shared, reset
+
+# Mark test mode so EventLog.append() is allowed
+os.environ["NXL_EVENTLOG_WRITER"] = "test"
 
 
 @pytest.fixture(autouse=True)
