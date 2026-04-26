@@ -131,7 +131,6 @@ def run(
     _, old_handler = setup_sigint_handler()
 
     if dry_run:
-        from nxl_core.events.log import EventLog
         from nxl_core.events.schema import CycleStarted, CycleCompleted
         from nxl_core.events.singletons import journal_log
         import hashlib

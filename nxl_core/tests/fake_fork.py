@@ -12,18 +12,10 @@ Run: uv run pytest nxl_core/tests/test_fake_fork.py -v
 """
 from __future__ import annotations
 
-import io
 import json
 import queue
 import threading
-import time
 from typing import Optional
-
-from nxl_core.events.ipc import (
-    EventEmissionClient,
-    EventEmissionError,
-    EventEmissionTimeoutError,
-)
 
 
 class FakeFork:

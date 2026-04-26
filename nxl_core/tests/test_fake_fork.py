@@ -8,13 +8,11 @@ Run: uv run pytest nxl_core/tests/test_fake_fork.py -v
 from __future__ import annotations
 
 import json
-import time
 
 import pytest
 
 from nxl_core.events.ipc import EventEmissionClient, EventEmissionTimeoutError
 from nxl_core.events.log import EventLog
-from nxl_core.events.schema import CycleStarted
 from nxl_core.tests.fake_fork import FakeFork
 
 
@@ -49,7 +47,7 @@ class TestFakeFork:
             assert event_id.startswith("01H"), f"expected ULID event_id, got {event_id!r}"
 
             # Verify event was appended to the log
-            lines = [l.strip() for l in events_file.read_text().splitlines() if l.strip()]
+            lines = [ln.strip() for ln in events_file.read_text().splitlines() if ln.strip()]
             assert len(lines) == 1
             written = json.loads(lines[0])
             assert written["kind"] == "cycle_started"
