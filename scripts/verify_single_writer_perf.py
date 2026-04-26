@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 MAX_TIME_SECONDS = 3.0
-TEST_FILE = "tests/event-emitter.test.ts"
+TEST_FILE = "../tests/event-emitter.test.ts"
 
 
 def main() -> None:
@@ -29,7 +29,7 @@ def main() -> None:
         capture_output=True,
         text=True,
         timeout=30,
-        cwd=Path(__file__).parent.parent / "agentcore",
+        cwd=Path(__file__).parent.parent / "agentcore" / "server-fork",
     )
     elapsed = time.perf_counter() - t0
 
