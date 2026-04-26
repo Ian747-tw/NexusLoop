@@ -20,7 +20,7 @@ TEST_FILE = "tests/event-emitter.test.ts"
 
 
 def main() -> None:
-    print(f"P3.10: Event emission performance verification")
+    print("P3.10: Event emission performance verification")
     print(f"  Budget: {TEST_FILE} completes in <{MAX_TIME_SECONDS}s wall time")
 
     t0 = time.perf_counter()
@@ -38,7 +38,7 @@ def main() -> None:
         if elapsed > MAX_TIME_SECONDS:
             print(f"  FAIL: elapsed ({elapsed:.2f}s) exceeds budget ({MAX_TIME_SECONDS}s)")
             sys.exit(1)
-        print(f"  OK")
+        print("  OK")
         sys.exit(0)
     else:
         print(f"  FAIL: tests failed: {result.stderr[:200]}")

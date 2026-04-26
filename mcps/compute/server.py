@@ -15,9 +15,6 @@ from mcps.compute.responses import (
     ComputeDiskStatusResponse,
     ComputeGPUStatusResponse,
 )
-from nxl_core.events.schema import ToolRequested
-
-
 def _get_gpu_info() -> tuple[bool, str, int]:
     """Attempt to get GPU info via nvidia-smi."""
     try:

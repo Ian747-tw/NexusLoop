@@ -16,8 +16,6 @@ from mcps.hypothesis.responses import (
     HypothesisDataResponse,
     HypothesisListResponse,
 )
-from nxl_core.events.schema import ToolRequested
-
 # In-memory hypothesis store (replace with real registry when available)
 _hypotheses: dict[str, dict[str, Any]] = {}
 

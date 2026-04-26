@@ -7,7 +7,6 @@ Run: uv run pytest nxl_core/tests/test_event_emission_client.py -x -v
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys

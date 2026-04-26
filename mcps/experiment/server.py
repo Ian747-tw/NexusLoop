@@ -17,7 +17,6 @@ from mcps.experiment.responses import (
     ExperimentStatusResponse,
     ExperimentSubmitResponse,
 )
-from nxl_core.events.schema import ToolRequested
 _trials: dict[str, dict[str, Any]] = {}
 
 
