@@ -22,7 +22,6 @@ export function emitEvent(event: Record<string, unknown>): void {
   }
   const line = JSON.stringify(event) + '\n';
   const release = properLockfile.lockSync(LOCK_PATH, {
-    retries: 10,
     stale: 1,
     updateAgeWhenOpening: true,
   });
@@ -47,7 +46,6 @@ export function emitEventBatch(
   const LOCK_PATH = EVENT_LOG_PATH + '.lock';
   const lines = events.map((e) => JSON.stringify(e) + '\n').join('');
   const release = properLockfile.lockSync(LOCK_PATH, {
-    retries: 10,
     stale: 1,
     updateAgeWhenOpening: true,
   });
