@@ -94,17 +94,18 @@ def _get_spec_for_dry_run(project_dir: Path) -> dict[str, object]:
     """Call spec MCP tools and emit ToolRequested events for E2E test verification."""
     from mcps.spec.server import SpecMCPServer
     from nxl_core.events.schema import ToolRequested
-    from nxl_core.events.ipc import EventEmissionClient
+    from nxl_core.events.singletons import journal_log
 
+    log = journal_log()
     spec_server = SpecMCPServer(project_dir)
 
     # Emit tool_requested events for spec.get_project and spec.get_operations
     for tool_name in ("spec.get_project", "spec.get_operations"):
-        EventEmissionClient().emit(ToolRequested(
+        log.append(ToolRequested(
             tool_name=tool_name,
             args_hash="0" * 16,
             requesting_skill=None,
-        ), origin_mcp="orchestrator")
+        ))
 
     return spec_server._get_project()
 
@@ -130,10 +131,9 @@ def run(
     _, old_handler = setup_sigint_handler()
 
     if dry_run:
-        import os
-        os.environ['NXL_EVENTLOG_WRITER'] = 'test'
+        from nxl_core.events.log import EventLog
         from nxl_core.events.schema import CycleStarted, CycleCompleted
-        from nxl_core.events.ipc import EventEmissionClient
+        from nxl_core.events.singletons import journal_log
         import hashlib
 
         console("Dry-run: would execute one cycle with provider.", "info")
@@ -151,15 +151,16 @@ def run(
         # Call spec MCP to emit tool events (spec.get_project, spec.get_operations)
         _get_spec_for_dry_run(project_dir)
 
-        EventEmissionClient().emit(CycleStarted(
+        log = journal_log()
+        log.append(CycleStarted(
             brief_hash=brief_hash,
             hypothesis_id="dry-run-hypothesis",
-        ), origin_mcp="orchestrator")
-        EventEmissionClient().emit(CycleCompleted(
+        ))
+        log.append(CycleCompleted(
             brief_hash=brief_hash,
             hypothesis_id="dry-run-hypothesis",
             summary_tokens=0,
-        ), origin_mcp="orchestrator")
+        ))
 
         signal.signal(signal.SIGINT, old_handler)
         return 0

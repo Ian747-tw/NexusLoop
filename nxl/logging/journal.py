@@ -107,8 +107,9 @@ class ProjectJournal:
         lines.append("\n---\n")
         self._append_to_section("## Experiment Log", "".join(lines))
         try:
-            from nxl_core.events.ipc import EventEmissionClient
+            from nxl_core.events.log import EventLog
             from nxl_core.events.schema import IncidentReported
+            from nxl_core.events.singletons import journal_log
 
             ev = IncidentReported(
                 event_id=_make_ulid(),
@@ -121,7 +122,7 @@ class ProjectJournal:
                 run_id="journal",
                 description=content[:200],
             )
-            EventEmissionClient().emit(ev, origin_mcp="nxl.logging")
+            journal_log().append(ev)
         except Exception:
             pass
 

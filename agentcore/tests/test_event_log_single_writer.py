@@ -267,8 +267,8 @@ class TestSingleWriterInvariant:
 
     def test_eventlog_append_raises_when_not_fork_or_test(self, temp_events_dir) -> None:
         """
-        EventLog.append raises RuntimeError when NXL_EVENTLOG_WRITER is
-        neither 'fork' nor 'test' — enforces single-writer at runtime.
+        EventLog.append raises AssertionError when NXL_EVENTLOG_WRITER is
+        neither 'fork', 'cli', nor 'test' — enforces single-writer at runtime.
         """
         from nxl_core.events.log import EventLog
         from nxl_core.events.schema import CycleStarted
@@ -278,7 +278,7 @@ class TestSingleWriterInvariant:
 
         original = os.environ.pop("NXL_EVENTLOG_WRITER", None)
         try:
-            with pytest.raises(AssertionError, match="NXL_EVENTLOG_WRITER must be 'fork' or 'test'"):
+            with pytest.raises(AssertionError, match="NXL_EVENTLOG_WRITER must be 'fork', 'cli', or 'test'"):
                 log.append(CycleStarted(brief_hash="abc", hypothesis_id="h1", started_at=0))
         finally:
             if original is not None:

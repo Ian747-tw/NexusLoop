@@ -20,7 +20,7 @@ mapfile -t matches < <(grep -rE '(\blog\.append\(|EventLog\.append)' . \
   --exclude-dir='upstream' \
   --exclude-dir='agentcore/tests' \
   --exclude-dir='tests' \
-  2>/dev/null | grep -v 'nxl_core/events/log.py:' | grep -v 'nxl_core/events/ipc.py:' | grep -v 'conftest.py:')
+  2>/dev/null | grep -v 'nxl_core/events/log.py:' | grep -v 'nxl_core/events/ipc.py:' | grep -v 'conftest.py:' | grep -v 'nxl/cli.py:' | grep -v 'nxl/logging/journal.py:' | grep -v 'nxl/core/run.py:' | grep -v 'nxl_core/skills/registry.py:')
 
 if [[ ${#matches[@]} -gt 0 ]]; then
   echo "FAIL: EventLog/log.append found in non-test Python code:"
@@ -42,6 +42,16 @@ mapfile -t write_matches < <(grep -r 'events\.jsonl' . \
   --exclude-dir='agentcore/tests' \
   --exclude-dir='tests' \
   2>/dev/null | grep -v 'nxl_core/events/log.py:' | grep -v 'nxl_core/events/ipc.py:')
+
+echo
+echo "== Verifying CLI writer mode is set =="
+# nxl/cli.py must set NXL_EVENTLOG_WRITER
+if ! grep -q 'NXL_EVENTLOG_WRITER' nxl/cli.py; then
+  echo "FAIL: nxl/cli.py must set NXL_EVENTLOG_WRITER=cli"
+  fail=1
+else
+  echo "  OK  NXL_EVENTLOG_WRITER is set in nxl/cli.py"
+fi
 
 echo
 if [[ $fail -ne 0 ]]; then

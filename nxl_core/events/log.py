@@ -51,19 +51,20 @@ class EventLog:
         Raises
         ------
         AssertionError
-            If NXL_EVENTLOG_WRITER is not set to "fork" or "test".
-            Only the fork process (runtime) or test harness (tests) may write.
+            If NXL_EVENTLOG_WRITER is not set to "fork", "cli", or "test".
+            Only the fork process (runtime), CLI process (lifecycle events),
+            or test harness (tests) may write.
 
         Returns
         -------
         event_id: str — the ULID of the appended event.
         """
         writer = os.environ.get("NXL_EVENTLOG_WRITER", "")
-        if writer not in ("fork", "test"):
+        if writer not in ("fork", "cli", "test"):
             raise AssertionError(
-                f"NXL_EVENTLOG_WRITER must be 'fork' or 'test', got {writer!r}. "
+                f"NXL_EVENTLOG_WRITER must be 'fork', 'cli', or 'test', got {writer!r}. "
                 "Python MCPs must use EventEmissionClient IPC to emit events. "
-                "Direct EventLog.append() is only allowed from the fork or tests."
+                "Direct EventLog.append() is only allowed from the fork, CLI, or tests."
             )
         line = event.model_dump_json() + "\n"
         with portalocker.Lock(self._lock_path, timeout=10, mode="w") as _lock:
