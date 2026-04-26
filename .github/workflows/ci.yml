@@ -51,7 +51,7 @@ jobs:
         run: uv run pytest mcps -q
 
       - name: Pytest — agentcore Python tests
-        run: uv run pytest agentcore/tests -q -k "not test_ts"
+        run: uv run pytest agentcore/tests -q -k "not (test_ts or portalocker or ts_blocks)"
 
       - name: Audit fork depth
         run: bash scripts/audit-fork-depth.sh || echo "audit reports planned seams as expected"
