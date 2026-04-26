@@ -239,7 +239,7 @@ class TestSingleWriterInvariant:
         assert not errors, f"concurrent errors: {errors}"
 
         # Verify 50 events written across all batches
-        lines = [l.strip() for line in events_path.read_text().splitlines() if line.strip()]
+        lines = [line.strip() for line in events_path.read_text().splitlines() if line.strip()]
         assert len(lines) == 50, f"expected 50, got {len(lines)}"
 
     def test_invalid_event_kind_returns_null_event_id(self, temp_events_dir) -> None:
