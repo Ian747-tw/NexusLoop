@@ -29,7 +29,7 @@ def main() -> None:
         capture_output=True,
         text=True,
         timeout=30,
-        cwd=Path(__file__).parent.parent / "agentcore" / "server-fork",
+        cwd=Path(__file__).parent.parent / "agentcore",
     )
     elapsed = time.perf_counter() - t0
 
