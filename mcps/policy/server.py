@@ -4,9 +4,19 @@ from __future__ import annotations
 from typing import Any
 
 from mcps._shared.base import BaseMCPServer
+from nxl_core.events.ipc import EventEmissionClient
 from nxl_core.events.schema import PolicyDecision as PolicyDecisionEvent
-from nxl_core.events.singletons import journal_log
 from nxl_core.policy.engine import PolicyDecision, PolicyEngine
+
+# IPC client for policy decision events
+_policy_event_client: EventEmissionClient | None = None
+
+
+def _get_policy_client() -> EventEmissionClient:
+    global _policy_event_client
+    if _policy_event_client is None:
+        _policy_event_client = EventEmissionClient()
+    return _policy_event_client
 
 
 # Valid policy modes as per task specification
@@ -69,7 +79,6 @@ class PolicyMCPServer(BaseMCPServer):
         ]
 
     async def handle_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        self.emit_tool_requested(tool_name, args)
         decision = self._engine.check(tool_name, args)
         if not decision.allowed:
             return {"ok": False, "error": f"Policy denied: {decision.reason}"}
@@ -138,7 +147,7 @@ class PolicyMCPServer(BaseMCPServer):
         }
 
     def _emit_policy_decision_event(self, action: str, decision: PolicyDecision) -> None:
-        """Emit a PolicyDecision event via journal_log."""
+        """Emit a PolicyDecision event via IPC."""
         if decision.allowed:
             if decision.requires_confirmation:
                 decision_str = "ask"
@@ -152,4 +161,4 @@ class PolicyMCPServer(BaseMCPServer):
             decision=decision_str,  # type: ignore[arg-type]
             reason=decision.reason,
         )
-        journal_log().append(event)
+        _get_policy_client().emit(event, origin_mcp="policy")

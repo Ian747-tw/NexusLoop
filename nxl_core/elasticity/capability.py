@@ -70,7 +70,7 @@ async def capability(
 
 def _emit(kind: str, **kwargs) -> None:
     """Emit a capability-related event using IncidentReported as carrier."""
-    from nxl_core.events.singletons import journal_log
+    from nxl_core.events.ipc import EventEmissionClient
     from nxl_core.events.schema import IncidentReported
 
     # Map capability events to IncidentReported for now
@@ -100,4 +100,4 @@ def _emit(kind: str, **kwargs) -> None:
         run_id=token_id,
         description=description[:200],
     )
-    journal_log().append(ev)
+    EventEmissionClient().emit(ev, origin_mcp="elasticity")

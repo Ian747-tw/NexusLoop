@@ -23,7 +23,7 @@ def server() -> ExperimentServer:
 class TestExperimentPolicyGate:
     @pytest.mark.asyncio
     async def test_submit_blocked_when_policy_denies(self, server: ExperimentServer) -> None:
-        with patch.object(server, "_emit"), patch.object(server, "check_policy", return_value=False):
+        with patch.object(server, "check_policy", return_value=False):
             result = await server.handle_tool(
                 "experiment.submit",
                 {"config": {}},
@@ -33,7 +33,7 @@ class TestExperimentPolicyGate:
 
     @pytest.mark.asyncio
     async def test_status_blocked_when_policy_denies(self, server: ExperimentServer) -> None:
-        with patch.object(server, "_emit"), patch.object(server, "check_policy", return_value=False):
+        with patch.object(server, "check_policy", return_value=False):
             result = await server.handle_tool(
                 "experiment.status",
                 {"trial_id": "any_id"},
@@ -43,7 +43,7 @@ class TestExperimentPolicyGate:
 
     @pytest.mark.asyncio
     async def test_cancel_blocked_when_policy_denies(self, server: ExperimentServer) -> None:
-        with patch.object(server, "_emit"), patch.object(server, "check_policy", return_value=False):
+        with patch.object(server, "check_policy", return_value=False):
             result = await server.handle_tool(
                 "experiment.cancel",
                 {"trial_id": "any_id"},
@@ -53,7 +53,7 @@ class TestExperimentPolicyGate:
 
     @pytest.mark.asyncio
     async def test_list_blocked_when_policy_denies(self, server: ExperimentServer) -> None:
-        with patch.object(server, "_emit"), patch.object(server, "check_policy", return_value=False):
+        with patch.object(server, "check_policy", return_value=False):
             result = await server.handle_tool("experiment.list", {})
         assert result["ok"] is False
         assert "denied" in result["error"]

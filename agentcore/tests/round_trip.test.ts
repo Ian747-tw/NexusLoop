@@ -4,6 +4,8 @@ import {
   ToolCallRequest,
   CapsuleResponse,
   CompactRequest,
+  EventEmissionRequest,
+  EventEmissionAck,
 } from '../server-fork/bridge/protocol';
 
 describe('protocol round-trip', () => {
@@ -79,6 +81,54 @@ describe('protocol round-trip', () => {
     const decoded = CompactRequest.parse(msg);
     expect(decoded.tier_hint).toBe('soft');
     expect(decoded.current_token_count).toBe(95000);
+    const reEncoded = JSON.stringify(decoded);
+    expect(JSON.parse(reEncoded)).toEqual(msg);
+  });
+
+  test('EventEmissionRequest round-trip', () => {
+    const msg = {
+      kind: 'EventEmissionRequest' as const,
+      request_id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      event: {
+        event_id: '01ARZ3NDEKTSV4RRFFQ69G5FAW',
+        kind: 'cycle_started',
+        brief_hash: 'abc123',
+        hypothesis_id: 'h1',
+        started_at: 1712000000000,
+      },
+      origin_mcp: 'journal',
+    };
+    const decoded = EventEmissionRequest.parse(msg);
+    expect(decoded.request_id).toBe('01ARZ3NDEKTSV4RRFFQ69G5FAV');
+    expect(decoded.event.kind).toBe('cycle_started');
+    expect(decoded.origin_mcp).toBe('journal');
+    const reEncoded = JSON.stringify(decoded);
+    expect(JSON.parse(reEncoded)).toEqual(msg);
+  });
+
+  test('EventEmissionAck success round-trip', () => {
+    const msg = {
+      kind: 'EventEmissionAck' as const,
+      request_id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      event_id: '01ARZ3NDEKTSV4RRFFQ69G5FAW',
+    };
+    const decoded = EventEmissionAck.parse(msg);
+    expect(decoded.event_id).toBe('01ARZ3NDEKTSV4RRFFQ69G5FAW');
+    expect(decoded.error).toBeUndefined();
+    const reEncoded = JSON.stringify(decoded);
+    expect(JSON.parse(reEncoded)).toEqual(msg);
+  });
+
+  test('EventEmissionAck error round-trip', () => {
+    const msg = {
+      kind: 'EventEmissionAck' as const,
+      request_id: 'req-1',
+      event_id: null,
+      error: 'unknown event kind',
+    };
+    const decoded = EventEmissionAck.parse(msg);
+    expect(decoded.event_id).toBeNull();
+    expect(decoded.error).toBe('unknown event kind');
     const reEncoded = JSON.stringify(decoded);
     expect(JSON.parse(reEncoded)).toEqual(msg);
   });

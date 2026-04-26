@@ -15,9 +15,6 @@ from mcps.compute.responses import (
     ComputeDiskStatusResponse,
     ComputeGPUStatusResponse,
 )
-from nxl_core.events.schema import ToolRequested
-
-
 def _get_gpu_info() -> tuple[bool, str, int]:
     """Attempt to get GPU info via nvidia-smi."""
     try:
@@ -125,18 +122,6 @@ class ComputeServer(BaseMCPServer):
             },
         ]
 
-    def _emit(self, tool_name: str, args: dict[str, Any]) -> None:
-        from nxl_core.events.singletons import journal_log
-
-        event_log = journal_log()
-        event_log.append(
-            ToolRequested(
-                tool_name=tool_name,
-                args_hash=str(hash(frozenset(args.items()))),
-                requesting_skill=None,
-            )
-        )
-
     async def handle_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "compute.gpu_status":
             return await self._gpu_status(args)
@@ -152,7 +137,6 @@ class ComputeServer(BaseMCPServer):
     async def _gpu_status(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("compute.gpu_status", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("compute.gpu_status", args)
 
         available, name, memory_free_mb = _get_gpu_info()
         return {
@@ -167,7 +151,6 @@ class ComputeServer(BaseMCPServer):
     async def _cpu_status(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("compute.cpu_status", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("compute.cpu_status", args)
 
         cores = _get_cpu_cores()
         usage = _get_cpu_usage()
@@ -182,7 +165,6 @@ class ComputeServer(BaseMCPServer):
     async def _disk_status(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("compute.disk_status", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("compute.disk_status", args)
 
         req = ComputeDiskStatusRequest(**args)
         free_gb, total_gb = _get_disk_info(req.path)
@@ -197,7 +179,6 @@ class ComputeServer(BaseMCPServer):
     async def _budget_status(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("compute.budget_status", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("compute.budget_status", args)
 
         # Token budget tracking — defaults, replace with real tracking
         return {

@@ -68,7 +68,6 @@ class CycleMCPServer(BaseMCPServer):
         ]
 
     async def handle_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        self.emit_tool_requested(tool_name, args)
         decision = self._policy.check(tool_name, args)
         if not decision.allowed:
             return {"ok": False, "error": f"Policy denied: {decision.reason}"}
@@ -82,25 +81,23 @@ class CycleMCPServer(BaseMCPServer):
 
     async def _start(self, args: dict[str, Any]) -> dict[str, Any]:
         from nxl_core.events.schema import CycleStarted
-        from nxl_core.events.singletons import journal_log
+        from nxl_core.events.ipc import EventEmissionClient
 
         hypothesis_id = str(args["hypothesis_id"])
         brief_hash = str(args["brief_hash"])
 
         event = CycleStarted(brief_hash=brief_hash, hypothesis_id=hypothesis_id)
-        log = journal_log()
-        event_id = log.append(event)
+        event_id = EventEmissionClient().emit(event, origin_mcp="cycle")
         return {"ok": True, "data": {"event_id": event_id}}
 
     async def _end(self, args: dict[str, Any]) -> dict[str, Any]:
         from nxl_core.events.schema import CycleCompleted, CycleFailed
-        from nxl_core.events.singletons import journal_log
+        from nxl_core.events.ipc import EventEmissionClient
 
         status = str(args["status"])
         hypothesis_id = str(args["hypothesis_id"])
         brief_hash = str(args["brief_hash"])
 
-        log = journal_log()
         if status == "completed":
             summary_tokens = int(args.get("summary_tokens", 0))
             event = CycleCompleted(
@@ -108,7 +105,7 @@ class CycleMCPServer(BaseMCPServer):
                 hypothesis_id=hypothesis_id,
                 summary_tokens=summary_tokens,
             )
-            event_id = log.append(event)
+            event_id = EventEmissionClient().emit(event, origin_mcp="cycle")
             return {"ok": True, "data": {"event_id": event_id}}
         elif status == "failed":
             reason = str(args.get("reason", "unknown"))
@@ -117,7 +114,7 @@ class CycleMCPServer(BaseMCPServer):
                 hypothesis_id=hypothesis_id,
                 reason=reason,
             )
-            event_id = log.append(event)
+            event_id = EventEmissionClient().emit(event, origin_mcp="cycle")
             return {"ok": True, "data": {"event_id": event_id}}
         else:
             return {"ok": False, "error": f"Invalid status: {status}"}

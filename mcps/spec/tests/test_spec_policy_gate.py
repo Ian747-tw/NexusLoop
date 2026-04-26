@@ -11,18 +11,6 @@ from mcps.spec.server import SpecMCPServer
 class TestPolicyGate:
     """Assert policy check fires on every tool call."""
 
-    def test_get_project_emits_tool_requested(self) -> None:
-        """get_project emits ToolRequested event via EventLog."""
-        server = SpecMCPServer()
-        # Should not raise
-        server.emit_tool_requested("spec.get_project", {})
-
-    def test_get_operations_emits_tool_requested(self) -> None:
-        """get_operations emits ToolRequested event via EventLog."""
-        server = SpecMCPServer()
-        # Should not raise
-        server.emit_tool_requested("spec.get_operations", {})
-
     def test_check_policy_is_called_on_handle_tool(self) -> None:
         """handle_tool goes through policy check before executing."""
         server = SpecMCPServer()

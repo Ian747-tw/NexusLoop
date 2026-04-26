@@ -38,11 +38,10 @@ class TestHypothesisServer:
 
     @pytest.mark.asyncio
     async def test_create_returns_id_and_hash(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"):
-            result = await server.handle_tool(
-                "hypothesis.create",
-                {"text": "More layers improve accuracy", "confidence": 0.8},
-            )
+        result = await server.handle_tool(
+            "hypothesis.create",
+            {"text": "More layers improve accuracy", "confidence": 0.8},
+        )
         assert result["ok"] is True
         data = result["data"]
         assert "id" in data
@@ -51,64 +50,56 @@ class TestHypothesisServer:
 
     @pytest.mark.asyncio
     async def test_create_then_get_round_trip(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"):
-            create_result = await server.handle_tool(
-                "hypothesis.create",
-                {"text": "Dropout reduces overfitting", "confidence": 0.7},
-            )
+        create_result = await server.handle_tool(
+            "hypothesis.create",
+            {"text": "Dropout reduces overfitting", "confidence": 0.7},
+        )
         hyp_id = create_result["data"]["id"]
 
-        with patch.object(server, "_emit"):
-            get_result = await server.handle_tool("hypothesis.get", {"id": hyp_id})
+        get_result = await server.handle_tool("hypothesis.get", {"id": hyp_id})
         assert get_result["ok"] is True
         assert get_result["data"]["claim"] == "Dropout reduces overfitting"
         assert get_result["data"]["status"] == "active"
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_returns_error(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"):
-            result = await server.handle_tool("hypothesis.get", {"id": "does_not_exist"})
+        result = await server.handle_tool("hypothesis.get", {"id": "does_not_exist"})
         assert result["ok"] is False
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
     async def test_list_returns_all_hypotheses(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"):
-            await server.handle_tool(
-                "hypothesis.create",
-                {"text": "Hypothesis A", "confidence": 0.5},
-            )
-            await server.handle_tool(
-                "hypothesis.create",
-                {"text": "Hypothesis B", "confidence": 0.6},
-            )
+        await server.handle_tool(
+            "hypothesis.create",
+            {"text": "Hypothesis A", "confidence": 0.5},
+        )
+        await server.handle_tool(
+            "hypothesis.create",
+            {"text": "Hypothesis B", "confidence": 0.6},
+        )
 
-        with patch.object(server, "_emit"):
-            result = await server.handle_tool("hypothesis.list", {})
+        result = await server.handle_tool("hypothesis.list", {})
         assert result["ok"] is True
         hypos = result["data"]["hypotheses"]
         assert len(hypos) == 2
 
     @pytest.mark.asyncio
     async def test_close_updates_verdict_and_status(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"):
-            create_result = await server.handle_tool(
-                "hypothesis.create",
-                {"text": "Learning rate too high", "confidence": 0.9},
-            )
+        create_result = await server.handle_tool(
+            "hypothesis.create",
+            {"text": "Learning rate too high", "confidence": 0.9},
+        )
         hyp_id = create_result["data"]["id"]
 
-        with patch.object(server, "_emit"):
-            close_result = await server.handle_tool(
-                "hypothesis.close",
-                {"id": hyp_id, "verdict": "confirmed"},
-            )
+        close_result = await server.handle_tool(
+            "hypothesis.close",
+            {"id": hyp_id, "verdict": "confirmed"},
+        )
         assert close_result["ok"] is True
         assert close_result["data"]["verdict"] == "confirmed"
         assert close_result["data"]["status"] == "closed"
 
-        with patch.object(server, "_emit"):
-            get_result = await server.handle_tool("hypothesis.get", {"id": hyp_id})
+        get_result = await server.handle_tool("hypothesis.get", {"id": hyp_id})
         assert get_result["data"]["status"] == "closed"
 
     @pytest.mark.asyncio
@@ -123,22 +114,10 @@ class TestHypothesisServer:
 
     @pytest.mark.asyncio
     async def test_close_nonexistent_returns_error(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"):
-            result = await server.handle_tool(
-                "hypothesis.close",
-                {"id": "nonexistent_id", "verdict": "rejected"},
-            )
+        result = await server.handle_tool(
+            "hypothesis.close",
+            {"id": "nonexistent_id", "verdict": "rejected"},
+        )
         assert result["ok"] is False
         assert "not found" in result["error"]
 
-    @pytest.mark.asyncio
-    async def test_emit_tool_requested_is_called(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit") as mock_emit:
-            await server.handle_tool(
-                "hypothesis.create",
-                {"text": "Test emit", "confidence": 0.5},
-            )
-            mock_emit.assert_called_once_with(
-                "hypothesis.create",
-                {"text": "Test emit", "confidence": 0.5},
-            )

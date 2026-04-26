@@ -99,7 +99,6 @@ class TrialMCPServer(BaseMCPServer):
         ]
 
     async def handle_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        self.emit_tool_requested(tool_name, args)
         decision = self._policy.check(tool_name, args)
         if not decision.allowed:
             return {"ok": False, "error": f"Policy denied: {decision.reason}"}
@@ -117,7 +116,7 @@ class TrialMCPServer(BaseMCPServer):
 
     async def _start(self, args: dict[str, Any]) -> dict[str, Any]:
         from nxl_core.events.schema import TrialStarted
-        from nxl_core.events.singletons import journal_log
+        from nxl_core.events.ipc import EventEmissionClient
 
         trial_id = str(args["trial_id"])
         hypothesis_id = str(args["hypothesis_id"])
@@ -132,8 +131,7 @@ class TrialMCPServer(BaseMCPServer):
             hypothesis_id=hypothesis_id,
             config=config,
         )
-        log = journal_log()
-        event_id = log.append(event)
+        event_id = EventEmissionClient().emit(event, origin_mcp="trial")
 
         self._trials[trial_id] = {
             "hypothesis_id": hypothesis_id,
@@ -146,7 +144,7 @@ class TrialMCPServer(BaseMCPServer):
 
     async def _complete(self, args: dict[str, Any]) -> dict[str, Any]:
         from nxl_core.events.schema import TrialCompleted
-        from nxl_core.events.singletons import journal_log
+        from nxl_core.events.ipc import EventEmissionClient
 
         trial_id = str(args["trial_id"])
         metrics = args.get("metrics", {})
@@ -161,8 +159,7 @@ class TrialMCPServer(BaseMCPServer):
             hypothesis_id=hypothesis_id,
             metrics=metrics,
         )
-        log = journal_log()
-        event_id = log.append(event)
+        event_id = EventEmissionClient().emit(event, origin_mcp="trial")
 
         self._trials[trial_id]["status"] = "completed"
 
@@ -170,7 +167,7 @@ class TrialMCPServer(BaseMCPServer):
 
     async def _fail(self, args: dict[str, Any]) -> dict[str, Any]:
         from nxl_core.events.schema import TrialFailed
-        from nxl_core.events.singletons import journal_log
+        from nxl_core.events.ipc import EventEmissionClient
 
         trial_id = str(args["trial_id"])
         reason = str(args["reason"])
@@ -185,8 +182,7 @@ class TrialMCPServer(BaseMCPServer):
             hypothesis_id=hypothesis_id,
             reason=reason,
         )
-        log = journal_log()
-        event_id = log.append(event)
+        event_id = EventEmissionClient().emit(event, origin_mcp="trial")
 
         self._trials[trial_id]["status"] = "failed"
 

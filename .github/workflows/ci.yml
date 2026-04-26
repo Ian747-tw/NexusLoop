@@ -12,6 +12,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
@@ -53,6 +56,15 @@ jobs:
       - name: Audit fork depth
         run: bash scripts/audit-fork-depth.sh || echo "audit reports planned seams as expected"
         # Non-blocking until P2 ships seams 12-13. Re-enable as blocking after P2.
+
+      - name: Single-writer CI gate
+        run: bash scripts/verify_single_writer.sh
+
+      - name: Install agentcore dependencies
+        run: cd agentcore/server-fork && bun install
+
+      - name: Single-writer perf budget
+        run: bun test tests/event-emitter.test.ts --timeout=30000
 
       - name: Verify Priority 1 docs
         run: bash scripts/verify_priority_1.sh

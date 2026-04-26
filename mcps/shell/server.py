@@ -65,8 +65,6 @@ class ShellMCP(BaseMCPServer):
     async def handle_tool(
         self, tool_name: str, args: dict[str, Any]
     ) -> dict[str, Any]:
-        self.emit_tool_requested(tool_name, args)
-
         # Policy gate
         decision = self._policy.check(tool_name, args)
         if not decision.allowed:

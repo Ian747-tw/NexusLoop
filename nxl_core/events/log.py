@@ -48,10 +48,24 @@ class EventLog:
         The write is performed under an exclusive file lock (portalocker)
         with fsync to ensure durability on the current filesystem.
 
+        Raises
+        ------
+        AssertionError
+            If NXL_EVENTLOG_WRITER is not set to "fork", "cli", or "test".
+            Only the fork process (runtime), CLI process (lifecycle events),
+            or test harness (tests) may write.
+
         Returns
         -------
         event_id: str — the ULID of the appended event.
         """
+        writer = os.environ.get("NXL_EVENTLOG_WRITER", "")
+        if writer not in ("fork", "cli", "test"):
+            raise AssertionError(
+                f"NXL_EVENTLOG_WRITER must be 'fork', 'cli', or 'test', got {writer!r}. "
+                "Python MCPs must use EventEmissionClient IPC to emit events. "
+                "Direct EventLog.append() is only allowed from the fork, CLI, or tests."
+            )
         line = event.model_dump_json() + "\n"
         with portalocker.Lock(self._lock_path, timeout=10, mode="w") as _lock:
             with self.path.open("a") as f:

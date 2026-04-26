@@ -613,6 +613,9 @@ def main(argv: list[str] | None = None) -> None:
     argv:
         Argument list (defaults to ``sys.argv[1:]`` when ``None``).
     """
+    import os
+    os.environ.setdefault("NXL_EVENTLOG_WRITER", "cli")
+
     parser = _build_parser()
     args = parser.parse_args(argv)
 

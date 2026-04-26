@@ -9,7 +9,6 @@ from nxl_core.events.schema import (
     CompactRequested,
     SessionClearing,
 )
-from nxl_core.events.singletons import journal_log
 from nxl_core.capsule.handoff import HandoffRecord
 
 
@@ -69,7 +68,7 @@ class CycleAdapter:
 
     def _check_soft_trigger(self) -> None:
         """Emit CompactRequested(tier_hint='soft') if thresholds exceeded."""
-        log = journal_log()
+        from nxl_core.events.ipc import EventEmissionClient
 
         # Check: tokens > 60% OR events > 40 since last compact
         if self._events_since_compact > EVENTS_SOFT_THRESHOLD or self._token_estimate > SOFT_TOKEN_THRESHOLD:
@@ -77,20 +76,21 @@ class CycleAdapter:
                 f"events_since_compact={self._events_since_compact}, "
                 f"token_estimate={self._token_estimate:.2f}"
             )
-            log.append(
+            EventEmissionClient().emit(
                 CompactRequested(
                     tier_hint="soft",
                     reason=reason,
                     events_since_compact=self._events_since_compact,
                     token_estimate=self._token_estimate,
-                )
+                ),
+                origin_mcp="orchestrator",
             )
             self._events_since_compact = 0
             self._token_estimate = 0.0
 
     def _check_hard_trigger(self) -> None:
         """Emit CompactRequested(tier_hint='hard') if thresholds exceeded."""
-        log = journal_log()
+        from nxl_core.events.ipc import EventEmissionClient
 
         # Check: tokens > 80% OR events > 150 since last compact
         if self._events_since_compact > EVENTS_HARD_THRESHOLD or self._token_estimate > HARD_TOKEN_THRESHOLD:
@@ -98,30 +98,33 @@ class CycleAdapter:
                 f"events_since_compact={self._events_since_compact}, "
                 f"token_estimate={self._token_estimate:.2f}"
             )
-            log.append(
+            EventEmissionClient().emit(
                 CompactRequested(
                     tier_hint="hard",
                     reason=reason,
                     events_since_compact=self._events_since_compact,
                     token_estimate=self._token_estimate,
-                )
+                ),
+                origin_mcp="orchestrator",
             )
             self._events_since_compact = 0
             self._token_estimate = 0.0
 
     def _trigger_clear(self, reason: str) -> None:
         """Emit SessionClearing event and write HandoffRecord."""
-        log = journal_log()
+        from nxl_core.events.ipc import EventEmissionClient
+
         handoff_id = f"handoff-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 
         # Emit SessionClearing event
-        log.append(
+        EventEmissionClient().emit(
             SessionClearing(
                 handoff_id=handoff_id,
                 reason=reason,
                 from_agent="nexusloop",
                 to_agent="nexusloop-next",
-            )
+            ),
+            origin_mcp="orchestrator",
         )
 
         # HandoffRecord is a validated Pydantic model — in production this

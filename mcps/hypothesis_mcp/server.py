@@ -75,7 +75,6 @@ class HypothesisMCPServer(BaseMCPServer):
         ]
 
     async def handle_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        self.emit_tool_requested(tool_name, args)
         decision = self._policy.check(tool_name, args)
         if not decision.allowed:
             return {"ok": False, "error": f"Policy denied: {decision.reason}"}
@@ -91,7 +90,7 @@ class HypothesisMCPServer(BaseMCPServer):
 
     async def _create(self, args: dict[str, Any]) -> dict[str, Any]:
         from nxl_core.events.schema import HypothesisCreated
-        from nxl_core.events.singletons import journal_log
+        from nxl_core.events.ipc import EventEmissionClient
 
         hypothesis_id = _ulid()
         claim = str(args["claim"])
@@ -111,8 +110,7 @@ class HypothesisMCPServer(BaseMCPServer):
             claim=claim,
             source=source,  # type: ignore[arg-type]
         )
-        log = journal_log()
-        log.append(event)
+        EventEmissionClient().emit(event, origin_mcp="hypothesis")
 
         return {"ok": True, "data": {"hypothesis_id": hypothesis_id}}
 

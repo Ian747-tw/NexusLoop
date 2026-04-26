@@ -17,9 +17,6 @@ from mcps.experiment.responses import (
     ExperimentStatusResponse,
     ExperimentSubmitResponse,
 )
-from nxl_core.events.schema import ToolRequested
-
-# In-memory trial store
 _trials: dict[str, dict[str, Any]] = {}
 
 
@@ -77,18 +74,6 @@ class ExperimentServer(BaseMCPServer):
             },
         ]
 
-    def _emit(self, tool_name: str, args: dict[str, Any]) -> None:
-        from nxl_core.events.singletons import journal_log
-
-        event_log = journal_log()
-        event_log.append(
-            ToolRequested(
-                tool_name=tool_name,
-                args_hash=str(hash(frozenset(args.items()))),
-                requesting_skill=None,
-            )
-        )
-
     async def handle_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "experiment.submit":
             return await self._submit(args)
@@ -104,7 +89,6 @@ class ExperimentServer(BaseMCPServer):
     async def _submit(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("experiment.submit", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("experiment.submit", args)
 
         req = ExperimentSubmitRequest(**args)
         trial_id = _generate_trial_id()
@@ -129,7 +113,6 @@ class ExperimentServer(BaseMCPServer):
     async def _status(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("experiment.status", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("experiment.status", args)
 
         req = ExperimentStatusRequest(**args)
         trial = _trials.get(req.trial_id)
@@ -149,7 +132,6 @@ class ExperimentServer(BaseMCPServer):
     async def _cancel(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("experiment.cancel", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("experiment.cancel", args)
 
         req = ExperimentCancelRequest(**args)
         trial = _trials.get(req.trial_id)
@@ -167,7 +149,6 @@ class ExperimentServer(BaseMCPServer):
     async def _list(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("experiment.list", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("experiment.list", args)
 
         trials = [
             ExperimentStatusResponse(

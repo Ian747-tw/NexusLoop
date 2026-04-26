@@ -103,7 +103,7 @@ def _get_spec_for_dry_run(project_dir: Path) -> dict[str, object]:
     for tool_name in ("spec.get_project", "spec.get_operations"):
         log.append(ToolRequested(
             tool_name=tool_name,
-            args_hash="dry-run",
+            args_hash="0" * 16,
             requesting_skill=None,
         ))
 
@@ -131,8 +131,8 @@ def run(
     _, old_handler = setup_sigint_handler()
 
     if dry_run:
-        from nxl_core.events.singletons import journal_log
         from nxl_core.events.schema import CycleStarted, CycleCompleted
+        from nxl_core.events.singletons import journal_log
         import hashlib
 
         console("Dry-run: would execute one cycle with provider.", "info")
@@ -146,11 +146,11 @@ def run(
         except Exception:
             pass
         brief_hash = hashlib.sha256(brief_text.encode()).hexdigest()[:16]
-        log = journal_log()
 
         # Call spec MCP to emit tool events (spec.get_project, spec.get_operations)
         _get_spec_for_dry_run(project_dir)
 
+        log = journal_log()
         log.append(CycleStarted(
             brief_hash=brief_hash,
             hypothesis_id="dry-run-hypothesis",

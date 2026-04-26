@@ -10,18 +10,6 @@ from mcps.inbox.server import InboxMCPServer
 class TestPolicyGate:
     """Assert policy check fires on every tool call."""
 
-    def test_list_emits_tool_requested(self) -> None:
-        """list emits ToolRequested event via EventLog."""
-        server = InboxMCPServer()
-        # Should not raise
-        server.emit_tool_requested("inbox.list", {})
-
-    def test_get_emits_tool_requested(self) -> None:
-        """get emits ToolRequested event via EventLog."""
-        server = InboxMCPServer()
-        # Should not raise
-        server.emit_tool_requested("inbox.get", {"directive_id": "test"})
-
     def test_all_tools_have_policy_gate(self) -> None:
         """Every tool name in get_tools() must go through policy check."""
         server = InboxMCPServer()
