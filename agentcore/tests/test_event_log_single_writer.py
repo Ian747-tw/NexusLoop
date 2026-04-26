@@ -14,9 +14,7 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -150,7 +148,7 @@ class TestSingleWriterInvariant:
             assert ack.get("error") is None
 
             # Verify event was actually written
-            lines = [l.strip() for l in events_path.read_text().splitlines() if l.strip()]
+            lines = [l.strip() for line in events_path.read_text().splitlines() if line.strip()]
             assert len(lines) == 1
             parsed = json.loads(lines[0])
             assert parsed["event_id"] == "ev-001"
@@ -182,7 +180,7 @@ class TestSingleWriterInvariant:
             fork.stop()
 
             # Verify all 100 lines are valid JSON with correct event_ids
-            lines = [l.strip() for l in events_path.read_text().splitlines() if l.strip()]
+            lines = [l.strip() for line in events_path.read_text().splitlines() if line.strip()]
             assert len(lines) == 100, f"expected 100 lines, got {len(lines)}"
 
             written_ids = []
@@ -241,7 +239,7 @@ class TestSingleWriterInvariant:
         assert not errors, f"concurrent errors: {errors}"
 
         # Verify 50 events written across all batches
-        lines = [l.strip() for l in events_path.read_text().splitlines() if l.strip()]
+        lines = [l.strip() for line in events_path.read_text().splitlines() if line.strip()]
         assert len(lines) == 50, f"expected 50, got {len(lines)}"
 
     def test_invalid_event_kind_returns_null_event_id(self, temp_events_dir) -> None:
@@ -302,7 +300,7 @@ class TestSingleWriterInvariant:
             eid = log.append(CycleStarted(brief_hash="xyz", hypothesis_id="h2", started_at=0))
             assert eid and isinstance(eid, str)
             # Verify it was actually written
-            lines = [l.strip() for l in events_path.read_text().splitlines() if l.strip()]
+            lines = [l.strip() for line in events_path.read_text().splitlines() if line.strip()]
             assert len(lines) == 1
             assert json.loads(lines[0])["event_id"] == eid
         finally:
