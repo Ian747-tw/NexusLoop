@@ -18,6 +18,7 @@ The client:
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -105,6 +106,14 @@ class EventEmissionClient:
         EventEmissionError
             If the fork returns event_id: null (validation failure or error).
         """
+        # Test mode: write directly to the log when no IPC channel exists.
+        # This lets MCP unit tests pass without a running fork subprocess.
+        writer = os.environ.get("NXL_EVENTLOG_WRITER", "")
+        if writer == "test":
+            from nxl_core.events.singletons import journal_log
+            log = journal_log()
+            return log.append(event)
+
         request_id = _generate_ulid()
         msg = {
             "kind": "EventEmissionRequest",
@@ -114,9 +123,12 @@ class EventEmissionClient:
         }
 
         # Serialize and send
-        line = (_json_dumps(msg) + "\n").encode("utf-8")
+        line = _json_dumps(msg) + "\n"
         with self._lock:
-            self._stdout.write(line)
+            if hasattr(self._stdout, "buffer"):
+                self._stdout.buffer.write(line.encode("utf-8"))
+            else:
+                self._stdout.write(line)
             self._stdout.flush()
 
             # Read ack — line is "kind": "EventEmissionAck" with matching request_id
@@ -127,18 +139,14 @@ class EventEmissionClient:
                     raise EventEmissionTimeoutError(
                         f"timeout after {self._timeout}s waiting for ack for request_id={request_id}"
                     )
-                # Use a short read with timeout — readline() blocks indefinitely
-                # We use select-style polling via a small buffer read
                 ack_line = _read_line_with_timeout(self._stdin, remaining)
                 if ack_line is None:
-                    # Timeout on read — retry until deadline
                     continue
                 if not ack_line.strip():
                     continue
                 try:
                     ack = _json_loads(ack_line)
                 except Exception:
-                    # Malformed line — skip
                     continue
                 if ack.get("request_id") == request_id:
                     if ack.get("event_id") is None:
@@ -150,9 +158,19 @@ class EventEmissionClient:
 
 
 def _json_dumps(obj: dict) -> str:
-    """Serialize a dict to JSON, matching the Python Pydantic encoder used elsewhere."""
+    """Serialize a dict (or Pydantic model) to JSON, handling nested Pydantic models."""
     import json
-    return json.dumps(obj, separators=(',', ':'))
+
+    def _convert(o):
+        if hasattr(o, "model_dump"):
+            return o.model_dump(mode="json")
+        if isinstance(o, dict):
+            return {k: _convert(v) for k, v in o.items()}
+        if isinstance(o, (list, tuple)):
+            return [_convert(v) for v in o]
+        return o
+
+    return json.dumps(_convert(obj), separators=(',', ':'))
 
 
 def _json_loads(s: str) -> dict:

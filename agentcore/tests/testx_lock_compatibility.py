@@ -12,10 +12,7 @@ Run: uv run pytest agentcore/tests/test_lock_compatibility.py -v
 """
 from __future__ import annotations
 
-import json
-import os
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -87,7 +84,6 @@ setTimeout(() => {{
 
         # Python portalocker should block (not acquire) while TS holds the lock.
         # Use a timeout of 0.5s to detect that the lock was NOT immediately acquired.
-        start = time.monotonic()
         acquired = threading.Event()
         failed = threading.Event()
 
