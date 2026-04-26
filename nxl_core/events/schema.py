@@ -284,6 +284,18 @@ class FreeFormTrialStarted(_BaseEvent):
     notes: list[str] = Field(default_factory=list, description="Initial observations")
 
 
+class ProviderCalled(_BaseEvent):
+    """Emitted on every LLM provider call for telemetry and cost accounting."""
+    kind: Literal["provider_called"] = "provider_called"
+    prompt_bytes: int = Field(description="Size of the prompt in bytes")
+    response_bytes: int = Field(description="Size of the response in bytes")
+    tokens_used: int = Field(description="Total tokens used (prompt + completion)")
+    cache_hit: bool = Field(description="Whether the response was a cache hit")
+    latency_ms: float = Field(description="Latency in milliseconds (monotonic clock)")
+    model_version: str = Field(description="Model version / identifier used")
+    temperature: float = Field(description="Temperature parameter for the call")
+
+
 class CompactionTierEntered(_BaseEvent):
     """Emitted when a new compaction tier is activated."""
     kind: Literal["compaction_tier_entered"] = "compaction_tier_entered"
@@ -324,6 +336,7 @@ Event = Annotated[
         ChangeIntentRecorded,
         FreeFormTrialStarted,
         CompactionTierEntered,
+        ProviderCalled,
     ],
     Field(discriminator="kind"),
 ]

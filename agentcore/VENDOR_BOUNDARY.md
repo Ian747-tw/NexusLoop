@@ -52,14 +52,9 @@ fork-level modification, append here and bump the rebase impact estimate.
 6. `seams/mcp-gate.ts` — wraps OpenCode MCP registry with PolicyEngine; intercepts every MCP tool call before dispatching
 7. `seams/research-state.ts` — extends OpenCode session schema with a `research:` namespace (current_cycle, program_state, registry_projection, tier_state, capsule_cursor, scheduler_queue). Schema locked in ADR-008. Populated on session start by reading events.jsonl from cursor.
 8. `seams/scheduler-integration.ts` — outer scheduler. TS class holding scheduler_queue, picks next cycle via priority + budget gates. Calls registered callbacks on cycle-driver.ts for cycle_end events. Never enqueues from TS — proposal authority stays with the LLM.
+9. `seams/provider-instrumentation.ts` — wraps provider adapter to record per-call telemetry: prompt_bytes, response_bytes, tokens_used, cache_hit, latency_ms, model_version, temperature. Emits ProviderCalled event on every LLM call.
 
 ### Planned but not yet implemented
-
-9. `seams/provider-instrumentation.ts` — wraps provider adapter to record:
-   - prompt_bytes, response_bytes, tokens_used, cache_hit, latency_ms,
-     model_version, temperature
-   - Required for replay determinism and cost accounting.
-   - STATUS: planned (file does not exist)
 
 10. `seams/session-storage.ts` — upstream's message-list session store is replaced
     by a thin pointer into events.jsonl. Source of truth is the event log.
@@ -84,8 +79,8 @@ fork-level modification, append here and bump the rebase impact estimate.
 ### Rebase impact
 
 Each modification adds ~1–3 hours to a rebase. Total rebase budget:
-- 8 implemented modifications: ~24 hours (already absorbed)
-- 6 planned-but-missing (entries 9-14): ~18 hours budget reserved
+- 9 implemented modifications: ~27 hours (already absorbed)
+- 5 planned-but-missing (entries 10-14): ~15 hours budget reserved
 - <1 day target for full fork integration (M4 exit gate)
 
 ## Pinned commit

@@ -106,6 +106,7 @@ const EventKind = z.enum([
   'hard_regenerated',
   'session_clearing',
   'literature_invariant_violated',
+  'provider_called',
 ]);
 type EventKind = z.infer<typeof EventKind>;
 
