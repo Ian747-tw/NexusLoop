@@ -10,7 +10,7 @@ let _turnCount = 0;
 export async function startCycle(brief: string): Promise<void> {
   _cycleState = 'running';
   _turnCount = 0;
-  await emitEvent({ event: { kind: 'CycleStarted', brief, timestamp: Date.now() } });
+  emitEvent({ event: { kind: 'CycleStarted', brief, timestamp: Date.now() } });
 }
 
 export function pauseCycle(): void {

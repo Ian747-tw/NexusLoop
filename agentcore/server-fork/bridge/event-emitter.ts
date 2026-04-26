@@ -11,7 +11,7 @@ function _ulid(): string {
   return `01H${timePart}${randPart}`;
 }
 
-export async function emitEvent(event: Record<string, unknown>): Promise<void> {
+export function emitEvent(event: Record<string, unknown>): void {
   const EVENT_LOG_PATH = resolve(process.cwd(), 'events.jsonl');
   const LOCK_PATH = EVENT_LOG_PATH + '.lock';
   // Inject event_id and timestamp into the inner event when wrapped
@@ -21,13 +21,8 @@ export async function emitEvent(event: Record<string, unknown>): Promise<void> {
     if (!inner.timestamp) inner.timestamp = new Date().toISOString();
   }
   const line = JSON.stringify(event) + '\n';
-  const release = await properLockfile.lock(LOCK_PATH, {
-    retries: {
-      retries: 10,
-      factor: 2,
-      minTimeout: 20,
-      maxTimeout: 500,
-    },
+  const release = properLockfile.lockSync(LOCK_PATH, {
+    retries: 10,
     stale: 1,
     updateAgeWhenOpening: true,
   });
@@ -40,24 +35,19 @@ export async function emitEvent(event: Record<string, unknown>): Promise<void> {
       closeSync(fd);
     }
   } finally {
-    await release();
+    release();
   }
 }
 
-export async function emitEventBatch(
+export function emitEventBatch(
   events: Record<string, unknown>[]
-): Promise<void> {
+): void {
   if (events.length === 0) return;
   const EVENT_LOG_PATH = resolve(process.cwd(), 'events.jsonl');
   const LOCK_PATH = EVENT_LOG_PATH + '.lock';
   const lines = events.map((e) => JSON.stringify(e) + '\n').join('');
-  const release = await properLockfile.lock(LOCK_PATH, {
-    retries: {
-      retries: 10,
-      factor: 2,
-      minTimeout: 20,
-      maxTimeout: 500,
-    },
+  const release = properLockfile.lockSync(LOCK_PATH, {
+    retries: 10,
     stale: 1,
     updateAgeWhenOpening: true,
   });
@@ -70,6 +60,6 @@ export async function emitEventBatch(
       closeSync(fd);
     }
   } finally {
-    await release();
+    release();
   }
 }
