@@ -103,7 +103,7 @@ def _get_spec_for_dry_run(project_dir: Path) -> dict[str, object]:
     for tool_name in ("spec.get_project", "spec.get_operations"):
         log.append(ToolRequested(
             tool_name=tool_name,
-            args_hash="dry-run",
+            args_hash="0" * 16,
             requesting_skill=None,
         ))
 
@@ -131,6 +131,8 @@ def run(
     _, old_handler = setup_sigint_handler()
 
     if dry_run:
+        import os
+        os.environ['NXL_EVENTLOG_WRITER'] = 'test'
         from nxl_core.events.singletons import journal_log
         from nxl_core.events.schema import CycleStarted, CycleCompleted
         import hashlib
