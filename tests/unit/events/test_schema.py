@@ -178,9 +178,9 @@ class TestAll21KindsPresent:
             "cycle_started": '{"kind": "cycle_started", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "brief_hash": "h", "hypothesis_id": "hyp"}',
             "cycle_completed": '{"kind": "cycle_completed", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "brief_hash": "h", "hypothesis_id": "hyp", "summary_tokens": 1}',
             "cycle_failed": '{"kind": "cycle_failed", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "brief_hash": "h", "hypothesis_id": "hyp", "reason": "x"}',
-            "tool_requested": '{"kind": "tool_requested", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "tool_name": "bash", "args_hash": "h"}',
-            "tool_completed": '{"kind": "tool_completed", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "tool_name": "bash", "args_hash": "h", "duration_ms": 1}',
-            "tool_failed": '{"kind": "tool_failed", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "tool_name": "bash", "args_hash": "h", "error": "x"}',
+            "tool_requested": '{"kind": "tool_requested", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "tool_name": "bash", "args_hash": "abcd1234567890ab"}',
+            "tool_completed": '{"kind": "tool_completed", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "tool_name": "bash", "args_hash": "abcd1234567890ab", "duration_ms": 1}',
+            "tool_failed": '{"kind": "tool_failed", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "tool_name": "bash", "args_hash": "abcd1234567890ab", "error": "x"}',
             "hypothesis_created": '{"kind": "hypothesis_created", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "hypothesis_id": "h", "claim": "c"}',
             "trial_started": '{"kind": "trial_started", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "trial_id": "t", "hypothesis_id": "h"}',
             "trial_completed": '{"kind": "trial_completed", "event_id": "01HXXXX", "timestamp": "2026-01-01T00:00:00Z", "trial_id": "t", "hypothesis_id": "h", "metrics": {}}',
@@ -257,7 +257,7 @@ def _make_tool_requested() -> "nxl_core.events.schema.ToolRequested":
         causation_id=None,
         kind="tool_requested",
         tool_name="bash",
-        args_hash="a1b2c3d4e5f6",
+        args_hash="a1b2c3d4e5f6a1b2",
         requesting_skill="superpowers:execute-plan",
     )
 
@@ -271,7 +271,7 @@ def _make_tool_completed() -> "nxl_core.events.schema.ToolCompleted":
         causation_id="01HXXXXXXXXXXXX",
         kind="tool_completed",
         tool_name="bash",
-        args_hash="a1b2c3d4e5f6",
+        args_hash="a1b2c3d4e5f6a1b2",
         duration_ms=450,
     )
 
@@ -285,7 +285,7 @@ def _make_tool_failed() -> "nxl_core.events.schema.ToolFailed":
         causation_id="01HXXXXXXXXXXXX",
         kind="tool_failed",
         tool_name="bash",
-        args_hash="a1b2c3d4e5f6",
+        args_hash="a1b2c3d4e5f6a1b2",
         error="exit code 1",
     )
 
