@@ -94,15 +94,12 @@ class SkillRegistry:
 
             # Emit SkillRegistered event
             from nxl_core.events.schema import SkillRegistered
-            from nxl_core.events.singletons import registry_log
+            from nxl_core.events.ipc import EventEmissionClient
 
-            log = registry_log()
-            log.append(
-                SkillRegistered(
-                    skill_name=name,
-                    skill_def=skill_def.model_dump(),
-                )
-            )
+            EventEmissionClient().emit(SkillRegistered(
+                skill_name=name,
+                skill_def=skill_def.model_dump(),
+            ), origin_mcp="skills")
 
         return result
 

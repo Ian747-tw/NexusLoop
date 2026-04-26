@@ -18,7 +18,6 @@ The client:
 """
 from __future__ import annotations
 
-import os
 import sys
 import threading
 import time
@@ -106,14 +105,6 @@ class EventEmissionClient:
         EventEmissionError
             If the fork returns event_id: null (validation failure or error).
         """
-        # Test mode: write directly to the log when no IPC channel exists.
-        # This lets MCP unit tests pass without a running fork subprocess.
-        writer = os.environ.get("NXL_EVENTLOG_WRITER", "")
-        if writer == "test":
-            from nxl_core.events.singletons import journal_log
-            log = journal_log()
-            return log.append(event)
-
         request_id = _generate_ulid()
         msg = {
             "kind": "EventEmissionRequest",

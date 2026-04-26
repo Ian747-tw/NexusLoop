@@ -6,36 +6,28 @@ cd "$(dirname "$0")/.."
 
 fail=0
 
-# Find all EventLog.append calls in Python code, excluding:
-# - test files (use NXL_EVENTLOG_WRITER=test)
-# - nxl_core/events/ implementation files themselves
-grep_args=(
-  --no-filename
-  '-n'
-  '-o'
-  '--word-regexp'
-  'EventLog.append'
-)
-
 echo "== Scanning for EventLog.append in Python =="
 
-# Exclude test files only. mcps/ are migrated and must be scanned.
-# Also exclude nxl_core/events/ itself (the implementation).
-mapfile -t matches < <(grep -r 'EventLog\.append' . \
+# Catch both:
+#   EventLog.append(...) — class method call
+#   journal_log().append(event) / self._log.append(event) — method on log variable
+# Exclude: test files, nxl_core/events/ implementation, conftest.py
+mapfile -t matches < <(grep -rE '(\blog\.append\(|EventLog\.append)' . \
   --include='*.py' \
   --exclude-dir='.claude' \
+  --exclude-dir='.venv' \
   --exclude-dir='node_modules' \
   --exclude-dir='upstream' \
   --exclude-dir='agentcore/tests' \
   --exclude-dir='tests' \
-  2>/dev/null | grep -v 'nxl_core/events/log.py:' | grep -v 'conftest.py:')
+  2>/dev/null | grep -v 'nxl_core/events/log.py:' | grep -v 'nxl_core/events/ipc.py:' | grep -v 'conftest.py:')
 
 if [[ ${#matches[@]} -gt 0 ]]; then
-  echo "FAIL: EventLog.append found in non-test Python code:"
+  echo "FAIL: EventLog/log.append found in non-test Python code:"
   for m in "${matches[@]}"; do echo "  $m"; done
   fail=1
 else
-  echo "  OK  No EventLog.append in production Python (outside tests)"
+  echo "  OK  No EventLog/log.append in production Python (outside tests)"
 fi
 
 echo
@@ -44,6 +36,7 @@ echo "== Scanning for direct write patterns to events.jsonl =="
 mapfile -t write_matches < <(grep -r 'events\.jsonl' . \
   --include='*.py' \
   --exclude-dir='.claude' \
+  --exclude-dir='.venv' \
   --exclude-dir='node_modules' \
   --exclude-dir='upstream' \
   --exclude-dir='agentcore/tests' \

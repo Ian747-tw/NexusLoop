@@ -75,7 +75,7 @@ class EvidenceMCPServer(BaseMCPServer):
 
     async def _record(self, args: dict[str, Any]) -> dict[str, Any]:
         from nxl_core.events.schema import EvidenceCollected
-        from nxl_core.events.singletons import journal_log
+        from nxl_core.events.ipc import EventEmissionClient
 
         trial_id = str(args["trial_id"])
         evidence_type = str(args["evidence_type"])
@@ -86,8 +86,7 @@ class EvidenceMCPServer(BaseMCPServer):
             evidence_type=evidence_type,  # type: ignore[arg-type]
             value=value,
         )
-        log = journal_log()
-        event_id = log.append(event)
+        event_id = EventEmissionClient().emit(event, origin_mcp="evidence")
         return {"ok": True, "data": {"event_id": event_id}}
 
     async def _list(self, args: dict[str, Any]) -> dict[str, Any]:

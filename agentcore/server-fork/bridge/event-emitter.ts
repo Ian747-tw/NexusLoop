@@ -1,4 +1,4 @@
-import { openSync, writeSync, fsyncSync, closeSync } from 'fs';
+import { openSync, writeSync, fsyncSync, closeSync, existsSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
 import { resolve } from 'path';
 import * as properLockfile from 'proper-lockfile';
@@ -14,6 +14,10 @@ function _ulid(): string {
 export function emitEvent(event: Record<string, unknown>): void {
   const EVENT_LOG_PATH = resolve(process.cwd(), 'events.jsonl');
   const LOCK_PATH = EVENT_LOG_PATH + '.lock';
+  // Ensure the lock file exists (proper-lockfile uses mkdir which requires the path to not exist)
+  if (!existsSync(LOCK_PATH)) {
+    writeFileSync(LOCK_PATH, '');
+  }
   // Inject event_id and timestamp into the inner event when wrapped
   if (event.event && typeof event.event === 'object') {
     const inner = event.event as Record<string, unknown>;
@@ -21,7 +25,9 @@ export function emitEvent(event: Record<string, unknown>): void {
     if (!inner.timestamp) inner.timestamp = new Date().toISOString();
   }
   const line = JSON.stringify(event) + '\n';
+  // Use lockfilePath so proper-lockfile locks the SAME file portalocker uses (events.jsonl.lock)
   const release = properLockfile.lockSync(LOCK_PATH, {
+    lockfilePath: LOCK_PATH,
     stale: 1,
     updateAgeWhenOpening: true,
   });
@@ -44,8 +50,12 @@ export function emitEventBatch(
   if (events.length === 0) return;
   const EVENT_LOG_PATH = resolve(process.cwd(), 'events.jsonl');
   const LOCK_PATH = EVENT_LOG_PATH + '.lock';
+  if (!existsSync(LOCK_PATH)) {
+    writeFileSync(LOCK_PATH, '');
+  }
   const lines = events.map((e) => JSON.stringify(e) + '\n').join('');
   const release = properLockfile.lockSync(LOCK_PATH, {
+    lockfilePath: LOCK_PATH,
     stale: 1,
     updateAgeWhenOpening: true,
   });

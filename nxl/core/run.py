@@ -94,18 +94,17 @@ def _get_spec_for_dry_run(project_dir: Path) -> dict[str, object]:
     """Call spec MCP tools and emit ToolRequested events for E2E test verification."""
     from mcps.spec.server import SpecMCPServer
     from nxl_core.events.schema import ToolRequested
-    from nxl_core.events.singletons import journal_log
+    from nxl_core.events.ipc import EventEmissionClient
 
-    log = journal_log()
     spec_server = SpecMCPServer(project_dir)
 
     # Emit tool_requested events for spec.get_project and spec.get_operations
     for tool_name in ("spec.get_project", "spec.get_operations"):
-        log.append(ToolRequested(
+        EventEmissionClient().emit(ToolRequested(
             tool_name=tool_name,
             args_hash="0" * 16,
             requesting_skill=None,
-        ))
+        ), origin_mcp="orchestrator")
 
     return spec_server._get_project()
 
@@ -133,8 +132,8 @@ def run(
     if dry_run:
         import os
         os.environ['NXL_EVENTLOG_WRITER'] = 'test'
-        from nxl_core.events.singletons import journal_log
         from nxl_core.events.schema import CycleStarted, CycleCompleted
+        from nxl_core.events.ipc import EventEmissionClient
         import hashlib
 
         console("Dry-run: would execute one cycle with provider.", "info")
@@ -148,20 +147,19 @@ def run(
         except Exception:
             pass
         brief_hash = hashlib.sha256(brief_text.encode()).hexdigest()[:16]
-        log = journal_log()
 
         # Call spec MCP to emit tool events (spec.get_project, spec.get_operations)
         _get_spec_for_dry_run(project_dir)
 
-        log.append(CycleStarted(
+        EventEmissionClient().emit(CycleStarted(
             brief_hash=brief_hash,
             hypothesis_id="dry-run-hypothesis",
-        ))
-        log.append(CycleCompleted(
+        ), origin_mcp="orchestrator")
+        EventEmissionClient().emit(CycleCompleted(
             brief_hash=brief_hash,
             hypothesis_id="dry-run-hypothesis",
             summary_tokens=0,
-        ))
+        ), origin_mcp="orchestrator")
 
         signal.signal(signal.SIGINT, old_handler)
         return 0
