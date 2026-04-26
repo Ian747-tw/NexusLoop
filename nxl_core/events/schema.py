@@ -78,7 +78,10 @@ class ToolRequested(_BaseEvent):
     kind: Literal["tool_requested"] = "tool_requested"
     tool_name: str = Field(description="Name of the tool being invoked")
     args_hash: str = Field(
-        description="SHA-256 hex of canonical JSON args (sorted keys, first 16 chars)"
+        description="SHA-256 hex of canonical JSON args (sorted keys, first 16 chars)",
+        min_length=16,
+        max_length=16,
+        pattern=r"^[0-9a-f]{16}$",
     )
     requesting_skill: str | None = Field(
         default=None, description="Skill that requested this tool, if any"

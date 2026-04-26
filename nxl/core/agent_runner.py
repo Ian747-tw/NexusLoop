@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from agentcore.client_py.client import OpenCodeClient
-from nxl_core.events.log import EventLog
 
 
 @dataclass
@@ -29,7 +28,6 @@ class OpenCodeBackend:
 
     def __init__(self, events_path: Path):
         self._client = OpenCodeClient()
-        self._event_log = EventLog(events_path)
 
     def run_cycle(self, brief: str) -> dict:
         result = self._client.run_cycle(
@@ -37,9 +35,8 @@ class OpenCodeBackend:
             policy_endpoint='http://localhost:9001/policy',
             events_endpoint='http://localhost:9001/events',
         )
-        # Write events to log
-        for event in result.events:
-            self._event_log.append(event)
+        # Events are written by the fork-side event-emitter after IPC emission.
+        # OpenCodeBackend is preserved as a stub for future integration.
         return {
             'cycle_id': result.cycle_id,
             'tool_calls': result.tool_calls,

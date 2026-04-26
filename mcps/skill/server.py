@@ -6,8 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from mcps._shared.base import BaseMCPServer
-from nxl_core.events.singletons import journal_log
-from nxl_core.events.schema import SkillRegistered
 
 
 class SkillMCPServer(BaseMCPServer):
@@ -114,7 +112,7 @@ class SkillMCPServer(BaseMCPServer):
             return yaml.safe_load(fh) or {}
 
     def _register_skill(self, skill_name: str, definition: dict) -> dict[str, Any]:
-        """Register a new skill by emitting a SkillRegistered event."""
-        event_log = journal_log()
-        event_log.append(SkillRegistered(skill_name=skill_name, skill_def=definition))
+        """Register a new skill (SkillRegistered event emitted via IPC from fork)."""
+        # Single-writer: fork emits SkillRegistered after skill.register tool
+        # call completes. Python side no longer writes directly.
         return {"skill_name": skill_name, "registered": True}

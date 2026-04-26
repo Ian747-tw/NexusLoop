@@ -280,7 +280,7 @@ class TestSingleWriterInvariant:
 
         original = os.environ.pop("NXL_EVENTLOG_WRITER", None)
         try:
-            with pytest.raises(RuntimeError, match="only fork may write"):
+            with pytest.raises(AssertionError, match="NXL_EVENTLOG_WRITER must be 'fork' or 'test'"):
                 log.append(CycleStarted(brief_hash="abc", hypothesis_id="h1", started_at=0))
         finally:
             if original is not None:
