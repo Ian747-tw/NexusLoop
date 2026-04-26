@@ -51,9 +51,9 @@ def _make_events(count: int, seed: int = 42) -> list[dict]:
         elif kind == "cycle_completed":
             events.append({**base, "kind": kind, "brief_hash": f"hash{i}", "hypothesis_id": hypothesis_id, "summary_tokens": rng.randint(50, 500)})
         elif kind == "tool_requested":
-            events.append({**base, "kind": kind, "tool_name": rng.choice(["bash", "read", "write"]), "args_hash": f"ah{i}", "requesting_skill": None})
+            events.append({**base, "kind": kind, "tool_name": rng.choice(["bash", "read", "write"]), "args_hash": f"{i:016x}", "requesting_skill": None})
         elif kind == "tool_completed":
-            events.append({**base, "kind": kind, "tool_name": "bash", "args_hash": f"ah{i}", "duration_ms": rng.randint(10, 5000)})
+            events.append({**base, "kind": kind, "tool_name": "bash", "args_hash": f"{i:016x}", "duration_ms": rng.randint(10, 5000)})
         elif kind == "hypothesis_created":
             events.append({**base, "kind": kind, "hypothesis_id": hypothesis_id, "claim": f"claim{i}", "source": "human"})
         elif kind == "trial_started":
