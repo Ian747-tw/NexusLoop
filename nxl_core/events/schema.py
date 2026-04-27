@@ -154,10 +154,11 @@ class EvidenceCollected(_BaseEvent):
 class PolicyDecision(_BaseEvent):
     kind: Literal["policy_decision"] = "policy_decision"
     action: str = Field(description="Action that was evaluated")
-    decision: Literal["allow", "deny", "ask", "narrow"] = Field(
+    decision: Literal["allow", "deny", "deny_non_negotiable", "ask", "narrow"] = Field(
         description="Policy decision"
     )
     reason: str = Field(description="Human-readable reason for the decision")
+    rule_id: str | None = Field(default=None, description="Rule that fired, if DENY or deny_non_negotiable")
 
 
 # ---------------------------------------------------------------------------
@@ -289,12 +290,90 @@ class FreeFormTrialStarted(_BaseEvent):
     notes: list[str] = Field(default_factory=list, description="Initial observations")
 
 
+class ProviderCalled(_BaseEvent):
+    """Emitted on every LLM provider call for telemetry and cost accounting."""
+    kind: Literal["provider_called"] = "provider_called"
+    prompt_bytes: int = Field(description="Size of the prompt in bytes")
+    response_bytes: int = Field(description="Size of the response in bytes")
+    tokens_used: int = Field(description="Total tokens used (prompt + completion)")
+    cache_hit: bool = Field(description="Whether the response was a cache hit")
+    latency_ms: float = Field(description="Latency in milliseconds (monotonic clock)")
+    model_version: str = Field(description="Model version / identifier used")
+    temperature: float = Field(description="Temperature parameter for the call")
+
+
 class CompactionTierEntered(_BaseEvent):
     """Emitted when a new compaction tier is activated."""
     kind: Literal["compaction_tier_entered"] = "compaction_tier_entered"
     tier: Literal["soft", "hard", "clear"] = Field(description="Tier activated")
     reason: str = Field(default="", description="Why this tier was entered")
     events_active: int = Field(default=0, description="Events in memory when tier entered")
+
+
+class SubagentSpawned(_BaseEvent):
+    """Emitted when a subagent is spawned via TaskTool."""
+    kind: Literal["subagent_spawned"] = "subagent_spawned"
+    subagent_type: str = Field(description="Registered name of the subagent")
+    isolated: bool = Field(description="Whether this subagent has parent context stripped")
+    parent_session_id: str | None = Field(default=None, description="Parent session ID")
+    parent_message_id: str | None = Field(default=None, description="Parent message ID")
+    purpose: str = Field(default="vanilla", description="Purpose string from registry")
+    invocation_id: str = Field(description="Unique invocation ID for this spawn")
+
+
+class SubagentCompleted(_BaseEvent):
+    """Emitted when a subagent task completes."""
+    kind: Literal["subagent_completed"] = "subagent_completed"
+    subagent_type: str = Field(description="Registered name of the subagent")
+    invocation_id: str = Field(description="Matches the invocation_id from SubagentSpawned")
+    success: bool = Field(description="Whether the subagent completed successfully")
+    session_id: str | None = Field(default=None, description="Subagent's session ID")
+    output_preview: str | None = Field(default=None, description="First 200 chars of output")
+    error: str | None = Field(default=None, description="Error message if success=false")
+
+
+# ---------------------------------------------------------------------------
+# Tripwire events (P4.5)
+# ---------------------------------------------------------------------------
+
+
+class TripwireFired(_BaseEvent):
+    """Emitted when a NON_NEGOTIABLE rule is violated and dispatches are blocked."""
+    kind: Literal["tripwire_fired"] = "tripwire_fired"
+    tripwire_id: str = Field(description="ULID assigned to this tripwire firing")
+    rule_id: str = Field(description="Which NON_NEGOTIABLE rule was violated")
+    reason: str = Field(description="Human-readable explanation of the violation")
+    tool_name: str = Field(default="", description="Tool that triggered the violation")
+    session_id: str | None = Field(default=None, description="Session where violation occurred")
+
+
+class TripwireCleared(_BaseEvent):
+    """Emitted when an active tripwire is acknowledged and cleared."""
+    kind: Literal["tripwire_cleared"] = "tripwire_cleared"
+    tripwire_id: str = Field(description="ULID of the tripwire that was cleared")
+    acknowledged_by: str = Field(description="Operator who acknowledged the tripwire")
+    reason: str | None = Field(default=None, description="Optional acknowledgment notes")
+
+
+class ToolCallBlocked(_BaseEvent):
+    """Emitted when a tool call is refused because a tripwire is active."""
+    kind: Literal["tool_call_blocked"] = "tool_call_blocked"
+    tripwire_id: str = Field(description="Which active tripwire is blocking the dispatch")
+    tool_name: str = Field(description="Tool that was blocked")
+    tool_id: str = Field(description="Request ID of the blocked tool call")
+
+
+# ---------------------------------------------------------------------------
+# Mode flag events (P4.6)
+# ---------------------------------------------------------------------------
+
+
+class ModeFlagDenied(_BaseEvent):
+    """Emitted when a policy-gated runtime flag is denied by PolicyEngine."""
+    kind: Literal["mode_flag_denied"] = "mode_flag_denied"
+    flag_name: str = Field(description="Name of the flag that was denied")
+    reason: str = Field(description="Policy reason for the denial")
+    rule_id: str | None = Field(default=None, description="Rule that caused the denial")
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +408,13 @@ Event = Annotated[
         ChangeIntentRecorded,
         FreeFormTrialStarted,
         CompactionTierEntered,
+        ProviderCalled,
+        SubagentSpawned,
+        SubagentCompleted,
+        TripwireFired,
+        TripwireCleared,
+        ToolCallBlocked,
+        ModeFlagDenied,
     ],
     Field(discriminator="kind"),
 ]

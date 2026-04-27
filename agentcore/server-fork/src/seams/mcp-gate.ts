@@ -71,6 +71,10 @@ export async function dispatchMCP(mcp: string, tool: string, args: Record<string
         enqueueIntervention({ verb: decision.verb, payload: decision.payload });
         return { id: req.id, allowed: false, error: `ask:${decision.verb}` };
       }
+      case 'deny_non_negotiable': {
+        emitEvent({ event: { kind: 'MCPToolDenied', mcp, tool, reason: decision.reason } });
+        return { id: req.id, allowed: false, error: `deny_non_negotiable:${decision.rule_id}` };
+      }
       case 'narrow': {
         const handler = _mcpHandlers.get(mcp);
         if (!handler) return { id: req.id, allowed: false, error: `MCP ${mcp} not registered` };

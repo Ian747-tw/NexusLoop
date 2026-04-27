@@ -6,7 +6,9 @@ Disk: `agentcore/server-fork/src/seams/`
 
 ## Summary
 
-**6 of 11 documented fork modifications are implemented; 5 are planned-but-missing; 1 additional implemented seam (mcp-gate.ts) is not yet documented.**
+**11 of 13 documented fork modifications are implemented; 1 is cancelled; 2 Tier-2 research seams are implemented.**
+
+The 11 implemented seams cover all fork-level capabilities. Entry count excludes the cancelled session-storage (M1-era, superseded by P2 research-state + M1 capsule-session).
 
 ## Implemented seams
 
@@ -17,18 +19,18 @@ Disk: `agentcore/server-fork/src/seams/`
 | 3 | `seams/capsule-session.ts` | IMPLEMENTED | 56 lines; capsule-as-prefix + cache breakpoint + compaction delegation |
 | 4 | `seams/cycle-driver.ts` | IMPLEMENTED | 55 lines; emits typed events at turn lifecycle points |
 | 9 | `seams/skill-dispatcher.ts` | IMPLEMENTED | 40 lines; covers "skill-registration" (entry 9) — YAML skills registered as slash commands |
+| 9 | `seams/provider-instrumentation.ts` | IMPLEMENTED | wraps provider adapter to record per-call telemetry (P4.1) |
+| 10 | `seams/lifecycle-hooks.ts` | IMPLEMENTED | 148 lines; SIGTERM/SIGINT/SIGHUP handlers, draining flag, in-flight counter, 5s drain timeout, idempotent pidfile release (P4.2) |
 | — | `seams/mcp-gate.ts` | IMPLEMENTED | 67 lines; NOT in VENDOR_BOUNDARY.md — wraps MCP registry with PolicyEngine |
 
 ## Planned but not yet implemented
 
 | # | File | Status | Description from VENDOR_BOUNDARY.md |
 |---|------|--------|-------------------------------------|
-| 5 | `seams/provider-instrumentation.ts` | MISSING | Wraps provider adapter to record: prompt_bytes, response_bytes, tokens_used, cache_hit, latency_ms, model_version, temperature |
-| 6 | `seams/session-storage.ts` | MISSING | Upstream's message-list session store replaced by pointer into events.jsonl |
-| 7 | `seams/lifecycle-hooks.ts` | MISSING | Graceful shutdown flushes pending events to events.jsonl; SIGTERM, SIGINT honored |
-| 8 | `seams/subagent-isolation.ts` | MISSING | Intercepts subagent setup when isolation=true to enforce no parent context leak |
-| 10 | `seams/tripwire-gate.ts` | MISSING | When tripwire fires, gate refuses next tool call until acknowledged (M4) |
-| 11 | `seams/mode-flag-gate.ts` | MISSING | Flags that would bypass approval are themselves policy-gated (M4) |
+| — | `seams/session-storage.ts` | CANCELLED | Superseded by research-state.ts + capsule-session.ts (see ADR-010) |
+| 11 | `seams/subagent-isolation.ts` | IMPLEMENTED | Config-driven; registry.yaml declares isolated types; strips parentID on spawn |
+| 12 | `seams/tripwire-gate.ts` | IMPLEMENTED | 237 lines; ULID-like IDs, events.jsonl replay, blocks dispatch until acknowledged (P4.5) |
+| 13 | `seams/mode-flag-gate.ts` | IMPLEMENTED | Registry-gated flags; deny-by-default; ModeFlagDenied event on rejection (P4.6) |
 
 ## Tier 2 — Research seams (post-M1.1, see ADR-006)
 

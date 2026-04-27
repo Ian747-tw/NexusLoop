@@ -1,0 +1,30 @@
+# NexusLoop mode-flag registry — declares runtime flags subject to policy gating.
+#
+# Flags listed here are checked against PolicyEngine at startup or when
+# set. If the policy verdict is "deny", the flag is ignored (treated as
+# absent) and a ModeFlagDenied event is recorded.
+#
+# Flags NOT listed here pass through unchanged (registry passthrough).
+#
+# Each entry:
+#   <flag_name>:
+#     description: <one line>
+#     default_verdict: <"allow" | "deny">  # used when no explicit rule matches
+
+allow-edit-without-approval:
+  description: |
+    Bypasses the intervention layer for edit/scaffold tool calls.
+    Subject to policy because it skips operator review.
+  default_verdict: deny
+
+allow-shell-without-approval:
+  description: |
+    Bypasses the intervention layer for shell execution.
+    Subject to policy because it skips operator review.
+  default_verdict: deny
+
+skip-policy-check:
+  description: |
+    Skips the PolicyEngine check entirely. Subject to policy because
+    it would disable all policy enforcement for the session.
+  default_verdict: deny

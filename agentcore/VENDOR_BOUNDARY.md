@@ -52,40 +52,41 @@ fork-level modification, append here and bump the rebase impact estimate.
 6. `seams/mcp-gate.ts` — wraps OpenCode MCP registry with PolicyEngine; intercepts every MCP tool call before dispatching
 7. `seams/research-state.ts` — extends OpenCode session schema with a `research:` namespace (current_cycle, program_state, registry_projection, tier_state, capsule_cursor, scheduler_queue). Schema locked in ADR-008. Populated on session start by reading events.jsonl from cursor.
 8. `seams/scheduler-integration.ts` — outer scheduler. TS class holding scheduler_queue, picks next cycle via priority + budget gates. Calls registered callbacks on cycle-driver.ts for cycle_end events. Never enqueues from TS — proposal authority stays with the LLM.
+9. `seams/provider-instrumentation.ts` — wraps provider adapter to record per-call telemetry: prompt_bytes, response_bytes, tokens_used, cache_hit, latency_ms, model_version, temperature. Emits ProviderCalled event on every LLM call.
+10. `seams/lifecycle-hooks.ts` — graceful shutdown ensures all pending events are flushed to events.jsonl before exit. SIGTERM, SIGINT, SIGHUP all handled. Draining flag blocks new tool calls; in-flight calls wait up to 5s before forced exit. Emits session_shutdown synchronously before handler returns. Idempotent pidfile release via rm(force=true).
+
+11. `seams/subagent-isolation.ts` — config-driven subagent firewall (ADR-012).
+    `agentcore/subagents/registry.yaml` declares which subagent types are isolated.
+    When `isolated: true`, parentID is stripped from session create args before
+    upstream's TaskTool creates the child. SubagentSpawned + SubagentCompleted
+    events emitted for audit. Registered non-isolated types and vanilla OpenCode
+    subagents pass through unchanged.
+    - STATUS: implemented (config-driven; no parameter added to TaskTool)
+
+12. `seams/tripwire-gate.ts` — when a tripwire is fired, the gate refuses
+    next tool call until acknowledged. Fork-level integration with the gate.
+    - STATUS: implemented
+
+13. `seams/mode-flag-gate.ts` — `--allow-edit-without-approval` policy gating —
+    flags that would bypass approval are themselves policy-gated.
+    - STATUS: implemented
 
 ### Planned but not yet implemented
 
-9. `seams/provider-instrumentation.ts` — wraps provider adapter to record:
-   - prompt_bytes, response_bytes, tokens_used, cache_hit, latency_ms,
-     model_version, temperature
-   - Required for replay determinism and cost accounting.
-   - STATUS: planned (file does not exist)
-
-10. `seams/session-storage.ts` — upstream's message-list session store is replaced
-    by a thin pointer into events.jsonl. Source of truth is the event log.
-    - STATUS: planned (file does not exist)
-
-11. `seams/lifecycle-hooks.ts` — graceful shutdown ensures all pending events
-    are flushed to events.jsonl before exit. SIGTERM, SIGINT both honored.
-    - STATUS: planned (file does not exist)
-
-12. `seams/subagent-isolation.ts` — when a subagent is spawned with isolation=true,
-    upstream's subagent setup is intercepted to enforce no parent context leak.
-    - STATUS: planned (file does not exist)
-
-13. `seams/tripwire-gate.ts` — when a tripwire is fired, the gate refuses
-    next tool call until acknowledged. Fork-level integration with the gate.
-    - STATUS: planned (file does not exist)
-
-14. `seams/mode-flag-gate.ts` — `--allow-edit-without-approval` policy gating —
-    flags that would bypass approval are themselves policy-gated.
-    - STATUS: planned (file does not exist)
+~`seams/session-storage.ts`~~ — CANCELLED (see ADR-010)
+    Originally scoped (M1) to replace upstream's message-list store with
+    an events.jsonl pointer. Determined in P4.3 to be redundant: the
+    stated job is fully covered by `research-state.ts` (event-log
+    projection, P2) + `capsule-session.ts` (conversation prefix, M1)
+    + upstream's native message store. No architectural gap remains.
+    Reopen as a NEW seam if message-token-level replay determinism
+    becomes a requirement.
+    STATUS: cancelled.
 
 ### Rebase impact
 
 Each modification adds ~1–3 hours to a rebase. Total rebase budget:
-- 8 implemented modifications: ~24 hours (already absorbed)
-- 6 planned-but-missing (entries 9-14): ~18 hours budget reserved
+- 13 implemented modifications: ~39 hours (already absorbed)
 - <1 day target for full fork integration (M4 exit gate)
 
 ## Pinned commit

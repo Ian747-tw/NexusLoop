@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 export type PolicyDecision =
   | { kind: 'allow' }
   | { kind: 'deny'; reason: string }
+  | { kind: 'deny_non_negotiable'; rule_id: string; reason: string }
   | { kind: 'ask'; verb: string; payload: unknown }
   | { kind: 'narrow'; narrowed_args: Record<string, unknown>; reason: string };
 

@@ -27,6 +27,7 @@ export type SessionCtx = z.infer<typeof SessionCtx>;
 export const PolicyDecision = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('allow') }),
   z.object({ kind: z.literal('deny'), reason: z.string() }),
+  z.object({ kind: z.literal('deny_non_negotiable'), rule_id: z.string(), reason: z.string() }),
   z.object({ kind: z.literal('ask'), verb: z.string(), payload: z.unknown() }),
   z.object({
     kind: z.literal('narrow'),
@@ -145,6 +146,27 @@ export const SkillCompleted = z.object({
 export type SkillCompleted = z.infer<typeof SkillCompleted>;
 
 // ---------------------------------------------------------------------------
+// Tripwire IPC (Python ↔ TS)
+// ---------------------------------------------------------------------------
+
+// Python → TS: human operator acknowledged a fired tripwire
+export const TripwireAcknowledgment = z.object({
+  kind: z.literal('TripwireAcknowledgment'),
+  tripwire_id: z.string(),
+  acknowledged_by: z.string(),
+  reason: z.string().optional(),
+});
+export type TripwireAcknowledgment = z.infer<typeof TripwireAcknowledgment>;
+
+// TS → Python: result of a tripwire acknowledgment attempt
+export const TripwireAcknowledgmentResult = z.object({
+  kind: z.literal('TripwireAcknowledgmentResult'),
+  tripwire_id: z.string(),
+  cleared: z.boolean(),
+  error: z.string().optional(),
+});
+export type TripwireAcknowledgmentResult = z.infer<typeof TripwireAcknowledgmentResult>;
+
 // v1.1: EventEmissionRequest / EventEmissionAck (Python → TS)
 // ---------------------------------------------------------------------------
 

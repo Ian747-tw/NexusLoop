@@ -4,19 +4,9 @@ from __future__ import annotations
 from typing import Any
 
 from mcps._shared.base import BaseMCPServer
-from nxl_core.events.ipc import EventEmissionClient
 from nxl_core.events.schema import PolicyDecision as PolicyDecisionEvent
+from nxl_core.events.singletons import journal_log
 from nxl_core.policy.engine import PolicyDecision, PolicyEngine
-
-# IPC client for policy decision events
-_policy_event_client: EventEmissionClient | None = None
-
-
-def _get_policy_client() -> EventEmissionClient:
-    global _policy_event_client
-    if _policy_event_client is None:
-        _policy_event_client = EventEmissionClient()
-    return _policy_event_client
 
 
 # Valid policy modes as per task specification
@@ -102,6 +92,20 @@ class PolicyMCPServer(BaseMCPServer):
         self._emit_policy_decision_event(tool_name, decision)
 
         # Map PolicyEngine decision to MCP response
+        # Note: deny_non_negotiable uses discriminated union to carry rule_id
+        if decision.non_negotiable_violated:
+            # NON_NEGOTIABLE rule violated — tripwire fires
+            result_data: dict[str, object] = {
+                "tool_name": tool_name,
+                "allowed": False,
+                "decision": {"kind": "deny_non_negotiable", "rule_id": decision.non_negotiable_rule_id or "", "reason": decision.reason},
+                "reason": decision.reason,
+                "mode": decision.mode,
+                "violated_rules": decision.violated_rules,
+                "rule_id": decision.non_negotiable_rule_id or "",
+            }
+            return {"ok": True, "data": result_data}
+
         if decision.allowed:
             if decision.requires_confirmation:
                 mcp_decision = "ask"
@@ -146,19 +150,24 @@ class PolicyMCPServer(BaseMCPServer):
             },
         }
 
-    def _emit_policy_decision_event(self, action: str, decision: PolicyDecision) -> None:
-        """Emit a PolicyDecision event via IPC."""
+    def _emit_policy_decision_event(self, action: str, decision: "PolicyDecision") -> None:
+        """Emit a PolicyDecision event via journal_log."""
         if decision.allowed:
             if decision.requires_confirmation:
-                decision_str = "ask"
+                decision_str: str = "ask"
             else:
                 decision_str = "allow"
+        elif decision.non_negotiable_violated:
+            decision_str = "deny_non_negotiable"
         else:
             decision_str = "deny"
+
+        violated_rule_id = decision.non_negotiable_rule_id or ""
 
         event = PolicyDecisionEvent(
             action=action,
             decision=decision_str,  # type: ignore[arg-type]
             reason=decision.reason,
+            rule_id=violated_rule_id or None,
         )
-        _get_policy_client().emit(event, origin_mcp="policy")
+        journal_log().append(event)

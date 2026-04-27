@@ -22,6 +22,8 @@ class PolicyDecision:
     requires_confirmation: bool
     reason: str
     violated_rules: list[str] = field(default_factory=list)
+    non_negotiable_violated: bool = False
+    non_negotiable_rule_id: str | None = None
     mode: str = "typed_rules"
 
 
@@ -59,6 +61,8 @@ class PolicyEngine:
                         requires_confirmation=False,
                         reason=self._format_reason(rule, ctx),
                         violated_rules=[rule.id],
+                        non_negotiable_violated=rule.non_negotiable,
+                        non_negotiable_rule_id=rule.id if rule.non_negotiable else None,
                         mode="typed_rules",
                     )
                 elif rule.effect == RuleEffect.ALLOW:
