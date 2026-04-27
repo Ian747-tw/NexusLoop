@@ -6,7 +6,21 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { parse as parseYaml } from 'yaml';
+
+function findProjectRoot(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  // agentcore/server-fork/src/util/mode-flag-registry.ts
+  // walk up: util -> src -> server-fork -> agentcore -> project root
+  while (dir !== '/') {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    dir = path.dirname(dir);
+  }
+  throw new Error('project root not found (.git not located)');
+}
+
+const PROJECT_ROOT = findProjectRoot();
 
 export interface ModeFlagConfig {
   description: string;
@@ -20,9 +34,9 @@ export interface ModeFlagRegistry {
 
 let _registry: ModeFlagRegistry | null = null;
 
-export function loadRegistry(rootDir: string = process.cwd()): ModeFlagRegistry {
+export function loadRegistry(): ModeFlagRegistry {
   if (_registry !== null) return _registry;
-  const registryPath = path.join(rootDir, 'agentcore', 'mode-flags', 'registry.yaml');
+  const registryPath = path.join(PROJECT_ROOT, 'agentcore', 'mode-flags', 'registry.yaml');
   if (!fs.existsSync(registryPath)) {
     _registry = {};
     return _registry;

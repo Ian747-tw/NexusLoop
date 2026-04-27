@@ -55,18 +55,6 @@ fork-level modification, append here and bump the rebase impact estimate.
 9. `seams/provider-instrumentation.ts` — wraps provider adapter to record per-call telemetry: prompt_bytes, response_bytes, tokens_used, cache_hit, latency_ms, model_version, temperature. Emits ProviderCalled event on every LLM call.
 10. `seams/lifecycle-hooks.ts` — graceful shutdown ensures all pending events are flushed to events.jsonl before exit. SIGTERM, SIGINT, SIGHUP all handled. Draining flag blocks new tool calls; in-flight calls wait up to 5s before forced exit. Emits session_shutdown synchronously before handler returns. Idempotent pidfile release via rm(force=true).
 
-### Planned but not yet implemented
-
-~`seams/session-storage.ts`~~ — CANCELLED (see ADR-010)
-    Originally scoped (M1) to replace upstream's message-list store with
-    an events.jsonl pointer. Determined in P4.3 to be redundant: the
-    stated job is fully covered by `research-state.ts` (event-log
-    projection, P2) + `capsule-session.ts` (conversation prefix, M1)
-    + upstream's native message store. No architectural gap remains.
-    Reopen as a NEW seam if message-token-level replay determinism
-    becomes a requirement.
-    STATUS: cancelled.
-
 11. `seams/subagent-isolation.ts` — config-driven subagent firewall (ADR-012).
     `agentcore/subagents/registry.yaml` declares which subagent types are isolated.
     When `isolated: true`, parentID is stripped from session create args before
@@ -83,11 +71,22 @@ fork-level modification, append here and bump the rebase impact estimate.
     flags that would bypass approval are themselves policy-gated.
     - STATUS: implemented
 
+### Planned but not yet implemented
+
+~`seams/session-storage.ts`~~ — CANCELLED (see ADR-010)
+    Originally scoped (M1) to replace upstream's message-list store with
+    an events.jsonl pointer. Determined in P4.3 to be redundant: the
+    stated job is fully covered by `research-state.ts` (event-log
+    projection, P2) + `capsule-session.ts` (conversation prefix, M1)
+    + upstream's native message store. No architectural gap remains.
+    Reopen as a NEW seam if message-token-level replay determinism
+    becomes a requirement.
+    STATUS: cancelled.
+
 ### Rebase impact
 
 Each modification adds ~1–3 hours to a rebase. Total rebase budget:
-- 10 implemented modifications: ~30 hours (already absorbed)
-- 3 planned-but-missing (entries 11-13): ~9 hours budget reserved
+- 13 implemented modifications: ~39 hours (already absorbed)
 - <1 day target for full fork integration (M4 exit gate)
 
 ## Pinned commit

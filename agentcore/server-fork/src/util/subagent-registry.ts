@@ -1,6 +1,20 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { parse as parseYaml } from 'yaml';
+
+function findProjectRoot(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  // agentcore/server-fork/src/util/subagent-registry.ts
+  // walk up: util -> src -> server-fork -> agentcore -> project root
+  while (dir !== '/') {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    dir = path.dirname(dir);
+  }
+  throw new Error('project root not found (.git not located)');
+}
+
+const PROJECT_ROOT = findProjectRoot();
 
 export interface SubagentConfig {
   description: string;
@@ -15,9 +29,9 @@ export interface SubagentRegistry {
 
 let _registry: SubagentRegistry | null = null;
 
-export function loadRegistry(rootDir: string = process.cwd()): SubagentRegistry {
+export function loadRegistry(): SubagentRegistry {
   if (_registry !== null) return _registry;
-  const registryPath = path.join(rootDir, 'agentcore', 'subagents', 'registry.yaml');
+  const registryPath = path.join(PROJECT_ROOT, 'agentcore', 'subagents', 'registry.yaml');
   if (!fs.existsSync(registryPath)) {
     _registry = {};
     return _registry;

@@ -57,8 +57,7 @@ jobs:
         run: uv run pytest agentcore/tests -q -k "not test_ts"
 
       - name: Audit fork depth
-        run: bash scripts/audit-fork-depth.sh || echo "audit reports planned seams as expected"
-        # Non-blocking until P2 ships seams 12-13. Re-enable as blocking after P2.
+        run: bash scripts/audit-fork-depth.sh
 
       - name: Single-writer CI gate
         run: bash scripts/verify_single_writer.sh
