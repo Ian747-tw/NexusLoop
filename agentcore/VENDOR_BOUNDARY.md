@@ -77,7 +77,7 @@ fork-level modification, append here and bump the rebase impact estimate.
 
 12. `seams/tripwire-gate.ts` — when a tripwire is fired, the gate refuses
     next tool call until acknowledged. Fork-level integration with the gate.
-    - STATUS: planned (file does not exist)
+    - STATUS: implemented
 
 13. `seams/mode-flag-gate.ts` — `--allow-edit-without-approval` policy gating —
     flags that would bypass approval are themselves policy-gated.
