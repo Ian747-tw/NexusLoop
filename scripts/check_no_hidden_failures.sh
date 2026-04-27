@@ -65,7 +65,7 @@ echo "== Guard 2: no --ignore flags in CI =="
 ADDED_IGNORES=$(
   git diff "$MERGE_BASE"..HEAD -- '.github/workflows/*' \
     | grep -E '^\+[^+]' \
-    | grep -E -- '--ignore=' \
+    | grep -e '--ignore=' \
     || true
 )
 if [[ -n "$ADDED_IGNORES" ]]; then
