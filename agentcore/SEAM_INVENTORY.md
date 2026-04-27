@@ -6,7 +6,7 @@ Disk: `agentcore/server-fork/src/seams/`
 
 ## Summary
 
-**10 of 13 documented fork modifications are implemented; 1 is planned-but-missing; 1 is cancelled; 2 Tier-2 research seams are implemented.**
+**11 of 13 documented fork modifications are implemented; 1 is cancelled; 2 Tier-2 research seams are implemented.**
 
 The 11 implemented seams cover all fork-level capabilities. Entry count excludes the cancelled session-storage (M1-era, superseded by P2 research-state + M1 capsule-session).
 
@@ -30,7 +30,7 @@ The 11 implemented seams cover all fork-level capabilities. Entry count excludes
 | — | `seams/session-storage.ts` | CANCELLED | Superseded by research-state.ts + capsule-session.ts (see ADR-010) |
 | 11 | `seams/subagent-isolation.ts` | IMPLEMENTED | Config-driven; registry.yaml declares isolated types; strips parentID on spawn |
 | 12 | `seams/tripwire-gate.ts` | IMPLEMENTED | 237 lines; ULID-like IDs, events.jsonl replay, blocks dispatch until acknowledged (P4.5) |
-| 13 | `seams/mode-flag-gate.ts` | MISSING | Flags that would bypass approval are themselves policy-gated (M4) |
+| 13 | `seams/mode-flag-gate.ts` | IMPLEMENTED | Registry-gated flags; deny-by-default; ModeFlagDenied event on rejection (P4.6) |
 
 ## Tier 2 — Research seams (post-M1.1, see ADR-006)
 

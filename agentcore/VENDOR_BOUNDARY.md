@@ -81,7 +81,7 @@ fork-level modification, append here and bump the rebase impact estimate.
 
 13. `seams/mode-flag-gate.ts` — `--allow-edit-without-approval` policy gating —
     flags that would bypass approval are themselves policy-gated.
-    - STATUS: planned (file does not exist)
+    - STATUS: implemented
 
 ### Rebase impact
 

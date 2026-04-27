@@ -364,6 +364,19 @@ class ToolCallBlocked(_BaseEvent):
 
 
 # ---------------------------------------------------------------------------
+# Mode flag events (P4.6)
+# ---------------------------------------------------------------------------
+
+
+class ModeFlagDenied(_BaseEvent):
+    """Emitted when a policy-gated runtime flag is denied by PolicyEngine."""
+    kind: Literal["mode_flag_denied"] = "mode_flag_denied"
+    flag_name: str = Field(description="Name of the flag that was denied")
+    reason: str = Field(description="Policy reason for the denial")
+    rule_id: str | None = Field(default=None, description="Rule that caused the denial")
+
+
+# ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
 
@@ -401,6 +414,7 @@ Event = Annotated[
         TripwireFired,
         TripwireCleared,
         ToolCallBlocked,
+        ModeFlagDenied,
     ],
     Field(discriminator="kind"),
 ]
