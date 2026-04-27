@@ -109,6 +109,9 @@ const EventKind = z.enum([
   'provider_called',
   'subagent_spawned',
   'subagent_completed',
+  'tripwire_fired',
+  'tripwire_cleared',
+  'tool_call_blocked',
 ]);
 type EventKind = z.infer<typeof EventKind>;
 
@@ -302,6 +305,13 @@ export function applyEvent(ns: ResearchNamespace, event: Event): ResearchNamespa
       // Subagent lifecycle events do not affect the research namespace.
       // The events are recorded for audit but do not change cycle state,
       // registry projection, or tier state.
+      return ns;
+
+    case 'tripwire_fired':
+    case 'tripwire_cleared':
+    case 'tool_call_blocked':
+      // Tripwire events do not affect the research namespace.
+      // Tripwire state is managed independently in tripwire-gate.ts.
       return ns;
 
     default:

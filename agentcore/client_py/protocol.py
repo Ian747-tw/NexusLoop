@@ -51,6 +51,15 @@ class PolicyDecisionDeny(BaseModel):
     reason: str = Field(default="", description="Why the tool call was denied")
 
 
+class PolicyDecisionDenyNonNegotiable(BaseModel):
+    """kind=deny_non_negotiable: NON_NEGOTIABLE rule violated; tripwire fires."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: Literal["deny_non_negotiable"] = "deny_non_negotiable"
+    rule_id: str = Field(default="", description="Rule that was violated")
+    reason: str = Field(default="", description="Why the tool call was denied")
+
+
 class PolicyDecisionAsk(BaseModel):
     """kind=ask: confirmation required; verb names the confirmation type."""
     model_config = ConfigDict(populate_by_name=True)
@@ -76,6 +85,7 @@ class PolicyDecision(BaseModel):
     Variants:
       allow  — tool call permitted
       deny   — tool call blocked; reason explains why
+      deny_non_negotiable — NON_NEGOTIABLE rule violated; tripwire fires
       ask    — confirmation required; verb names the confirmation type
       narrow — args sanitized; narrowed_args are the safe subset
 
@@ -84,7 +94,7 @@ class PolicyDecision(BaseModel):
     """
     model_config = ConfigDict(populate_by_name=True)
 
-    kind: Literal["allow", "deny", "ask", "narrow"]
+    kind: Literal["allow", "deny", "deny_non_negotiable", "ask", "narrow"]
 
     @classmethod
     def model_validate(cls, data: Any, **kwargs: Any) -> "PolicyDecision":  # type: ignore[override]
@@ -93,6 +103,8 @@ class PolicyDecision(BaseModel):
         kind = data.get("kind") if isinstance(data, dict) else None
         if kind == "deny":
             return PolicyDecisionDeny.model_validate(data, **kwargs)
+        if kind == "deny_non_negotiable":
+            return PolicyDecisionDenyNonNegotiable.model_validate(data, **kwargs)
         if kind == "ask":
             return PolicyDecisionAsk.model_validate(data, **kwargs)
         if kind == "narrow":
@@ -109,6 +121,8 @@ class PolicyDecision(BaseModel):
             return {"kind": "allow"}
         if self.kind == "deny":
             return {"kind": "deny", "reason": self.reason}
+        if self.kind == "deny_non_negotiable":
+            return {"kind": "deny_non_negotiable", "rule_id": self.rule_id, "reason": self.reason}
         if self.kind == "ask":
             return {"kind": "ask", "verb": self.verb, "payload": self.payload}
         if self.kind == "narrow":
@@ -276,6 +290,40 @@ class SkillCompleted(BaseModel):
         result = super().model_dump(**kwargs)
         if "result" in result and result["result"] is None:
             del result["result"]
+        if "error" in result and result["error"] is None:
+            del result["error"]
+        return result
+
+    def model_dump_json(self, **kwargs: Any) -> str:
+        return json.dumps(self.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Tripwire IPC (Python ↔ TS)
+# ---------------------------------------------------------------------------
+
+
+class TripwireAcknowledgment(BaseModel):
+    """Python → TS: human operator acknowledged a fired tripwire."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: Literal["TripwireAcknowledgment"] = "TripwireAcknowledgment"
+    tripwire_id: str = Field(description="ULID assigned when tripwire fired")
+    acknowledged_by: str = Field(description="Operator identifier")
+    reason: str | None = Field(default=None, description="Optional operator notes")
+
+
+class TripwireAcknowledgmentResult(BaseModel):
+    """TS → Python: result of a tripwire acknowledgment attempt."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: Literal["TripwireAcknowledgmentResult"] = "TripwireAcknowledgmentResult"
+    tripwire_id: str = Field(description="ULID of the tripwire that was acked")
+    cleared: bool = Field(description="Whether the tripwire was active and is now cleared")
+    error: str | None = Field(default=None, description="Present iff cleared is False")
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        result = super().model_dump(**kwargs)
         if "error" in result and result["error"] is None:
             del result["error"]
         return result

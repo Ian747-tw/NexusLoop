@@ -92,26 +92,35 @@ class PolicyMCPServer(BaseMCPServer):
         # Emit PolicyDecision event
         self._emit_policy_decision_event(tool_name, decision)
 
-        # Map PolicyEngine decision to MCP response
+        # Map PolicyEngine decision to discriminated-union decision object
         if decision.allowed:
             if decision.requires_confirmation:
-                mcp_decision = "ask"
+                decision_obj: dict[str, object] = {"kind": "ask"}
             else:
-                mcp_decision = "allow"
-        else:
-            mcp_decision = "deny"
-
-        return {
-            "ok": True,
-            "data": {
-                "tool_name": tool_name,
-                "allowed": decision.allowed,
-                "decision": mcp_decision,
+                decision_obj = {"kind": "allow"}
+        elif decision.non_negotiable_violated:
+            # NON_NEGOTIABLE rule violated — tripwire fires
+            decision_obj = {
+                "kind": "deny_non_negotiable",
+                "rule_id": decision.non_negotiable_rule_id or "",
                 "reason": decision.reason,
-                "mode": decision.mode,
-                "violated_rules": decision.violated_rules,
-            },
+            }
+        else:
+            decision_obj = {"kind": "deny", "reason": decision.reason}
+
+        result_data: dict[str, object] = {
+            "tool_name": tool_name,
+            "allowed": decision.allowed,
+            "decision": decision_obj,
+            "reason": decision.reason,
+            "mode": decision.mode,
+            "violated_rules": decision.violated_rules,
         }
+        # Include rule_id when NON_NEGOTIABLE fires
+        if decision.non_negotiable_violated and decision.non_negotiable_rule_id:
+            result_data["rule_id"] = decision.non_negotiable_rule_id
+
+        return {"ok": True, "data": result_data}
 
     async def _get_mode(self) -> dict[str, Any]:
         """Handle policy.get_mode tool call."""
@@ -137,19 +146,24 @@ class PolicyMCPServer(BaseMCPServer):
             },
         }
 
-    def _emit_policy_decision_event(self, action: str, decision: PolicyDecision) -> None:
+    def _emit_policy_decision_event(self, action: str, decision: "PolicyDecision") -> None:
         """Emit a PolicyDecision event via journal_log."""
         if decision.allowed:
             if decision.requires_confirmation:
-                decision_str = "ask"
+                decision_str: str = "ask"
             else:
                 decision_str = "allow"
+        elif decision.non_negotiable_violated:
+            decision_str = "deny_non_negotiable"
         else:
             decision_str = "deny"
+
+        violated_rule_id = decision.non_negotiable_rule_id or ""
 
         event = PolicyDecisionEvent(
             action=action,
             decision=decision_str,  # type: ignore[arg-type]
             reason=decision.reason,
+            rule_id=violated_rule_id or None,
         )
         journal_log().append(event)

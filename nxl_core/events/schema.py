@@ -149,10 +149,11 @@ class EvidenceCollected(_BaseEvent):
 class PolicyDecision(_BaseEvent):
     kind: Literal["policy_decision"] = "policy_decision"
     action: str = Field(description="Action that was evaluated")
-    decision: Literal["allow", "deny", "ask", "narrow"] = Field(
+    decision: Literal["allow", "deny", "deny_non_negotiable", "ask", "narrow"] = Field(
         description="Policy decision"
     )
     reason: str = Field(description="Human-readable reason for the decision")
+    rule_id: str | None = Field(default=None, description="Rule that fired, if DENY or deny_non_negotiable")
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +328,37 @@ class SubagentCompleted(_BaseEvent):
 
 
 # ---------------------------------------------------------------------------
+# Tripwire events (P4.5)
+# ---------------------------------------------------------------------------
+
+
+class TripwireFired(_BaseEvent):
+    """Emitted when a NON_NEGOTIABLE rule is violated and dispatches are blocked."""
+    kind: Literal["tripwire_fired"] = "tripwire_fired"
+    tripwire_id: str = Field(description="ULID assigned to this tripwire firing")
+    rule_id: str = Field(description="Which NON_NEGOTIABLE rule was violated")
+    reason: str = Field(description="Human-readable explanation of the violation")
+    tool_name: str = Field(default="", description="Tool that triggered the violation")
+    session_id: str | None = Field(default=None, description="Session where violation occurred")
+
+
+class TripwireCleared(_BaseEvent):
+    """Emitted when an active tripwire is acknowledged and cleared."""
+    kind: Literal["tripwire_cleared"] = "tripwire_cleared"
+    tripwire_id: str = Field(description="ULID of the tripwire that was cleared")
+    acknowledged_by: str = Field(description="Operator who acknowledged the tripwire")
+    reason: str | None = Field(default=None, description="Optional acknowledgment notes")
+
+
+class ToolCallBlocked(_BaseEvent):
+    """Emitted when a tool call is refused because a tripwire is active."""
+    kind: Literal["tool_call_blocked"] = "tool_call_blocked"
+    tripwire_id: str = Field(description="Which active tripwire is blocking the dispatch")
+    tool_name: str = Field(description="Tool that was blocked")
+    tool_id: str = Field(description="Request ID of the blocked tool call")
+
+
+# ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
 
@@ -361,6 +393,9 @@ Event = Annotated[
         ProviderCalled,
         SubagentSpawned,
         SubagentCompleted,
+        TripwireFired,
+        TripwireCleared,
+        ToolCallBlocked,
     ],
     Field(discriminator="kind"),
 ]

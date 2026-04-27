@@ -34,6 +34,7 @@ class Rule:
     effect: RuleEffect
     reason_template: str
     priority: int  # higher = evaluated first
+    non_negotiable: bool = False  # if True, triggers deny_non_negotiable variant
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +67,7 @@ _R1 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 1: Deleting source code outside logs/ or skills/ is forbidden.",
     priority=10,
+    non_negotiable=True,
 )
 
 
@@ -86,6 +88,7 @@ _R2 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 2: Modifying NON_NEGOTIABLE_RULES.md is strictly forbidden.",
     priority=10,
+    non_negotiable=True,
 )
 
 
@@ -103,6 +106,7 @@ _R3 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 3: Disabling the permission check (drl-autoresearch) is forbidden.",
     priority=10,
+    non_negotiable=True,
 )
 
 
@@ -117,6 +121,7 @@ _R4 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 4: Global package installs are forbidden.",
     priority=9,
+    non_negotiable=True,
 )
 
 
@@ -131,6 +136,7 @@ _R5 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 5: Experiment results must be logged to experiment_registry.tsv before updating the plan.",
     priority=8,
+    non_negotiable=True,
 )
 
 
@@ -145,6 +151,7 @@ _R6 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 6: Metrics must be recorded as-measured; post-hoc manipulation is forbidden.",
     priority=8,
+    non_negotiable=True,
 )
 
 
@@ -161,6 +168,7 @@ _R7 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 7: Incomplete runs (non-crashed) must not influence best-model selection.",
     priority=8,
+    non_negotiable=True,
 )
 
 
@@ -175,6 +183,7 @@ _R8 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 8: Evaluation code/protocol cannot be modified without explicit human approval.",
     priority=8,
+    non_negotiable=True,
 )
 
 
@@ -196,6 +205,7 @@ _R9 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 9: GPU/CPU usage must stay within configured project limits.",
     priority=7,
+    non_negotiable=True,
 )
 
 
@@ -210,6 +220,7 @@ _R10 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 10: Checkpoint disk usage must stay within configured project limits.",
     priority=7,
+    non_negotiable=True,
 )
 
 
@@ -227,6 +238,7 @@ _R11 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 11: GPU/CPU decision must be recorded at session start.",
     priority=6,
+    non_negotiable=True,
 )
 
 
@@ -241,6 +253,7 @@ _R12 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 12: Policy/permission config files cannot be edited without explicit human approval.",
     priority=10,
+    non_negotiable=True,
 )
 
 
@@ -276,6 +289,7 @@ _R13 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 13: Checkpoint deletion requires explicit human approval.",
     priority=9,
+    non_negotiable=True,
 )
 
 
@@ -290,6 +304,7 @@ _R14 = Rule(
     effect=RuleEffect.DENY,
     reason_template="Rule 14: Ad hoc shell commands require explicit human approval.",
     priority=9,
+    non_negotiable=True,
 )
 
 
