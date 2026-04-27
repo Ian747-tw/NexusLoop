@@ -57,19 +57,25 @@ fork-level modification, append here and bump the rebase impact estimate.
 
 ### Planned but not yet implemented
 
-11. `seams/session-storage.ts` — upstream's message-list session store is replaced
-    by a thin pointer into events.jsonl. Source of truth is the event log.
-    - STATUS: planned (file does not exist)
+~`seams/session-storage.ts`~~ — CANCELLED (see ADR-010)
+    Originally scoped (M1) to replace upstream's message-list store with
+    an events.jsonl pointer. Determined in P4.3 to be redundant: the
+    stated job is fully covered by `research-state.ts` (event-log
+    projection, P2) + `capsule-session.ts` (conversation prefix, M1)
+    + upstream's native message store. No architectural gap remains.
+    Reopen as a NEW seam if message-token-level replay determinism
+    becomes a requirement.
+    STATUS: cancelled.
 
-12. `seams/subagent-isolation.ts` — when a subagent is spawned with isolation=true,
+11. `seams/subagent-isolation.ts` — when a subagent is spawned with isolation=true,
     upstream's subagent setup is intercepted to enforce no parent context leak.
     - STATUS: planned (file does not exist)
 
-13. `seams/tripwire-gate.ts` — when a tripwire is fired, the gate refuses
+12. `seams/tripwire-gate.ts` — when a tripwire is fired, the gate refuses
     next tool call until acknowledged. Fork-level integration with the gate.
     - STATUS: planned (file does not exist)
 
-14. `seams/mode-flag-gate.ts` — `--allow-edit-without-approval` policy gating —
+13. `seams/mode-flag-gate.ts` — `--allow-edit-without-approval` policy gating —
     flags that would bypass approval are themselves policy-gated.
     - STATUS: planned (file does not exist)
 
@@ -77,7 +83,7 @@ fork-level modification, append here and bump the rebase impact estimate.
 
 Each modification adds ~1–3 hours to a rebase. Total rebase budget:
 - 10 implemented modifications: ~30 hours (already absorbed)
-- 4 planned-but-missing (entries 11-14): ~12 hours budget reserved
+- 3 planned-but-missing (entries 11-13): ~9 hours budget reserved
 - <1 day target for full fork integration (M4 exit gate)
 
 ## Pinned commit
