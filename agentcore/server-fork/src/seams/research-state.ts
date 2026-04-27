@@ -107,6 +107,8 @@ const EventKind = z.enum([
   'session_clearing',
   'literature_invariant_violated',
   'provider_called',
+  'subagent_spawned',
+  'subagent_completed',
 ]);
 type EventKind = z.infer<typeof EventKind>;
 
@@ -294,6 +296,13 @@ export function applyEvent(ns: ResearchNamespace, event: Event): ResearchNamespa
 
     case 'session_clearing':
       return createEmptyResearchNamespace();
+
+    case 'subagent_spawned':
+    case 'subagent_completed':
+      // Subagent lifecycle events do not affect the research namespace.
+      // The events are recorded for audit but do not change cycle state,
+      // registry projection, or tier state.
+      return ns;
 
     default:
       return ns;

@@ -67,9 +67,13 @@ fork-level modification, append here and bump the rebase impact estimate.
     becomes a requirement.
     STATUS: cancelled.
 
-11. `seams/subagent-isolation.ts` — when a subagent is spawned with isolation=true,
-    upstream's subagent setup is intercepted to enforce no parent context leak.
-    - STATUS: planned (file does not exist)
+11. `seams/subagent-isolation.ts` — config-driven subagent firewall (ADR-012).
+    `agentcore/subagents/registry.yaml` declares which subagent types are isolated.
+    When `isolated: true`, parentID is stripped from session create args before
+    upstream's TaskTool creates the child. SubagentSpawned + SubagentCompleted
+    events emitted for audit. Registered non-isolated types and vanilla OpenCode
+    subagents pass through unchanged.
+    - STATUS: implemented (config-driven; no parameter added to TaskTool)
 
 12. `seams/tripwire-gate.ts` — when a tripwire is fired, the gate refuses
     next tool call until acknowledged. Fork-level integration with the gate.

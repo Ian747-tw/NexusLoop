@@ -1,0 +1,17 @@
+# NexusLoop subagent registry — declares subagents the fork knows about.
+# Vanilla OpenCode subagents are passed through; only types listed here
+# get NexusLoop-specific behavior (e.g. isolation).
+#
+# Each entry:
+#   <name>:
+#     description: <one line>
+#     isolated: <bool>  # if true, parent context stripped on spawn
+#     purpose: <free-form description for documentation>
+
+second_review:
+  description: |
+    Verifies T1→T2 promotion candidates. Reviews evidence
+    independently from the parent reasoning chain to avoid
+    confirmation bias.
+  isolated: true
+  purpose: tier_promotion_verification

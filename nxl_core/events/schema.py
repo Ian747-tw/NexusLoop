@@ -304,6 +304,28 @@ class CompactionTierEntered(_BaseEvent):
     events_active: int = Field(default=0, description="Events in memory when tier entered")
 
 
+class SubagentSpawned(_BaseEvent):
+    """Emitted when a subagent is spawned via TaskTool."""
+    kind: Literal["subagent_spawned"] = "subagent_spawned"
+    subagent_type: str = Field(description="Registered name of the subagent")
+    isolated: bool = Field(description="Whether this subagent has parent context stripped")
+    parent_session_id: str | None = Field(default=None, description="Parent session ID")
+    parent_message_id: str | None = Field(default=None, description="Parent message ID")
+    purpose: str = Field(default="vanilla", description="Purpose string from registry")
+    invocation_id: str = Field(description="Unique invocation ID for this spawn")
+
+
+class SubagentCompleted(_BaseEvent):
+    """Emitted when a subagent task completes."""
+    kind: Literal["subagent_completed"] = "subagent_completed"
+    subagent_type: str = Field(description="Registered name of the subagent")
+    invocation_id: str = Field(description="Matches the invocation_id from SubagentSpawned")
+    success: bool = Field(description="Whether the subagent completed successfully")
+    session_id: str | None = Field(default=None, description="Subagent's session ID")
+    output_preview: str | None = Field(default=None, description="First 200 chars of output")
+    error: str | None = Field(default=None, description="Error message if success=false")
+
+
 # ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
@@ -337,6 +359,8 @@ Event = Annotated[
         FreeFormTrialStarted,
         CompactionTierEntered,
         ProviderCalled,
+        SubagentSpawned,
+        SubagentCompleted,
     ],
     Field(discriminator="kind"),
 ]
