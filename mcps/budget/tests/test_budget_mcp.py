@@ -242,10 +242,6 @@ class TestConvenienceWrappers:
 class TestPolicyGate:
     """Assert policy check fires on every tool call."""
 
-    def test_get_budget_emits_tool_requested(self, tmp_path: Path) -> None:
-        server = BudgetMCPServer(tmp_path)
-        server.emit_tool_requested("budget.get", {})
-
     def test_check_policy_is_called_on_handle_tool(self, tmp_path: Path) -> None:
         server = BudgetMCPServer(tmp_path)
         allowed = server.check_policy("budget.get", {})

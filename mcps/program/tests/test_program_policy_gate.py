@@ -10,18 +10,6 @@ from mcps.program.server import ProgramMCPServer
 class TestPolicyGate:
     """Assert policy check fires on every tool call."""
 
-    def test_get_state_emits_tool_requested(self) -> None:
-        """get_state emits ToolRequested event via EventLog."""
-        server = ProgramMCPServer()
-        # Should not raise
-        server.emit_tool_requested("program.get_state", {})
-
-    def test_get_queue_emits_tool_requested(self) -> None:
-        """get_queue emits ToolRequested event via EventLog."""
-        server = ProgramMCPServer()
-        # Should not raise
-        server.emit_tool_requested("program.get_queue", {})
-
     def test_all_tools_have_policy_gate(self) -> None:
         """Every tool name in get_tools() must go through policy check."""
         server = ProgramMCPServer()

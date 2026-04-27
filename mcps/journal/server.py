@@ -6,6 +6,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from mcps._shared.base import BaseMCPServer
+from nxl_core.events.ipc import EventEmissionClient
 
 
 class AppendRequest(BaseModel):
@@ -96,7 +97,6 @@ class JournalMCPServer(BaseMCPServer):
         ]
 
     async def handle_tool(self, tool_name: str, args: dict[str, object]) -> dict[str, object]:
-        self.emit_tool_requested(tool_name, args)
         decision = self._policy.check(tool_name, args)
         if not decision.allowed:
             return {"ok": False, "error": f"Policy denied: {decision.reason}"}
@@ -111,8 +111,8 @@ class JournalMCPServer(BaseMCPServer):
 
     async def _append(self, args: dict[str, object]) -> dict[str, object]:
         from pydantic import TypeAdapter
+        from nxl_core.events.ipc import EventEmissionClient
         from nxl_core.events.schema import Event
-        from nxl_core.events.singletons import journal_log
 
         event_dict = args.get("event", {})
         if "kind" not in event_dict:
@@ -121,8 +121,8 @@ class JournalMCPServer(BaseMCPServer):
         # Build event from dict using TypeAdapter (Event is a union, not a model)
         ta = TypeAdapter(Event)
         event = ta.validate_python(event_dict)
-        log = journal_log()
-        event_id = log.append(event)
+        _client = EventEmissionClient()
+        event_id = _client.emit(event, origin_mcp="journal")
         return {"ok": True, "data": {"event_id": event_id}}
 
     async def _tail(self, args: dict[str, object]) -> dict[str, object]:
@@ -155,15 +155,23 @@ class JournalMCPServer(BaseMCPServer):
 
 
 # Convenience synchronous wrappers
+_client: EventEmissionClient | None = None
+
+
+def _get_client() -> EventEmissionClient:
+    global _client
+    if _client is None:
+        _client = EventEmissionClient()
+    return _client
+
+
 def append(event: dict) -> str:
     from pydantic import TypeAdapter
     from nxl_core.events.schema import Event
-    from nxl_core.events.singletons import journal_log
 
     ta = TypeAdapter(Event)
     event_obj = ta.validate_python(event)
-    log = journal_log()
-    return log.append(event_obj)
+    return _get_client().emit(event_obj, origin_mcp="journal")
 
 
 def tail(n: int) -> list[dict]:

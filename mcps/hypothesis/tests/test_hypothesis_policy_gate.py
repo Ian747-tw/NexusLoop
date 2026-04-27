@@ -23,7 +23,7 @@ def server() -> HypothesisServer:
 class TestHypothesisPolicyGate:
     @pytest.mark.asyncio
     async def test_create_blocked_when_policy_denies(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"), patch.object(server, "check_policy", return_value=False):
+        with patch.object(server, "check_policy", return_value=False):
             result = await server.handle_tool(
                 "hypothesis.create",
                 {"text": "Should be blocked", "confidence": 0.5},
@@ -33,21 +33,21 @@ class TestHypothesisPolicyGate:
 
     @pytest.mark.asyncio
     async def test_list_blocked_when_policy_denies(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"), patch.object(server, "check_policy", return_value=False):
+        with patch.object(server, "check_policy", return_value=False):
             result = await server.handle_tool("hypothesis.list", {})
         assert result["ok"] is False
         assert "denied" in result["error"]
 
     @pytest.mark.asyncio
     async def test_get_blocked_when_policy_denies(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"), patch.object(server, "check_policy", return_value=False):
+        with patch.object(server, "check_policy", return_value=False):
             result = await server.handle_tool("hypothesis.get", {"id": "any_id"})
         assert result["ok"] is False
         assert "denied" in result["error"]
 
     @pytest.mark.asyncio
     async def test_close_blocked_when_policy_denies(self, server: HypothesisServer) -> None:
-        with patch.object(server, "_emit"), patch.object(server, "check_policy", return_value=False):
+        with patch.object(server, "check_policy", return_value=False):
             result = await server.handle_tool(
                 "hypothesis.close",
                 {"id": "any_id", "verdict": "rejected"},

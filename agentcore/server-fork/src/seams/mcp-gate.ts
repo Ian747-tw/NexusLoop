@@ -32,7 +32,7 @@ function computeArgsHash(args: Record<string, unknown>): string {
 export function registerMCP(name: string, tools: MCPToolDefinition[], handler: (name: string, args: Record<string, unknown>) => Promise<unknown>): void {
   _mcpRegistry.set(name, tools);
   _mcpHandlers.set(name, handler);
-  emitEvent({ event: { kind: 'MCPRegistered', mcp: name, tools: tools.map(t => t.name) } });
+  void emitEvent({ event: { kind: 'MCPRegistered', mcp: name, tools: tools.map(t => t.name) } });
 }
 
 export async function dispatchMCP(mcp: string, tool: string, args: Record<string, unknown>): Promise<ToolCallResult> {
@@ -60,11 +60,11 @@ export async function dispatchMCP(mcp: string, tool: string, args: Record<string
         const handler = _mcpHandlers.get(mcp);
         if (!handler) return { id: req.id, allowed: false, error: `MCP ${mcp} not registered` };
         const result = await handler(tool, args);
-        emitEvent({ event: { kind: 'MCPToolCompleted', mcp, tool, result } });
+        void emitEvent({ event: { kind: 'MCPToolCompleted', mcp, tool, result } });
         return { id: req.id, allowed: true, result };
       }
       case 'deny': {
-        emitEvent({ event: { kind: 'MCPToolDenied', mcp, tool, reason: decision.reason } });
+        void emitEvent({ event: { kind: 'MCPToolDenied', mcp, tool, reason: decision.reason } });
         return { id: req.id, allowed: false, error: decision.reason };
       }
       case 'ask': {

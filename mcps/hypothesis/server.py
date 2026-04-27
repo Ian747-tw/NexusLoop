@@ -16,8 +16,6 @@ from mcps.hypothesis.responses import (
     HypothesisDataResponse,
     HypothesisListResponse,
 )
-from nxl_core.events.schema import ToolRequested
-
 # In-memory hypothesis store (replace with real registry when available)
 _hypotheses: dict[str, dict[str, Any]] = {}
 
@@ -79,18 +77,6 @@ class HypothesisServer(BaseMCPServer):
             },
         ]
 
-    def _emit(self, tool_name: str, args: dict[str, Any]) -> None:
-        from nxl_core.events.singletons import journal_log
-
-        event_log = journal_log()
-        event_log.append(
-            ToolRequested(
-                tool_name=tool_name,
-                args_hash=str(hash(frozenset(args.items()))),
-                requesting_skill=None,
-            )
-        )
-
     async def handle_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "hypothesis.create":
             return await self._create(args)
@@ -106,7 +92,6 @@ class HypothesisServer(BaseMCPServer):
     async def _create(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("hypothesis.create", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("hypothesis.create", args)
 
         req = HypothesisCreateRequest(**args)
         hyp_id = _generate_id()
@@ -131,7 +116,6 @@ class HypothesisServer(BaseMCPServer):
     async def _list(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("hypothesis.list", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("hypothesis.list", args)
 
         hypos = [
             HypothesisDataResponse(
@@ -153,7 +137,6 @@ class HypothesisServer(BaseMCPServer):
     async def _get(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("hypothesis.get", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("hypothesis.get", args)
 
         req = HypothesisGetRequest(**args)
         hypo = _hypotheses.get(req.id)
@@ -176,7 +159,6 @@ class HypothesisServer(BaseMCPServer):
     async def _close(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self.check_policy("hypothesis.close", args):
             return {"ok": False, "error": "Policy denied"}
-        self._emit("hypothesis.close", args)
 
         req = HypothesisCloseRequest(**args)
         hypo = _hypotheses.get(req.id)

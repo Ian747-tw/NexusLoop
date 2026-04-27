@@ -10,24 +10,6 @@ from mcps.journal.server import JournalMCPServer
 class TestPolicyGate:
     """Assert policy check fires on every tool call."""
 
-    def test_append_emits_tool_requested(self) -> None:
-        """append emits ToolRequested event via EventLog."""
-        server = JournalMCPServer()
-        # Should not raise
-        server.emit_tool_requested("journal.append", {"event": {"kind": "test"}})
-
-    def test_tail_emits_tool_requested(self) -> None:
-        """tail emits ToolRequested event via EventLog."""
-        server = JournalMCPServer()
-        # Should not raise
-        server.emit_tool_requested("journal.tail", {"n": 5})
-
-    def test_query_emits_tool_requested(self) -> None:
-        """query emits ToolRequested event via EventLog."""
-        server = JournalMCPServer()
-        # Should not raise
-        server.emit_tool_requested("journal.query", {"kind": "cycle_started", "limit": 10})
-
     def test_all_tools_have_policy_gate(self) -> None:
         """Every tool name in get_tools() must go through policy check."""
         server = JournalMCPServer()

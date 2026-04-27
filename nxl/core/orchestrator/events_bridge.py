@@ -1,14 +1,12 @@
 """nxl/core/orchestrator/events_bridge.py — OpenCode events → nxl events."""
 from __future__ import annotations
 
-from pathlib import Path
-
-from nxl_core.events.log import EventLog
+from nxl_core.events.ipc import EventEmissionClient
 
 
 class EventsBridge:
-    def __init__(self, path: Path):
-        self._log = EventLog(path)
+    def __init__(self) -> None:
+        self._client = EventEmissionClient()
 
-    def write(self, event: dict) -> None:
-        self._log.append(event)
+    def emit_event(self, event: dict) -> None:
+        self._client.emit(event, origin_mcp="orchestrator")

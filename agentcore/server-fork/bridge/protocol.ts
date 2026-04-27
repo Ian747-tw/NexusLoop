@@ -166,3 +166,22 @@ export const TripwireAcknowledgmentResult = z.object({
   error: z.string().optional(),
 });
 export type TripwireAcknowledgmentResult = z.infer<typeof TripwireAcknowledgmentResult>;
+
+// v1.1: EventEmissionRequest / EventEmissionAck (Python → TS)
+// ---------------------------------------------------------------------------
+
+export const EventEmissionRequest = z.object({
+  kind: z.literal('EventEmissionRequest'),
+  request_id: z.string(),
+  event: z.record(z.string(), z.unknown()),
+  origin_mcp: z.string(),
+});
+export type EventEmissionRequest = z.infer<typeof EventEmissionRequest>;
+
+export const EventEmissionAck = z.object({
+  kind: z.literal('EventEmissionAck'),
+  request_id: z.string(),
+  event_id: z.string().nullable(),
+  error: z.string().optional(),
+});
+export type EventEmissionAck = z.infer<typeof EventEmissionAck>;

@@ -14,15 +14,15 @@ export function registerSkill(skill: SkillRegistration): void {
   // Handler dispatches each step through gated-dispatch
   _skillHandlers.set(skill.name, async (args) => {
     const invId = `skill-${skill.name}-${Date.now()}`;
-    emitEvent({ event: { kind: 'SkillInvoked', skill_name: skill.name, invocation_id: invId, args } });
+    await emitEvent({ event: { kind: 'SkillInvoked', skill_name: skill.name, invocation_id: invId, args } });
     try {
       // Each step in the skill goes through policy gate
       // For now, skill steps are dispatched as tool calls through gated-dispatch
       const result = { steps_executed: skill.steps_count };
-      emitEvent({ event: { kind: 'SkillCompleted', skill_name: skill.name, invocation_id: invId, success: true, result } });
+      await emitEvent({ event: { kind: 'SkillCompleted', skill_name: skill.name, invocation_id: invId, success: true, result } });
       return result;
     } catch (err) {
-      emitEvent({ event: { kind: 'SkillCompleted', skill_name: skill.name, invocation_id: invId, success: false, error: String(err) } });
+      await emitEvent({ event: { kind: 'SkillCompleted', skill_name: skill.name, invocation_id: invId, success: false, error: String(err) } });
       throw err;
     }
   });

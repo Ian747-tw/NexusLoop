@@ -32,6 +32,19 @@ to the fork; the fork serializes the append. Python may freely **read**
 `events.jsonl`. Test fixtures using isolated EventLog instances are exempt
 (invariant binds runtime, not the harness).
 
+> **"Runtime" means "during an active research session."** The CLI process
+> itself may write its own lifecycle events (dry-run summaries, skill
+> registry init, logging utility) under `NXL_EVENTLOG_WRITER=cli`. The CLI
+> and the fork coordinate via the shared `events.jsonl.lock` companion
+> file (portalocker on Python, proper-lockfile on TS, same path) so
+> concurrent writes are still serialized to one writer at a time. MCP
+> servers spawned by the fork still route through IPC; they do not write
+> directly.
+
+The invariant becomes: "At any given moment, only one process holds the
+lock and writes." Whether that process is the fork or the CLI depends on
+lifecycle stage.
+
 See ADR-007 (Single Brain) and ADR-009 (Single-Writer) for rationale.
 
 ## The Two-Tier Scheduling Principle

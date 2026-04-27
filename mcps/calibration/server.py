@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from mcps._shared.base import BaseMCPServer
+from nxl_core.events.ipc import EventEmissionClient
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +47,7 @@ class CalibrationMCPServer(BaseMCPServer):
         super().__init__("calibration")
         # In-memory store: hypothesis_id -> list of {confidence, actual_outcome, timestamp}
         self._store: dict[str, list[dict[str, Any]]] = {}
+        self._client = EventEmissionClient()
         # Current tier per hypothesis
         self._tiers: dict[str, str] = {}
 
@@ -113,7 +115,6 @@ class CalibrationMCPServer(BaseMCPServer):
         ]
 
     async def handle_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        self.emit_tool_requested(tool_name, args)
         decision = self._policy.check(tool_name, args)
         if not decision.allowed:
             return {"ok": False, "error": f"Policy denied: {decision.reason}"}
@@ -180,13 +181,12 @@ class CalibrationMCPServer(BaseMCPServer):
     async def _emit_tier_event(
         self, hypothesis_id: str, tier: str, history: list[dict[str, Any]]
     ) -> None:
-        """Emit a CompactionTierEntered event via journal_log."""
+        """Emit a CompactionTierEntered event via IPC."""
         from nxl_core.events.schema import CompactionTierEntered
-        from nxl_core.events.singletons import journal_log
 
         event = CompactionTierEntered(
             tier=tier,  # type: ignore[arg-type]
             reason=f"Calibration check for hypothesis {hypothesis_id}",
             events_active=len(history),
         )
-        journal_log().append(event)
+        self._client.emit(event, origin_mcp="calibration")
