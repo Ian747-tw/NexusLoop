@@ -92,35 +92,40 @@ class PolicyMCPServer(BaseMCPServer):
         # Emit PolicyDecision event
         self._emit_policy_decision_event(tool_name, decision)
 
-        # Map PolicyEngine decision to discriminated-union decision object
+        # Map PolicyEngine decision to MCP response
+        # Note: deny_non_negotiable uses discriminated union to carry rule_id
+        if decision.non_negotiable_violated:
+            # NON_NEGOTIABLE rule violated — tripwire fires
+            result_data: dict[str, object] = {
+                "tool_name": tool_name,
+                "allowed": False,
+                "decision": {"kind": "deny_non_negotiable", "rule_id": decision.non_negotiable_rule_id or "", "reason": decision.reason},
+                "reason": decision.reason,
+                "mode": decision.mode,
+                "violated_rules": decision.violated_rules,
+                "rule_id": decision.non_negotiable_rule_id or "",
+            }
+            return {"ok": True, "data": result_data}
+
         if decision.allowed:
             if decision.requires_confirmation:
-                decision_obj: dict[str, object] = {"kind": "ask"}
+                mcp_decision = "ask"
             else:
-                decision_obj = {"kind": "allow"}
-        elif decision.non_negotiable_violated:
-            # NON_NEGOTIABLE rule violated — tripwire fires
-            decision_obj = {
-                "kind": "deny_non_negotiable",
-                "rule_id": decision.non_negotiable_rule_id or "",
-                "reason": decision.reason,
-            }
+                mcp_decision = "allow"
         else:
-            decision_obj = {"kind": "deny", "reason": decision.reason}
+            mcp_decision = "deny"
 
-        result_data: dict[str, object] = {
-            "tool_name": tool_name,
-            "allowed": decision.allowed,
-            "decision": decision_obj,
-            "reason": decision.reason,
-            "mode": decision.mode,
-            "violated_rules": decision.violated_rules,
+        return {
+            "ok": True,
+            "data": {
+                "tool_name": tool_name,
+                "allowed": decision.allowed,
+                "decision": mcp_decision,
+                "reason": decision.reason,
+                "mode": decision.mode,
+                "violated_rules": decision.violated_rules,
+            },
         }
-        # Include rule_id when NON_NEGOTIABLE fires
-        if decision.non_negotiable_violated and decision.non_negotiable_rule_id:
-            result_data["rule_id"] = decision.non_negotiable_rule_id
-
-        return {"ok": True, "data": result_data}
 
     async def _get_mode(self) -> dict[str, Any]:
         """Handle policy.get_mode tool call."""
