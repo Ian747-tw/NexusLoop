@@ -112,6 +112,8 @@ const EventKind = z.enum([
   'tripwire_fired',
   'tripwire_cleared',
   'tool_call_blocked',
+  'mode_flag_denied',
+  'mode_flag_check_error',
 ]);
 type EventKind = z.infer<typeof EventKind>;
 
@@ -310,6 +312,8 @@ export function applyEvent(ns: ResearchNamespace, event: Event): ResearchNamespa
     case 'tripwire_fired':
     case 'tripwire_cleared':
     case 'tool_call_blocked':
+    case 'mode_flag_denied':
+    case 'mode_flag_check_error':
       // Tripwire events do not affect the research namespace.
       // Tripwire state is managed independently in tripwire-gate.ts.
       return ns;

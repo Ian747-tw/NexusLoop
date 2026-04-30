@@ -113,8 +113,15 @@ export async function checkFlagPolicy(
         });
         return 'deny';
     }
-  } catch {
-    // On error, fail open (allow the flag) but log
-    return 'allow';
+  } catch (err) {
+    emitEvent({
+      event: {
+        kind: 'mode_flag_check_error',
+        flag: `--${flagName}`,
+        error: String(err),
+        verdict: 'deny',
+      },
+    });
+    return 'deny';
   }
 }

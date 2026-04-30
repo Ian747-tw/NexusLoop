@@ -43,6 +43,14 @@ const VALID_EVENT_KINDS = new Set([
   'change_intent_recorded',
   'free_form_trial_started',
   'compaction_tier_entered',
+  'provider_called',
+  'subagent_spawned',
+  'subagent_completed',
+  'tripwire_fired',
+  'tripwire_cleared',
+  'tool_call_blocked',
+  'mode_flag_denied',
+  'mode_flag_check_error',
 ] as const);
 
 // ---------------------------------------------------------------------------

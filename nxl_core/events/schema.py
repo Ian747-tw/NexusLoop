@@ -376,6 +376,16 @@ class ModeFlagDenied(_BaseEvent):
     rule_id: str | None = Field(default=None, description="Rule that caused the denial")
 
 
+class ModeFlagCheckError(_BaseEvent):
+    """Emitted when a mode-flag policy check fails and the gate denies by default."""
+    kind: Literal["mode_flag_check_error"] = "mode_flag_check_error"
+    flag: str = Field(description="CLI flag being checked, including leading dashes")
+    error: str = Field(description="Error returned by the policy client")
+    verdict: Literal["deny"] = Field(
+        default="deny", description="Fail-closed verdict applied after the check error"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
@@ -415,6 +425,7 @@ Event = Annotated[
         TripwireCleared,
         ToolCallBlocked,
         ModeFlagDenied,
+        ModeFlagCheckError,
     ],
     Field(discriminator="kind"),
 ]

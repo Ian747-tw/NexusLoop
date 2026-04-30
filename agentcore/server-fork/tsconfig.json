@@ -4,7 +4,8 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
-    "types": ["node"],
+    "skipLibCheck": true,
+    "types": ["node", "bun"],
     "paths": {
       "@upstream/opencode/*": ["../upstream/packages/opencode/src/*"]
     }

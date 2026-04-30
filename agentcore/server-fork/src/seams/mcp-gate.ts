@@ -10,6 +10,7 @@ import { checkToolPolicy } from './gated-dispatch';
 import { enqueueIntervention } from './intervention-hook';
 import { emitEvent } from '../../bridge/event-emitter';
 import type { ToolCallRequest, ToolCallResult } from '../../bridge/protocol';
+import { fireTripwire, getActiveTripwires, isTripwireBlocked } from './tripwire-gate';
 
 export interface MCPToolDefinition {
   name: string;
@@ -53,6 +54,19 @@ export async function dispatchMCP(mcp: string, tool: string, args: Record<string
     },
   });
 
+  if (isTripwireBlocked()) {
+    const tripwireId = Array.from(getActiveTripwires().keys())[0] ?? 'unknown';
+    void emitEvent({
+      event: {
+        kind: 'tool_call_blocked',
+        tripwire_id: tripwireId,
+        tool_name: `${mcp}.${tool}`,
+        tool_id: req.id,
+      },
+    });
+    return { id: req.id, allowed: false, error: `tripwire_active:${tripwireId}` };
+  }
+
   try {
     const decision = await checkToolPolicy(req);
     switch (decision.kind) {
@@ -72,8 +86,14 @@ export async function dispatchMCP(mcp: string, tool: string, args: Record<string
         return { id: req.id, allowed: false, error: `ask:${decision.verb}` };
       }
       case 'deny_non_negotiable': {
+        fireTripwire(
+          decision.rule_id,
+          decision.reason,
+          `${mcp}.${tool}`,
+          null,
+        );
         emitEvent({ event: { kind: 'MCPToolDenied', mcp, tool, reason: decision.reason } });
-        return { id: req.id, allowed: false, error: `deny_non_negotiable:${decision.rule_id}` };
+        return { id: req.id, allowed: false, error: `deny_non_negotiable:${decision.rule_id} (tripwire fired)` };
       }
       case 'narrow': {
         const handler = _mcpHandlers.get(mcp);

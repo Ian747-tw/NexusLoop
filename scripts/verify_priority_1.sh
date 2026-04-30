@@ -19,16 +19,32 @@ check "test -x scripts/audit-fork-depth.sh"                                 "aud
 check "test -x scripts/verify_priority_1.sh"                                "verify_priority_1.sh executable"
 
 echo
-echo "== Frozen files untouched =="
-# Compare against the merge-base on main (or HEAD~6 as fallback)
-BASE=$(git merge-base HEAD main 2>/dev/null || git rev-parse HEAD~6)
-for f in CLAUDE.md agentcore/SEAM_CONTRACT.md agentcore/PROTOCOL.md NON_NEGOTIABLE_RULES.md NON_NEGOTIABLE_RULES_dev.md; do
-  if [[ -n "$BASE" ]] && git diff --quiet "$BASE" -- "$f" 2>/dev/null; then
+echo "== Frozen files untouched (or authorized) =="
+BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~6)
+while read -r f; do
+  if git diff --quiet "$BASE" -- "$f" 2>/dev/null; then
     echo "  OK  $f unchanged"
-  else
-    echo "  FAIL $f modified (frozen)"; fail=1
+    continue
   fi
-done
+
+  unauthorized=()
+  while read -r sha; do
+    [[ -z "$sha" ]] && continue
+    if ! git log -1 --format=%B "$sha" | grep -q "^Authorized-frozen-edit:"; then
+      unauthorized+=("$sha")
+    fi
+  done < <(git log --format=%H "$BASE..HEAD" -- "$f")
+
+  if [[ ${#unauthorized[@]} -eq 0 ]]; then
+    echo "  OK  $f changed (all commits authorized)"
+  else
+    echo "  FAIL $f modified by unauthorized commits:"
+    for s in "${unauthorized[@]}"; do
+      echo "         $s — $(git log -1 --format=%s "$s")"
+    done
+    fail=1
+  fi
+done < <(grep -v '^#' FROZEN.lock | grep -v '^$' | grep -v '^[[:space:]]*#')
 
 echo
 echo "== Principles landed =="
