@@ -35,6 +35,9 @@ jobs:
             exit 1
           }
 
+      - name: Install agentcore dependencies
+        run: cd agentcore/server-fork && bun install
+
       - name: Hide-failure guard (mechanical enforcement of NON_NEGOTIABLE rules)
         run: bash scripts/check_no_hidden_failures.sh origin/main
 
@@ -64,9 +67,6 @@ jobs:
 
       - name: Single-writer CI gate
         run: bash scripts/verify_single_writer.sh
-
-      - name: Install agentcore dependencies
-        run: cd agentcore/server-fork && bun install
 
       - name: Single-writer perf budget
         run: bun test tests/event-emitter.test.ts --timeout=30000

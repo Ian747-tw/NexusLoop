@@ -41,3 +41,10 @@ Owner: P7 lead
 Required by: second_review subagent activation
 Reference: subagent-isolation.ts comment block + ADR-012 Runtime
 Integration Gap section
+
+### Validate snapshot performance at scale (P9)
+
+bench_snapshot_replay.py at 10K events shows full≈snapshot≈12ms;
+the snapshot strategy's value is unproven at this scale. P9 overnight
+run will produce realistic event volumes (100K+); re-run the bench
+against that output to validate the architecture pays off in practice.
