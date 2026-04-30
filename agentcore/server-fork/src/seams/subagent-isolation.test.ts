@@ -6,6 +6,7 @@
  */
 // @ts-ignore — bun:test is a Bun built-in, not in @types/node
 import { describe, it, expect, beforeEach, vi } from 'bun:test';
+import crypto from 'crypto';
 import { getConfig, _resetForTesting as _resetRegistry } from '../util/subagent-registry';
 
 // ---------------------------------------------------------------------------
@@ -22,8 +23,133 @@ vi.mock('../../bridge/event-emitter', () => ({
   emitEvent: originalEmitEvent,
 }));
 
+type MockMessage = {
+  info: {
+    role: string;
+    modelID: string;
+    providerID: string;
+  };
+  text: string;
+};
+
+type MockSession = {
+  id: string;
+  parentID?: string;
+  capsulePrefix: string;
+  toolResults: string[];
+  messages: Record<string, MockMessage>;
+};
+
+let mockSessions: Record<string, MockSession> = {};
+let capturedRequests: string[] = [];
+let sessionCounter = 0;
+
+function seedParentSession(secret: string): {
+  sessionID: string;
+  messageID: string;
+} {
+  const sessionID = 'parent-session-123';
+  const messageID = 'parent-msg-456';
+  mockSessions[sessionID] = {
+    id: sessionID,
+    capsulePrefix: `capsule:${secret}`,
+    toolResults: [`tool:${secret}`],
+    messages: {
+      [messageID]: {
+        info: {
+          role: 'assistant',
+          modelID: 'claude-sonnet-4-20250514',
+          providerID: 'anthropic',
+        },
+        text: `message-history:${secret}`,
+      },
+    },
+  };
+  return { sessionID, messageID };
+}
+
+function buildOutboundRequest(sessionID: string, input: {
+  agent: string;
+  model: { modelID: string; providerID: string };
+  parts: Array<{ type: string; text?: string }>;
+}): string {
+  const session = mockSessions[sessionID];
+  const parent = session.parentID ? mockSessions[session.parentID] : undefined;
+  return JSON.stringify({
+    sessionID,
+    parentSessionID: session.parentID ?? null,
+    agent: input.agent,
+    model: input.model,
+    prompt: input.parts.map((part) => part.text ?? '').join('\n'),
+    inherited: parent
+      ? {
+          messageHistory: Object.values(parent.messages).map((msg) => msg.text).join('\n'),
+          capsulePrefix: parent.capsulePrefix,
+          toolResults: parent.toolResults,
+        }
+      : null,
+  });
+}
+
+function createMockTaskToolExecute() {
+  return vi.fn(async (args: { prompt: string; subagent_type: string }, ctx: {
+    sessionID?: string;
+    messageID: string;
+    extra?: {
+      promptOps?: {
+        resolvePromptParts: (template: string) => Promise<Array<{ type: string; text: string }>>;
+        prompt: (input: {
+          messageID: string;
+          sessionID: string;
+          model: { modelID: string; providerID: string };
+          agent: string;
+          tools: Record<string, boolean>;
+          parts: Array<{ type: string; text: string }>;
+        }) => Promise<{ parts: Array<{ type: string; text: string }> }>;
+      };
+    };
+  }) => {
+    const createdSessionID = `subagent-session-${++sessionCounter}`;
+    mockSessions[createdSessionID] = {
+      id: createdSessionID,
+      parentID: ctx.sessionID,
+      capsulePrefix: '',
+      toolResults: [],
+      messages: {},
+    };
+
+    const msgSessionID = ctx.sessionID;
+    if (!msgSessionID) {
+      throw new Error('message lookup requires a sessionID after child session creation');
+    }
+    const parentSession = mockSessions[msgSessionID];
+    const parentMessage = parentSession?.messages[ctx.messageID];
+    if (!parentMessage || parentMessage.info.role !== 'assistant') {
+      throw new Error('Not an assistant message');
+    }
+
+    const parts = await ctx.extra!.promptOps!.resolvePromptParts(args.prompt);
+    await ctx.extra!.promptOps!.prompt({
+      messageID: `subagent-msg-${sessionCounter}`,
+      sessionID: createdSessionID,
+      model: {
+        modelID: parentMessage.info.modelID,
+        providerID: parentMessage.info.providerID,
+      },
+      agent: args.subagent_type,
+      tools: {},
+      parts,
+    });
+
+    return {
+      metadata: { sessionId: createdSessionID },
+      output: `task_id: ${createdSessionID}`,
+    };
+  });
+}
+
 const mockTaskToolDef = {
-  execute: vi.fn(async () => ({ metadata: {}, output: '' })),
+  execute: createMockTaskToolExecute(),
 };
 
 vi.mock('@upstream/opencode/src/tool/task', () => ({
@@ -47,10 +173,13 @@ const { TaskTool } = await import('@upstream/opencode/src/tool/task');
 describe('subagent-isolation seam', () => {
   beforeEach(() => {
     emittedEvents.length = 0;
+    capturedRequests = [];
+    mockSessions = {};
+    sessionCounter = 0;
     originalEmitEvent.mockClear();
     _resetRegistry();
     _resetForTest();
-    mockTaskToolDef.execute = vi.fn(async () => ({ metadata: {}, output: '' }));
+    mockTaskToolDef.execute = createMockTaskToolExecute();
     (TaskTool.init as { mockClear: () => void }).mockClear();
   });
 
@@ -71,48 +200,82 @@ describe('subagent-isolation seam', () => {
   // Test 2: Secret in parent capsule does NOT leak to isolated subagent
   //         (NON-NEGOTIABLE — must scan FULL assembled prompt)
   // -------------------------------------------------------------------------
-  it('Test 2: secret token in parent capsule absent from isolated subagent context', () => {
-    // This test validates that when second_review (isolated) is spawned,
-    // the parent capsule's secret token does not appear in the subagent's
-    // assembled prompt bytes.
-    //
-    // The isolation mechanism strips parentID — if the upstream TaskTool
-    // respects this, the subagent session gets no parent message history,
-    // and the capsule assembled for the subagent is built fresh (not inherited
-    // from parent).
-    //
-    // We test by verifying:
-    // 1. second_review IS registered as isolated
-    // 2. The isolation flag is set in ctx.extra when isolated
-    // 3. The SubagentSpawned event carries isolated: true
-    // 4. No parent-derived secret path exists in the registry config
+  it('Test 2 strengthened: secret token absent from isolated subagent FIRST LLM CALL', async () => {
+    const secret = `SECRET_TOKEN_${crypto.randomUUID()}`;
+    const parent = seedParentSession(secret);
+    await initSubagentIsolation();
 
-    const isolated = isSubagentIsolated('second_review');
-    expect(isolated).toBe(true);
+    const promptOps = {
+      cancel: vi.fn(),
+      resolvePromptParts: vi.fn(async (template: string) => [{ type: 'text', text: template }]),
+      prompt: vi.fn(async (input: {
+        messageID: string;
+        sessionID: string;
+        model: { modelID: string; providerID: string };
+        agent: string;
+        tools: Record<string, boolean>;
+        parts: Array<{ type: string; text: string }>;
+      }) => {
+        capturedRequests.push(buildOutboundRequest(input.sessionID, input));
+        return {
+          parts: [{ type: 'text', text: 'Promotion verified.' }],
+        };
+      }),
+    };
 
-    // The secret leak would happen if:
-    // - parent capsule were passed to subagent's first LLM call
-    // - parent message history were visible to the subagent
-    // Both are blocked by: no parentID → no parent session → no parent capsule
-    // We verify the isolation config blocks the path
-    const config = getConfig('second_review');
-    expect(config?.isolated).toBe(true);
-    // No secret propagation path in isolated config
-    expect((config as Record<string, unknown>)['secret_token']).toBeUndefined();
+    await mockTaskToolDef.execute(
+      { prompt: 'verify X', subagent_type: 'second_review' },
+      {
+        sessionID: parent.sessionID,
+        messageID: parent.messageID,
+        extra: { promptOps },
+      },
+    );
+
+    const subagentRequest = capturedRequests.find((req) => req.includes('"agent":"second_review"'));
+    expect(subagentRequest).toBeDefined();
+    expect(subagentRequest).not.toContain(secret);
   });
 
   // -------------------------------------------------------------------------
   // Test 3: Non-isolated registered subagent INHERITS parent context
   // -------------------------------------------------------------------------
-  it('Test 3: registered but non-isolated subagent inherits parent context', () => {
-    // We test the ISOLATION flag logic: non-isolated types do NOT strip parentID.
-    // We mock the scenario by checking that isSubagentIsolated returns false
-    // for a type that has config.isolated = false.
-    // For this test we verify the general agent (not in registry, so passthrough)
+  it('Test 3: registered but non-isolated subagent inherits parent context', async () => {
+    const secret = `SECRET_TOKEN_${crypto.randomUUID()}`;
+    const parent = seedParentSession(secret);
     expect(isSubagentIsolated('general')).toBe(false);
-
-    // And confirm second_review (isolated) is different
     expect(isSubagentIsolated('second_review')).toBe(true);
+
+    const promptOps = {
+      cancel: vi.fn(),
+      resolvePromptParts: vi.fn(async (template: string) => [{ type: 'text', text: template }]),
+      prompt: vi.fn(async (input: {
+        messageID: string;
+        sessionID: string;
+        model: { modelID: string; providerID: string };
+        agent: string;
+        tools: Record<string, boolean>;
+        parts: Array<{ type: string; text: string }>;
+      }) => {
+        capturedRequests.push(buildOutboundRequest(input.sessionID, input));
+        return {
+          parts: [{ type: 'text', text: 'Inherited parent context.' }],
+        };
+      }),
+    };
+
+    await mockTaskToolDef.execute(
+      { prompt: 'verify Y', subagent_type: 'general' },
+      {
+        sessionID: parent.sessionID,
+        messageID: parent.messageID,
+        extra: { promptOps },
+      },
+    );
+
+    const subagentRequest = capturedRequests.find((req) => req.includes('"agent":"general"'));
+    expect(subagentRequest).toBeDefined();
+    expect(subagentRequest).toContain(secret);
   });
 
   // -------------------------------------------------------------------------
