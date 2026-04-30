@@ -12,6 +12,9 @@ from nxl.core.orchestrator.bootstrap import bootstrap, setup_sigint_handler
 from nxl.core.orchestrator.loop import OrchestrationLoop
 from nxl.core.orchestrator.cycle_adapter import CycleAdapter
 from nxl.core.state import ProjectState
+from nxl_core.runtime.pidfile import acquire as acquire_pidfile
+from nxl_core.runtime.pidfile import read_owner_pid
+from nxl_core.runtime.pidfile import release as release_pidfile
 
 
 def main(provider: str | None = None) -> int:
@@ -126,46 +129,57 @@ def run(
         console("Project not initialised. Run `nxl init` first.", "error")
         return 1
 
+    pidfile_path = config_dir / "run.lock"
+    pidfile_handle = acquire_pidfile(pidfile_path)
+    if pidfile_handle is None:
+        owner_pid = read_owner_pid(pidfile_path)
+        suffix = f" (pid {owner_pid})" if owner_pid else ""
+        console(f"another nxl run is active{suffix}", "error")
+        return 1
+
     bootstrap(config_dir)
 
     _, old_handler = setup_sigint_handler()
 
-    if dry_run:
-        from nxl_core.events.schema import CycleStarted, CycleCompleted
-        from nxl_core.events.singletons import journal_log
-        import hashlib
+    try:
+        if dry_run:
+            from nxl_core.events.schema import CycleStarted, CycleCompleted
+            from nxl_core.events.singletons import journal_log
+            import hashlib
 
-        console("Dry-run: would execute one cycle with provider.", "info")
-        console("  (actual execution skipped — no experiment started)", "info")
+            console("Dry-run: would execute one cycle with provider.", "info")
+            console("  (actual execution skipped — no experiment started)", "info")
 
-        # Emit CycleStarted and CycleCompleted events for E2E test verification
-        brief_text = "dry-run-brief"
-        try:
-            state = ProjectState.load(project_dir)
-            brief_text = state.flags.get("brief", "dry-run-brief")
-        except Exception:
-            pass
-        brief_hash = hashlib.sha256(brief_text.encode()).hexdigest()[:16]
+            # Emit CycleStarted and CycleCompleted events for E2E test verification
+            brief_text = "dry-run-brief"
+            try:
+                state = ProjectState.load(project_dir)
+                brief_text = state.flags.get("brief", "dry-run-brief")
+            except Exception:
+                pass
+            brief_hash = hashlib.sha256(brief_text.encode()).hexdigest()[:16]
 
-        # Call spec MCP to emit tool events (spec.get_project, spec.get_operations)
-        _get_spec_for_dry_run(project_dir)
+            # Call spec MCP to emit tool events (spec.get_project, spec.get_operations)
+            _get_spec_for_dry_run(project_dir)
 
-        log = journal_log()
-        log.append(CycleStarted(
-            brief_hash=brief_hash,
-            hypothesis_id="dry-run-hypothesis",
-        ))
-        log.append(CycleCompleted(
-            brief_hash=brief_hash,
-            hypothesis_id="dry-run-hypothesis",
-            summary_tokens=0,
-        ))
+            log = journal_log()
+            log.append(CycleStarted(
+                brief_hash=brief_hash,
+                hypothesis_id="dry-run-hypothesis",
+            ))
+            log.append(CycleCompleted(
+                brief_hash=brief_hash,
+                hypothesis_id="dry-run-hypothesis",
+                summary_tokens=0,
+            ))
 
-        signal.signal(signal.SIGINT, old_handler)
-        return 0
+            signal.signal(signal.SIGINT, old_handler)
+            return 0
 
-    provider = _resolve_provider(provider, config_dir)
-    return main(provider=provider)
+        provider = _resolve_provider(provider, config_dir)
+        return main(provider=provider)
+    finally:
+        release_pidfile(pidfile_handle)
 
 
 if __name__ == '__main__':

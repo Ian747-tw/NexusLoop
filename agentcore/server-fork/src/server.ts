@@ -1,98 +1,12 @@
-import { dlopen, FFIType, suffix } from "bun:ffi";
-import {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  writeFileSync,
-} from "fs";
-import { dirname, resolve } from "path";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { spawn } from "child_process";
 import { registerShutdownHandlers } from "./seams/lifecycle-hooks";
 import { initSubagentIsolation } from "./seams/subagent-isolation";
 import { projectTripwiresFromEventLog } from "./seams/tripwire-gate";
 import { projectFromEventLog } from "./seams/research-state";
 import { startEventEmissionServer } from "./seams/event-emission-handler";
-
-const LIBC_PATHS = [
-  "/usr/lib/x86_64-linux-gnu/libc.so.6",
-  "/lib/x86_64-linux-gnu/libc.so.6",
-  "/usr/lib/libc.so.6",
-  "/lib/libc.so.6",
-];
-
-function findLibC(): string {
-  for (const candidate of LIBC_PATHS) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return `libc.${suffix}`;
-}
-
-const libc = dlopen(findLibC(), {
-  flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-});
-
-const LOCK_EX = 2;
-const LOCK_UN = 8;
-const LOCK_NB = 4;
-
-interface RunLockHandle {
-  fd: number;
-  path: string;
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function acquireRunLock(projectDir: string): RunLockHandle | null {
-  const lockPath = resolve(projectDir, ".nxl", "run.lock");
-  mkdirSync(dirname(lockPath), { recursive: true });
-  if (!existsSync(lockPath)) {
-    writeFileSync(lockPath, "");
-  }
-
-  const fd = openSync(lockPath, "r+");
-  const rc = libc.symbols.flock(fd, LOCK_EX | LOCK_NB);
-  if (rc !== 0) {
-    closeSync(fd);
-    return null;
-  }
-
-  try {
-    const previous = readFileSync(lockPath, "utf-8").trim();
-    if (previous) {
-      const previousPid = Number(previous);
-      if (Number.isFinite(previousPid) && previousPid > 0 && !isPidAlive(previousPid)) {
-        // Stale pidfile content is expected after an ungraceful exit; we own the flock now.
-      }
-    }
-  } catch {
-    // Ignore unreadable stale content; flock ownership is authoritative.
-  }
-
-  writeFileSync(lockPath, `${process.pid}\n`);
-  const verifyFd = openSync(lockPath, "r");
-  fsyncSync(verifyFd);
-  closeSync(verifyFd);
-  return { fd, path: lockPath };
-}
-
-function releaseRunLock(handle: RunLockHandle | null): void {
-  if (!handle) return;
-  try {
-    libc.symbols.flock(handle.fd, LOCK_UN);
-  } finally {
-    closeSync(handle.fd);
-  }
-}
+import { acquire, release } from "./util/pidfile";
 
 async function spawnStubMcpIfRequested(): Promise<void> {
   const envPath = process.env.NXL_TEST_STUB_MCP_ENV_PATH;
@@ -150,11 +64,12 @@ async function waitForShutdownSignal(): Promise<void> {
 
 async function run(): Promise<void> {
   const projectDir = process.cwd();
-  const lockHandle = acquireRunLock(projectDir);
+  const lockPath = resolve(projectDir, ".nxl", "run.lock");
+  const lockHandle = acquire(lockPath);
   if (!lockHandle) {
     let ownerPid: string | null = null;
     try {
-      ownerPid = readFileSync(resolve(projectDir, ".nxl", "run.lock"), "utf-8").trim() || null;
+      ownerPid = readFileSync(lockPath, "utf-8").trim() || null;
     } catch {
       ownerPid = null;
     }
@@ -176,7 +91,7 @@ async function run(): Promise<void> {
     writeMessage({ type: "ready", pid: process.pid });
     await waitForShutdownSignal();
   } finally {
-    releaseRunLock(lockHandle);
+    release(lockHandle);
   }
 }
 
