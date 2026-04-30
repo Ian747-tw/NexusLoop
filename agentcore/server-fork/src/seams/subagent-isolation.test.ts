@@ -160,6 +160,7 @@ vi.mock('@upstream/opencode/src/tool/task', () => ({
 }));
 
 const { isSubagentIsolated, initSubagentIsolation, _resetForTest } = await import('./subagent-isolation');
+// @ts-ignore — upstream path is resolved at runtime by Bun during tests
 const { TaskTool } = await import('@upstream/opencode/src/tool/task');
 
 // ---------------------------------------------------------------------------

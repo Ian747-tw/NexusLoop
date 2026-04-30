@@ -1,3 +1,4 @@
+// @ts-ignore — bun:test is a Bun built-in, not in @types/node
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 
 const mockCheckToolPolicy = vi.fn();
