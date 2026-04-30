@@ -90,22 +90,29 @@ export async function initSubagentIsolation(): Promise<void> {
 
       let result: unknown;
       if (isolated) {
-        // Isolate: strip parentID. The subagent gets a fresh session with no
-        // lineage to parent's message history. This is the load-bearing action.
-        // The __nexusloop_isolated marker is metadata-only for downstream
-        // NexusLoop code — not load-bearing for the isolation itself.
+        // Isolate: the first TaskTool read of ctx.sessionID feeds
+        // sessions.create({ parentID: ctx.sessionID }). Strip only that read so
+        // the child session is created parentless. Later reads still need the
+        // parent message context for model lookup and tool bookkeeping.
         const isolatedArgs = { ...pargs };
         delete (isolatedArgs as Record<string, unknown>).parentID;
 
-        const isolatedCtx = {
-          ...pctx,
-          extra: {
-            ...pctx.extra,
-            __nexusloop_isolated: true,
-            // metadata-only marker for downstream NexusLoop code;
-            // not load-bearing. The isolation happens by stripping parentID.
+        let sessionIDReads = 0;
+        const isolatedCtx = new Proxy(pctx, {
+          get(target, prop, receiver) {
+            if (prop === 'sessionID') {
+              sessionIDReads += 1;
+              return sessionIDReads === 1 ? undefined : target.sessionID;
+            }
+            if (prop === 'extra') {
+              return {
+                ...target.extra,
+                __nexusloop_isolated: true,
+              };
+            }
+            return Reflect.get(target, prop, receiver);
           },
-        };
+        });
 
         try {
           result = await (_originalExecute!(isolatedArgs, isolatedCtx) as Promise<unknown>);
