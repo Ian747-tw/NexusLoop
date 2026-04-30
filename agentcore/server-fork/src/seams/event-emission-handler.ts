@@ -51,6 +51,8 @@ const VALID_EVENT_KINDS = new Set([
   'tool_call_blocked',
   'mode_flag_denied',
   'mode_flag_check_error',
+  'snapshot_corrupted',
+  'snapshot_cursor_missing',
 ] as const);
 
 // ---------------------------------------------------------------------------

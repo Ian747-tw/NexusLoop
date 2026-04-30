@@ -8,18 +8,18 @@
  * original cwd so the module can use them.
  */
 import { describe, it, beforeEach, afterEach, expect } from 'bun:test';
-import { existsSync, unlinkSync, writeFileSync, readFileSync, mkdirSync, chdir } from 'fs';
+import { unlinkSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs';
 import { resolve } from 'path';
 import { emitEvent, emitEventBatch } from '../server-fork/bridge/event-emitter';
 
 // Original cwd — event-emitter resolves paths from here at import time
 const ORIGINAL_CWD = process.cwd();
-const EVENTS_IN_CWD = resolve(ORIGINAL_CWD, 'events.jsonl');
-const LOCK_IN_CWD = resolve(ORIGINAL_CWD, 'events.jsonl.lock');
+const NXL_DIR_IN_CWD = resolve(ORIGINAL_CWD, '.nxl');
+const EVENTS_IN_CWD = resolve(NXL_DIR_IN_CWD, 'events.jsonl');
+const LOCK_IN_CWD = resolve(NXL_DIR_IN_CWD, 'events.jsonl.lock');
 
 function setup() {
-  // event-emitter.ts reads EVENT_LOG_PATH at import time (process.cwd()).
-  // Ensure the lock file exists at that location so proper-lockfile can use it.
+  mkdirSync(NXL_DIR_IN_CWD, { recursive: true });
   writeFileSync(EVENTS_IN_CWD, '');
   writeFileSync(LOCK_IN_CWD, '');
 }
@@ -33,6 +33,7 @@ function readLines(): string[] {
 function teardown() {
   try { unlinkSync(EVENTS_IN_CWD); } catch {}
   try { unlinkSync(LOCK_IN_CWD); } catch {}
+  try { rmSync(NXL_DIR_IN_CWD, { recursive: true, force: true }); } catch {}
 }
 
 describe('emitEvent', () => {

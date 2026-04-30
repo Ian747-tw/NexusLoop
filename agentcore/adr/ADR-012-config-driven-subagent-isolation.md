@@ -104,3 +104,36 @@ policy automatically.
 - Every upstream rebase that touches `task.ts` requires a fresh audit of
   `ctx.sessionID` read order until the seam can migrate away from the
   first-read interception strategy
+
+## Runtime Integration Gap (discovered in P5.4)
+
+The seam intercepts the module-level export `TaskTool` and wraps
+its `def.init()` chain. Investigation in P5.4 showed:
+
+1. Upstream's `TaskTool.init()` returns an Effect, not a Promise.
+   The wrapper's `await def.init()` resolves to the Effect object,
+   not the tool definition.
+2. Upstream's `ToolRegistry` resolves a fresh task def each time
+   via Effect runtime; module-level wrapping does not propagate
+   to the runtime-resolved instances.
+3. The wrapped `execute` we install on the original module-level
+   def is therefore never called in the real runtime path.
+
+Status: the unit test (subagent-isolation.test.ts) verifies the
+wrapper's logic is correct. A real-runtime integration test
+(deferred to P7) is required to verify the wrapper is actually
+invoked. Until that test exists, isolation is preparatory
+infrastructure, not enforced.
+
+Implication: do NOT activate `second_review` (or any other
+isolated subagent type) for security-relevant decisions until
+P7 redesigns the interception point. Until then, treat
+"isolated: true" in the registry as a future intent, not a
+current guarantee.
+
+The redesign (P7) needs to:
+- Find the actual tool-resolution hook point in upstream
+  (likely ToolRegistry-level, not module-level)
+- Reattach the wrapper there
+- Verify via integration test that secret-token-in-parent-capsule
+  cannot leak to isolated subagent's first LLM call

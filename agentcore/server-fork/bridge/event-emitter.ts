@@ -1,5 +1,4 @@
-import { openSync, writeSync, fsyncSync, closeSync, existsSync, writeFileSync } from 'fs';
-import { createHash } from 'crypto';
+import { openSync, writeSync, fsyncSync, closeSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 import { withFlock } from '../src/util/posix-flock';
 
@@ -12,8 +11,9 @@ function _ulid(): string {
 }
 
 export function emitEvent(event: Record<string, unknown>): void {
-  const EVENT_LOG_PATH = resolve(process.cwd(), 'events.jsonl');
+  const EVENT_LOG_PATH = resolve(process.cwd(), '.nxl', 'events.jsonl');
   const LOCK_PATH = EVENT_LOG_PATH + '.lock';
+  mkdirSync(resolve(process.cwd(), '.nxl'), { recursive: true });
   if (!existsSync(LOCK_PATH)) {
     writeFileSync(LOCK_PATH, '');
   }
@@ -38,8 +38,9 @@ export function emitEventBatch(
   events: Record<string, unknown>[]
 ): void {
   if (events.length === 0) return;
-  const EVENT_LOG_PATH = resolve(process.cwd(), 'events.jsonl');
+  const EVENT_LOG_PATH = resolve(process.cwd(), '.nxl', 'events.jsonl');
   const LOCK_PATH = EVENT_LOG_PATH + '.lock';
+  mkdirSync(resolve(process.cwd(), '.nxl'), { recursive: true });
   if (!existsSync(LOCK_PATH)) {
     writeFileSync(LOCK_PATH, '');
   }

@@ -114,12 +114,29 @@ const EventKind = z.enum([
   'tool_call_blocked',
   'mode_flag_denied',
   'mode_flag_check_error',
+  'snapshot_corrupted',
+  'snapshot_cursor_missing',
 ]);
 type EventKind = z.infer<typeof EventKind>;
 
 // Discriminated-union event record
 const _Event = z.record(z.string(), z.unknown());
 type Event = z.infer<typeof _Event>;
+
+function normalizeEventRecord(raw: Record<string, unknown>): Event | null {
+  const inner = raw.event;
+  if (inner && typeof inner === 'object') {
+    const event = { ...(inner as Record<string, unknown>) };
+    if (!event.event_id && raw.event_id) {
+      event.event_id = raw.event_id;
+    }
+    if (!event.timestamp && raw.timestamp) {
+      event.timestamp = raw.timestamp;
+    }
+    return event as Event;
+  }
+  return raw as Event;
+}
 
 // ---------------------------------------------------------------------------
 // Empty namespace factory
@@ -189,14 +206,17 @@ export async function projectFromEventLog(
       if (!started) {
         try {
           const parsed = JSON.parse(line) as Record<string, unknown>;
-          if (parsed.event_id === cursor) started = true;
+          const event = normalizeEventRecord(parsed);
+          if (event?.event_id === cursor || parsed.event_id === cursor) started = true;
         } catch {
           // malformed line — skip
         }
         continue;
       }
       try {
-        const event = JSON.parse(line) as Event;
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const event = normalizeEventRecord(parsed);
+        if (!event) continue;
         ns = applyEvent(ns, event);
       } catch {
         // malformed line — skip
@@ -314,6 +334,8 @@ export function applyEvent(ns: ResearchNamespace, event: Event): ResearchNamespa
     case 'tool_call_blocked':
     case 'mode_flag_denied':
     case 'mode_flag_check_error':
+    case 'snapshot_corrupted':
+    case 'snapshot_cursor_missing':
       // Tripwire events do not affect the research namespace.
       // Tripwire state is managed independently in tripwire-gate.ts.
       return ns;

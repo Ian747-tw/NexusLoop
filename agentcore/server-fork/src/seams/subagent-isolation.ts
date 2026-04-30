@@ -18,12 +18,6 @@
 import { getConfig, isIsolated } from '../util/subagent-registry';
 import { emitEvent } from '../../bridge/event-emitter';
 
-const TASK_TOOL_ID = 'task';
-
-/**
- * Holds the original TaskTool.execute wrapped by the interceptor.
- * Set once on first interception; used to restore if needed.
- */
 let _originalExecute: ((args: unknown, ctx: unknown) => Promise<unknown>) | null = null;
 
 let _intercepted = false;
@@ -50,21 +44,33 @@ export async function initSubagentIsolation(): Promise<void> {
 
   try {
     // Dynamic import avoids hard coupling to upstream module structure at startup
-    const { TaskTool } = await import('@upstream/opencode/src/tool/task');
+    const taskToolModule = '@upstream/opencode/tool/task';
+    const appRuntimeModule = '@upstream/opencode/effect/app-runtime';
+    const { TaskTool } = await import(taskToolModule);
+    const { AppRuntime } = await import(appRuntimeModule);
 
     // Defensive: verify the tool exposes the expected interface
-    const def = TaskTool as unknown as { id?: string; init?: () => Promise<{ execute: Function }> };
+    let def = TaskTool as unknown as { id?: string; init?: () => Promise<{ execute: Function }> };
+    if (!def?.init) {
+      try {
+        def = await AppRuntime.runPromise(TaskTool as never) as typeof def;
+      } catch {
+        // Fall through to the warning below if resolution fails.
+      }
+    }
     if (!def?.init) {
       console.warn('[subagent-isolation] TaskTool def.init not found — skipping interception');
       return;
     }
 
-    // Intercept at the tool definition level — wrap execute after init resolves
+    // Intercept at the tool definition level — wrap execute after init resolves.
+    // NOTE: P5.4 confirmed this module-level interception does not currently
+    // propagate to upstream's real runtime-resolved ToolRegistry path.
     const toolDef = await def.init();
     _originalExecute = toolDef.execute as (args: unknown, ctx: unknown) => Promise<unknown>;
 
     const wrappedExecute = async (args: unknown, ctx: unknown) => {
-      const pargs = args as { subagent_type?: string; task_id?: string };
+      const pargs = args as { subagent_type?: string; task_id?: string; parentID?: string };
       const subagentType = pargs.subagent_type ?? '';
       const isolated = isIsolated(subagentType);
       const config = getConfig(subagentType);
@@ -90,10 +96,6 @@ export async function initSubagentIsolation(): Promise<void> {
 
       let result: unknown;
       if (isolated) {
-        // Isolate: the first TaskTool read of ctx.sessionID feeds
-        // sessions.create({ parentID: ctx.sessionID }). Strip only that read so
-        // the child session is created parentless. Later reads still need the
-        // parent message context for model lookup and tool bookkeeping.
         const isolatedArgs = { ...pargs };
         delete (isolatedArgs as Record<string, unknown>).parentID;
 
