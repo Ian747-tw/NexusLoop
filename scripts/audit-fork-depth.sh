@@ -23,7 +23,9 @@ extract_section() {
 }
 
 implemented=$(extract_section '^### Implemented fork-level modifications' | grep -oE 'seams/[a-z-]+\.ts' | sort -u || true)
-planned=$(extract_section '^### Planned but not yet implemented' | grep -oE 'seams/[a-z-]+\.ts' | sort -u || true)
+planned_section="$(extract_section '^### Planned but not yet implemented')"
+planned=$(printf '%s\n' "$planned_section" | grep -vE 'CANCELLED|^~~|^~`' | grep -oE 'seams/[a-z-]+\.ts' | sort -u || true)
+cancelled=$(printf '%s\n' "$planned_section" | grep -E 'CANCELLED|^~~|^~`' | grep -oE 'seams/[a-z-]+\.ts' | sort -u || true)
 tier2=$(extract_section '^### Tier 2 — Research seams' | grep -oE 'seams/[a-z-]+\.ts' | sort -u || true)
 
 fail=0
@@ -49,6 +51,14 @@ for s in $planned $tier2; do
     echo "  planned $s"
   fi
 done
+
+if [[ -n "$cancelled" ]]; then
+  echo
+  echo "=== Cancelled seams (informational) ==="
+  for s in $cancelled; do
+    echo "  cancelled $s"
+  done
+fi
 
 if [[ $fail -ne 0 ]]; then
   echo

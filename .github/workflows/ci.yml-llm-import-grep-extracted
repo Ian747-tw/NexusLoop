@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if grep -rE "^(import|from) (anthropic|openai)" nxl/ nxl_core/ mcps/ \
+  --include='*.py' --exclude-dir=__pycache__; then
+  echo "::error::Python LLM client imports forbidden by Integration Principle."
+  exit 1
+fi

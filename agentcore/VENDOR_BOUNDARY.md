@@ -71,9 +71,14 @@ fork-level modification, append here and bump the rebase impact estimate.
     flags that would bypass approval are themselves policy-gated.
     - STATUS: implemented
 
+14. `seams/event-emission-handler.ts` — IPC handler that routes
+    EventEmissionRequest to the fork's event-emitter (P3 single-writer
+    invariant enforcement).
+    - STATUS: implemented
+
 ### Planned but not yet implemented
 
-~`seams/session-storage.ts`~~ — CANCELLED (see ADR-010)
+~~`seams/session-storage.ts`~~ — CANCELLED (see ADR-010)
     Originally scoped (M1) to replace upstream's message-list store with
     an events.jsonl pointer. Determined in P4.3 to be redundant: the
     stated job is fully covered by `research-state.ts` (event-log
@@ -86,7 +91,7 @@ fork-level modification, append here and bump the rebase impact estimate.
 ### Rebase impact
 
 Each modification adds ~1–3 hours to a rebase. Total rebase budget:
-- 13 implemented modifications: ~39 hours (already absorbed)
+- 14 implemented modifications: ~42 hours (already absorbed)
 - <1 day target for full fork integration (M4 exit gate)
 
 ## Pinned commit

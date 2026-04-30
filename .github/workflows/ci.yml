@@ -38,6 +38,9 @@ jobs:
       - name: Hide-failure guard (mechanical enforcement of NON_NEGOTIABLE rules)
         run: bash scripts/check_no_hidden_failures.sh origin/main
 
+      - name: No Python LLM imports (Integration Principle)
+        run: bash .github/workflows/ci.yml-llm-import-grep-extracted
+
       - name: Ruff
         run: uv run ruff check . --exclude '.claude/worktrees/**'
 
