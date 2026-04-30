@@ -1,9 +1,17 @@
 // @ts-ignore
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import process from "process";
+
+const emittedEvents: Array<Record<string, unknown>> = [];
+
+vi.mock("../../bridge/event-emitter", () => ({
+  emitEvent: (payload: Record<string, unknown>) => {
+    emittedEvents.push(payload);
+  },
+}));
 
 const {
   findLatestSnapshot,
@@ -49,6 +57,7 @@ describe("snapshot.ts", () => {
     eventsPath = join(projectDir, ".nxl", "events.jsonl");
     snapshotsDir = join(projectDir, ".nxl", "snapshots");
     process.chdir(projectDir);
+    emittedEvents.length = 0;
   });
 
   afterEach(() => {
@@ -88,9 +97,14 @@ describe("snapshot.ts", () => {
     const fullReplay = await replayEventLog(eventsPath);
 
     expect(replayed).toEqual(fullReplay);
-    const emitted = readFileSync(join(projectDir, ".nxl", "events.jsonl"), "utf-8");
-    expect(emitted).toContain('"kind":"snapshot_corrupted"');
-    expect(emitted).toContain(corruptPath);
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          kind: "snapshot_corrupted",
+          snapshot_path: corruptPath,
+        }),
+      }),
+    );
   });
 
   it("selects the lexicographically latest snapshot file", () => {
