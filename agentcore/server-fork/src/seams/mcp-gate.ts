@@ -11,6 +11,7 @@ import { enqueueIntervention } from './intervention-hook';
 import { emitEvent } from '../../bridge/event-emitter';
 import type { ToolCallRequest, ToolCallResult } from '../../bridge/protocol';
 import { fireTripwire, getActiveTripwires, isTripwireBlocked } from './tripwire-gate';
+import { invokeWithCircuitBreaker } from '../util/circuit-breaker';
 
 export interface MCPToolDefinition {
   name: string;
@@ -73,7 +74,7 @@ export async function dispatchMCP(mcp: string, tool: string, args: Record<string
       case 'allow': {
         const handler = _mcpHandlers.get(mcp);
         if (!handler) return { id: req.id, allowed: false, error: `MCP ${mcp} not registered` };
-        const result = await handler(tool, args);
+        const result = await invokeWithCircuitBreaker(mcp, async () => handler(tool, args));
         void emitEvent({ event: { kind: 'MCPToolCompleted', mcp, tool, result } });
         return { id: req.id, allowed: true, result };
       }
@@ -98,7 +99,7 @@ export async function dispatchMCP(mcp: string, tool: string, args: Record<string
       case 'narrow': {
         const handler = _mcpHandlers.get(mcp);
         if (!handler) return { id: req.id, allowed: false, error: `MCP ${mcp} not registered` };
-        const result = await handler(tool, decision.narrowed_args);
+        const result = await invokeWithCircuitBreaker(mcp, async () => handler(tool, decision.narrowed_args));
         return { id: req.id, allowed: true, result };
       }
     }
