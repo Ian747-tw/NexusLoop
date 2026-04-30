@@ -6,7 +6,6 @@
  */
 // @ts-ignore — bun:test is a Bun built-in, not in @types/node
 import { describe, it, expect, beforeEach, vi } from 'bun:test';
-import { isSubagentIsolated } from './subagent-isolation';
 import { getConfig, _resetForTesting as _resetRegistry } from '../util/subagent-registry';
 
 // ---------------------------------------------------------------------------
@@ -23,6 +22,20 @@ vi.mock('../../bridge/event-emitter', () => ({
   emitEvent: originalEmitEvent,
 }));
 
+const mockTaskToolDef = {
+  execute: vi.fn(async () => ({ metadata: {}, output: '' })),
+};
+
+vi.mock('@upstream/opencode/src/tool/task', () => ({
+  TaskTool: {
+    id: 'task',
+    init: vi.fn(async () => mockTaskToolDef),
+  },
+}));
+
+const { isSubagentIsolated, initSubagentIsolation, _resetForTest } = await import('./subagent-isolation');
+const { TaskTool } = await import('@upstream/opencode/src/tool/task');
+
 // ---------------------------------------------------------------------------
 // Registry test fixtures
 // ---------------------------------------------------------------------------
@@ -36,6 +49,9 @@ describe('subagent-isolation seam', () => {
     emittedEvents.length = 0;
     originalEmitEvent.mockClear();
     _resetRegistry();
+    _resetForTest();
+    mockTaskToolDef.execute = vi.fn(async () => ({ metadata: {}, output: '' }));
+    (TaskTool.init as { mockClear: () => void }).mockClear();
   });
 
   // -------------------------------------------------------------------------
@@ -179,5 +195,14 @@ describe('subagent-isolation seam', () => {
       initExists = false;
     }
     expect(initExists).toBe(true);
+  });
+
+  it('Test 7: initSubagentIsolation resolves only after wrapper is installed', async () => {
+    const originalExecute = mockTaskToolDef.execute;
+    await initSubagentIsolation();
+
+    expect(TaskTool.init).toHaveBeenCalledTimes(1);
+    expect(mockTaskToolDef.execute).not.toBe(originalExecute);
+    expect((mockTaskToolDef.execute as { __nexusloop_isolation_wrapped?: boolean }).__nexusloop_isolation_wrapped).toBe(true);
   });
 });

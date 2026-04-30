@@ -48,22 +48,22 @@ let _intercepted = false;
 export async function initSubagentIsolation(): Promise<void> {
   if (_intercepted) return;
 
-  // Dynamic import avoids hard coupling to upstream module structure at startup
-  const { TaskTool } = await import('@upstream/opencode/src/tool/task');
+  try {
+    // Dynamic import avoids hard coupling to upstream module structure at startup
+    const { TaskTool } = await import('@upstream/opencode/src/tool/task');
 
-  // Defensive: verify the tool exposes the expected interface
-  const def = TaskTool as unknown as { id?: string; init?: () => Promise<{ execute: Function }> };
-  if (!def) {
-    console.warn('[subagent-isolation] TaskTool def not found — skipping interception');
-    return;
-  }
+    // Defensive: verify the tool exposes the expected interface
+    const def = TaskTool as unknown as { id?: string; init?: () => Promise<{ execute: Function }> };
+    if (!def?.init) {
+      console.warn('[subagent-isolation] TaskTool def.init not found — skipping interception');
+      return;
+    }
 
-  // Intercept at the tool definition level — wrap execute after init resolves
-  def.init?.().then((toolDef: { execute: Function }) => {
+    // Intercept at the tool definition level — wrap execute after init resolves
+    const toolDef = await def.init();
     _originalExecute = toolDef.execute as (args: unknown, ctx: unknown) => Promise<unknown>;
-    _intercepted = true;
 
-    toolDef.execute = async (args: unknown, ctx: unknown) => {
+    const wrappedExecute = async (args: unknown, ctx: unknown) => {
       const pargs = args as { subagent_type?: string; task_id?: string };
       const subagentType = pargs.subagent_type ?? '';
       const isolated = isIsolated(subagentType);
@@ -140,9 +140,12 @@ export async function initSubagentIsolation(): Promise<void> {
 
       return result;
     };
-  }).catch((err) => {
+    (wrappedExecute as typeof wrappedExecute & { __nexusloop_isolation_wrapped?: boolean }).__nexusloop_isolation_wrapped = true;
+    toolDef.execute = wrappedExecute;
+    _intercepted = true;
+  } catch (err) {
     console.error('[subagent-isolation] failed to intercept TaskTool:', err);
-  });
+  }
 }
 
 /**
