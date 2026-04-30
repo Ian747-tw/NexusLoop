@@ -115,6 +115,7 @@ const EventKind = z.enum([
   'mode_flag_denied',
   'mode_flag_check_error',
   'snapshot_corrupted',
+  'snapshot_cursor_missing',
 ]);
 type EventKind = z.infer<typeof EventKind>;
 
@@ -334,6 +335,7 @@ export function applyEvent(ns: ResearchNamespace, event: Event): ResearchNamespa
     case 'mode_flag_denied':
     case 'mode_flag_check_error':
     case 'snapshot_corrupted':
+    case 'snapshot_cursor_missing':
       // Tripwire events do not affect the research namespace.
       // Tripwire state is managed independently in tripwire-gate.ts.
       return ns;

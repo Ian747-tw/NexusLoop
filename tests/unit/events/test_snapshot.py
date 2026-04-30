@@ -5,6 +5,7 @@ from pathlib import Path
 
 from nxl_core.events.snapshot import (
     find_latest_snapshot,
+    project_event_log,
     replay_from_snapshot,
     should_snapshot,
     write_snapshot,
@@ -32,6 +33,22 @@ def _write_events(path: Path, count: int) -> None:
         else:
             lines.append(json.dumps(event))
     path.write_text("\n".join(lines) + "\n")
+
+
+def _truncate_events(source: Path, destination: Path, end_event_id: str) -> None:
+    lines: list[str] = []
+    for line in source.read_text().splitlines():
+        if not line.strip():
+            continue
+        raw = json.loads(line)
+        event_id = raw.get("event", {}).get("event_id") if isinstance(raw.get("event"), dict) else None
+        event_id = event_id or raw.get("event_id")
+        if event_id is None:
+            continue
+        if str(event_id) > end_event_id:
+            break
+        lines.append(line)
+    destination.write_text("\n".join(lines) + "\n")
 
 
 def test_should_snapshot_default_interval() -> None:
@@ -77,3 +94,32 @@ def test_replay_from_snapshot_applies_delta_events(tmp_path: Path) -> None:
     replayed = replay_from_snapshot(snapshot_path, events_path)
     assert replayed["program_state"] == "exploiting"
     assert replayed["registry_projection"]["hypotheses"]["h-1"]["last_evidence_event_id"] == _event_id(2)
+
+
+def test_replay_falls_back_to_full_when_cursor_missing(tmp_path: Path, monkeypatch) -> None:
+    events_path = tmp_path / ".nxl" / "events.jsonl"
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_events(events_path, 1000)
+
+    snapshot_path = write_snapshot(
+        events_path,
+        project_event_log(events_path),
+        _event_id(500),
+        500,
+    )
+
+    truncated_path = tmp_path / ".nxl" / "truncated.jsonl"
+    _truncate_events(events_path, truncated_path, _event_id(400))
+
+    monkeypatch.setenv("NXL_EVENTLOG_WRITER", "test")
+    replayed = replay_from_snapshot(snapshot_path, truncated_path)
+    expected = project_event_log(truncated_path)
+
+    assert replayed == expected, "cursor-miss should trigger full replay fallback"
+
+    lines = truncated_path.read_text().splitlines()
+    assert lines, "expected snapshot_cursor_missing event to be appended"
+    last = json.loads(lines[-1])
+    assert last["kind"] == "snapshot_cursor_missing"
+    assert last["cursor_event_id"] == _event_id(500)
+    assert last["events_path"] == str(truncated_path)

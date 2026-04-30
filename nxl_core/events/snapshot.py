@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from nxl_core.events.log import EventLog
+from nxl_core.events.schema import SnapshotCursorMissing
+
 
 ResearchNamespace = dict[str, Any]
 
@@ -29,6 +32,20 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
             event["timestamp"] = raw["timestamp"]
         return event
     return raw
+
+
+def _iter_event_records(events_path: Path):
+    if not events_path.exists():
+        return
+
+    for line in events_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        yield raw, _normalize_event(raw)
 
 
 def _apply_event(ns: ResearchNamespace, event: dict[str, Any]) -> ResearchNamespace:
@@ -87,23 +104,26 @@ def _apply_event(ns: ResearchNamespace, event: dict[str, Any]) -> ResearchNamesp
 
 
 def _iter_normalized_events(events_path: Path, cursor: str | None = None):
-    if not events_path.exists():
-        return
-
     started = cursor is None
-    for line in events_path.read_text().splitlines():
-        if not line.strip():
-            continue
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        event = _normalize_event(raw)
+    for raw, event in _iter_event_records(events_path) or ():
         if not started:
             if event.get("event_id") == cursor or raw.get("event_id") == cursor:
                 started = True
             continue
         yield event
+
+
+def _emit_snapshot_cursor_missing(events_path: Path, cursor: str) -> None:
+    try:
+        EventLog(events_path).append(
+            SnapshotCursorMissing(
+                cursor_event_id=cursor,
+                events_path=str(events_path),
+            )
+        )
+    except Exception:
+        # Observability should not block replay fallback.
+        pass
 
 
 def should_snapshot(event_count: int, interval: int = 1000) -> bool:
@@ -155,6 +175,7 @@ def project_event_log(
 
 
 def replay_from_snapshot(snapshot_path: str | Path, events_path: str | Path) -> ResearchNamespace:
+    events_file = Path(events_path)
     try:
         payload = json.loads(Path(snapshot_path).read_text())
         state = payload["state"]
@@ -163,4 +184,20 @@ def replay_from_snapshot(snapshot_path: str | Path, events_path: str | Path) -> 
         state = _empty_research_namespace()
         cursor = None
 
-    return project_event_log(events_path, cursor, state)
+    if cursor is None:
+        return project_event_log(events_file, None, state)
+
+    found_cursor = False
+    result = state
+    for raw, event in _iter_event_records(events_file) or ():
+        if not found_cursor:
+            if event.get("event_id") == cursor or raw.get("event_id") == cursor:
+                found_cursor = True
+            continue
+        result = _apply_event(result, event)
+
+    if not found_cursor:
+        _emit_snapshot_cursor_missing(events_file, cursor)
+        return project_event_log(events_file)
+
+    return result

@@ -107,6 +107,45 @@ describe("snapshot.ts", () => {
     );
   });
 
+  it("cursor missing falls back to full replay and emits snapshot_cursor_missing", async () => {
+    writeFileSync(eventsPath, buildEventLines(20));
+    mkdirSync(snapshotsDir, { recursive: true });
+    const snapshotPath = join(snapshotsDir, `${eventId(10)}.json`);
+    writeFileSync(
+      snapshotPath,
+      JSON.stringify({
+        cursor_event_id: eventId(10),
+        event_count: 10,
+        state: {
+          current_cycle: null,
+          program_state: "paused",
+          registry_projection: {
+            hypotheses: { "h-stale": { tier: "T0", score: null, last_evidence_event_id: eventId(10) } },
+            cursor: null,
+          },
+          tier_state: {},
+          capsule_cursor: null,
+          scheduler_queue: [],
+        },
+      }),
+    );
+    writeFileSync(eventsPath, buildEventLines(5));
+
+    const replayed = await replayFromSnapshot(snapshotPath, eventsPath);
+    const fullReplay = await replayEventLog(eventsPath);
+
+    expect(replayed).toEqual(fullReplay);
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          kind: "snapshot_cursor_missing",
+          cursor_event_id: eventId(10),
+          events_path: eventsPath,
+        }),
+      }),
+    );
+  });
+
   it("selects the lexicographically latest snapshot file", () => {
     mkdirSync(snapshotsDir, { recursive: true });
     writeFileSync(join(snapshotsDir, `${eventId(10)}.json`), "{}");

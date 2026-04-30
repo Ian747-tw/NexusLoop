@@ -393,6 +393,13 @@ class SnapshotCorrupted(_BaseEvent):
     error: str = Field(description="Parse or read error that triggered the fallback")
 
 
+class SnapshotCursorMissing(_BaseEvent):
+    """Emitted when a snapshot cursor is absent from the log and replay restarts from the beginning."""
+    kind: Literal["snapshot_cursor_missing"] = "snapshot_cursor_missing"
+    cursor_event_id: str = Field(description="Snapshot cursor that could not be found in the log")
+    events_path: str = Field(description="Event log that was replayed from the beginning")
+
+
 # ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
@@ -434,6 +441,7 @@ Event = Annotated[
         ModeFlagDenied,
         ModeFlagCheckError,
         SnapshotCorrupted,
+        SnapshotCursorMissing,
     ],
     Field(discriminator="kind"),
 ]

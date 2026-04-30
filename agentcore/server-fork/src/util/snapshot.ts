@@ -105,13 +105,55 @@ export async function replayEventLog(
   return state;
 }
 
+async function emitSnapshotCursorMissing(
+  eventsPath: string,
+  cursor: string,
+): Promise<void> {
+  emitEvent({
+    event: {
+      kind: "snapshot_cursor_missing",
+      cursor_event_id: cursor,
+      events_path: eventsPath,
+    },
+  });
+}
+
 export async function replayFromSnapshot(
   snapshotPath: string,
   eventsPath: string,
 ): Promise<ResearchNamespace> {
   try {
     const payload = JSON.parse(readFileSync(snapshotPath, "utf-8")) as SnapshotFile;
-    return replayEventLog(eventsPath, payload.cursor_event_id, payload.state);
+    const lines = readEventLines(eventsPath);
+    let state = payload.state;
+    let foundCursor = false;
+
+    for (const line of lines) {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const normalized = normalizeEventRecord(parsed);
+      if (!normalized) continue;
+
+      if (!foundCursor) {
+        if (normalized.event_id === payload.cursor_event_id || parsed.event_id === payload.cursor_event_id) {
+          foundCursor = true;
+        }
+        continue;
+      }
+
+      state = applyEvent(state, normalized as Record<string, unknown>);
+    }
+
+    if (!foundCursor) {
+      await emitSnapshotCursorMissing(eventsPath, payload.cursor_event_id);
+      return replayEventLog(eventsPath, null, createEmptyResearchNamespace());
+    }
+
+    return state;
   } catch (error) {
     emitEvent({
       event: {
