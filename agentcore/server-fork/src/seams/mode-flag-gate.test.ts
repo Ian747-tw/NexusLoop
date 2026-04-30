@@ -1,12 +1,22 @@
-import { describe, it, expect, beforeEach, vi } from 'bun:test';
-import { applyModeFlagGate } from './mode-flag-gate';
+import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import { _resetForTesting as _resetFlagRegistry } from '../util/mode-flag-registry';
 
+const mockEmitEvent = vi.fn();
+const mockPolicyCheck = vi.fn();
+
 vi.mock('../../bridge/event-emitter', () => ({
-  emitEvent: vi.fn(),
+  emitEvent: mockEmitEvent,
 }));
 
-const { emitEvent } = await import('../../bridge/event-emitter');
+vi.mock('../../bridge/policy-client', () => ({
+  PolicyClient: class MockPolicyClient {
+    check(req: { id: string; name: string; args: Record<string, unknown> }) {
+      return mockPolicyCheck(req);
+    }
+  },
+}));
+
+const { applyModeFlagGate, checkFlagPolicy } = await import('./mode-flag-gate');
 
 describe('mode-flag-gate', () => {
   beforeEach(() => {
@@ -20,7 +30,7 @@ describe('mode-flag-gate', () => {
     const result = applyModeFlagGate(flags, 'cycle-1');
 
     expect(result['allow-edit-without-approval']).toBe(false);
-    expect(emitEvent).toHaveBeenCalledWith({
+    expect(mockEmitEvent).toHaveBeenCalledWith({
       event: expect.objectContaining({
         kind: 'mode_flag_denied',
         flag_name: 'allow-edit-without-approval',
@@ -33,7 +43,7 @@ describe('mode-flag-gate', () => {
     const result = applyModeFlagGate(flags, 'cycle-1');
 
     expect(result['allow-edit-without-approval']).toBe(false);
-    expect(emitEvent).not.toHaveBeenCalled();
+    expect(mockEmitEvent).not.toHaveBeenCalled();
   });
 
   it('Test 3: multiple gated flags set simultaneously → each evaluated independently', () => {
@@ -50,14 +60,14 @@ describe('mode-flag-gate', () => {
     expect(result['skip-policy-check']).toBe(false);
 
     // Three separate denial events
-    expect(emitEvent).toHaveBeenCalledTimes(3);
-    expect(emitEvent).toHaveBeenCalledWith({
+    expect(mockEmitEvent).toHaveBeenCalledTimes(3);
+    expect(mockEmitEvent).toHaveBeenCalledWith({
       event: expect.objectContaining({ kind: 'mode_flag_denied', flag_name: 'allow-edit-without-approval' }),
     });
-    expect(emitEvent).toHaveBeenCalledWith({
+    expect(mockEmitEvent).toHaveBeenCalledWith({
       event: expect.objectContaining({ kind: 'mode_flag_denied', flag_name: 'allow-shell-without-approval' }),
     });
-    expect(emitEvent).toHaveBeenCalledWith({
+    expect(mockEmitEvent).toHaveBeenCalledWith({
       event: expect.objectContaining({ kind: 'mode_flag_denied', flag_name: 'skip-policy-check' }),
     });
   });
@@ -67,7 +77,7 @@ describe('mode-flag-gate', () => {
     const result = applyModeFlagGate(flags, 'cycle-1');
 
     expect(result['some-other-flag']).toBe(true);
-    expect(emitEvent).not.toHaveBeenCalled();
+    expect(mockEmitEvent).not.toHaveBeenCalled();
   });
 
   it('Test 5: mix of registered denied and registered allowed flags → only denied overridden', () => {
@@ -81,6 +91,21 @@ describe('mode-flag-gate', () => {
 
     expect(result['allow-edit-without-approval']).toBe(false); // denied → overridden
     expect(result['unregistered-flag']).toBe(true); // passthrough
-    expect(emitEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('Test 6: mode-flag policy client error → flag denied (fail closed)', async () => {
+    mockPolicyCheck.mockRejectedValueOnce(new Error('policy service unreachable'));
+
+    const verdict = await checkFlagPolicy('allow-edit-without-approval', 'cycle-1');
+
+    expect(verdict).toBe('deny');
+    expect(mockEmitEvent).toHaveBeenCalledWith({
+      event: expect.objectContaining({
+        kind: 'mode_flag_check_error',
+        flag: '--allow-edit-without-approval',
+        verdict: 'deny',
+      }),
+    });
   });
 });
