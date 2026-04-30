@@ -386,6 +386,13 @@ class ModeFlagCheckError(_BaseEvent):
     )
 
 
+class SnapshotCorrupted(_BaseEvent):
+    """Emitted when a snapshot file is unreadable and replay falls back to the full log."""
+    kind: Literal["snapshot_corrupted"] = "snapshot_corrupted"
+    snapshot_path: str = Field(description="Snapshot file that could not be parsed")
+    error: str = Field(description="Parse or read error that triggered the fallback")
+
+
 # ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
@@ -426,6 +433,7 @@ Event = Annotated[
         ToolCallBlocked,
         ModeFlagDenied,
         ModeFlagCheckError,
+        SnapshotCorrupted,
     ],
     Field(discriminator="kind"),
 ]

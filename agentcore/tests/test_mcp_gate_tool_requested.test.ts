@@ -10,7 +10,7 @@
  * (This is the same pattern used in event-emitter.test.ts.)
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { unlinkSync, writeFileSync, readFileSync } from 'fs';
+import { unlinkSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs';
 import { resolve } from 'path';
 
 import {
@@ -21,10 +21,12 @@ import {
 
 // event-emitter resolves paths from this CWD at import time
 const ORIGINAL_CWD = process.cwd();
-const EVENTS_IN_CWD = resolve(ORIGINAL_CWD, 'events.jsonl');
-const LOCK_IN_CWD = resolve(ORIGINAL_CWD, 'events.jsonl.lock');
+const NXL_DIR_IN_CWD = resolve(ORIGINAL_CWD, '.nxl');
+const EVENTS_IN_CWD = resolve(NXL_DIR_IN_CWD, 'events.jsonl');
+const LOCK_IN_CWD = resolve(NXL_DIR_IN_CWD, 'events.jsonl.lock');
 
 function setup() {
+  mkdirSync(NXL_DIR_IN_CWD, { recursive: true });
   writeFileSync(EVENTS_IN_CWD, '');
   writeFileSync(LOCK_IN_CWD, '');
 }
@@ -38,6 +40,7 @@ function readLines(): string[] {
 function teardown() {
   try { unlinkSync(EVENTS_IN_CWD); } catch {}
   try { unlinkSync(LOCK_IN_CWD); } catch {}
+  try { rmSync(NXL_DIR_IN_CWD, { recursive: true, force: true }); } catch {}
 }
 
 describe('dispatchMCP emits tool_requested from fork side', () => {

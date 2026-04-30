@@ -4,9 +4,14 @@ import { spawn } from "child_process";
 import { registerShutdownHandlers } from "./seams/lifecycle-hooks";
 import { initSubagentIsolation } from "./seams/subagent-isolation";
 import { projectTripwiresFromEventLog } from "./seams/tripwire-gate";
-import { projectFromEventLog } from "./seams/research-state";
 import { startEventEmissionServer } from "./seams/event-emission-handler";
 import { acquire, release } from "./util/pidfile";
+import {
+  findLatestSnapshot,
+  materializeSnapshots,
+  replayEventLog,
+  replayFromSnapshot,
+} from "./util/snapshot";
 
 async function spawnStubMcpIfRequested(): Promise<void> {
   const envPath = process.env.NXL_TEST_STUB_MCP_ENV_PATH;
@@ -85,7 +90,15 @@ async function run(): Promise<void> {
     await initSubagentIsolation();
     registerShutdownHandlers();
     await projectTripwiresFromEventLog(null);
-    await projectFromEventLog(null);
+    const eventsPath = resolve(projectDir, ".nxl", "events.jsonl");
+    const snapshotsDir = resolve(projectDir, ".nxl", "snapshots");
+    await materializeSnapshots(eventsPath, snapshotsDir);
+    const latestSnapshot = findLatestSnapshot(snapshotsDir);
+    if (latestSnapshot) {
+      await replayFromSnapshot(latestSnapshot.path, eventsPath);
+    } else {
+      await replayEventLog(eventsPath);
+    }
     startEventEmissionServer();
     await spawnStubMcpIfRequested();
     writeMessage({ type: "ready", pid: process.pid });

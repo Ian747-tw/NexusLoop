@@ -7,9 +7,8 @@
  * - handleEventEmissionRequest returns error on invalid kind
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, unlinkSync, writeFileSync, readFileSync } from 'fs';
+import { unlinkSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs';
 import { resolve } from 'path';
-import { resolve as pathResolve } from 'path';
 
 // Import the module under test
 import {
@@ -19,12 +18,14 @@ import {
 import type { EventEmissionRequest } from '../server-fork/bridge/protocol';
 
 const ORIGINAL_CWD = process.cwd();
-const EVENTS_IN_CWD = resolve(ORIGINAL_CWD, 'events.jsonl');
-const LOCK_IN_CWD = resolve(ORIGINAL_CWD, 'events.jsonl.lock');
+const NXL_DIR_IN_CWD = resolve(ORIGINAL_CWD, '.nxl');
+const EVENTS_IN_CWD = resolve(NXL_DIR_IN_CWD, 'events.jsonl');
+const LOCK_IN_CWD = resolve(NXL_DIR_IN_CWD, 'events.jsonl.lock');
 
 function setup() {
   try { unlinkSync(EVENTS_IN_CWD); } catch {}
   try { unlinkSync(LOCK_IN_CWD); } catch {}
+  mkdirSync(NXL_DIR_IN_CWD, { recursive: true });
   writeFileSync(EVENTS_IN_CWD, '');
   writeFileSync(LOCK_IN_CWD, '');
 }
@@ -38,6 +39,7 @@ function readLines(): string[] {
 function teardown() {
   try { unlinkSync(EVENTS_IN_CWD); } catch {}
   try { unlinkSync(LOCK_IN_CWD); } catch {}
+  try { rmSync(NXL_DIR_IN_CWD, { recursive: true, force: true }); } catch {}
 }
 
 describe('validateEvent', () => {
