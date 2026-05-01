@@ -5,7 +5,7 @@ Audit date: 2026-05-01
 Classification key:
 - `GREEN` — passes in isolation and still represents a valid user-facing CLI scenario
 - `RED-fixable` — fails for a repairable reason such as stale assertions or stale fixture data
-- `RED-architectural` — fails because the underlying feature is not currently wired through the real user-facing path
+- `DEFERRED-TO-P7` — honest E2E coverage depends on upstream/session-path work already deferred to P7
 - `DEAD` — should not live in `tests/e2e_user/` because it imports internals or no longer tests an honest user-facing scenario
 
 | Scenario | Classification | Reason |
@@ -34,10 +34,10 @@ Classification key:
 | `test_resume_loads_handoff_and_continues.py` | `RED-fixable` | Uses the real CLI, but one handoff fixture encodes a stale spec-hash assumption that now trips the intended mismatch guard. |
 | `test_run_once.py` | `GREEN` | Passes and still validates `nxl run --once --dry-run`. |
 | `test_shell_denies_write_outside_scratch.py` | `DEAD` | Instantiates `ShellMCP` directly with mocks instead of simulating a user CLI flow. |
-| `test_skill_dispatch_slash_command.py` | `RED-architectural` | The claimed slash-command behavior is not exercised by the current dry-run path; real skill-dispatch E2E depends on the later P7 upstream/session integration work. |
+| `test_skill_dispatch_slash_command.py` | `DEFERRED-TO-P7` | The file claims to test slash-command flow but only runs `nxl run --once --dry-run`, which does not emit skill events; honest E2E coverage depends on the P7 upstream/session-path work. |
 | `test_soft_compact_emits_event_at_threshold.py` | `DEAD` | Exercises compaction internals directly and fails because it is not a real CLI scenario. |
 
-## Architectural
+## Deferred To P7
 
 ### `test_skill_dispatch_slash_command.py`
 
