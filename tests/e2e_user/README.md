@@ -18,8 +18,7 @@ These tests simulate a **real user** installing NexusLoop into a **fresh environ
 ## Running locally
 ```bash
 uv sync
-cd agentcore/server-fork && bun install
-cd ..
+(cd agentcore/server-fork && bun install)
 uv run pytest tests/e2e_user/ -v --tb=short
 ```
 

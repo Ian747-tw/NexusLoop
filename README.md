@@ -271,8 +271,7 @@ the release-gate workflow:
 
 ```bash
 uv sync
-cd agentcore/server-fork && bun install
-cd ..
+(cd agentcore/server-fork && bun install)
 uv run pytest tests/e2e_user/ -v --tb=short
 ```
 
