@@ -9,6 +9,9 @@ Tests:
 """
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 from pydantic import ValidationError
 
@@ -18,6 +21,7 @@ from nxl_core.spec.model import (
     OperationsSection,
     ProjectSection,
     ProjectSpec,
+    canonical_spec_hash,
 )
 
 
@@ -220,6 +224,18 @@ class TestSpecHashCustomFields:
             custom={"key": "value"},
         )
         assert spec1.spec_hash == spec2.spec_hash
+
+    def test_hash_is_stable_across_processes(self) -> None:
+        """Canonical spec hash must not depend on Python's per-process hash seed."""
+        payload = {"name": "test-project", "mode": "explore", "metric": "reward"}
+        code = (
+            "from nxl_core.spec.model import canonical_spec_hash; "
+            f"print(canonical_spec_hash({payload!r}))"
+        )
+        out1 = subprocess.check_output([sys.executable, "-c", code], text=True).strip()
+        out2 = subprocess.check_output([sys.executable, "-c", code], text=True).strip()
+        assert out1 == out2
+        assert int(out1) == canonical_spec_hash(payload)
 
 
 class TestYamlRoundtrip:
