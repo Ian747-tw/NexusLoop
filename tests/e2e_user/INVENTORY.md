@@ -13,7 +13,7 @@ Classification key:
 | `test_12h_overnight_smoke.py` | `GREEN` | Passes as a lightweight dry-run smoke check through the real CLI. |
 | `test_capability_postcondition_fail_rolls_back.py` | `DEAD` | Imports elasticity internals directly and fails on IPC test-harness assumptions instead of exercising the CLI. |
 | `test_capability_token_expires_after_ttl.py` | `DEAD` | Imports capability internals directly and is a unit test misfiled as E2E. |
-| `test_dashboard_launches.py` | `RED-fixable` | Real CLI scenario passes the server launch, but the HTML assertions are stale versus the current dashboard template. |
+| `test_dashboard_launches.py` | `GREEN` | Passes after updating the stale HTML assertions to match the current dashboard template. |
 | `test_first_install.py` | `GREEN` | Passes and still represents first-install CLI behavior. |
 | `test_fs_archive_and_restore.py` | `DEAD` | Instantiates `FsMCP` directly with mocks; this is integration/unit coverage, not user simulation. |
 | `test_hard_compact_produces_deterministic_capsule.py` | `DEAD` | Exercises compaction internals directly and fails because it is not using the runtime event-emission harness expected by current code. |
@@ -22,7 +22,7 @@ Classification key:
 | `test_irreplaceable_demos.py` | `GREEN` | Passes through real `status` and `plan` CLI commands. |
 | `test_mcp_code_read_edit_no_rm.py` | `DEAD` | The name claims code-MCP behavior, but the body only checks for `spec.*` events after a dry run, so it is not an honest E2E for the stated feature. |
 | `test_mcp_hypothesis_crud.py` | `DEAD` | The name claims hypothesis CRUD, but the body only checks for `spec.*` events after a dry run, so it does not test the advertised behavior. |
-| `test_mcp_policy_denies_on_rule_violation.py` | `RED-fixable` | Uses the real CLI but assumes the default project policy mode denies `shell.exec`; current default mode is open, so the scenario setup is stale. |
+| `test_mcp_policy_denies_on_rule_violation.py` | `DEAD` | Asserts CLI `nxl check` covers MCP-layer policy gates (`shell.exec` TTL/cwd). By design, `nxl check` only covers `PolicyEngine`; MCP-local gates are domain-specific and only fire on real dispatch. |
 | `test_mcp_spec_returns_pointer.py` | `GREEN` | Passes and honestly checks that a real dry-run cycle emits `spec.*` tool events. |
 | `test_package_install_via_pkg_mcp.py` | `GREEN` | Passes through the documented CLI surface. |
 | `test_pkg_install_with_capability_token.py` | `DEAD` | Instantiates `PkgMCP` directly with mocks, so it is not a user-simulation scenario. |
