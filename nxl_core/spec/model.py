@@ -13,6 +13,7 @@ Phase C.1: Extensibility additions:
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Literal
 
 import yaml
@@ -71,6 +72,13 @@ class Context(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def canonical_spec_hash(data: Any) -> int:
+    """Deterministic hash of canonical YAML content, stable across processes."""
+    canonical_yaml = yaml.safe_dump(data, sort_keys=True)
+    digest = hashlib.sha256(canonical_yaml.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=False)
+
+
 class ProjectSpec(BaseModel):
     """Research project specification — matches project.yaml schema."""
 
@@ -90,11 +98,10 @@ class ProjectSpec(BaseModel):
         Custom fields in any section affect the hash to detect configuration
         drift in handoff/resume scenarios.
 
-        Uses the same algorithm as HandoffRecord.verify_spec for consistency:
-        hash(yaml.dump(data, sort_keys=True))
+        Uses the same deterministic algorithm as HandoffRecord.verify_spec.
         """
         data = self.model_dump()
-        return hash(yaml.dump(data, sort_keys=True))
+        return canonical_spec_hash(data)
 
     @classmethod
     def from_yaml(cls, yaml_text: str) -> "ProjectSpec":

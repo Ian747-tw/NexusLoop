@@ -17,8 +17,16 @@ These tests simulate a **real user** installing NexusLoop into a **fresh environ
 
 ## Running locally
 ```bash
-pytest tests/e2e_user/ -v
+uv sync
+(cd agentcore/server-fork && bun install)
+uv run pytest tests/e2e_user/ -v --tb=short
 ```
+
+## CI policy
+
+These tests are not part of the default PR workflow. They run only through the
+release-gate workflow in `.github/workflows/e2e.yml`, triggered manually and on
+`v*` tags.
 
 ## If a test fails
 1. Do NOT "fix" the test — the test is the spec

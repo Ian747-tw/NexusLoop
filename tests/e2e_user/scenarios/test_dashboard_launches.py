@@ -17,6 +17,7 @@ def test_dashboard_serves_locally(sandbox) -> None:
         response = sandbox.http_get("http://127.0.0.1:18765/")
 
     assert response.status_code == 200
-    assert "Live" in response.text
-    assert "Leaderboard" in response.text
-    assert "Lineage" in response.text
+    assert "NexusLoop Dashboard" in response.text
+    assert "Live dashboard" in response.text
+    assert "Total Runs" in response.text
+    assert "Open Incidents" in response.text

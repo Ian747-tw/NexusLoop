@@ -2,7 +2,19 @@
 from __future__ import annotations
 
 import json
+import yaml
 import pytest
+from nxl_core.spec.model import canonical_spec_hash
+
+
+def _write_project_yaml(project) -> int:
+    project_yaml = project / "project.yaml"
+    project_yaml.write_text(
+        "name: test-project\n"
+        "mode: explore\n"
+        "metric: reward\n"
+    )
+    return canonical_spec_hash(yaml.safe_load(project_yaml.read_text()))
 
 
 @pytest.mark.phase_m2
@@ -14,6 +26,7 @@ def test_resume_loads_handoff_and_continues(sandbox) -> None:
 
     # Write a HandoffRecorded event to events.jsonl to simulate a handoff
     events_path = project / ".nxl" / "events.jsonl"
+    current_spec_hash = _write_project_yaml(project)
     handoff_event = {
         "event_id": "01HAABBCCDD011122334455",
         "timestamp": "2026-04-24T00:00:00Z",
@@ -23,7 +36,7 @@ def test_resume_loads_handoff_and_continues(sandbox) -> None:
             "from_agent": "agent-1",
             "to_agent": "agent-2",
         },
-        "spec_hash": 12345,
+        "spec_hash": current_spec_hash,
         "event_cursor": [
             {"kind": "MissionDeclared", "data": {"mission": "Test mission"}},
             {"kind": "ProgressNoted", "data": {"note": "Made progress"}},
@@ -46,6 +59,7 @@ def test_resume_rejects_spec_hash_mismatch(sandbox) -> None:
     install = sandbox.install_from_current_repo()
     assert install.exit_code == 0, install.stdout + install.stderr
     project = sandbox.init_project(mode="improve")
+    _write_project_yaml(project)
 
     # Write a HandoffRecorded event with spec_hash that won't match
     events_path = project / ".nxl" / "events.jsonl"
@@ -78,6 +92,7 @@ def test_resume_with_message_merges_guidance(sandbox) -> None:
     install = sandbox.install_from_current_repo()
     assert install.exit_code == 0, install.stdout + install.stderr
     project = sandbox.init_project(mode="improve")
+    current_spec_hash = _write_project_yaml(project)
 
     # Write a HandoffRecorded event with some event_cursor
     events_path = project / ".nxl" / "events.jsonl"
@@ -90,7 +105,7 @@ def test_resume_with_message_merges_guidance(sandbox) -> None:
             "from_agent": "agent-1",
             "to_agent": "agent-2",
         },
-        "spec_hash": 0,
+        "spec_hash": current_spec_hash,
         "event_cursor": [
             {"kind": "MissionDeclared", "data": {"mission": "Test mission"}},
         ],

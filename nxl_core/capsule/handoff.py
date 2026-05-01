@@ -13,6 +13,7 @@ import yaml
 from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
+from nxl_core.spec.model import canonical_spec_hash
 
 
 class HandoffRecord(BaseModel):
@@ -71,5 +72,5 @@ class HandoffRecord(BaseModel):
                 return True  # spec_hash=0 means no project.yaml was used at handoff time
             return False  # spec_hash != 0 but project.yaml gone → treat as mismatch
         data = yaml.safe_load(project_yaml.read_text())
-        spec_hash = hash(yaml.dump(data, sort_keys=True))
+        spec_hash = canonical_spec_hash(data)
         return spec_hash == self.spec_hash

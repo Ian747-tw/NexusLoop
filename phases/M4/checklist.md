@@ -48,3 +48,23 @@ bench_snapshot_replay.py at 10K events shows full≈snapshot≈12ms;
 the snapshot strategy's value is unproven at this scale. P9 overnight
 run will produce realistic event volumes (100K+); re-run the bench
 against that output to validate the architecture pays off in practice.
+
+### Deferred to P7 — slash-command flow E2E
+
+P6 found tests/e2e_user/scenarios/test_skill_dispatch_slash_command.py
+was a stale scenario: it ran nxl run --once --dry-run looking for
+skill events that the dry-run path does not emit. Deleted in P6.X
+(sha) as architecturally not-yet-coverable.
+
+P7 must add a real E2E covering:
+  - User invokes a registered skill via slash command
+  - skill-dispatcher.ts routes the invocation
+  - Skill emits SkillRegistered/SkillInvoked/SkillCompleted events
+  - Events land in events.jsonl in the expected order
+
+Required infrastructure: server.ts session spawn (also deferred from
+P5.0), real upstream session creation, mock or real provider on
+the skill execution path.
+
+Owner: P7 lead
+Required by: any user-facing slash-command behavior claim

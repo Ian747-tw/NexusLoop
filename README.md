@@ -259,6 +259,26 @@ Runtime notes:
 
 ### Step 4: Monitor and intervene when needed
 
+## E2E Release Gate
+
+User-simulation end-to-end tests live under `tests/e2e_user/`. These are
+local/release-gate scenarios that install NexusLoop into a fresh sandbox and
+exercise the real `nxl` CLI. They are intentionally not part of the default
+pull-request CI workflow in `.github/workflows/ci.yml`.
+
+Run them locally from a clean checkout with the same dependency order used by
+the release-gate workflow:
+
+```bash
+uv sync
+(cd agentcore/server-fork && bun install)
+uv run pytest tests/e2e_user/ -v --tb=short
+```
+
+GitHub runs the same suite only in `.github/workflows/e2e.yml`, which is
+triggered manually via `workflow_dispatch` and automatically on version tags
+matching `v*`.
+
 ```bash
 nxl status
 nxl plan --refresh
