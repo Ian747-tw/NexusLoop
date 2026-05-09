@@ -48,7 +48,7 @@ export function reduceRuntimeEvent(state: UiState, event: RuntimeEvent): UiState
           budget: event.budget,
         },
         systemActions: append(state.systemActions, {
-          title: "Mission claim",
+          title: "Mission started",
           detail: `${event.missionId}: ${event.workIntent}`,
         }),
       }

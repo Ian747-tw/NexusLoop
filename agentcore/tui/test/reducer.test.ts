@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { reduceRuntimeEvent } from "../src/reducer"
+import { layoutSnapshot } from "../src/snapshot"
 import { initialState } from "../src/state"
 
 describe("TUI runtime event reducer", () => {
@@ -31,6 +32,11 @@ describe("TUI runtime event reducer", () => {
     expect(state.commander.programState).toBe("running")
     expect(state.commander.workIntent).toBe("investigate")
     expect(state.commander.budget).toBe("2h")
+    expect(state.systemActions.at(-1)?.title).toBe("Mission started")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Mission started")
+    expect(snapshot).not.toContain("Mission claim")
   })
 
   test("ExecutorToolStarted and ExecutorToolCompleted update executor block", () => {

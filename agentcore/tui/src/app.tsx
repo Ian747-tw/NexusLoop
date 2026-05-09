@@ -2,7 +2,7 @@ import { createCliRenderer, type CliRendererConfig, type TextareaRenderable } fr
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, For, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
-import { applyKeyCommand, type KeyCommand } from "./keyboard"
+import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
 import type { RuntimeClient } from "./runtime"
@@ -282,15 +282,11 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
   const [state, setState] = createStore<UiState>(props.initial)
 
   function apply(command: KeyCommand) {
-    const beforeDraft = state.messageDraft
-    const beforeScreen = state.screen
-    const next = applyKeyCommand(state, command)
-    setState(next)
-    if (command.type === "submit" && beforeScreen === "main" && beforeDraft.trim()) {
-      void props.runtime.sendUserMessage(beforeDraft)
-    }
-    if (command.type === "submit" && next.lastCommand && beforeScreen !== "main") {
-      void props.runtime.sendCommand(next.lastCommand)
+    const result = applyKeyCommandWithEffects(state, command)
+    setState(result.state)
+    for (const effect of result.effects) {
+      if (effect.type === "send-user-message") void props.runtime.sendUserMessage(effect.message)
+      if (effect.type === "send-command") void props.runtime.sendCommand(effect.command)
     }
     renderer.requestRender()
   }

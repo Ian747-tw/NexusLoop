@@ -1,5 +1,5 @@
 import { basename, resolve } from "path"
-import { applyKeyCommand, type KeyCommand } from "./keyboard"
+import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { initialState } from "./state"
 import { FakeRuntimeClient } from "./runtime"
@@ -16,12 +16,11 @@ async function buildHeadlessSnapshot() {
 
   const commands = process.env.NXL_TUI_KEYS ? (JSON.parse(process.env.NXL_TUI_KEYS) as KeyCommand[]) : []
   for (const command of commands) {
-    state = applyKeyCommand(state, command)
-    if (command.type === "submit" && state.submittedMessages.length > 0) {
-      await runtime.sendUserMessage(state.submittedMessages.at(-1)!)
-    }
-    if (command.type === "submit" && state.lastCommand) {
-      await runtime.sendCommand(state.lastCommand)
+    const result = applyKeyCommandWithEffects(state, command)
+    state = result.state
+    for (const effect of result.effects) {
+      if (effect.type === "send-user-message") await runtime.sendUserMessage(effect.message)
+      if (effect.type === "send-command") await runtime.sendCommand(effect.command)
     }
   }
 
