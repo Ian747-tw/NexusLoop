@@ -93,6 +93,10 @@ def _dashboard_mod():
     from nxl import dashboard as _dash
     return _dash
 
+def _tui_launcher():
+    from agentcore.tui import launcher as _launcher
+    return _launcher
+
 
 # ---------------------------------------------------------------------------
 # Subcommand handlers
@@ -136,6 +140,10 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def _cmd_dashboard(args: argparse.Namespace) -> int:
+    console(
+        "`nxl dashboard` is deprecated as the primary UX; run `nxl` to open the OpenTUI shell.",
+        "warning",
+    )
     project_dir = Path(args.project_dir).resolve()
     mod = _dashboard_mod()
     return mod.run(
@@ -212,6 +220,12 @@ def _cmd_stop(args: argparse.Namespace) -> int:
     return mod.run(project_dir=project_dir, brief=getattr(args, "brief", "") or "")
 
 
+def _cmd_tui(args: argparse.Namespace) -> int:
+    project_dir = Path(getattr(args, "project_dir", ".")).resolve()
+    mod = _tui_launcher()
+    return mod.run(project_dir=project_dir)
+
+
 # ---------------------------------------------------------------------------
 # Parser construction
 # ---------------------------------------------------------------------------
@@ -226,10 +240,11 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
+            "  nxl\n"
             "  nxl init --project-dir ~/my-drl-project\n"
             "  nxl doctor\n"
             "  nxl run --parallel 4\n"
-            "  nxl dashboard --port 8765\n"
+            "  nxl dashboard --port 8765  # deprecated\n"
         ),
     )
     parser.add_argument(
@@ -239,7 +254,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(
         dest="command", metavar="COMMAND", title="Available commands"
     )
-    sub.required = True
+    sub.required = False
 
     # -- install -------------------------------------------------------------
     p_install = sub.add_parser(
@@ -354,10 +369,11 @@ def _build_parser() -> argparse.ArgumentParser:
     # -- dashboard -----------------------------------------------------------
     p_dashboard = sub.add_parser(
         "dashboard",
-        help="Start the local web dashboard.",
+        help="Deprecated: start the legacy local web dashboard.",
         description=(
-            "Launch the NexusLoop web dashboard which streams live "
-            "experiment metrics, logs, and plan status."
+            "Deprecated compatibility command. Launch the legacy NexusLoop "
+            "web dashboard for historical workflows; run `nxl` for the "
+            "OpenTUI product shell."
         ),
     )
     p_dashboard.add_argument(
@@ -618,6 +634,9 @@ def main(argv: list[str] | None = None) -> None:
 
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.command is None:
+        args.func = _cmd_tui
+        args.project_dir = "."
 
     try:
         exit_code: int = args.func(args)

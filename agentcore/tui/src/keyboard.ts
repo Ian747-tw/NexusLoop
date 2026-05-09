@@ -1,0 +1,130 @@
+import type { FocusTarget, UiState } from "./state"
+
+export type KeyCommand =
+  | { type: "focus-next" }
+  | { type: "focus-prev" }
+  | { type: "select-next" }
+  | { type: "select-prev" }
+  | { type: "submit" }
+  | { type: "cancel" }
+  | { type: "insert"; text: string }
+  | { type: "backspace" }
+
+export type KeySideEffect =
+  | { type: "send-command"; command: string }
+  | { type: "send-user-message"; message: string }
+
+export type KeyCommandResult = {
+  state: UiState
+  effects: KeySideEffect[]
+}
+
+const mainFocusOrder: FocusTarget[] = [
+  "executor",
+  "commander",
+  "system-actions",
+  "search-records",
+  "approval",
+  "message-box",
+]
+
+function moveFocus(current: FocusTarget, direction: 1 | -1): FocusTarget {
+  const index = mainFocusOrder.indexOf(current)
+  if (index === -1) return "message-box"
+  return mainFocusOrder[(index + direction + mainFocusOrder.length) % mainFocusOrder.length]
+}
+
+export function applyKeyCommand(state: UiState, command: KeyCommand): UiState {
+  return applyKeyCommandWithEffects(state, command).state
+}
+
+export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand): KeyCommandResult {
+  switch (command.type) {
+    case "focus-next":
+      return { state: state.screen === "main" ? { ...state, focus: moveFocus(state.focus, 1) } : state, effects: [] }
+    case "focus-prev":
+      return { state: state.screen === "main" ? { ...state, focus: moveFocus(state.focus, -1) } : state, effects: [] }
+    case "select-next":
+      if (state.screen === "init") {
+        return { state: { ...state, initSelection: (state.initSelection + 1) % state.initChoices.length }, effects: [] }
+      }
+      if (state.screen === "resume") {
+        return { state: { ...state, resumeSelection: (state.resumeSelection + 1) % state.resumeChoices.length }, effects: [] }
+      }
+      return { state, effects: [] }
+    case "select-prev":
+      if (state.screen === "init") {
+        return {
+          state: { ...state, initSelection: (state.initSelection - 1 + state.initChoices.length) % state.initChoices.length },
+          effects: [],
+        }
+      }
+      if (state.screen === "resume") {
+        return {
+          state: {
+            ...state,
+            resumeSelection: (state.resumeSelection - 1 + state.resumeChoices.length) % state.resumeChoices.length,
+          },
+          effects: [],
+        }
+      }
+      return { state, effects: [] }
+    case "submit":
+      if (state.screen === "init") {
+        const choice = state.initChoices[state.initSelection]
+        if (choice?.id === "initialize") {
+          return {
+            state: {
+              ...state,
+              screen: "main",
+              focus: "message-box",
+              lastCommand: "initialize",
+              commander: { ...state.commander, workIntent: "TUI onboarding shell" },
+              systemActions: [...state.systemActions, { title: "Initialize selected", detail: "Entered onboarding shell" }],
+            },
+            effects: [{ type: "send-command", command: "initialize" }],
+          }
+        }
+        return { state: { ...state, lastCommand: "cancel" }, effects: [{ type: "send-command", command: "cancel" }] }
+      }
+      if (state.screen === "resume") {
+        const choice = state.resumeChoices[state.resumeSelection]
+        const selected = choice?.id ?? "resume"
+        return {
+          state: {
+            ...state,
+            screen: "main",
+            focus: "message-box",
+            lastCommand: selected,
+            systemActions: [...state.systemActions, { title: choice?.label ?? "Resume choice", detail: "Selection routed to runtime" }],
+          },
+          effects: [{ type: "send-command", command: selected }],
+        }
+      }
+      if (state.messageDraft.trim() === "") return { state, effects: [] }
+      return {
+        state: {
+          ...state,
+          submittedMessages: [...state.submittedMessages, state.messageDraft],
+          systemActions: [...state.systemActions, { title: "user -> runtime", detail: state.messageDraft }],
+          messageDraft: "",
+        },
+        effects: [{ type: "send-user-message", message: state.messageDraft }],
+      }
+    case "cancel":
+      return {
+        state: state.screen === "init" || state.screen === "resume" ? { ...state, lastCommand: "cancel" } : { ...state, messageDraft: "" },
+        effects: [],
+      }
+    case "insert":
+      return {
+        state: state.focus === "message-box" ? { ...state, messageDraft: state.messageDraft + command.text } : state,
+        effects: [],
+      }
+    case "backspace":
+      return {
+        state: state.focus === "message-box" ? { ...state, messageDraft: state.messageDraft.slice(0, -1) } : state,
+        effects: [],
+      }
+  }
+}
