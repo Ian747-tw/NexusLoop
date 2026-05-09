@@ -51,4 +51,20 @@ describe("TUI keyboard command model", () => {
     expect(effects).toEqual(["send-command:initialize", "send-user-message:hello runtime"])
     expect(state.submittedMessages).toEqual(["hello runtime"])
   })
+
+  test("message box keeps API keys out of TUI state while sending original message", () => {
+    let state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "provider key sk-test-SECRET123",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+    state = result.state
+
+    expect(result.effects).toEqual([{ type: "send-user-message", message: "provider key sk-test-SECRET123" }])
+    expect(JSON.stringify(state)).not.toContain("sk-test-SECRET123")
+    expect(state.submittedMessages).toEqual(["provider key [REDACTED]"])
+  })
 })

@@ -1,4 +1,5 @@
 import type { FocusTarget, UiState } from "./state"
+import { redactText } from "./redaction"
 
 export type KeyCommand =
   | { type: "focus-next" }
@@ -102,11 +103,12 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
         }
       }
       if (state.messageDraft.trim() === "") return { state, effects: [] }
+      const redactedMessage = redactText(state.messageDraft)
       return {
         state: {
           ...state,
-          submittedMessages: [...state.submittedMessages, state.messageDraft],
-          systemActions: [...state.systemActions, { title: "user -> runtime", detail: state.messageDraft }],
+          submittedMessages: [...state.submittedMessages, redactedMessage],
+          systemActions: [...state.systemActions, { title: "user -> runtime", detail: redactedMessage }],
           messageDraft: "",
         },
         effects: [{ type: "send-user-message", message: state.messageDraft }],

@@ -67,6 +67,7 @@ class EventLog:
                 "Direct EventLog.append() is only allowed from the fork, CLI, or tests."
             )
         line = event.model_dump_json() + "\n"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with portalocker.Lock(self._lock_path, timeout=10, mode="w") as _lock:
             with self.path.open("a") as f:
                 f.write(line)

@@ -15,6 +15,7 @@ from nxl.core.state import ProjectState
 from nxl_core.runtime.pidfile import acquire as acquire_pidfile
 from nxl_core.runtime.pidfile import read_owner_pid
 from nxl_core.runtime.pidfile import release as release_pidfile
+from nxl_core.spec.backend import SpecStore
 
 
 def main(provider: str | None = None) -> int:
@@ -31,6 +32,13 @@ def main(provider: str | None = None) -> int:
     config_dir = project_dir / ".nxl"
     if not config_dir.is_dir():
         console("Project not initialised. Run `nxl init` first.", "error")
+        return 1
+    if not SpecStore(project_dir).runtimeReady():
+        console(
+            "Approved project spec is required before starting commander/executor mode. "
+            "Complete project spec onboarding and approve the structured draft first.",
+            "error",
+        )
         return 1
 
     # Resolve provider using the full precedence chain
@@ -127,6 +135,13 @@ def run(
     config_dir = project_dir / ".nxl"
     if not config_dir.is_dir():
         console("Project not initialised. Run `nxl init` first.", "error")
+        return 1
+    if not dry_run and not SpecStore(project_dir).runtimeReady():
+        console(
+            "Approved project spec is required before starting commander/executor mode. "
+            "Complete project spec onboarding and approve the structured draft first.",
+            "error",
+        )
         return 1
 
     pidfile_path = config_dir / "run.lock"

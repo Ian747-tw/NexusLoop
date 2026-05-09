@@ -162,6 +162,99 @@ class PolicyDecision(_BaseEvent):
 
 
 # ---------------------------------------------------------------------------
+# Spec / provider / custom policy events (R2)
+# ---------------------------------------------------------------------------
+
+
+class GlobalProviderConfigured(_BaseEvent):
+    kind: Literal["global_provider_configured"] = "global_provider_configured"
+    provider: str
+    model: str
+    credential_source: Literal["secure_store", "env", "local_endpoint", "none"]
+    has_secret: bool = False
+
+
+class UserPlainSpecReceived(_BaseEvent):
+    kind: Literal["user_plain_spec_received"] = "user_plain_spec_received"
+    source: Literal["message_box", "file", "cli"] = "message_box"
+    text_hash: str
+
+
+class SpecDraftCreated(_BaseEvent):
+    kind: Literal["spec_draft_created"] = "spec_draft_created"
+    spec_id: str
+    version: int
+    requires_clarification: bool = False
+
+
+class SpecClarificationRequested(_BaseEvent):
+    kind: Literal["spec_clarification_requested"] = "spec_clarification_requested"
+    spec_id: str
+    question_id: str
+    field: str
+    question: str
+
+
+class SpecClarificationAnswered(_BaseEvent):
+    kind: Literal["spec_clarification_answered"] = "spec_clarification_answered"
+    spec_id: str
+    question_id: str
+    field: str
+
+
+class SpecDraftUpdated(_BaseEvent):
+    kind: Literal["spec_draft_updated"] = "spec_draft_updated"
+    spec_id: str
+    version: int
+    reason: str
+
+
+class SpecApprovalRequested(_BaseEvent):
+    kind: Literal["spec_approval_requested"] = "spec_approval_requested"
+    spec_id: str
+    version: int
+
+
+class SpecApproved(_BaseEvent):
+    kind: Literal["spec_approved"] = "spec_approved"
+    spec_id: str
+    version: int
+    approved_by: str
+
+
+class SpecSuperseded(_BaseEvent):
+    kind: Literal["spec_superseded"] = "spec_superseded"
+    spec_id: str
+    superseded_by: str
+    version: int
+
+
+class SpecChangeIntentDetected(_BaseEvent):
+    kind: Literal["spec_change_intent_detected"] = "spec_change_intent_detected"
+    message_hash: str
+
+
+class CustomPolicyRuleCreated(_BaseEvent):
+    kind: Literal["custom_policy_rule_created"] = "custom_policy_rule_created"
+    rule_id: str
+    source: Literal["user", "system", "spec"]
+    scope: str
+    effect: Literal["deny", "allow", "requires_approval", "warn"]
+
+
+class CustomPolicyRuleUpdated(_BaseEvent):
+    kind: Literal["custom_policy_rule_updated"] = "custom_policy_rule_updated"
+    rule_id: str
+    enabled: bool
+
+
+class CustomPolicyRuleDisabled(_BaseEvent):
+    kind: Literal["custom_policy_rule_disabled"] = "custom_policy_rule_disabled"
+    rule_id: str
+    reason: str
+
+
+# ---------------------------------------------------------------------------
 # Zone events
 # ---------------------------------------------------------------------------
 
@@ -418,6 +511,19 @@ Event = Annotated[
         TrialFailed,
         EvidenceCollected,
         PolicyDecision,
+        GlobalProviderConfigured,
+        UserPlainSpecReceived,
+        SpecDraftCreated,
+        SpecClarificationRequested,
+        SpecClarificationAnswered,
+        SpecDraftUpdated,
+        SpecApprovalRequested,
+        SpecApproved,
+        SpecSuperseded,
+        SpecChangeIntentDetected,
+        CustomPolicyRuleCreated,
+        CustomPolicyRuleUpdated,
+        CustomPolicyRuleDisabled,
         ZoneEntered,
         ZoneExited,
         CapsuleBuilt,
