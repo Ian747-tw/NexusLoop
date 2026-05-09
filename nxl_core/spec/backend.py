@@ -5,9 +5,9 @@ and emits events for structured spec state; it does not call an LLM.
 """
 from __future__ import annotations
 
-import os
 import tempfile
 import hashlib
+import os
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,6 +121,16 @@ class ClarificationRecord(BaseModel):
     asked_at: datetime = Field(default_factory=_now)
     answered_at: datetime | None = None
 
+    @field_validator("question", "field")
+    @classmethod
+    def redact_record_text(cls, value: str) -> str:
+        return redact_text(value.strip())
+
+    @field_validator("answer")
+    @classmethod
+    def redact_optional_answer(cls, value: str | None) -> str | None:
+        return None if value is None else redact_text(value.strip())
+
 
 class ProjectSpecV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -149,15 +159,25 @@ class ProjectSpecV1(BaseModel):
     def required_text(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("required text field cannot be blank")
-        return value.strip()
+        return redact_text(value.strip())
+
+    @field_validator("domain", "environment")
+    @classmethod
+    def redact_short_text(cls, value: str) -> str:
+        return redact_text(value.strip())
 
     @field_validator("success_metrics")
     @classmethod
     def success_metrics_required(cls, value: list[str]) -> list[str]:
-        cleaned = [item.strip() for item in value if item.strip()]
+        cleaned = [redact_text(item.strip()) for item in value if item.strip()]
         if not cleaned:
             raise ValueError("at least one success metric is required")
         return cleaned
+
+    @field_validator("user_rules", "forbidden_actions")
+    @classmethod
+    def redact_text_list(cls, value: list[str]) -> list[str]:
+        return [redact_text(item.strip()) for item in value if item.strip()]
 
 
 class SpecDraftResult(BaseModel):
@@ -211,7 +231,7 @@ class SpecStore:
         if not text:
             raise ValueError("plain text spec cannot be empty")
         self.event_log.append(UserPlainSpecReceived(source="message_box", text_hash=_stable_hash(text)))
-        data = self.extractor(text)
+        data = _redact_extracted_data(self.extractor(text))
         result = self._build_draft(data)
         self._write_version(result.spec)
         self.event_log.append(
@@ -239,18 +259,25 @@ class SpecStore:
             raise ValueError("clarification answer cannot be empty")
         records = []
         found = False
+        matched_field: str | None = None
+        patch: dict[str, Any] = {}
         for item in spec.clarification_history:
             if item.question_id == question_id:
                 records.append(item.model_copy(update={"answer": answer, "answered_at": _now()}))
                 found = True
+                matched_field = item.field
+                patch = _clarification_patch(item.field, answer)
             else:
                 records.append(item)
         if not found:
             raise KeyError(f"unknown clarification question: {question_id}")
-        spec = spec.model_copy(update={"clarification_history": records})
+        spec_data = spec.model_dump(mode="json")
+        spec_data.update(patch)
+        spec_data["clarification_history"] = [record.model_dump() for record in records]
+        spec = ProjectSpecV1.model_validate(spec_data)
         self._write_version(spec)
         self.event_log.append(
-            SpecClarificationAnswered(spec_id=spec_id, question_id=question_id, field=records[-1].field)
+            SpecClarificationAnswered(spec_id=spec_id, question_id=question_id, field=matched_field or "")
         )
         self.event_log.append(SpecDraftUpdated(spec_id=spec_id, version=spec.version, reason="clarification_answered"))
         return spec
@@ -298,7 +325,7 @@ class SpecStore:
         if current is None:
             raise ValueError("cannot propose a spec change without an approved current spec")
         self.event_log.append(SpecChangeIntentDetected(message_hash=_stable_hash(plain_text.strip())))
-        patch = self.extractor(plain_text)
+        patch = _redact_extracted_data(self.extractor(plain_text))
         base = current.model_dump(mode="json")
         base.update(
             {
@@ -392,3 +419,24 @@ class SpecStore:
 
 def _stable_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _redact_extracted_data(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, list):
+        return [_redact_extracted_data(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_extracted_data(item) for key, item in value.items()}
+    return value
+
+
+def _clarification_patch(field: str, answer: str) -> dict[str, Any]:
+    if field == "objective":
+        return {"objective": answer}
+    if field == "success_metrics":
+        metrics = [part.strip() for part in answer.replace("\n", ",").split(",") if part.strip()]
+        return {"success_metrics": metrics or [answer]}
+    if field == "evaluation_protocol":
+        return {"evaluation_protocol": answer}
+    return {}

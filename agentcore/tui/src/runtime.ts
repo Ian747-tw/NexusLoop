@@ -53,6 +53,25 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   async sendUserMessage(message: string): Promise<void> {
     this.sentMessages.push(message)
+    const python = process.env.NXL_PYTHON_EXECUTABLE ?? "python"
+    const result = Bun.spawnSync({
+      cmd: [
+        python,
+        "-m",
+        "nxl_core.spec.tui_onboarding",
+        "--project-dir",
+        this.projectDir,
+        "--message",
+        message,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: process.env,
+    })
+    if (result.exitCode !== 0) {
+      const stderr = new TextDecoder().decode(result.stderr).trim()
+      throw new Error(`spec onboarding failed: ${stderr}`)
+    }
   }
 
   async sendCommand(command: string): Promise<void> {

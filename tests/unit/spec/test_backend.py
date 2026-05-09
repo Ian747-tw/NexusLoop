@@ -100,10 +100,45 @@ def test_ambiguous_text_requests_clarification_and_answer_updates_draft(tmp_path
         if item.question_id == result.clarifications[0].question_id
     )
     assert answered.answer == "Optimize CartPole for reward >= 475"
+    assert updated.objective == "Optimize CartPole for reward >= 475"
     kinds = [json.loads(line)["kind"] for line in (tmp_path / ".nxl" / "events.jsonl").read_text().splitlines()]
     assert "spec_clarification_requested" in kinds
     assert "spec_clarification_answered" in kinds
     assert "spec_draft_updated" in kinds
+
+
+def test_multiple_clarifications_emit_answered_field_for_matched_question(tmp_path: Path) -> None:
+    store = SpecStore(tmp_path, event_log=EventLog(tmp_path / ".nxl" / "events.jsonl"), extractor=_extractor)
+
+    result = store.createDraftFromPlainText("ambiguous project")
+    objective_question = next(item for item in result.clarifications if item.field == "objective")
+    updated = store.requestClarification(
+        result.spec.spec_id,
+        question_id=objective_question.question_id,
+        answer="Build a robust CartPole policy",
+    )
+
+    assert updated.objective == "Build a robust CartPole policy"
+    answered_events = [
+        json.loads(line)
+        for line in (tmp_path / ".nxl" / "events.jsonl").read_text().splitlines()
+        if json.loads(line)["kind"] == "spec_clarification_answered"
+    ]
+    assert answered_events[-1]["field"] == "objective"
+
+
+def test_success_metrics_clarification_updates_target_field(tmp_path: Path) -> None:
+    store = SpecStore(tmp_path, event_log=EventLog(tmp_path / ".nxl" / "events.jsonl"), extractor=_extractor)
+    result = store.createDraftFromPlainText("ambiguous project")
+    metrics_question = next(item for item in result.clarifications if item.field == "success_metrics")
+
+    updated = store.requestClarification(
+        result.spec.spec_id,
+        question_id=metrics_question.question_id,
+        answer="reward >= 475, no secret sk-test-SECRET123",
+    )
+
+    assert updated.success_metrics == ["reward >= 475", "no secret [REDACTED]"]
 
 
 def test_runtime_requires_approved_spec(tmp_path: Path) -> None:
@@ -162,3 +197,32 @@ def test_reopen_project_loads_current_approved_spec(tmp_path: Path) -> None:
 
     reopened = SpecStore(tmp_path, event_log=EventLog(tmp_path / ".nxl" / "events.jsonl"), extractor=_extractor)
     assert reopened.getCurrentSpec() == approved
+
+
+def test_extractor_free_text_is_redacted_before_spec_files_or_events(tmp_path: Path) -> None:
+    def secret_extractor(_: str) -> dict:
+        data = _extractor("")
+        data["objective"] = "Use sk-test-SECRET123"
+        data["domain"] = "secret domain sk-test-SECRET123"
+        data["environment"] = "env sk-test-SECRET123"
+        data["success_metrics"] = ["metric sk-test-SECRET123"]
+        data["evaluation_protocol"] = "eval sk-test-SECRET123"
+        data["user_rules"] = ["rule sk-test-SECRET123"]
+        data["forbidden_actions"] = ["forbidden sk-test-SECRET123"]
+        return data
+
+    store = SpecStore(tmp_path, event_log=EventLog(tmp_path / ".nxl" / "events.jsonl"), extractor=secret_extractor)
+    draft = store.createDraftFromPlainText("plain text").spec
+    store.approveDraft(draft.spec_id, approved_by="tester")
+
+    all_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [
+            tmp_path / ".nxl" / "events.jsonl",
+            tmp_path / ".nxl" / "spec" / "current.json",
+            tmp_path / ".nxl" / "spec" / "current.md",
+            tmp_path / ".nxl" / "spec" / "versions" / f"{draft.spec_id}.json",
+        ]
+    )
+    assert "sk-test-SECRET123" not in all_text
+    assert "[REDACTED]" in all_text

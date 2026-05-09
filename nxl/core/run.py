@@ -18,7 +18,7 @@ from nxl_core.runtime.pidfile import release as release_pidfile
 from nxl_core.spec.backend import SpecStore
 
 
-def main(provider: str | None = None) -> int:
+def main(provider: str | None = None, project_dir: Path | None = None) -> int:
     """Run one autonomous cycle.
 
     Parameters
@@ -27,7 +27,7 @@ def main(provider: str | None = None) -> int:
         AI provider: "anthropic", "openai", or "ollama".
         Resolved from CLI flag → NXL_PROVIDER env → project.yaml → error.
     """
-    project_dir = Path.cwd()
+    project_dir = Path(project_dir or Path.cwd()).resolve()
 
     config_dir = project_dir / ".nxl"
     if not config_dir.is_dir():
@@ -130,7 +130,7 @@ def run(
     provider: str | None = None,
 ) -> int:
     """CLI entry point for `nxl run` subcommand."""
-    project_dir = Path.cwd()
+    project_dir = Path(project_dir).resolve()
 
     config_dir = project_dir / ".nxl"
     if not config_dir.is_dir():
@@ -192,7 +192,7 @@ def run(
             return 0
 
         provider = _resolve_provider(provider, config_dir)
-        return main(provider=provider)
+        return main(provider=provider, project_dir=project_dir)
     finally:
         release_pidfile(pidfile_handle)
 

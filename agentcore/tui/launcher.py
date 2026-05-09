@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -43,5 +44,6 @@ def run(project_dir: Path) -> int:
 
     entry = tui_dir / "src" / "index.tsx"
     env["NXL_PROJECT_DIR"] = str(project_dir)
+    env["NXL_PYTHON_EXECUTABLE"] = sys.executable
 
     return subprocess.call(["bun", "run", str(entry)], cwd=str(tui_dir), env=env)

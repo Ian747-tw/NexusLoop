@@ -97,7 +97,7 @@ class ProviderConfigStore:
     ) -> None:
         self.config_path = config_path or _global_config_path()
         self.event_log = event_log
-        self.secret_backend = secret_backend or self._best_secret_backend()
+        self.secret_backend = secret_backend if secret_backend is not None else self._best_secret_backend()
 
     def loadGlobalConfig(self) -> ProviderConfig:
         if not self.config_path.exists():
@@ -116,6 +116,11 @@ class ProviderConfigStore:
         env_var: str | None = None,
         local_endpoint: str | None = None,
     ) -> ProviderConfig:
+        if credential_source == "secure_store" and self.secret_backend is None:
+            raise RuntimeError(
+                "secure provider storage is unavailable because OS keyring is not available; "
+                "choose credential_source='env' or credential_source='local_endpoint'."
+            )
         api_key_ref = f"nexusloop:provider:{provider}" if credential_source == "secure_store" else None
         config = ProviderConfig(
             provider=provider,
@@ -140,6 +145,11 @@ class ProviderConfigStore:
     def storeSecret(self, provider: str, secret: str) -> str:
         if not secret.strip():
             raise ValueError("secret cannot be empty")
+        if self.secret_backend is None:
+            raise RuntimeError(
+                "secure provider storage is unavailable because OS keyring is not available; "
+                "choose env-var or local endpoint credentials."
+            )
         ref = f"nexusloop:provider:{provider}"
         self.secret_backend.store(ref, secret)
         config = self.loadGlobalConfig()
@@ -154,6 +164,8 @@ class ProviderConfigStore:
         if config.credential_source == "env":
             return os.environ.get(config.env_var or "")
         if config.credential_source == "secure_store" and config.api_key_ref:
+            if self.secret_backend is None:
+                raise RuntimeError("secure provider storage is unavailable")
             return self.secret_backend.resolve(config.api_key_ref)
         return None
 
@@ -165,8 +177,8 @@ class ProviderConfigStore:
             lines.append(f"{key} = {_toml_quote(value) if isinstance(value, str) else str(value).lower()}")
         _write_strict(self.config_path, "\n".join(lines) + "\n")
 
-    def _best_secret_backend(self) -> SecretBackend:
+    def _best_secret_backend(self) -> SecretBackend | None:
         try:
             return KeyringSecretBackend()
         except Exception:
-            return FakeSecretBackend()
+            return None

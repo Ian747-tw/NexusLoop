@@ -10,12 +10,29 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 import portalocker
 
 from nxl_core.events.schema import Event
+
+
+@contextmanager
+def event_writer(identity: str) -> Iterator[None]:
+    """Temporarily mark the current process as an approved event writer."""
+    if identity not in ("fork", "cli", "test"):
+        raise ValueError(f"invalid event writer identity: {identity!r}")
+    previous = os.environ.get("NXL_EVENTLOG_WRITER")
+    os.environ["NXL_EVENTLOG_WRITER"] = identity
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("NXL_EVENTLOG_WRITER", None)
+        else:
+            os.environ["NXL_EVENTLOG_WRITER"] = previous
 
 
 class EventLog:

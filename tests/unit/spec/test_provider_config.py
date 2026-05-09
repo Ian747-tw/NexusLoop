@@ -5,7 +5,10 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
+
 from nxl_core.events.log import EventLog
+from nxl_core.spec import provider_config
 from nxl_core.spec.provider_config import FakeSecretBackend, ProviderConfigStore
 
 
@@ -47,3 +50,19 @@ def test_provider_config_can_resolve_user_chosen_env_var(tmp_path: Path, monkeyp
 
     assert store.resolveCredentials("openai") == "sk-test-env-secret"
     assert "sk-test-env-secret" not in store.config_path.read_text()
+
+
+def test_provider_config_does_not_default_to_fake_secret_backend(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config-home"))
+
+    class MissingKeyring:
+        def __init__(self) -> None:
+            raise RuntimeError("no keyring")
+
+    monkeypatch.setattr(provider_config, "KeyringSecretBackend", MissingKeyring)
+    store = ProviderConfigStore()
+
+    with pytest.raises(RuntimeError, match="OS keyring is not available"):
+        store.saveProviderConfig(provider="openai", model="gpt-test", credential_source="secure_store")
+
+    assert not store.config_path.exists()
