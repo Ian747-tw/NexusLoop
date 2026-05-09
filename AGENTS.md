@@ -4,6 +4,23 @@ Same content as CLAUDE.md — keep in sync.
 
 Codex agents must follow the same execution contract as [CLAUDE.md](CLAUDE.md).
 
+## Canonical architecture docs
+
+Before designing or implementing new runtime or UX behavior, read:
+
+- `docs/ARCHITECTURE.md`
+- `docs/TUI_UX.md`
+- `docs/SPEC_BACKEND.md`
+- `docs/RESEARCH_BACKEND.md`
+- `docs/TEST_STRATEGY.md`
+- `agentcore/adr/ADR-013-runtime-server-redesign.md`
+- `agentcore/adr/ADR-014-spec-and-custom-policy-backend.md`
+- `agentcore/adr/ADR-015-research-db-results-registry.md`
+- `agentcore/adr/ADR-016-opentui-product-shell.md`
+
+These documents supersede legacy plans that centered a Python orchestrator or
+browser dashboard as the main runtime architecture.
+
 ## End-to-end user-simulation testing
 
 In addition to unit, integration, and adversarial tests, NexusLoop has **user-simulation E2E tests** in `tests/e2e_user/`. These are distinct from all other test types and represent the final ground truth for local release validation.
@@ -31,6 +48,14 @@ In addition to unit, integration, and adversarial tests, NexusLoop has **user-si
 3. Implement the feature
 4. E2E (local) + unit/non-E2E tests (CI) go green
 5. Commit as `M<phase>.<step>: <description>`
+
+## Forbidden behaviors
+
+- Never implement new primary runtime features in the legacy Python orchestrator unless the work is explicitly scoped as a compatibility shim.
+- Never treat the legacy dashboard as the default product shell; OpenTUI is the target UX.
+- Never ship a prompt-injection-only implementation for approvals, policy, spec authority, or research authority.
+- Never rely on in-memory-only research, candidate, trial, or mission authority.
+- Never mark mission completion, finding promotion, or spec approval from prose alone.
 
 ## The Decision Principle
 
@@ -78,6 +103,9 @@ Instead, write:
 If a behavior can't be expressed in these primitives, the gap is in
 NexusLoop's tool surface, not in the design. Add the missing tool.
 
+The current target architecture is runtime-server-centered. Do not introduce a
+new external Python orchestrator to drive OpenCode as the primary runtime path.
+
 ## The Fork Discipline
 
 The fork (`agentcore/`) exists for things plug-ins cannot do:
@@ -98,6 +126,9 @@ If you find yourself adding code to the fork that could be a plug-in,
 move it out. If you find yourself adding code as a plug-in that
 requires intercepting upstream behavior, it must move into the fork
 and be added to VENDOR_BOUNDARY.md.
+
+The fork remains the place for runtime-server authority. OpenTUI is the default
+UX target; the dashboard is deprecated as the primary shell.
 
 ---
 

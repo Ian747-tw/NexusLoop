@@ -1,5 +1,10 @@
 # M1 Design Spec — OpenCode Fork Integration
 
+> **Deprecated architecture context:** This document is retained as historical
+> design material. Its Python-harness/orchestrator framing is no longer the
+> canonical target architecture. For current guidance, use
+> `docs/ARCHITECTURE.md` and ADR-013 through ADR-016.
+
 ## Status
 Approved for implementation.
 

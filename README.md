@@ -1,5 +1,12 @@
 # NexusLoop
 
+> **Architecture status:** This README still contains historical workflow text
+> from the legacy Python-orchestrator/dashboard direction. For the current
+> target architecture, treat `docs/ARCHITECTURE.md`, `docs/TUI_UX.md`,
+> `docs/SPEC_BACKEND.md`, and `docs/RESEARCH_BACKEND.md` as canonical. Do not
+> implement new primary runtime features against the legacy dashboard or Python
+> orchestrator except as compatibility shims.
+
 Autonomous DRL research workflow manager with orchestrator-led agent loops, hard-rule guardrails, structured logs, and a local dashboard.
 
 ## Project Lineage

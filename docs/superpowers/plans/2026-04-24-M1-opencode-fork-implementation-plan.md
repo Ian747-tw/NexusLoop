@@ -1,5 +1,10 @@
 # M1: OpenCode Fork Integration — Implementation Plan
 
+> **Deprecated architecture context:** This plan is historical. Any steps that
+> treat a Python orchestrator as the long-term runtime center are superseded by
+> `docs/ARCHITECTURE.md` and ADR-013 through ADR-016. Keep it only as phase
+> history unless a task is explicitly a compatibility shim.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fork OpenCode (`anomalyco/opencode` v1.14.22, `38deb0f`) into `agentcore/` with four replaced seams (tool dispatch, intervention hook, capsule/session, cycle driver), Python client-py, and `nxl/core/run.py` decomposed to ≤80 lines.

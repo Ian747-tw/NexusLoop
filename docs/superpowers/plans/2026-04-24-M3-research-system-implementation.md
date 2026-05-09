@@ -1,5 +1,10 @@
 # M3 Research System Implementation Plan
 
+> **Deprecated architecture context:** This plan is retained as historical phase
+> material. Its dashboard-centric UX and Python-centered runtime assumptions are
+> superseded by `docs/ARCHITECTURE.md`, `docs/TUI_UX.md`, and ADR-013 through
+> ADR-016. Do not treat it as the canonical target for new architecture work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Transform NexusLoop from "reliable agent driver" into "research system" with autonomous hypothesis generation, program state machine, literature stack, second-review subagent, and streaming dashboard.
