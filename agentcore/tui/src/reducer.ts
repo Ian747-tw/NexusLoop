@@ -1,0 +1,160 @@
+import type { RuntimeEvent } from "./events"
+import { initialState, type UiState } from "./state"
+
+function append<T>(items: T[], item: T, limit = 12): T[] {
+  return [...items, item].slice(-limit)
+}
+
+export function reduceRuntimeEvent(state: UiState, event: RuntimeEvent): UiState {
+  switch (event.type) {
+    case "RuntimeReady":
+      return {
+        ...state,
+        header: {
+          ...state.header,
+          projectName: event.projectName,
+          runtimeStatus: event.runtimeStatus,
+          providerStatus: event.providerLabel ? `provider: ${event.providerLabel}` : "provider: not connected",
+          modelStatus: event.modelLabel ? `model: ${event.modelLabel}` : "model: placeholder",
+        },
+      }
+    case "ProjectUninitialized":
+      return { ...state, screen: "init", projectDir: event.projectDir, focus: "init-choice" }
+    case "ProjectInitialized":
+      return { ...state, screen: "resume", projectDir: event.projectDir, focus: "resume-choice" }
+    case "ResumeSummaryLoaded":
+      return {
+        ...state,
+        header: {
+          ...state.header,
+          activeMissionId: event.activeMissionId ?? state.header.activeMissionId,
+        },
+        systemActions: append(state.systemActions, {
+          title: "Resume summary loaded",
+          detail: `last_run=${event.lastRunId ?? "none"} records=${event.recordsCount ?? 0}`,
+        }),
+      }
+    case "MissionStarted":
+      return {
+        ...state,
+        screen: "main",
+        focus: "message-box",
+        header: { ...state.header, activeMissionId: event.missionId },
+        commander: {
+          ...state.commander,
+          programState: event.programState,
+          workIntent: event.workIntent,
+          mission: event.missionId,
+          budget: event.budget,
+        },
+        systemActions: append(state.systemActions, {
+          title: "Mission claim",
+          detail: `${event.missionId}: ${event.workIntent}`,
+        }),
+      }
+    case "MissionBriefUpdated": {
+      const obligations = event.obligations ?? state.commander.obligations
+      return {
+        ...state,
+        header: { ...state.header, openObligationsCount: obligations.length },
+        commander: {
+          ...state.commander,
+          workIntent: event.brief,
+          obligations,
+          candidates: event.candidates ?? state.commander.candidates,
+        },
+      }
+    }
+    case "ExecutorToolStarted":
+      return {
+        ...state,
+        executor: append(state.executor, {
+          title: `tool started: ${event.tool}`,
+          detail: event.command ?? event.target,
+          status: "running",
+        }),
+      }
+    case "ExecutorToolCompleted":
+      return {
+        ...state,
+        executor: append(state.executor, {
+          title: `tool ${event.status}: ${event.tool}`,
+          detail: [event.output, ...(event.editedFiles ?? []).map((file) => `edit: ${file}`)].filter(Boolean).join(" | "),
+          status: event.status,
+        }),
+      }
+    case "CommanderDecisionRecorded":
+      return {
+        ...state,
+        commander: {
+          ...state.commander,
+          decisions: append(state.commander.decisions, { title: event.decision, detail: event.reason }),
+        },
+        systemActions: append(state.systemActions, {
+          title: "commander -> executor",
+          detail: event.decision,
+        }),
+      }
+    case "UserInterventionReceived":
+      return {
+        ...state,
+        systemActions: append(state.systemActions, {
+          title: "user intervention routing",
+          detail: `${event.route}: ${event.message}`,
+        }),
+      }
+    case "WakeHookFired":
+      return {
+        ...state,
+        systemActions: append(state.systemActions, { title: "wake hook fired", detail: event.hook }),
+      }
+    case "TrainingProgressObserved":
+      return {
+        ...state,
+        header: { ...state.header, activeTrainingCount: event.activeCount },
+        executor: append(state.executor, {
+          title: "training progress",
+          detail: event.summary,
+          status: `${event.activeCount} active`,
+        }),
+      }
+    case "ResearchResultAccepted":
+      return {
+        ...state,
+        search: {
+          ...state.search,
+          records: append(state.search.records, {
+            title: `${event.label}: ${event.resultId}`,
+            detail: event.summary,
+          }),
+        },
+      }
+    case "ApprovalRequested": {
+      const item = { title: `${event.kind} approval: ${event.approvalId}`, detail: event.prompt }
+      return {
+        ...state,
+        focus: "approval",
+        approval:
+          event.kind === "spec"
+            ? { ...state.approval, specApprovals: append(state.approval.specApprovals, item) }
+            : { ...state.approval, candidateApprovals: append(state.approval.candidateApprovals, item) },
+      }
+    }
+    case "ClarificationRequested":
+      return {
+        ...state,
+        focus: "approval",
+        approval: {
+          ...state.approval,
+          clarifications: append(state.approval.clarifications, {
+            title: `${event.source} clarification: ${event.clarificationId}`,
+            detail: event.prompt,
+          }),
+        },
+      }
+  }
+}
+
+export function reduceRuntimeEvents(projectDir: string, events: RuntimeEvent[]): UiState {
+  return events.reduce(reduceRuntimeEvent, initialState(projectDir))
+}
