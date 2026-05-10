@@ -64,7 +64,15 @@ const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>([
   "result_citation",
   "result_artifact",
 ])
-const EVIDENCE_REQUIRED_RESULT_TYPES = new Set<ResearchResultType>(["finding", "literature_finding", "bug_diagnosis", "promotion_decision"])
+const EVIDENCE_REQUIRED_RESULT_TYPES = new Set<ResearchResultType>([
+  "finding",
+  "literature_finding",
+  "bug_diagnosis",
+  "promotion_decision",
+  "checkpoint_selection",
+  "evaluation_result",
+  "full_training_result",
+])
 const DEFAULT_READ_LIMIT = 100
 const MAX_READ_LIMIT = 500
 

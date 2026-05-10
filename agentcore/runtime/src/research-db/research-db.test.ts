@@ -871,6 +871,77 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("accepting checkpoint selection requires linked evidence", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "checkpoint_1",
+      result_type: "checkpoint_selection",
+      title: "Select checkpoint",
+      summary: "Checkpoint selected from candidate run.",
+      confidence: "high",
+      created_by: "verifier",
+    })
+
+    expect(() => db.acceptResearchResult("checkpoint_1")).toThrow("requires linked citation or artifact evidence")
+
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "snapshot", content: "checkpoint metadata" })
+    db.linkResultArtifact("checkpoint_1", "artifact_1")
+
+    expect(db.acceptResearchResult("checkpoint_1").status).toBe("accepted")
+    db.close()
+  })
+
+  test("accepting evaluation result requires linked evidence", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "evaluation_1",
+      result_type: "evaluation_result",
+      title: "Evaluation result",
+      summary: "Evaluation completed.",
+      confidence: "medium",
+      created_by: "verifier",
+    })
+
+    expect(() => db.acceptResearchResult("evaluation_1")).toThrow("requires linked citation or artifact evidence")
+
+    db.recordCitation({
+      citation_id: "citation_1",
+      source_type: "file",
+      source_uri: "file://evaluation.md",
+      quoted_text_or_summary: "Evaluation evidence summary",
+    })
+    db.linkResultCitation("evaluation_1", "citation_1")
+
+    expect(db.acceptResearchResult("evaluation_1").status).toBe("accepted")
+    db.close()
+  })
+
+  test("accepting full training result requires linked evidence", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "training_1",
+      result_type: "full_training_result",
+      title: "Full training result",
+      summary: "Training completed.",
+      confidence: "medium",
+      metrics: { loss: 0.25 },
+      created_by: "executor",
+    })
+
+    expect(() => db.acceptResearchResult("training_1")).toThrow("requires linked citation or artifact evidence")
+
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "log", content: "training log" })
+    db.linkResultArtifact("training_1", "artifact_1")
+
+    expect(db.acceptResearchResult("training_1").status).toBe("accepted")
+    db.close()
+  })
+
   test("accepting an already accepted result is idempotent", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)
