@@ -46,3 +46,37 @@ def test_custom_policy_rule_validation_and_listing(tmp_path: Path) -> None:
     assert kinds.count("custom_policy_rule_created") == 2
     assert "custom_policy_rule_updated" in kinds
     assert "custom_policy_rule_disabled" in kinds
+
+
+def test_custom_policy_scope_matching_is_delimiter_aware(tmp_path: Path) -> None:
+    store = PolicyStore(tmp_path, event_log=EventLog(tmp_path / ".nxl" / "events.jsonl"))
+    train = store.addRule(
+        source="user",
+        scope="train",
+        effect="requires_approval",
+        reason="Training launches require approval.",
+    )
+    store.addRule(
+        source="user",
+        scope="rain",
+        effect="deny",
+        reason="Rain scope should not match train.",
+    )
+    reward = store.addRule(
+        source="user",
+        scope="reward",
+        effect="warn",
+        reason="Reward root scope only.",
+    )
+
+    assert store.evaluateUserPolicyMetadata("train")["requires_approval"] == [train.rule_id]
+    assert store.evaluateUserPolicyMetadata("train.launch")["requires_approval"] == [train.rule_id]
+    assert store.evaluateUserPolicyMetadata("train/launch")["requires_approval"] == [train.rule_id]
+    assert store.evaluateUserPolicyMetadata("train:launch")["requires_approval"] == [train.rule_id]
+
+    assert store.evaluateUserPolicyMetadata("train.launch")["deny"] == []
+    assert store.evaluateUserPolicyMetadata("training.reward_function")["warn"] == []
+    assert store.evaluateUserPolicyMetadata("reward.metric")["warn"] == [reward.rule_id]
+
+    store.updateRule(train.rule_id, enabled=False)
+    assert store.evaluateUserPolicyMetadata("train.launch")["requires_approval"] == []

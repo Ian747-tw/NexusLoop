@@ -141,6 +141,69 @@ def test_success_metrics_clarification_updates_target_field(tmp_path: Path) -> N
     assert updated.success_metrics == ["reward >= 475", "no secret [REDACTED]"]
 
 
+def test_clarification_rejected_after_spec_approval_without_changing_current_files(
+    tmp_path: Path,
+) -> None:
+    store = SpecStore(tmp_path, event_log=EventLog(tmp_path / ".nxl" / "events.jsonl"), extractor=_extractor)
+    result = store.createDraftFromPlainText("ambiguous project")
+    objective_question = next(item for item in result.clarifications if item.field == "objective")
+    completed = result.spec
+    for clarification in result.clarifications:
+        completed = store.requestClarification(
+            completed.spec_id,
+            question_id=clarification.question_id,
+            answer=f"answer for {clarification.field}",
+        )
+    approved = store.approveDraft(completed.spec_id, approved_by="tester")
+    current_json = tmp_path / ".nxl" / "spec" / "current.json"
+    current_md = tmp_path / ".nxl" / "spec" / "current.md"
+    before_json = current_json.read_text(encoding="utf-8")
+    before_md = current_md.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="only draft specs can receive clarification answers"):
+        store.requestClarification(
+            approved.spec_id,
+            question_id=objective_question.question_id,
+            answer="mutate approved objective",
+        )
+
+    assert current_json.read_text(encoding="utf-8") == before_json
+    assert current_md.read_text(encoding="utf-8") == before_md
+
+
+def test_clarification_rejected_after_spec_superseded_without_changing_current_files(
+    tmp_path: Path,
+) -> None:
+    store = SpecStore(tmp_path, event_log=EventLog(tmp_path / ".nxl" / "events.jsonl"), extractor=_extractor)
+    result = store.createDraftFromPlainText("ambiguous project")
+    objective_question = next(item for item in result.clarifications if item.field == "objective")
+    completed = result.spec
+    for clarification in result.clarifications:
+        completed = store.requestClarification(
+            completed.spec_id,
+            question_id=clarification.question_id,
+            answer=f"answer for {clarification.field}",
+        )
+    first = store.approveDraft(completed.spec_id, approved_by="tester")
+    second_draft = store.createDraftFromPlainText("Build CartPole agent").spec
+    second = store.approveDraft(second_draft.spec_id, approved_by="tester")
+    current_json = tmp_path / ".nxl" / "spec" / "current.json"
+    current_md = tmp_path / ".nxl" / "spec" / "current.md"
+    before_json = current_json.read_text(encoding="utf-8")
+    before_md = current_md.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="only draft specs can receive clarification answers"):
+        store.requestClarification(
+            first.spec_id,
+            question_id=objective_question.question_id,
+            answer="mutate superseded objective",
+        )
+
+    assert store.getCurrentSpec() == second
+    assert current_json.read_text(encoding="utf-8") == before_json
+    assert current_md.read_text(encoding="utf-8") == before_md
+
+
 def test_runtime_requires_approved_spec(tmp_path: Path) -> None:
     store = SpecStore(tmp_path, event_log=EventLog(tmp_path / ".nxl" / "events.jsonl"), extractor=_extractor)
     assert store.runtimeReady() is False

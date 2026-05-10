@@ -254,6 +254,8 @@ class SpecStore:
 
     def requestClarification(self, spec_id: str, *, question_id: str, answer: str) -> ProjectSpecV1:
         spec = self._load_version(spec_id)
+        if spec.status != "draft":
+            raise ValueError("only draft specs can receive clarification answers")
         answer = redact_text(answer.strip())
         if not answer:
             raise ValueError("clarification answer cannot be empty")

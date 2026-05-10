@@ -119,10 +119,17 @@ class PolicyStore:
     def evaluateUserPolicyMetadata(self, scope: str) -> dict[str, list[str]]:
         result = {"deny": [], "allow": [], "requires_approval": [], "warn": []}
         for rule in self.listRules(active_only=True):
-            if scope == rule.scope or scope.startswith(rule.scope) or rule.scope in scope:
+            if _scope_matches(rule.scope, scope):
                 result[rule.effect].append(rule.rule_id)
         return result
 
     def _write_rules(self, rules: list[CustomPolicyRule]) -> None:
         data = {"rules": [rule.model_dump(mode="json") for rule in rules]}
         _atomic_write(self.policy_path, json.dumps(data, indent=2))
+
+
+def _scope_matches(rule_scope: str, requested_scope: str) -> bool:
+    return requested_scope == rule_scope or any(
+        requested_scope.startswith(f"{rule_scope}{delimiter}")
+        for delimiter in (".", "/", ":")
+    )
