@@ -504,7 +504,7 @@ export class ResearchDb {
     const producedByMissionId = input.produced_by_mission_id ? cleanId(input.produced_by_mission_id) : null
     const producedByRunId = input.produced_by_run_id ? cleanId(input.produced_by_run_id) : null
     const description = cleanOptional(input.description)
-    const inputHash = hashPayload(compactPayload({
+    const inputHash = hashPayload(artifactInputHashPayload({
       topic_id: topicId,
       kind: input.kind,
       path,
@@ -697,10 +697,19 @@ export class ResearchDb {
     const sourceUri = cleanRequired(input.source_uri, "source_uri")
     const title = cleanOptional(input.title)
     const quoted = cleanRequired(input.quoted_text_or_summary, "quoted_text_or_summary")
-    const accessedAt = cleanOptional(input.accessed_at) ?? this.timestamp()
+    const callerAccessedAt = cleanOptional(input.accessed_at)
+    const accessedAt = callerAccessedAt ?? this.timestamp()
     const sha256 = cleanOptional(input.sha256)
     const metadata = input.metadata ?? null
-    const inputHash = hashPayload({ source_type: input.source_type, source_uri: sourceUri, title, quoted_text_or_summary: quoted, accessed_at: accessedAt, sha256, metadata })
+    const inputHash = hashPayload({
+      source_type: input.source_type,
+      source_uri: sourceUri,
+      title,
+      quoted_text_or_summary: quoted,
+      accessed_at: callerAccessedAt,
+      sha256,
+      metadata,
+    })
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
       const existing = this.db.query("SELECT * FROM citations WHERE citation_id = ?").get(citationId) as CitationRow | null
@@ -1088,7 +1097,7 @@ export class ResearchDb {
         "SELECT id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, input_hash, created_at FROM artifacts WHERE input_hash IS NULL",
       )
       .all() as ArtifactRow[]) {
-      const inputHash = hashPayload(compactPayload({
+      const inputHash = hashPayload(artifactInputHashPayload({
         topic_id: row.topic_id,
         kind: row.kind,
         path: row.path,
@@ -1273,6 +1282,34 @@ function cleanTags(value: string[] | undefined): string[] {
 
 function hashPayload(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
+}
+
+function artifactInputHashPayload(value: {
+  topic_id: string
+  kind: ArtifactKind
+  path: string | null
+  content: string | null
+  artifact_type: ArtifactType | null
+  sha256: string | null
+  size_bytes: number | null
+  produced_by_mission_id: string | null
+  produced_by_run_id: string | null
+  description: string | null
+}): Record<string, unknown> {
+  return {
+    topic_id: value.topic_id,
+    kind: value.kind,
+    path: value.path,
+    content: value.content,
+    ...compactPayload({
+      artifact_type: value.artifact_type,
+      sha256: value.sha256,
+      size_bytes: value.size_bytes,
+      produced_by_mission_id: value.produced_by_mission_id,
+      produced_by_run_id: value.produced_by_run_id,
+      description: value.description,
+    }),
+  }
 }
 
 function compactPayload(value: Record<string, unknown>): Record<string, unknown> {

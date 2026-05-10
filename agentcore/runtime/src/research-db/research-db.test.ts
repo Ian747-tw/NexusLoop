@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -963,6 +964,66 @@ describe("ResearchDb", () => {
     expect(db.getTopic("topic_1")?.title).toBe("Topic")
     expect(db.searchResearchResults()).toEqual([])
     expect(db.searchCitations()).toEqual([])
+    db.close()
+  })
+
+  test("upgraded artifacts keep idempotent explicit ID compatibility with old hashes", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const oldArtifactHash = createHash("sha256")
+      .update(JSON.stringify({ topic_id: "topic_1", kind: "report", path: null, content: "Legacy report" }))
+      .digest("hex")
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TABLE topics (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE artifacts (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          path TEXT,
+          content TEXT,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          CHECK (path IS NOT NULL OR content IS NOT NULL)
+        );
+        INSERT INTO topics VALUES ('topic_1', 'Topic', 'open', 'legacy-topic-hash', '2026-05-10T12:00:00.000Z', '2026-05-10T12:00:00.000Z');
+      `)
+      sqlite
+        .query("INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run("artifact_legacy", "topic_1", "report", null, "Legacy report", oldArtifactHash, "2026-05-10T12:00:00.000Z")
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openTestDb(dir)
+    expect(db.addArtifact({ id: "artifact_legacy", topic_id: "topic_1", kind: "report", content: "Legacy report" }).id).toBe("artifact_legacy")
+    db.close()
+  })
+
+  test("citation explicit ID retry is idempotent when accessed_at is generated", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const input = {
+      citation_id: "citation_1",
+      source_type: "url" as const,
+      source_uri: "https://example.test",
+      quoted_text_or_summary: "Evidence",
+    }
+
+    const first = db.recordCitation(input)
+    const second = db.recordCitation(input)
+
+    expect(second).toEqual(first)
+    expect(db.searchCitations()).toHaveLength(1)
+    expect(() => db.recordCitation({ ...input, quoted_text_or_summary: "Different evidence" })).toThrow("citation id collision")
     db.close()
   })
 
