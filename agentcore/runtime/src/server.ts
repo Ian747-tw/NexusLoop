@@ -10,11 +10,31 @@ import type { OpenCodeRuntimeAdapter } from "./opencode/adapter"
 import { PolicyService } from "./spec/policy-service"
 import { SpecService, type SpecSummary } from "./spec/spec-service"
 import { redactValue } from "./security/redaction"
+import {
+  ResearchDb,
+  type ListResearchEventsOptions,
+  type Note,
+  type ResearchEvent,
+  type SearchOptions,
+  type Topic,
+  type TopicSnapshot,
+} from "./research-db/research-db"
 
 export interface RuntimeServerOptions {
   projectDir?: string
   mode?: RuntimeMode
   adapter?: OpenCodeRuntimeAdapter
+  researchDb?: RuntimeResearchDbReader
+  researchDbFactory?: (projectDir: string) => RuntimeResearchDbReader
+}
+
+export interface RuntimeResearchDbReader {
+  close(): void
+  listTopics(): Topic[]
+  searchTopics(query: string, options?: SearchOptions): Topic[]
+  getTopicSnapshot(topicId: string): TopicSnapshot | null
+  listResearchEvents(options?: ListResearchEventsOptions): ResearchEvent[]
+  searchNotes(topicId: string, query: string, options?: SearchOptions): Note[]
 }
 
 export class RuntimeServer {
@@ -26,6 +46,9 @@ export class RuntimeServer {
   readonly policyService: PolicyService
   readonly adapter: OpenCodeRuntimeAdapter
   private readonly runLock: RunLock
+  private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbReader
+  private readonly ownsResearchDb: boolean
+  private researchDb: RuntimeResearchDbReader | null = null
   private specSummary: SpecSummary | null = null
   private started = false
   private executorStreamTask: Promise<void> | null = null
@@ -40,6 +63,9 @@ export class RuntimeServer {
     this.policyService = new PolicyService(this.projectDir)
     this.runLock = new RunLock(join(this.projectDir, ".nxl", "run.lock"))
     this.adapter = options.adapter ?? new FakeOpenCodeAdapter()
+    this.researchDb = options.researchDb ?? null
+    this.ownsResearchDb = options.researchDb === undefined
+    this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir))
   }
 
   async start(): Promise<void> {
@@ -141,6 +167,14 @@ export class RuntimeServer {
         return this.startNewSession()
       case "runtime.view_records":
         return this.viewRecords()
+      case "research.list_topics":
+        return this.listResearchTopics(optionalString(payload.query, "query"))
+      case "research.get_topic_snapshot":
+        return this.getResearchTopicSnapshot(requiredString(payload.topicId, "topicId"))
+      case "research.list_events":
+        return this.listResearchEvents(readResearchEventsOptions(payload.options))
+      case "research.search_notes":
+        return this.searchResearchNotes(requiredString(payload.topicId, "topicId"), requiredString(payload.query, "query"), readSearchOptions(payload.options))
       case "runtime.submit_user_message":
         return this.submitUserMessage(String(payload.message ?? ""))
       case "runtime.shutdown":
@@ -187,6 +221,24 @@ export class RuntimeServer {
     return { events: redactValue(await this.eventStore.readAll()) }
   }
 
+  listResearchTopics(query?: string, options?: SearchOptions): Topic[] {
+    const db = this.getResearchDb()
+    const topics = query === undefined ? db.listTopics() : db.searchTopics(query, options)
+    return redactValue(topics)
+  }
+
+  getResearchTopicSnapshot(topicId: string): TopicSnapshot | null {
+    return redactValue(this.getResearchDb().getTopicSnapshot(topicId))
+  }
+
+  listResearchEvents(options?: ListResearchEventsOptions): ResearchEvent[] {
+    return redactValue(this.getResearchDb().listResearchEvents(options))
+  }
+
+  searchResearchNotes(topicId: string, query: string, options?: SearchOptions): Note[] {
+    return redactValue(this.getResearchDb().searchNotes(topicId, query, options))
+  }
+
   async submitUserMessage(message: string): Promise<{ accepted: true }> {
     if (this.mode !== "active") {
       throw new Error("runtime.submit_user_message requires active mode")
@@ -200,36 +252,85 @@ export class RuntimeServer {
   }
 
   async shutdown(reason = "shutdown"): Promise<void> {
-    if (!this.started && !this.runLock.isHeld()) return
     let firstError: unknown = null
     this.executorStreamAbort = true
-    this.eventBus.emit({ type: "RuntimeShutdown", reason })
-    try {
-      await this.adapter.shutdown()
-    } catch (error) {
-      firstError ??= error
-      this.eventBus.emit({
-        type: "ExecutorLifecycle",
-        phase: "runtime-adapter-shutdown-error",
-        message: error instanceof Error ? error.message : String(error),
-      })
-    }
-    try {
-      await this.eventStore.append({ kind: "runtime_shutdown", reason })
-    } catch (error) {
-      firstError ??= error
-      this.eventBus.emit({
-        type: "ExecutorLifecycle",
-        phase: "runtime-shutdown-event-error",
-        message: error instanceof Error ? error.message : String(error),
-      })
-    } finally {
+    if (this.started || this.runLock.isHeld()) {
+      this.eventBus.emit({ type: "RuntimeShutdown", reason })
       try {
-        await this.runLock.release()
+        await this.adapter.shutdown()
+      } catch (error) {
+        firstError ??= error
+        this.eventBus.emit({
+          type: "ExecutorLifecycle",
+          phase: "runtime-adapter-shutdown-error",
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+      try {
+        await this.eventStore.append({ kind: "runtime_shutdown", reason })
+      } catch (error) {
+        firstError ??= error
+        this.eventBus.emit({
+          type: "ExecutorLifecycle",
+          phase: "runtime-shutdown-event-error",
+          message: error instanceof Error ? error.message : String(error),
+        })
       } finally {
-        this.started = false
+        try {
+          await this.runLock.release()
+        } finally {
+          this.started = false
+        }
       }
     }
+    this.closeOwnedResearchDb(firstError)
     if (firstError) throw firstError
   }
+
+  private getResearchDb(): RuntimeResearchDbReader {
+    if (!this.researchDb) this.researchDb = this.researchDbFactory(this.projectDir)
+    return this.researchDb
+  }
+
+  private closeOwnedResearchDb(firstError: unknown): void {
+    if (!this.researchDb || !this.ownsResearchDb) return
+    try {
+      this.researchDb.close()
+      this.researchDb = null
+    } catch (error) {
+      if (!firstError) throw error
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-research-db-close-error",
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${field} is required`)
+  return value
+}
+
+function optionalString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "string") throw new Error(`${field} must be a string`)
+  return value
+}
+
+function readResearchEventsOptions(value: unknown): ListResearchEventsOptions | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) throw new Error("options must be an object")
+  return value as ListResearchEventsOptions
+}
+
+function readSearchOptions(value: unknown): SearchOptions | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) throw new Error("options must be an object")
+  return value as SearchOptions
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
