@@ -126,8 +126,13 @@ export class ResearchDb {
       now: options.now ?? (() => new Date()),
       idFactory: options.idFactory ?? (() => randomUUID()),
     })
-    researchDb.migrate()
-    return researchDb
+    try {
+      researchDb.migrate()
+      return researchDb
+    } catch (error) {
+      db.close()
+      throw error
+    }
   }
 
   close(): void {
@@ -233,7 +238,7 @@ export class ResearchDb {
     if (sourceId) this.requireSource(sourceId, topicId)
     const id = cleanId(input.id ?? this.idFactory())
     const content = cleanRequired(input.content, "content")
-    const tags = input.tags ?? []
+    const tags = cleanTags(input.tags)
     const inputHash = hashPayload({ topic_id: topicId, source_id: sourceId, content, tags })
     const redactedContent = redactString(content)
     const redactedTags = JSON.stringify(redactValue(tags))
@@ -485,6 +490,12 @@ function cleanOptional(value: string | undefined): string | null {
   if (value === undefined) return null
   const trimmed = value.trim()
   return trimmed ? trimmed : null
+}
+
+function cleanTags(value: string[] | undefined): string[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || !value.every((tag) => typeof tag === "string")) throw new Error("invalid note tags")
+  return value
 }
 
 function hashPayload(value: unknown): string {

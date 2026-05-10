@@ -52,6 +52,27 @@ describe("ResearchDb", () => {
     }
   })
 
+  test("open closes sqlite handle when migration fails", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const dbPath = join(dir, ".nxl", "research.db")
+    const sqlite = new Database(dbPath)
+    try {
+      sqlite.exec("CREATE TABLE topics (id TEXT PRIMARY KEY)")
+    } finally {
+      sqlite.close()
+    }
+
+    expect(() => openTestDb(dir)).toThrow()
+
+    const retry = new Database(dbPath)
+    try {
+      expect(() => retry.exec("DROP TABLE topics")).not.toThrow()
+    } finally {
+      retry.close()
+    }
+  })
+
   test("create list and get topic", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
@@ -471,6 +492,7 @@ describe("ResearchDb", () => {
     expect(() => db.createTopic({ title: "Topic", status: "bad" as never })).toThrow("invalid topic status")
     expect(() => db.addSource({ topic_id: "topic_1", locator: "x", source_type: "bad" as never })).toThrow("invalid source type")
     expect(() => db.addSource({ topic_id: "topic_1", locator: "x", source_type: "url", status: "bad" as never })).toThrow("invalid source status")
+    expect(() => db.addNote({ topic_id: "topic_1", content: "note", tags: ["ok", 1] as never })).toThrow("invalid note tags")
     expect(() => db.addArtifact({ topic_id: "topic_1", kind: "bad" as never, content: "x" })).toThrow("invalid artifact kind")
     expect(() => db.addArtifact({ topic_id: "topic_1", kind: "report" })).toThrow("artifact requires path or content")
     expect(() => db.addArtifact({ topic_id: "topic_1", kind: "report", content: "   " })).toThrow("artifact requires path or content")
