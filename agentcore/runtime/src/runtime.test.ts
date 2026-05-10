@@ -71,13 +71,16 @@ class ThrowingShutdownAdapter extends FakeOpenCodeAdapter {
 class LongLivedAdapter implements OpenCodeRuntimeAdapter {
   streamCalls = 0
   startCalls = 0
+  packets: MissionPacket[] = []
   private releaseStream: (() => void) | null = null
 
   async startSession(_sessionSpec: SessionSpec): Promise<void> {
     this.startCalls += 1
   }
 
-  async sendMissionPacket(_packet: MissionPacket): Promise<void> {}
+  async sendMissionPacket(packet: MissionPacket): Promise<void> {
+    this.packets.push(packet)
+  }
 
   async pauseAtSafeBoundary(_reason: string): Promise<void> {}
 
@@ -231,6 +234,96 @@ describe("RuntimeServer core", () => {
     await expect(server.startNewSession()).rejects.toThrow("runtime must be started before starting a new session")
     expect(adapter.startCalls).toBe(0)
     expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+  })
+
+  test("startNewSession in status mode after start rejects", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter })
+
+    await server.start()
+    await expect(server.startNewSession()).rejects.toThrow("runtime.start_new_session requires active mode")
+
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
+  test("startNewSession in view-records mode after start rejects", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records", adapter })
+
+    await server.start()
+    await expect(server.startNewSession()).rejects.toThrow("runtime.start_new_session requires active mode")
+
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
+  test("submitUserMessage before start rejects without sending packet", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await expect(server.submitUserMessage("hello")).rejects.toThrow("runtime must be started before accepting user messages")
+
+    expect(adapter.packets).toHaveLength(0)
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+  })
+
+  test("submitUserMessage in status mode after start rejects", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter })
+
+    await server.start()
+    await expect(server.submitUserMessage("hello")).rejects.toThrow("runtime.submit_user_message requires active mode")
+
+    expect(adapter.packets).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("submitUserMessage in view-records mode after start rejects", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records", adapter })
+
+    await server.start()
+    await expect(server.submitUserMessage("hello")).rejects.toThrow("runtime.submit_user_message requires active mode")
+
+    expect(adapter.packets).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("submitUserMessage in active started mode succeeds", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    await expect(server.submitUserMessage("hello")).resolves.toEqual({ accepted: true })
+
+    expect(adapter.packets).toEqual([{ missionId: "runtime-message", message: "hello" }])
+    await server.shutdown()
+  })
+
+  test("shutdown then submitUserMessage rejects without sending packet", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    await server.shutdown()
+    await expect(server.submitUserMessage("after shutdown")).rejects.toThrow("runtime must be started before accepting user messages")
+
+    expect(adapter.packets).toHaveLength(0)
   })
 
   test("successful active start appends runtime_started before readiness events", async () => {

@@ -172,6 +172,9 @@ export class RuntimeServer {
   }
 
   async startNewSession(): Promise<{ adapter: Record<string, unknown> }> {
+    if (this.mode !== "active") {
+      throw new Error("runtime.start_new_session requires active mode")
+    }
     if (!this.started || !this.runLock.isHeld()) {
       throw new Error("runtime must be started before starting a new session")
     }
@@ -185,6 +188,12 @@ export class RuntimeServer {
   }
 
   async submitUserMessage(message: string): Promise<{ accepted: true }> {
+    if (this.mode !== "active") {
+      throw new Error("runtime.submit_user_message requires active mode")
+    }
+    if (!this.started || !this.runLock.isHeld()) {
+      throw new Error("runtime must be started before accepting user messages")
+    }
     await this.adapter.sendMissionPacket({ missionId: "runtime-message", message })
     this.eventBus.emit({ type: "ExecutorLifecycle", phase: "fake-user-message", message })
     return { accepted: true }
