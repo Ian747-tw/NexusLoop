@@ -2,17 +2,22 @@ import { createHash, randomUUID } from "node:crypto"
 import { mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { Database } from "bun:sqlite"
+import type { SQLQueryBindings } from "bun:sqlite"
 import { redactValue } from "../security/redaction"
 
 export type TopicStatus = "open" | "active" | "paused" | "closed"
 export type SourceStatus = "new" | "reviewed" | "rejected"
 export type SourceType = "url" | "file" | "paper" | "note" | "artifact" | "other"
 export type ArtifactKind = "artifact" | "report" | "log" | "dataset" | "snapshot" | "other"
+export type ResearchEntityType = "topic" | "source" | "note" | "artifact"
 
 const TOPIC_STATUSES = new Set<TopicStatus>(["open", "active", "paused", "closed"])
 const SOURCE_STATUSES = new Set<SourceStatus>(["new", "reviewed", "rejected"])
 const SOURCE_TYPES = new Set<SourceType>(["url", "file", "paper", "note", "artifact", "other"])
 const ARTIFACT_KINDS = new Set<ArtifactKind>(["artifact", "report", "log", "dataset", "snapshot", "other"])
+const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>(["topic", "source", "note", "artifact"])
+const DEFAULT_READ_LIMIT = 100
+const MAX_READ_LIMIT = 500
 
 export interface ResearchDbOptions {
   dbPath?: string
@@ -89,6 +94,45 @@ export interface Artifact {
   created_at: string
 }
 
+export interface ListResearchEventsOptions {
+  entity_type?: ResearchEntityType
+  entity_id?: string
+  event_type?: string
+  after_event_id?: string
+  limit?: number
+}
+
+export interface ResearchEvent {
+  event_id: string
+  event_type: string
+  entity_type: ResearchEntityType
+  entity_id: string
+  payload: unknown
+  created_at: string
+}
+
+export interface TopicSnapshotStats {
+  source_count: number
+  note_count: number
+  artifact_count: number
+  report_count: number
+  reviewed_source_count: number
+  rejected_source_count: number
+}
+
+export interface TopicSnapshot {
+  topic: Topic
+  sources: Source[]
+  notes: Note[]
+  artifacts: Artifact[]
+  stats: TopicSnapshotStats
+  latest_event: ResearchEvent | null
+}
+
+export interface SearchOptions {
+  limit?: number
+}
+
 interface NoteRow extends Omit<Note, "tags"> {
   tags_json: string | null
   input_hash?: string | null
@@ -104,6 +148,16 @@ interface SourceRow extends Source {
 
 interface ArtifactRow extends Artifact {
   input_hash: string | null
+}
+
+interface ResearchEventRow {
+  event_order: number
+  event_id: string
+  event_type: string
+  entity_type: string
+  entity_id: string
+  payload_json: string
+  created_at: string
 }
 
 export class ResearchDb {
@@ -171,6 +225,14 @@ export class ResearchDb {
 
   listTopics(): Topic[] {
     return this.db.query("SELECT id, title, status, created_at, updated_at FROM topics ORDER BY created_at, id").all() as Topic[]
+  }
+
+  searchTopics(query: string, options: SearchOptions = {}): Topic[] {
+    const term = cleanRequired(query, "query")
+    const limit = cleanLimit(options.limit)
+    return this.db
+      .query("SELECT id, title, status, created_at, updated_at FROM topics WHERE title LIKE ? ESCAPE '\\' ORDER BY created_at, id LIMIT ?")
+      .all(likeContains(term), limit) as Topic[]
   }
 
   addSource(input: SourceInput): Source {
@@ -303,6 +365,78 @@ export class ResearchDb {
     return this.db
       .query("SELECT id, topic_id, kind, path, content, created_at FROM artifacts WHERE topic_id = ? ORDER BY created_at, id")
       .all(id) as Artifact[]
+  }
+
+  listResearchEvents(options: ListResearchEventsOptions = {}): ResearchEvent[] {
+    const filters: string[] = []
+    const params: SQLQueryBindings[] = []
+
+    if (options.entity_type !== undefined) {
+      assertAllowed(RESEARCH_ENTITY_TYPES, options.entity_type, "research event entity_type")
+      filters.push("entity_type = ?")
+      params.push(options.entity_type)
+    }
+    if (options.entity_id !== undefined) {
+      filters.push("entity_id = ?")
+      params.push(cleanRequired(options.entity_id, "entity_id"))
+    }
+    if (options.event_type !== undefined) {
+      filters.push("event_type = ?")
+      params.push(cleanRequired(options.event_type, "event_type"))
+    }
+    if (options.after_event_id !== undefined) {
+      const afterEventId = cleanRequired(options.after_event_id, "after_event_id")
+      const after = this.db.query("SELECT rowid AS event_order, created_at FROM research_events WHERE event_id = ?").get(afterEventId) as
+        | Pick<ResearchEventRow, "event_order" | "created_at">
+        | null
+      if (!after) throw new Error(`research event not found: ${afterEventId}`)
+      filters.push("(created_at > ? OR (created_at = ? AND rowid > ?))")
+      params.push(after.created_at, after.created_at, after.event_order)
+    }
+
+    params.push(cleanLimit(options.limit))
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
+    return (this.db
+      .query(
+        `SELECT rowid AS event_order, event_id, event_type, entity_type, entity_id, payload_json, created_at FROM research_events ${where} ORDER BY created_at ASC, rowid ASC LIMIT ?`,
+      )
+      .all(...params) as ResearchEventRow[]).map(researchEventFromRow)
+  }
+
+  getTopicSnapshot(topicId: string): TopicSnapshot | null {
+    const id = cleanId(topicId)
+    const topic = this.getTopic(id)
+    if (!topic) return null
+    const sources = this.listSourcesForTopic(id)
+    const notes = this.listNotesForTopic(id)
+    const artifacts = this.listArtifactsForTopic(id)
+    return {
+      topic,
+      sources,
+      notes,
+      artifacts,
+      stats: {
+        source_count: sources.length,
+        note_count: notes.length,
+        artifact_count: artifacts.length,
+        report_count: artifacts.filter((artifact) => artifact.kind === "report").length,
+        reviewed_source_count: sources.filter((source) => source.status === "reviewed").length,
+        rejected_source_count: sources.filter((source) => source.status === "rejected").length,
+      },
+      latest_event: this.latestEventForTopic(id),
+    }
+  }
+
+  searchNotes(topicId: string, query: string, options: SearchOptions = {}): Note[] {
+    const id = cleanId(topicId)
+    this.requireTopic(id)
+    const term = cleanRequired(query, "query")
+    const limit = cleanLimit(options.limit)
+    return (this.db
+      .query(
+        "SELECT * FROM notes WHERE topic_id = ? AND (content LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\') ORDER BY created_at, id LIMIT ?",
+      )
+      .all(id, likeContains(term), likeContains(term), limit) as NoteRow[]).map((row) => this.noteFromRow(row))
   }
 
   private migrate(): void {
@@ -462,6 +596,24 @@ export class ResearchDb {
     if (!source) throw new Error(`source not found for topic: ${sourceId}`)
   }
 
+  private latestEventForTopic(topicId: string): ResearchEvent | null {
+    const row = this.db
+      .query(
+        `
+        SELECT rowid AS event_order, event_id, event_type, entity_type, entity_id, payload_json, created_at
+        FROM research_events
+        WHERE (entity_type = 'topic' AND entity_id = ?)
+          OR (entity_type = 'source' AND entity_id IN (SELECT id FROM sources WHERE topic_id = ?))
+          OR (entity_type = 'note' AND entity_id IN (SELECT id FROM notes WHERE topic_id = ?))
+          OR (entity_type = 'artifact' AND entity_id IN (SELECT id FROM artifacts WHERE topic_id = ?))
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 1
+      `,
+      )
+      .get(topicId, topicId, topicId, topicId) as ResearchEventRow | null
+    return row ? researchEventFromRow(row) : null
+  }
+
   private noteFromRow(row: NoteRow): Note
   private noteFromRow(row: NoteRow | null): Note | null
   private noteFromRow(row: NoteRow | null): Note | null {
@@ -490,6 +642,12 @@ function cleanOptional(value: string | undefined): string | null {
   if (value === undefined) return null
   const trimmed = value.trim()
   return trimmed ? trimmed : null
+}
+
+function cleanLimit(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_READ_LIMIT
+  if (!Number.isInteger(value) || value <= 0) throw new Error("limit must be a positive integer")
+  return Math.min(value, MAX_READ_LIMIT)
 }
 
 function cleanTags(value: string[] | undefined): string[] {
@@ -522,5 +680,21 @@ function parseTags(value: string | null): string[] {
     return parsed
   } catch {
     return []
+  }
+}
+
+function likeContains(value: string): string {
+  return `%${value.replace(/[\\%_]/g, (character) => `\\${character}`)}%`
+}
+
+function researchEventFromRow(row: ResearchEventRow): ResearchEvent {
+  assertAllowed(RESEARCH_ENTITY_TYPES, row.entity_type, "research event entity_type")
+  return {
+    event_id: row.event_id,
+    event_type: row.event_type,
+    entity_type: row.entity_type,
+    entity_id: row.entity_id,
+    payload: JSON.parse(row.payload_json) as unknown,
+    created_at: row.created_at,
   }
 }
