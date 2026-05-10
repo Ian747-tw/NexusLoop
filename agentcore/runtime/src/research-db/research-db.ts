@@ -1812,7 +1812,10 @@ export class ResearchDb {
   private updateCandidateStatus(candidateId: string, status: CandidateStatus, eventType: string, reason?: string): Candidate {
     const id = cleanId(candidateId)
     assertAllowed(CANDIDATE_STATUSES, status, "candidate status")
-    this.requireCandidate(id)
+    const existing = this.getCandidate(id)
+    if (!existing) throw new Error(`candidate not found: ${id}`)
+    if (existing.status === "rejected" && status !== "rejected") throw new Error(`candidate already rejected: ${id}`)
+    if (existing.status === "promoted" && status !== "promoted") throw new Error(`candidate already promoted: ${id}`)
     const cleanReason = cleanOptional(reason)
     const updatedAt = this.timestamp()
     return this.inTransaction(() => {

@@ -1397,6 +1397,9 @@ describe("ResearchDb", () => {
     expect(selected.status).toBe("active")
     expect(needsEvidence.status).toBe("needs_more_evidence")
     expect(rejected.status).toBe("rejected")
+    expect(() => db.selectCandidate("candidate_1")).toThrow("candidate already rejected: candidate_1")
+    expect(() => db.markCandidateNeedsMoreEvidence("candidate_1")).toThrow("candidate already rejected: candidate_1")
+    expect(db.getCandidate("candidate_1")!.status).toBe("rejected")
     expect(db.listResearchEvents({ entity_type: "candidate" }).map((event) => event.event_type)).toEqual([
       "CandidateCreated",
       "CandidateRanked",
@@ -1702,6 +1705,10 @@ describe("ResearchDb", () => {
     expect(promotedEvents()).toHaveLength(1)
     expect(db.promoteCandidate("candidate_1")).toEqual(promotedCandidate)
     expect(promotedEvents()).toHaveLength(1)
+    expect(() => db.selectCandidate("candidate_1")).toThrow("candidate already promoted: candidate_1")
+    expect(() => db.rejectCandidate("candidate_1")).toThrow("candidate already promoted: candidate_1")
+    expect(db.getCandidate("candidate_1")).toEqual(promotedCandidate)
+    expect(promotedEvents()).toHaveLength(1)
 
     db.createCandidate({ candidate_id: "candidate_stale", claim: "Stale", source: "Commander" })
     const staleLink = db.linkCandidateEvidence("candidate_stale", "research_result", "result_1")
@@ -1720,6 +1727,7 @@ describe("ResearchDb", () => {
     })
     db.linkCandidateEvidence("candidate_2", "research_result", "result_2")
     db.rejectCandidate("candidate_2")
+    expect(() => db.selectCandidate("candidate_2")).toThrow("candidate already rejected: candidate_2")
     expect(() => db.promoteCandidate("candidate_2")).toThrow("candidate already rejected")
     db.close()
   })
