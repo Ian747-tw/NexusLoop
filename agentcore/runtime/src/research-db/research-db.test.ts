@@ -1456,6 +1456,26 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("rejected research result events do not satisfy promotion evidence", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.rejectResearchResult("result_1")
+    const rejectedEvent = db.listResearchEvents({ event_type: "ResearchResultRejected" })[0]!.event_id
+
+    expect(() => db.linkCandidateEvidence("candidate_1", "event", rejectedEvent)).toThrow("research event evidence not found")
+    expect(db.canPromoteCandidate("candidate_1")).toEqual({ ok: false, reason: "candidate has no promotion evidence: candidate_1" })
+    db.close()
+  })
+
   test("candidate promotion requires evidence and rejects already rejected candidates", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)
@@ -1536,6 +1556,30 @@ describe("ResearchDb", () => {
       "TrialPlanned",
       "TrialCancelled",
     ])
+    db.close()
+  })
+
+  test("planning a trial enforces candidate hypothesis consistency", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Hypothesis 1", source: "Source" })
+    db.createHypothesis({ hypothesis_id: "hypothesis_2", claim: "Hypothesis 2", source: "Source" })
+    db.createCandidate({ candidate_id: "candidate_1", hypothesis_id: "hypothesis_1", claim: "Candidate", source: "Source" })
+    db.createCandidate({ candidate_id: "candidate_standalone", claim: "Candidate", source: "Source" })
+
+    expect(() =>
+      db.planTrial({ trial_id: "trial_mismatch", hypothesis_id: "hypothesis_2", candidate_id: "candidate_1", trial_kind: "probe", config: {} }),
+    ).toThrow("candidate hypothesis mismatch: candidate_1")
+    expect(() =>
+      db.planTrial({
+        trial_id: "trial_standalone_mismatch",
+        hypothesis_id: "hypothesis_1",
+        candidate_id: "candidate_standalone",
+        trial_kind: "probe",
+        config: {},
+      }),
+    ).toThrow("candidate hypothesis mismatch: candidate_standalone")
+    expect(db.getTrial("trial_mismatch")).toBeNull()
     db.close()
   })
 

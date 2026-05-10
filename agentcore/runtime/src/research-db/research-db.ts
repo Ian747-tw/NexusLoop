@@ -1180,7 +1180,11 @@ export class ResearchDb {
     const hypothesisId = input.hypothesis_id ? cleanId(input.hypothesis_id) : null
     const candidateId = input.candidate_id ? cleanId(input.candidate_id) : null
     if (hypothesisId) this.requireHypothesis(hypothesisId)
-    if (candidateId) this.requireCandidate(candidateId)
+    const candidate = candidateId ? this.getCandidate(candidateId) : null
+    if (candidateId && !candidate) throw new Error(`candidate not found: ${candidateId}`)
+    if (hypothesisId && candidate && candidate.hypothesis_id !== hypothesisId) {
+      throw new Error(`candidate hypothesis mismatch: ${candidateId}`)
+    }
     const trialKind = cleanRequired(input.trial_kind, "trial_kind")
     const config = input.config ?? null
     const inputHash = hashPayload({ hypothesis_id: hypothesisId, candidate_id: candidateId, trial_kind: trialKind, status: "planned", config })
@@ -1701,17 +1705,29 @@ export class ResearchDb {
   }
 
   private isValidEventEvidence(eventId: string): boolean {
-    const row = this.db.query("SELECT entity_type, event_type FROM research_events WHERE event_id = ?").get(eventId) as
-      | Pick<ResearchEventRow, "entity_type" | "event_type">
+    const row = this.db.query("SELECT entity_type, entity_id, event_type FROM research_events WHERE event_id = ?").get(eventId) as
+      | Pick<ResearchEventRow, "entity_type" | "entity_id" | "event_type">
       | null
     if (!row) return false
-    return (
-      row.entity_type === "research_result" ||
-      row.entity_type === "citation" ||
-      row.entity_type === "artifact" ||
-      row.entity_type === "result_citation" ||
-      row.entity_type === "result_artifact"
-    )
+    if (row.event_type === "ResearchResultProposed" || row.event_type === "ResearchResultAccepted") {
+      const result = this.getResearchResult(row.entity_id)
+      return result?.status === "proposed" || result?.status === "accepted"
+    }
+    if (row.event_type === "CitationRecorded") return this.getCitation(row.entity_id) !== null
+    if (row.event_type === "artifact_added") return this.getArtifact(row.entity_id) !== null
+    if (row.event_type === "ResultCitationLinked") {
+      const [resultId, citationId] = row.entity_id.split(":")
+      if (!resultId || !citationId) return false
+      const result = this.getResearchResult(resultId)
+      return (result?.status === "proposed" || result?.status === "accepted") && this.getCitation(citationId) !== null
+    }
+    if (row.event_type === "ResultArtifactLinked") {
+      const [resultId, artifactId] = row.entity_id.split(":")
+      if (!resultId || !artifactId) return false
+      const result = this.getResearchResult(resultId)
+      return (result?.status === "proposed" || result?.status === "accepted") && this.getArtifact(artifactId) !== null
+    }
+    return false
   }
 
   private updateCandidateStatus(candidateId: string, status: CandidateStatus, eventType: string, reason?: string): Candidate {
