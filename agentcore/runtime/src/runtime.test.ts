@@ -489,6 +489,34 @@ describe("RunLock", () => {
     expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(oldLiveRecord)
   })
 
+  test("legacy live pid lock is preserved", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const legacyLock = `${process.pid}\n`
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, legacyLock)
+    const lock = new RunLock(lockPath, { now: lockNow })
+
+    await expect(lock.acquire()).rejects.toThrow("runtime lock already held")
+
+    expect(await readFile(lockPath, "utf8")).toBe(legacyLock)
+  })
+
+  test("legacy dead pid lock is replaced", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, "99999999\n")
+    const lock = new RunLock(lockPath, { now: lockNow })
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+
+    expect(record.pid).toBe(process.pid)
+    expect(typeof record.token).toBe("string")
+    await lock.release()
+  })
+
   test("invalid acquired_at is treated as stale and replaced", async () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")

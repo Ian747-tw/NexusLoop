@@ -8,6 +8,11 @@ interface LockRecord {
   token: string
 }
 
+type LockCandidate =
+  | { raw: string; kind: "modern"; record: LockRecord }
+  | { raw: string; kind: "legacy"; pid: number }
+  | { raw: string; kind: "invalid" }
+
 export interface RunLockOptions {
   staleAfterMs?: number
   now?: () => Date
@@ -60,10 +65,11 @@ export class RunLock {
   private async removeIfStale(): Promise<boolean> {
     const candidate = await this.readLockCandidate()
     if (!candidate) return true
-    if (candidate.record) {
+    if (candidate.kind === "modern") {
       if (this.isProcessLive(candidate.record.pid)) return false
       if (!this.isExpired(candidate.record.acquired_at)) return false
     }
+    if (candidate.kind === "legacy" && this.isProcessLive(candidate.pid)) return false
     await this.beforeRemoveStale?.()
     const current = await this.readLockCandidate()
     if (!current || current.raw !== candidate.raw) return false
@@ -71,26 +77,28 @@ export class RunLock {
     return true
   }
 
-  private async readLockCandidate(): Promise<{ raw: string; record: LockRecord | null } | null> {
+  private async readLockCandidate(): Promise<LockCandidate | null> {
     try {
       const text = await readFile(this.lockPath, "utf8")
-      return { raw: text, record: this.parseLockRecord(text) }
+      return this.parseLockCandidate(text)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
       return null
     }
   }
 
-  private parseLockRecord(text: string): LockRecord | null {
+  private parseLockCandidate(text: string): LockCandidate {
+    const legacyPid = Number(text.trim())
+    if (Number.isInteger(legacyPid) && legacyPid > 0) return { raw: text, kind: "legacy", pid: legacyPid }
     try {
       const raw = JSON.parse(text) as Partial<LockRecord>
       const pid = raw.pid
-      if (!Number.isInteger(pid) || pid === undefined || pid <= 0 || typeof raw.acquired_at !== "string") return null
-      if (typeof raw.token !== "string" || raw.token.length === 0) return null
-      if (Number.isNaN(Date.parse(raw.acquired_at))) return null
-      return { pid, acquired_at: raw.acquired_at, token: raw.token }
+      if (!Number.isInteger(pid) || pid === undefined || pid <= 0 || typeof raw.acquired_at !== "string") return { raw: text, kind: "invalid" }
+      if (typeof raw.token !== "string" || raw.token.length === 0) return { raw: text, kind: "invalid" }
+      if (Number.isNaN(Date.parse(raw.acquired_at))) return { raw: text, kind: "invalid" }
+      return { raw: text, kind: "modern", record: { pid, acquired_at: raw.acquired_at, token: raw.token } }
     } catch {
-      return null
+      return { raw: text, kind: "invalid" }
     }
   }
 
@@ -114,7 +122,7 @@ export class RunLock {
   async release(): Promise<void> {
     if (!this.acquired) return
     const current = await this.readLockCandidate()
-    if (current?.record?.pid === process.pid && current.record.token === this.token) {
+    if (current?.kind === "modern" && current.record.pid === process.pid && current.record.token === this.token) {
       await rm(this.lockPath, { force: true })
     }
     this.acquired = false
