@@ -22,6 +22,15 @@ function openTestDb(projectDir: string): ResearchDb {
   })
 }
 
+function openSequencedTestDb(projectDir: string): ResearchDb {
+  let nextId = 1
+  let nextMs = 0
+  return ResearchDb.open(projectDir, {
+    now: () => new Date(Date.UTC(2026, 4, 10, 12, 0, 0, nextMs++)),
+    idFactory: () => `id_${nextId++}`,
+  })
+}
+
 afterEach(async () => {
   while (cleanup.length) await rm(cleanup.pop()!, { recursive: true, force: true })
 })
@@ -516,6 +525,168 @@ describe("ResearchDb", () => {
     expect(serialized).not.toContain("sk-test-SECRET123456789")
     expect(serialized).not.toContain("Bearer abc.def.ghi12345")
     expect(serialized).not.toContain("plainsecret")
+    expect(serialized).toContain("[REDACTED]")
+    db.close()
+  })
+
+  test("lists research events for all entity kinds in stable order", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.addSource({ id: "source_1", topic_id: "topic_1", locator: "file://source.md", source_type: "file" })
+    db.addNote({ id: "note_1", topic_id: "topic_1", content: "Useful finding" })
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "report", content: "Report" })
+
+    const events = db.listResearchEvents()
+
+    expect(events.map((event) => event.entity_type)).toEqual(["topic", "source", "note", "artifact"])
+    expect(events.map((event) => event.event_type)).toEqual(["topic_created", "source_added", "note_added", "artifact_added"])
+    expect(events.map((event) => event.payload)).toEqual([
+      db.getTopic("topic_1"),
+      db.listSourcesForTopic("topic_1")[0],
+      db.listNotesForTopic("topic_1")[0],
+      db.listArtifactsForTopic("topic_1")[0],
+    ])
+    expect(JSON.stringify(events)).not.toContain("payload_json")
+    db.close()
+  })
+
+  test("filters research events by entity type entity id and event type", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.addSource({ id: "source_1", topic_id: "topic_1", locator: "file://source.md", source_type: "file" })
+    db.addNote({ id: "note_1", topic_id: "topic_1", content: "Useful finding" })
+
+    expect(db.listResearchEvents({ entity_type: "source" }).map((event) => event.entity_id)).toEqual(["source_1"])
+    expect(db.listResearchEvents({ entity_id: " note_1 " }).map((event) => event.event_type)).toEqual(["note_added"])
+    expect(db.listResearchEvents({ event_type: " source_added " }).map((event) => event.entity_type)).toEqual(["source"])
+    expect(() => db.listResearchEvents({ entity_type: "bad" as never })).toThrow("invalid research event entity_type")
+    expect(() => db.listResearchEvents({ entity_id: " " })).toThrow("entity_id is required")
+    expect(() => db.listResearchEvents({ event_type: " " })).toThrow("event_type is required")
+    db.close()
+  })
+
+  test("lists research events strictly after an event id", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.addSource({ id: "source_1", topic_id: "topic_1", locator: "file://source.md", source_type: "file" })
+    db.addNote({ id: "note_1", topic_id: "topic_1", content: "Useful finding" })
+
+    const all = db.listResearchEvents()
+    const afterFirst = db.listResearchEvents({ after_event_id: all[0]!.event_id })
+
+    expect(afterFirst.map((event) => event.event_type)).toEqual(["source_added", "note_added"])
+    expect(() => db.listResearchEvents({ after_event_id: " " })).toThrow("after_event_id is required")
+    expect(() => db.listResearchEvents({ after_event_id: "missing" })).toThrow("research event not found: missing")
+    db.close()
+  })
+
+  test("caps and validates research event limits", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    for (let i = 0; i < 505; i++) db.createTopic({ id: `topic_${i}`, title: `Topic ${i}` })
+
+    expect(db.listResearchEvents({ limit: 2 })).toHaveLength(2)
+    expect(db.listResearchEvents({ limit: 999 })).toHaveLength(500)
+    expect(() => db.listResearchEvents({ limit: 0 })).toThrow("limit must be a positive integer")
+    expect(() => db.listResearchEvents({ limit: 1.5 })).toThrow("limit must be a positive integer")
+    db.close()
+  })
+
+  test("returns topic snapshot with related records stats and latest event", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const topic = db.createTopic({ id: "topic_1", title: "Topic" })
+    const reviewed = db.addSource({ id: "source_1", topic_id: "topic_1", locator: "file://source.md", source_type: "file", status: "reviewed" })
+    const rejected = db.addSource({ id: "source_2", topic_id: "topic_1", locator: "file://rejected.md", source_type: "file", status: "rejected" })
+    const note = db.addNote({ id: "note_1", topic_id: "topic_1", source_id: "source_1", content: "Useful finding" })
+    const artifact = db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "artifact", content: "Artifact" })
+    const report = db.addArtifact({ id: "report_1", topic_id: "topic_1", kind: "report", content: "Report" })
+
+    const snapshot = db.getTopicSnapshot(" topic_1 ")
+
+    expect(snapshot).toEqual({
+      topic,
+      sources: [reviewed, rejected],
+      notes: [note],
+      artifacts: [artifact, report],
+      stats: {
+        source_count: 2,
+        note_count: 1,
+        artifact_count: 2,
+        report_count: 1,
+        reviewed_source_count: 1,
+        rejected_source_count: 1,
+      },
+      latest_event: expect.objectContaining({ event_type: "artifact_added", entity_id: "report_1" }),
+    })
+    db.close()
+  })
+
+  test("topic snapshot returns null for missing topic", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+
+    expect(db.getTopicSnapshot("missing")).toBeNull()
+    expect(() => db.getTopicSnapshot(" ")).toThrow("id is required")
+    db.close()
+  })
+
+  test("searches topics with trimmed query and validates blank query", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const alpha = db.createTopic({ id: "topic_alpha", title: "Alpha retrieval" })
+    db.createTopic({ id: "topic_beta", title: "Beta planning" })
+    const another = db.createTopic({ id: "topic_another", title: "Another alpha result" })
+
+    expect(db.searchTopics(" alpha ")).toEqual([alpha, another])
+    expect(db.searchTopics("alpha", { limit: 1 })).toEqual([alpha])
+    expect(db.searchTopics("alpha", { limit: 999 })).toEqual([alpha, another])
+    expect(() => db.searchTopics(" ")).toThrow("query is required")
+    expect(() => db.searchTopics("alpha", { limit: -1 })).toThrow("limit must be a positive integer")
+    db.close()
+  })
+
+  test("searches notes for an existing topic with trimmed query and validates inputs", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.createTopic({ id: "topic_2", title: "Other topic" })
+    const contentMatch = db.addNote({ id: "note_content", topic_id: "topic_1", content: "Alpha finding", tags: ["probe"] })
+    const tagMatch = db.addNote({ id: "note_tag", topic_id: "topic_1", content: "Different content", tags: ["alpha-tag"] })
+    db.addNote({ id: "note_other_topic", topic_id: "topic_2", content: "Alpha elsewhere" })
+
+    expect(db.searchNotes(" topic_1 ", " alpha ")).toEqual([contentMatch, tagMatch])
+    expect(db.searchNotes("topic_1", "alpha", { limit: 1 })).toEqual([contentMatch])
+    expect(() => db.searchNotes("topic_1", " ")).toThrow("query is required")
+    expect(() => db.searchNotes("missing", "alpha")).toThrow("topic not found: missing")
+    expect(() => db.searchNotes("topic_1", "alpha", { limit: 0 })).toThrow("limit must be a positive integer")
+    db.close()
+  })
+
+  test("new read APIs preserve redaction", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_secret", title: "token=topicSecret123" })
+    db.addSource({ id: "source_secret", topic_id: "topic_secret", locator: "secret=sourceSecret123", source_type: "file" })
+    db.addNote({ id: "note_secret", topic_id: "topic_secret", content: "password=noteSecret123", tags: ["api_key=tagSecret123"] })
+    db.addArtifact({ id: "artifact_secret", topic_id: "topic_secret", kind: "report", content: "sk-artifactSecret123456" })
+
+    const serialized = JSON.stringify({
+      events: db.listResearchEvents(),
+      snapshot: db.getTopicSnapshot("topic_secret"),
+      topics: db.searchTopics("[REDACTED]"),
+      notes: db.searchNotes("topic_secret", "[REDACTED]"),
+    })
+
+    expect(serialized).not.toContain("topicSecret123")
+    expect(serialized).not.toContain("sourceSecret123")
+    expect(serialized).not.toContain("noteSecret123")
+    expect(serialized).not.toContain("tagSecret123")
+    expect(serialized).not.toContain("artifactSecret123456")
     expect(serialized).toContain("[REDACTED]")
     db.close()
   })
