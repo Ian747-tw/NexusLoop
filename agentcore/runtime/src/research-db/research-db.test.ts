@@ -1432,6 +1432,31 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("event evidence link validation preserves IDs containing colons", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    db.proposeResearchResult({
+      result_id: "result:1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "citation:1", source_type: "file", source_uri: "file://evidence.md", quoted_text_or_summary: "Evidence" })
+    db.addArtifact({ id: "artifact:1", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    db.linkResultCitation("result:1", "citation:1")
+    db.linkResultArtifact("result:1", "artifact:1")
+    const citationEvent = db.listResearchEvents({ event_type: "ResultCitationLinked" })[0]!.event_id
+    const artifactEvent = db.listResearchEvents({ event_type: "ResultArtifactLinked" })[0]!.event_id
+
+    expect(db.linkCandidateEvidence("candidate_1", "event", citationEvent).evidence_id).toBe(citationEvent)
+    expect(db.linkCandidateEvidence("candidate_1", "event", artifactEvent).evidence_id).toBe(artifactEvent)
+    db.close()
+  })
+
   test("candidate evidence linking fails clearly for missing candidate or evidence", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)

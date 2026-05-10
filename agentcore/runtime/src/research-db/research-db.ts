@@ -1716,16 +1716,20 @@ export class ResearchDb {
     if (row.event_type === "CitationRecorded") return this.getCitation(row.entity_id) !== null
     if (row.event_type === "artifact_added") return this.getArtifact(row.entity_id) !== null
     if (row.event_type === "ResultCitationLinked") {
-      const [resultId, citationId] = row.entity_id.split(":")
-      if (!resultId || !citationId) return false
-      const result = this.getResearchResult(resultId)
-      return (result?.status === "proposed" || result?.status === "accepted") && this.getCitation(citationId) !== null
+      const link = this.db.query("SELECT result_id, citation_id FROM result_citations WHERE result_id || ':' || citation_id = ?").get(row.entity_id) as
+        | Pick<ResultCitationLink, "result_id" | "citation_id">
+        | null
+      if (!link) return false
+      const result = this.getResearchResult(link.result_id)
+      return (result?.status === "proposed" || result?.status === "accepted") && this.getCitation(link.citation_id) !== null
     }
     if (row.event_type === "ResultArtifactLinked") {
-      const [resultId, artifactId] = row.entity_id.split(":")
-      if (!resultId || !artifactId) return false
-      const result = this.getResearchResult(resultId)
-      return (result?.status === "proposed" || result?.status === "accepted") && this.getArtifact(artifactId) !== null
+      const link = this.db.query("SELECT result_id, artifact_id FROM result_artifacts WHERE result_id || ':' || artifact_id = ?").get(row.entity_id) as
+        | Pick<ResultArtifactLink, "result_id" | "artifact_id">
+        | null
+      if (!link) return false
+      const result = this.getResearchResult(link.result_id)
+      return (result?.status === "proposed" || result?.status === "accepted") && this.getArtifact(link.artifact_id) !== null
     }
     return false
   }
