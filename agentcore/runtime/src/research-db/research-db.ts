@@ -133,13 +133,15 @@ export class ResearchDb {
       throw new Error(`topic id collision: ${id}`)
     }
     const createdAt = this.timestamp()
-    this.db
-      .query("INSERT OR IGNORE INTO topics (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .run(id, redactedTitle, status, createdAt, createdAt)
-    const topic = this.getTopic(id)
-    if (!topic) throw new Error(`failed to create topic: ${id}`)
-    this.recordEvent("topic_created", "topic", id, topic)
-    return topic
+    return this.inTransaction(() => {
+      this.db
+        .query("INSERT INTO topics (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(id, redactedTitle, status, createdAt, createdAt)
+      const topic = this.getTopic(id)
+      if (!topic) throw new Error(`failed to create topic: ${id}`)
+      this.recordEvent("topic_created", "topic", id, topic)
+      return topic
+    })
   }
 
   getTopic(id: string): Topic | null {
@@ -176,24 +178,26 @@ export class ResearchDb {
       throw new Error(`source id collision: ${id}`)
     }
     const createdAt = this.timestamp()
-    this.db
-      .query(
-        "INSERT INTO sources (id, topic_id, locator, title, source_type, status, credibility, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(
-        id,
-        topicId,
-        redactedLocator,
-        redactedTitle,
-        input.source_type,
-        status,
-        redactedCredibility,
-        createdAt,
-      )
-    const source = this.db.query("SELECT * FROM sources WHERE id = ?").get(id) as Source | null
-    if (!source) throw new Error(`failed to add source: ${id}`)
-    this.recordEvent("source_added", "source", id, source)
-    return source
+    return this.inTransaction(() => {
+      this.db
+        .query(
+          "INSERT INTO sources (id, topic_id, locator, title, source_type, status, credibility, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          id,
+          topicId,
+          redactedLocator,
+          redactedTitle,
+          input.source_type,
+          status,
+          redactedCredibility,
+          createdAt,
+        )
+      const source = this.db.query("SELECT * FROM sources WHERE id = ?").get(id) as Source | null
+      if (!source) throw new Error(`failed to add source: ${id}`)
+      this.recordEvent("source_added", "source", id, source)
+      return source
+    })
   }
 
   listSourcesForTopic(topicId: string): Source[] {
@@ -220,14 +224,16 @@ export class ResearchDb {
       throw new Error(`note id collision: ${id}`)
     }
     const createdAt = this.timestamp()
-    this.db
-      .query("INSERT INTO notes (id, topic_id, source_id, content, tags_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(id, topicId, sourceId, redactedContent, redactedTags, createdAt)
-    const row = this.db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null
-    if (!row) throw new Error(`failed to add note: ${id}`)
-    const note = this.noteFromRow(row)
-    this.recordEvent("note_added", "note", id, note)
-    return note
+    return this.inTransaction(() => {
+      this.db
+        .query("INSERT INTO notes (id, topic_id, source_id, content, tags_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(id, topicId, sourceId, redactedContent, redactedTags, createdAt)
+      const row = this.db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null
+      if (!row) throw new Error(`failed to add note: ${id}`)
+      const note = this.noteFromRow(row)
+      this.recordEvent("note_added", "note", id, note)
+      return note
+    })
   }
 
   listNotesForTopic(topicId: string): Note[] {
@@ -252,13 +258,15 @@ export class ResearchDb {
       throw new Error(`artifact id collision: ${id}`)
     }
     const createdAt = this.timestamp()
-    this.db
-      .query("INSERT INTO artifacts (id, topic_id, kind, path, content, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(id, topicId, input.kind, redactedPath, redactedContent, createdAt)
-    const artifact = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as Artifact | null
-    if (!artifact) throw new Error(`failed to add artifact: ${id}`)
-    this.recordEvent("artifact_added", "artifact", id, artifact)
-    return artifact
+    return this.inTransaction(() => {
+      this.db
+        .query("INSERT INTO artifacts (id, topic_id, kind, path, content, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(id, topicId, input.kind, redactedPath, redactedContent, createdAt)
+      const artifact = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as Artifact | null
+      if (!artifact) throw new Error(`failed to add artifact: ${id}`)
+      this.recordEvent("artifact_added", "artifact", id, artifact)
+      return artifact
+    })
   }
 
   listArtifactsForTopic(topicId: string): Artifact[] {
@@ -329,7 +337,19 @@ export class ResearchDb {
       .query(
         "INSERT INTO research_events (event_id, event_type, entity_type, entity_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(this.idFactory(), eventType, entityType, entityId, JSON.stringify(redactValue(payload)), this.timestamp())
+      .run(randomUUID(), eventType, entityType, entityId, JSON.stringify(redactValue(payload)), this.timestamp())
+  }
+
+  private inTransaction<T>(work: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE")
+    try {
+      const result = work()
+      this.db.exec("COMMIT")
+      return result
+    } catch (error) {
+      this.db.exec("ROLLBACK")
+      throw error
+    }
   }
 
   private requireTopic(topicId: string): void {

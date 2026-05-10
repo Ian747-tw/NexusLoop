@@ -173,6 +173,41 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("domain writes roll back when event append fails", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER fail_research_event_insert
+        BEFORE INSERT ON research_events
+        BEGIN
+          SELECT RAISE(ABORT, 'forced event failure');
+        END;
+      `)
+
+      expect(() => db.createTopic({ id: "topic_rollback", title: "Rollback topic" })).toThrow("forced event failure")
+      expect(db.getTopic("topic_rollback")).toBeNull()
+    } finally {
+      sqlite.close()
+      db.close()
+    }
+  })
+
+  test("event IDs are independent from injected entity id factory", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, {
+      now: () => new Date("2026-05-10T12:00:00Z"),
+      idFactory: () => "reused_entity_id",
+    })
+
+    db.createTopic({ id: "topic_1", title: "First topic" })
+    db.createTopic({ id: "topic_2", title: "Second topic" })
+
+    expect(db.listTopics().map((topic) => topic.id)).toEqual(["topic_1", "topic_2"])
+    db.close()
+  })
+
   test("invalid input fails loudly", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
