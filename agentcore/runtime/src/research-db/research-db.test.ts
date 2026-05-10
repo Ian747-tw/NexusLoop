@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -723,5 +724,517 @@ describe("ResearchDb", () => {
     expect(serialized).not.toContain("artifactSecret123456")
     expect(serialized).toContain("[REDACTED]")
     db.close()
+  })
+
+  test("creates typed result citation and link tables on empty DB", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.close()
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      const tables = sqlite
+        .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+        .all()
+        .map((row) => String((row as { name: string }).name))
+      expect(tables).toContain("research_results")
+      expect(tables).toContain("citations")
+      expect(tables).toContain("result_citations")
+      expect(tables).toContain("result_artifacts")
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  test("propose accept and reject research results write events", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+
+    const result = db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "probe_result",
+      title: "Probe passed",
+      summary: "The bounded probe completed.",
+      confidence: "medium",
+      mission_id: "mission_1",
+      created_by: "executor",
+    })
+    const accepted = db.acceptResearchResult(" result_1 ")
+    const rejected = db.rejectResearchResult("result_1", "Superseded by better evidence")
+
+    expect(result.status).toBe("proposed")
+    expect(accepted.status).toBe("accepted")
+    expect(rejected.status).toBe("rejected")
+    expect(db.getResearchResult("result_1")?.status).toBe("rejected")
+    expect(db.listResearchEvents({ entity_type: "research_result" }).map((event) => event.event_type)).toEqual([
+      "ResearchResultProposed",
+      "ResearchResultAccepted",
+      "ResearchResultRejected",
+    ])
+    db.close()
+  })
+
+  test("duplicate explicit result ID is idempotent only for same pre-redaction payload", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const input = {
+      result_id: "result_secret",
+      result_type: "probe_result" as const,
+      title: "token=alpha123",
+      summary: "same summary",
+      confidence: "low" as const,
+      created_by: "commander" as const,
+    }
+
+    const first = db.proposeResearchResult(input)
+    const second = db.proposeResearchResult(input)
+
+    expect(second).toEqual(first)
+    expect(() => db.proposeResearchResult({ ...input, title: "token=beta456" })).toThrow("research result id collision")
+    db.close()
+  })
+
+  test("record citation writes row and event", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+
+    const citation = db.recordCitation({
+      citation_id: "citation_1",
+      source_type: "url",
+      source_uri: "https://example.test/paper",
+      title: "Reference",
+      quoted_text_or_summary: "Supports the result.",
+      metadata: { section: "2" },
+    })
+
+    expect(db.getCitation("citation_1")).toEqual(citation)
+    expect(db.searchCitations({ source_type: "url" })).toEqual([citation])
+    expect(db.listResearchEvents({ entity_type: "citation" }).map((event) => event.event_type)).toEqual(["CitationRecorded"])
+    db.close()
+  })
+
+  test("result citation and artifact links are idempotent", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    const result = db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "finding",
+      title: "Finding",
+      summary: "Supported result",
+      confidence: "high",
+      created_by: "verifier",
+    })
+    const citation = db.recordCitation({
+      citation_id: "citation_1",
+      source_type: "paper",
+      source_uri: "doi:10.0000/example",
+      quoted_text_or_summary: "Paper summary",
+    })
+    const artifact = db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "log", content: "log", produced_by_mission_id: "mission_1" })
+
+    const citationLink = db.linkResultCitation(" result_1 ", " citation_1 ")
+    const artifactLink = db.linkResultArtifact("result_1", "artifact_1")
+
+    expect(db.linkResultCitation("result_1", "citation_1")).toEqual(citationLink)
+    expect(db.linkResultArtifact("result_1", "artifact_1")).toEqual(artifactLink)
+    expect(db.listResultCitations(result.result_id)).toEqual([citation])
+    expect(db.listResultArtifacts(result.result_id)).toEqual([artifact])
+    expect(db.listResearchEvents({ entity_type: "result_citation" })).toHaveLength(1)
+    expect(db.listResearchEvents({ entity_type: "result_artifact" })).toHaveLength(1)
+    db.close()
+  })
+
+  test("accepting evidence-required result requires citation or artifact evidence", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "finding_1",
+      result_type: "finding",
+      title: "Finding",
+      summary: "Needs evidence",
+      confidence: "high",
+      created_by: "commander",
+    })
+
+    expect(() => db.acceptResearchResult("finding_1")).toThrow("requires linked citation or artifact evidence")
+
+    db.recordCitation({
+      citation_id: "citation_1",
+      source_type: "file",
+      source_uri: "file://evidence.md",
+      quoted_text_or_summary: "Evidence summary",
+    })
+    db.linkResultCitation("finding_1", "citation_1")
+
+    expect(db.acceptResearchResult("finding_1").status).toBe("accepted")
+    db.close()
+  })
+
+  test("accepting checkpoint selection requires linked evidence", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "checkpoint_1",
+      result_type: "checkpoint_selection",
+      title: "Select checkpoint",
+      summary: "Checkpoint selected from candidate run.",
+      confidence: "high",
+      created_by: "verifier",
+    })
+
+    expect(() => db.acceptResearchResult("checkpoint_1")).toThrow("requires linked citation or artifact evidence")
+
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "snapshot", content: "checkpoint metadata" })
+    db.linkResultArtifact("checkpoint_1", "artifact_1")
+
+    expect(db.acceptResearchResult("checkpoint_1").status).toBe("accepted")
+    db.close()
+  })
+
+  test("accepting evaluation result requires linked evidence", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "evaluation_1",
+      result_type: "evaluation_result",
+      title: "Evaluation result",
+      summary: "Evaluation completed.",
+      confidence: "medium",
+      created_by: "verifier",
+    })
+
+    expect(() => db.acceptResearchResult("evaluation_1")).toThrow("requires linked citation or artifact evidence")
+
+    db.recordCitation({
+      citation_id: "citation_1",
+      source_type: "file",
+      source_uri: "file://evaluation.md",
+      quoted_text_or_summary: "Evaluation evidence summary",
+    })
+    db.linkResultCitation("evaluation_1", "citation_1")
+
+    expect(db.acceptResearchResult("evaluation_1").status).toBe("accepted")
+    db.close()
+  })
+
+  test("accepting full training result requires linked evidence", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "training_1",
+      result_type: "full_training_result",
+      title: "Full training result",
+      summary: "Training completed.",
+      confidence: "medium",
+      metrics: { loss: 0.25 },
+      created_by: "executor",
+    })
+
+    expect(() => db.acceptResearchResult("training_1")).toThrow("requires linked citation or artifact evidence")
+
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "log", content: "training log" })
+    db.linkResultArtifact("training_1", "artifact_1")
+
+    expect(db.acceptResearchResult("training_1").status).toBe("accepted")
+    db.close()
+  })
+
+  test("accepting an already accepted result is idempotent", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Accepted once",
+      confidence: "medium",
+      created_by: "executor",
+    })
+
+    const first = db.acceptResearchResult("result_1")
+    const second = db.acceptResearchResult("result_1")
+
+    expect(second).toEqual(first)
+    expect(db.listResearchEvents({ event_type: "ResearchResultAccepted" })).toHaveLength(1)
+    db.close()
+  })
+
+  test("artifact recording preserves the existing artifact_added event type", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "report", content: "Report", description: "metadata" })
+
+    expect(db.listResearchEvents({ entity_type: "artifact" }).map((event) => event.event_type)).toEqual(["artifact_added"])
+    db.close()
+  })
+
+  test("result citation and artifact payloads are redacted before storage and return", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+
+    const result = db.proposeResearchResult({
+      result_id: "result_secret",
+      result_type: "implementation_change",
+      title: "token=resultSecret123",
+      summary: "password=summarySecret123",
+      confidence: "medium",
+      metrics: { token: "metricSecret123" },
+      reproduction: { command: "API_KEY=reproSecret123 bun test" },
+      created_by: "executor",
+    })
+    const citation = db.recordCitation({
+      citation_id: "citation_secret",
+      source_type: "url",
+      source_uri: "https://example.test/?token=citationSecret123",
+      quoted_text_or_summary: "secret=citationSummary123",
+      metadata: { bearer: "Bearer citationMetadata123" },
+    })
+    const artifact = db.addArtifact({
+      id: "artifact_secret",
+      topic_id: "topic_1",
+      kind: "report",
+      content: "sk-artifactSecret123456",
+      description: "token=artifactDescription123",
+    })
+
+    const serialized = JSON.stringify({ result, citation, artifact, events: db.listResearchEvents() })
+    expect(serialized).not.toContain("resultSecret123")
+    expect(serialized).not.toContain("summarySecret123")
+    expect(serialized).not.toContain("metricSecret123")
+    expect(serialized).not.toContain("reproSecret123")
+    expect(serialized).not.toContain("citationSecret123")
+    expect(serialized).not.toContain("citationSummary123")
+    expect(serialized).not.toContain("citationMetadata123")
+    expect(serialized).not.toContain("artifactSecret123456")
+    expect(serialized).not.toContain("artifactDescription123")
+    expect(serialized).toContain("[REDACTED]")
+    db.close()
+  })
+
+  test("mission and research-result write barriers report missing evidence", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+
+    expect(db.canCompleteMission("mission_1")).toEqual({ ok: false, reason: "mission has no result evidence: mission_1" })
+    expect(() => db.assertMissionHasResultEvidence("mission_1")).toThrow("mission has no result evidence")
+
+    db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Mission evidence",
+      confidence: "medium",
+      mission_id: "mission_1",
+      created_by: "executor",
+    })
+    expect(db.canCompleteMission("mission_1")).toEqual({ ok: true })
+
+    expect(db.canCompleteMission("mission_2")).toEqual({ ok: false, reason: "mission has no result evidence: mission_2" })
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "log", content: "log", produced_by_mission_id: "mission_2" })
+    expect(db.canCompleteMission("mission_2")).toEqual({ ok: true })
+    db.close()
+  })
+
+  test("migration from DB without typed result tables succeeds", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TABLE topics (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO topics VALUES ('topic_1', 'Topic', 'open', 'legacy-hash', '2026-05-10T12:00:00.000Z', '2026-05-10T12:00:00.000Z');
+      `)
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openTestDb(dir)
+    expect(db.getTopic("topic_1")?.title).toBe("Topic")
+    expect(db.searchResearchResults()).toEqual([])
+    expect(db.searchCitations()).toEqual([])
+    db.close()
+  })
+
+  test("upgraded artifacts keep idempotent explicit ID compatibility with old hashes", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const oldArtifactHash = createHash("sha256")
+      .update(JSON.stringify({ topic_id: "topic_1", kind: "report", path: null, content: "Legacy report" }))
+      .digest("hex")
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TABLE topics (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE artifacts (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          path TEXT,
+          content TEXT,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          CHECK (path IS NOT NULL OR content IS NOT NULL)
+        );
+        INSERT INTO topics VALUES ('topic_1', 'Topic', 'open', 'legacy-topic-hash', '2026-05-10T12:00:00.000Z', '2026-05-10T12:00:00.000Z');
+      `)
+      sqlite
+        .query("INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run("artifact_legacy", "topic_1", "report", null, "Legacy report", oldArtifactHash, "2026-05-10T12:00:00.000Z")
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openTestDb(dir)
+    expect(db.addArtifact({ id: "artifact_legacy", topic_id: "topic_1", kind: "report", content: "Legacy report" }).id).toBe("artifact_legacy")
+    db.close()
+  })
+
+  test("citation explicit ID retry is idempotent when accessed_at is generated", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const input = {
+      citation_id: "citation_1",
+      source_type: "url" as const,
+      source_uri: "https://example.test",
+      quoted_text_or_summary: "Evidence",
+    }
+
+    const first = db.recordCitation(input)
+    const second = db.recordCitation(input)
+
+    expect(second).toEqual(first)
+    expect(db.searchCitations()).toHaveLength(1)
+    expect(() => db.recordCitation({ ...input, quoted_text_or_summary: "Different evidence" })).toThrow("citation id collision")
+    db.close()
+  })
+
+  test("citation explicit ID retry accepts returned generated accessed_at", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+
+    const first = db.recordCitation({
+      citation_id: "citation_1",
+      source_type: "url",
+      source_uri: "https://example.test",
+      quoted_text_or_summary: "Evidence",
+    })
+    const second = db.recordCitation({
+      citation_id: first.citation_id,
+      source_type: first.source_type,
+      source_uri: first.source_uri,
+      title: first.title ?? undefined,
+      quoted_text_or_summary: first.quoted_text_or_summary,
+      accessed_at: first.accessed_at,
+      sha256: first.sha256 ?? undefined,
+      metadata: first.metadata,
+    })
+
+    expect(second).toEqual(first)
+    expect(db.searchCitations()).toHaveLength(1)
+    db.close()
+  })
+
+  test("typed result write rolls back when event append fails", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER fail_research_result_event_insert
+        BEFORE INSERT ON research_events
+        WHEN NEW.event_type = 'ResearchResultProposed'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced typed event failure');
+        END;
+      `)
+
+      expect(() =>
+        db.proposeResearchResult({
+          result_id: "result_rollback",
+          result_type: "probe_result",
+          title: "Rollback",
+          summary: "Rollback",
+          confidence: "low",
+          created_by: "system",
+        }),
+      ).toThrow("forced typed event failure")
+      expect(db.getResearchResult("result_rollback")).toBeNull()
+    } finally {
+      sqlite.close()
+      db.close()
+    }
+  })
+
+  test("citation and link writes roll back when event append fails", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({
+      citation_id: "citation_1",
+      source_type: "url",
+      source_uri: "https://example.test",
+      quoted_text_or_summary: "Evidence",
+    })
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "log", content: "Log" })
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER fail_citation_event_insert
+        BEFORE INSERT ON research_events
+        WHEN NEW.event_type IN ('CitationRecorded', 'ResultCitationLinked', 'ResultArtifactLinked')
+        BEGIN
+          SELECT RAISE(ABORT, 'forced citation/link event failure');
+        END;
+      `)
+
+      expect(() =>
+        db.recordCitation({
+          citation_id: "citation_rollback",
+          source_type: "file",
+          source_uri: "file://rollback.md",
+          quoted_text_or_summary: "Rollback",
+        }),
+      ).toThrow("forced citation/link event failure")
+      expect(db.getCitation("citation_rollback")).toBeNull()
+
+      expect(() => db.linkResultCitation("result_1", "citation_1")).toThrow("forced citation/link event failure")
+      expect(db.listResultCitations("result_1")).toEqual([])
+
+      expect(() => db.linkResultArtifact("result_1", "artifact_1")).toThrow("forced citation/link event failure")
+      expect(db.listResultArtifacts("result_1")).toEqual([])
+    } finally {
+      sqlite.close()
+      db.close()
+    }
   })
 })
