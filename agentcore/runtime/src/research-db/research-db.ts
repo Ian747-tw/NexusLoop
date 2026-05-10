@@ -503,7 +503,11 @@ function redactString(value: string): string {
 
 function parseTags(value: string | null): string[] {
   if (!value) return []
-  const parsed = JSON.parse(value) as unknown
-  if (!Array.isArray(parsed) || !parsed.every((tag) => typeof tag === "string")) return []
-  return parsed
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!Array.isArray(parsed) || !parsed.every((tag) => typeof tag === "string")) return []
+    return parsed
+  } catch {
+    return []
+  }
 }

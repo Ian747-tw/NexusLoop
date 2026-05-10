@@ -202,6 +202,39 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("malformed legacy note tags do not abort open or backfill", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TABLE topics (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE notes (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          source_id TEXT,
+          content TEXT NOT NULL,
+          tags_json TEXT,
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO topics VALUES ('topic_1', 'Topic', 'open', '2026-05-10T12:00:00.000Z', '2026-05-10T12:00:00.000Z');
+        INSERT INTO notes VALUES ('note_1', 'topic_1', NULL, 'Legacy note', 'not-json', '2026-05-10T12:00:00.000Z');
+      `)
+    } finally {
+      sqlite.close()
+    }
+
+    const reopened = openTestDb(dir)
+    expect(reopened.listNotesForTopic("topic_1")[0]?.tags).toEqual([])
+    reopened.close()
+  })
+
   test("duplicate explicit IDs are idempotent", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
