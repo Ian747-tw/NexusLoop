@@ -724,6 +724,16 @@ export class ResearchDb {
       const existing = this.db.query("SELECT * FROM citations WHERE citation_id = ?").get(citationId) as CitationRow | null
       if (existing) {
         if (existing.input_hash === inputHash) return this.citationFromRow(existing)
+        const generatedAccessedAtHash = hashPayload({
+          source_type: input.source_type,
+          source_uri: sourceUri,
+          title,
+          quoted_text_or_summary: quoted,
+          accessed_at: null,
+          sha256,
+          metadata,
+        })
+        if (callerAccessedAt === existing.accessed_at && existing.input_hash === generatedAccessedAtHash) return this.citationFromRow(existing)
         throw new Error(`citation id collision: ${citationId}`)
       }
       this.db

@@ -1129,6 +1129,32 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("citation explicit ID retry accepts returned generated accessed_at", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+
+    const first = db.recordCitation({
+      citation_id: "citation_1",
+      source_type: "url",
+      source_uri: "https://example.test",
+      quoted_text_or_summary: "Evidence",
+    })
+    const second = db.recordCitation({
+      citation_id: first.citation_id,
+      source_type: first.source_type,
+      source_uri: first.source_uri,
+      title: first.title ?? undefined,
+      quoted_text_or_summary: first.quoted_text_or_summary,
+      accessed_at: first.accessed_at,
+      sha256: first.sha256 ?? undefined,
+      metadata: first.metadata,
+    })
+
+    expect(second).toEqual(first)
+    expect(db.searchCitations()).toHaveLength(1)
+    db.close()
+  })
+
   test("typed result write rolls back when event append fails", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
