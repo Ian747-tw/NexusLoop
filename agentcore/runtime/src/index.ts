@@ -1,4 +1,5 @@
 export { RuntimeServer } from "./server"
+export type { RuntimeResearchDbReader, RuntimeServerOptions } from "./server"
 export { EventStore } from "./events/event-store"
 export { RuntimeEventBus } from "./events/event-bus"
 export type { RuntimeEvent, RuntimeMode, RuntimeStatus } from "./events/event-types"

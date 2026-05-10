@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
+import type { RuntimeResearchDbReader } from "./server"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
@@ -12,6 +13,7 @@ import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
 import { RunLock } from "./project/run-lock"
+import { ResearchDb, type ListResearchEventsOptions, type Note, type ResearchEvent, type SearchOptions, type Topic, type TopicSnapshot } from "./research-db/research-db"
 
 const cleanup: string[] = []
 
@@ -100,6 +102,63 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
 
   async getStatus(): Promise<Record<string, unknown>> {
     return { adapter: "long-lived", message: "long stream adapter" }
+  }
+}
+
+class TrackingResearchDb implements RuntimeResearchDbReader {
+  closeCalls = 0
+
+  constructor(private readonly db: ResearchDb) {}
+
+  listTopics(): Topic[] {
+    return this.db.listTopics()
+  }
+
+  searchTopics(query: string, options?: SearchOptions): Topic[] {
+    return this.db.searchTopics(query, options)
+  }
+
+  getTopicSnapshot(topicId: string): TopicSnapshot | null {
+    return this.db.getTopicSnapshot(topicId)
+  }
+
+  listResearchEvents(options?: ListResearchEventsOptions): ResearchEvent[] {
+    return this.db.listResearchEvents(options)
+  }
+
+  searchNotes(topicId: string, query: string, options?: SearchOptions): Note[] {
+    return this.db.searchNotes(topicId, query, options)
+  }
+
+  close(): void {
+    this.closeCalls += 1
+    this.db.close()
+  }
+}
+
+function seedResearchDb(dir: string): void {
+  const db = ResearchDb.open(dir, {
+    now: (() => {
+      let nextMs = 0
+      return () => new Date(Date.UTC(2026, 4, 10, 12, 0, 0, nextMs++))
+    })(),
+    idFactory: () => "unused",
+  })
+  try {
+    db.createTopic({ id: "topic_1", title: "Runtime records", status: "active" })
+    db.createTopic({ id: "topic_2", title: "Other topic" })
+    db.addSource({
+      id: "source_1",
+      topic_id: "topic_1",
+      locator: "file://runtime.md",
+      title: "Runtime note source",
+      source_type: "file",
+      status: "reviewed",
+    })
+    db.addNote({ id: "note_1", topic_id: "topic_1", source_id: "source_1", content: "Projected research note", tags: ["finding"] })
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "report", content: "Projected report" })
+  } finally {
+    db.close()
   }
 }
 
@@ -383,6 +442,136 @@ describe("RuntimeServer core", () => {
     expect(serialized).not.toContain("Bearer abc.def.ghi12345")
     expect(serialized).toContain("[REDACTED]")
     await server.shutdown()
+  })
+
+  test("research records read surface works in active mode without starting executor sessions", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    seedResearchDb(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    expect(server.listResearchTopics().map((topic) => topic.id)).toEqual(["topic_1", "topic_2"])
+    const snapshot = server.getResearchTopicSnapshot("topic_1")
+    expect(snapshot?.topic.id).toBe("topic_1")
+    expect(snapshot?.stats).toMatchObject({ source_count: 1, note_count: 1, artifact_count: 1, report_count: 1 })
+    expect(server.searchResearchNotes("topic_1", "Projected")).toHaveLength(1)
+    expect(server.listResearchEvents({ entity_type: "note" }).map((event) => event.event_type)).toEqual(["note_added"])
+
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
+  test("research records read surface works in status mode without approved spec", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter })
+
+    await server.start()
+    expect(server.getResearchTopicSnapshot("topic_1")?.notes[0]?.content).toBe("Projected research note")
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
+  test("research records read surface works in view-records mode without approved spec", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records", adapter })
+
+    await server.start()
+    expect(await server.command("research.get_topic_snapshot", { topicId: "topic_1" })).toMatchObject({
+      topic: { id: "topic_1" },
+      stats: { note_count: 1 },
+    })
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
+  test("missing research topic snapshot returns null", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records" })
+
+    expect(server.getResearchTopicSnapshot("missing")).toBeNull()
+    await server.shutdown()
+  })
+
+  test("research event reads return parsed redacted events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const db = ResearchDb.open(dir)
+    try {
+      db.createTopic({ id: "topic_secret", title: "token=topicSecret123" })
+    } finally {
+      db.close()
+    }
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records" })
+
+    const events = server.listResearchEvents({ entity_type: "topic" })
+
+    expect(events).toHaveLength(1)
+    expect(events[0]?.payload).toMatchObject({ title: "[REDACTED]" })
+    expect(JSON.stringify(events)).not.toContain("topicSecret123")
+    await server.shutdown()
+  })
+
+  test("research records commands fail clearly on invalid input", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records" })
+
+    await expect(server.command("research.get_topic_snapshot", {})).rejects.toThrow("topicId is required")
+    await expect(server.command("research.search_notes", { topicId: "topic_1", query: "" })).rejects.toThrow("query is required")
+    await expect(server.command("research.list_events", { options: [] })).rejects.toThrow("options must be an object")
+    await expect(server.command("research.list_events", { options: { entity_type: "bad" } })).rejects.toThrow("invalid research event entity_type: bad")
+
+    await server.shutdown()
+  })
+
+  test("owned ResearchDb handle is opened lazily reused and closed on shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    let factoryCalls = 0
+    const opened: { current: TrackingResearchDb | null } = { current: null }
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "view-records",
+      researchDbFactory: (projectDir) => {
+        factoryCalls += 1
+        opened.current = new TrackingResearchDb(ResearchDb.open(projectDir))
+        return opened.current
+      },
+    })
+
+    expect(server.getResearchTopicSnapshot("topic_1")?.topic.id).toBe("topic_1")
+    expect(server.listResearchEvents()).not.toHaveLength(0)
+    expect(factoryCalls).toBe(1)
+
+    await server.shutdown()
+
+    expect(opened.current?.closeCalls).toBe(1)
+  })
+
+  test("injected ResearchDb handle is caller-owned and not closed on shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    const injected = new TrackingResearchDb(ResearchDb.open(dir))
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records", researchDb: injected })
+
+    expect(server.getResearchTopicSnapshot("topic_1")?.topic.id).toBe("topic_1")
+    await server.shutdown()
+
+    expect(injected.closeCalls).toBe(0)
+    expect(injected.listTopics().map((topic) => topic.id)).toContain("topic_1")
+    injected.close()
   })
 })
 
