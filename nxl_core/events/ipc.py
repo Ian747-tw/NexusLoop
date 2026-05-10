@@ -116,11 +116,19 @@ class EventEmissionClient:
         # Serialize and send
         line = _json_dumps(msg) + "\n"
         with self._lock:
-            if hasattr(self._stdout, "buffer"):
-                self._stdout.buffer.write(line.encode("utf-8"))
-            else:
-                self._stdout.write(line)
-            self._stdout.flush()
+            try:
+                if hasattr(self._stdout, "buffer"):
+                    self._stdout.buffer.write(line.encode("utf-8"))
+                else:
+                    try:
+                        self._stdout.write(line)
+                    except TypeError:
+                        self._stdout.write(line.encode("utf-8"))
+                self._stdout.flush()
+            except BrokenPipeError:
+                raise EventEmissionError(
+                    f"event emission pipe is closed for request_id={request_id}"
+                )
 
             # Read ack — line is "kind": "EventEmissionAck" with matching request_id
             deadline = time.monotonic() + self._timeout
