@@ -104,7 +104,7 @@ describe("ResearchDb", () => {
     const db = openTestDb(dir)
     db.createTopic({ id: "topic_1", title: "Topic" })
 
-    const report = db.addArtifact({ id: "report_1", topic_id: "topic_1", kind: "report", content: "Final summary" })
+    const report = db.addArtifact({ id: "report_1", topic_id: "topic_1", kind: "report", content: " Final summary " })
 
     expect(report.kind).toBe("report")
     expect(report.content).toBe("Final summary")
@@ -194,6 +194,27 @@ describe("ResearchDb", () => {
     }
   })
 
+  test("transaction wrapper preserves the original sqlite failure when rollback already happened", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER rollback_research_event_insert
+        BEFORE INSERT ON research_events
+        BEGIN
+          SELECT RAISE(ROLLBACK, 'forced rollback failure');
+        END;
+      `)
+
+      expect(() => db.createTopic({ id: "topic_rollback", title: "Rollback topic" })).toThrow("forced rollback failure")
+      expect(db.getTopic("topic_rollback")).toBeNull()
+    } finally {
+      sqlite.close()
+      db.close()
+    }
+  })
+
   test("event IDs are independent from injected entity id factory", async () => {
     const dir = await tempProject()
     const db = ResearchDb.open(dir, {
@@ -220,6 +241,8 @@ describe("ResearchDb", () => {
     expect(() => db.addSource({ topic_id: "topic_1", locator: "x", source_type: "url", status: "bad" as never })).toThrow("invalid source status")
     expect(() => db.addArtifact({ topic_id: "topic_1", kind: "bad" as never, content: "x" })).toThrow("invalid artifact kind")
     expect(() => db.addArtifact({ topic_id: "topic_1", kind: "report" })).toThrow("artifact requires path or content")
+    expect(() => db.addArtifact({ topic_id: "topic_1", kind: "report", content: "   " })).toThrow("artifact requires path or content")
+    expect(() => db.addArtifact({ topic_id: "topic_1", kind: "report", path: "   " })).toThrow("artifact requires path or content")
     db.close()
   })
 

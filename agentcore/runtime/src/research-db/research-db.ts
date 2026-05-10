@@ -249,9 +249,11 @@ export class ResearchDb {
     this.requireTopic(topicId)
     const id = cleanId(input.id ?? this.idFactory())
     assertAllowed(ARTIFACT_KINDS, input.kind, "artifact kind")
-    if (!input.path && !input.content) throw new Error("artifact requires path or content")
-    const redactedPath = input.path ? redactString(input.path) : null
-    const redactedContent = input.content ? redactString(input.content) : null
+    const path = cleanOptional(input.path)
+    const content = cleanOptional(input.content)
+    if (!path && !content) throw new Error("artifact requires path or content")
+    const redactedPath = path ? redactString(path) : null
+    const redactedContent = content ? redactString(content) : null
     const existing = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as Artifact | null
     if (existing) {
       if (existing.topic_id === topicId && existing.kind === input.kind && existing.path === redactedPath && existing.content === redactedContent) return existing
@@ -347,7 +349,11 @@ export class ResearchDb {
       this.db.exec("COMMIT")
       return result
     } catch (error) {
-      this.db.exec("ROLLBACK")
+      try {
+        this.db.exec("ROLLBACK")
+      } catch {
+        // SQLite may already have rolled the transaction back; keep the original failure visible.
+      }
       throw error
     }
   }
@@ -383,6 +389,12 @@ function cleanRequired(value: string, field: string): string {
   const trimmed = value.trim()
   if (!trimmed) throw new Error(`${field} is required`)
   return trimmed
+}
+
+function cleanOptional(value: string | undefined): string | null {
+  if (value === undefined) return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
 }
 
 function assertAllowed<T extends string>(allowed: Set<T>, value: string, field: string): asserts value is T {
