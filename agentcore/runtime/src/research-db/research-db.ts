@@ -1028,6 +1028,7 @@ export class ResearchDb {
     const source = cleanRequired(input.source, "source")
     const status = input.status ?? "active"
     assertAllowed(CANDIDATE_STATUSES, status, "candidate status")
+    if (status === "promoted") throw new Error("candidate cannot be created as promoted")
     const inputHash = hashPayload({ hypothesis_id: hypothesisId, claim, source, status })
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
@@ -1124,10 +1125,11 @@ export class ResearchDb {
 
   promoteCandidate(candidateId: string): Candidate {
     const id = cleanId(candidateId)
-    this.assertCandidateHasPromotionEvidence(id)
     const candidate = this.getCandidate(id)
     if (!candidate) throw new Error(`candidate not found: ${id}`)
     if (candidate.status === "rejected") throw new Error(`candidate already rejected: ${id}`)
+    if (candidate.status === "promoted") return candidate
+    this.assertCandidateHasPromotionEvidence(id)
     return this.updateCandidateStatus(id, "promoted", "CandidatePromoted")
   }
 

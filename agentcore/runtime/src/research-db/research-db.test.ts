@@ -1368,6 +1368,9 @@ describe("ResearchDb", () => {
     expect(standalone.hypothesis_id).toBeNull()
     expect(db.listResearchEvents({ entity_type: "candidate" }).map((event) => event.event_type)).toEqual(["CandidateCreated", "CandidateCreated"])
     expect(() => db.createCandidate({ ...input, claim: "Different" })).toThrow("candidate id collision")
+    expect(() => db.createCandidate({ candidate_id: "candidate_promoted", claim: "Promoted", source: "Commander", status: "promoted" })).toThrow(
+      "candidate cannot be created as promoted",
+    )
     expect(() => db.createCandidate({ candidate_id: "candidate_missing", hypothesis_id: "missing", claim: "Candidate", source: "Source" })).toThrow(
       "hypothesis not found",
     )
@@ -1694,7 +1697,11 @@ describe("ResearchDb", () => {
     db.linkCandidateEvidence("candidate_1", "research_result", "result_1")
     expect(db.proposeCandidatePromotion("candidate_1", ["result_1"])).toEqual(expect.objectContaining({ candidate_id: "candidate_1" }))
     expect(db.promoteCandidate("candidate_1").status).toBe("promoted")
-    expect(db.listResearchEvents({ entity_type: "candidate" }).map((event) => event.event_type)).toContain("CandidatePromoted")
+    const promotedCandidate = db.getCandidate("candidate_1")!
+    const promotedEvents = () => db.listResearchEvents({ entity_type: "candidate" }).filter((event) => event.event_type === "CandidatePromoted")
+    expect(promotedEvents()).toHaveLength(1)
+    expect(db.promoteCandidate("candidate_1")).toEqual(promotedCandidate)
+    expect(promotedEvents()).toHaveLength(1)
 
     db.createCandidate({ candidate_id: "candidate_stale", claim: "Stale", source: "Commander" })
     const staleLink = db.linkCandidateEvidence("candidate_stale", "research_result", "result_1")
