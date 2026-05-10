@@ -81,6 +81,7 @@ describe("ResearchDb", () => {
     })
 
     expect(db.listSourcesForTopic("topic_1")).toEqual([source])
+    expect(db.listSourcesForTopic(" topic_1 ")).toEqual([source])
     db.close()
   })
 
@@ -94,6 +95,7 @@ describe("ResearchDb", () => {
 
     expect(note.tags).toEqual(["probe", "finding"])
     expect(db.listNotesForTopic("topic_1")).toEqual([note])
+    expect(db.listNotesForTopic(" topic_1 ")).toEqual([note])
     db.close()
   })
 
@@ -107,6 +109,7 @@ describe("ResearchDb", () => {
     expect(report.kind).toBe("report")
     expect(report.content).toBe("Final summary")
     expect(db.listArtifactsForTopic("topic_1")).toEqual([report])
+    expect(db.listArtifactsForTopic(" topic_1 ")).toEqual([report])
     db.close()
   })
 
@@ -148,6 +151,26 @@ describe("ResearchDb", () => {
     } finally {
       sqlite.close()
     }
+  })
+
+  test("duplicate explicit IDs fail on conflicting payloads", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Same topic" })
+    db.createTopic({ id: "topic_2", title: "Other topic" })
+    db.addSource({ id: "source_1", topic_id: "topic_1", locator: "https://example.test/a", source_type: "url" })
+    db.addNote({ id: "note_1", topic_id: "topic_1", content: "original" })
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "report", content: "original" })
+
+    expect(() => db.createTopic({ id: "topic_1", title: "Different topic" })).toThrow("topic id collision")
+    expect(() => db.addSource({ id: "source_1", topic_id: "topic_2", locator: "https://example.test/b", source_type: "url" })).toThrow(
+      "source id collision",
+    )
+    expect(() => db.addNote({ id: "note_1", topic_id: "topic_1", content: "changed" })).toThrow("note id collision")
+    expect(() => db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "report", content: "changed" })).toThrow(
+      "artifact id collision",
+    )
+    db.close()
   })
 
   test("invalid input fails loudly", async () => {

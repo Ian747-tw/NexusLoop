@@ -126,13 +126,19 @@ export class ResearchDb {
     const title = cleanRequired(input.title, "title")
     const status = input.status ?? "open"
     assertAllowed(TOPIC_STATUSES, status, "topic status")
+    const redactedTitle = redactString(title)
+    const existing = this.getTopic(id)
+    if (existing) {
+      if (existing.title === redactedTitle && existing.status === status) return existing
+      throw new Error(`topic id collision: ${id}`)
+    }
     const createdAt = this.timestamp()
-    const result = this.db
+    this.db
       .query("INSERT OR IGNORE INTO topics (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .run(id, redactString(title), status, createdAt, createdAt)
+      .run(id, redactedTitle, status, createdAt, createdAt)
     const topic = this.getTopic(id)
     if (!topic) throw new Error(`failed to create topic: ${id}`)
-    if (result.changes > 0) this.recordEvent("topic_created", "topic", id, topic)
+    this.recordEvent("topic_created", "topic", id, topic)
     return topic
   }
 
@@ -152,30 +158,48 @@ export class ResearchDb {
     assertAllowed(SOURCE_TYPES, input.source_type, "source type")
     const status = input.status ?? "new"
     assertAllowed(SOURCE_STATUSES, status, "source status")
+    const redactedLocator = redactString(locator)
+    const redactedTitle = input.title ? redactString(input.title) : null
+    const redactedCredibility = input.credibility ? redactString(input.credibility) : null
+    const existing = this.db.query("SELECT * FROM sources WHERE id = ?").get(id) as Source | null
+    if (existing) {
+      if (
+        existing.topic_id === topicId &&
+        existing.locator === redactedLocator &&
+        existing.title === redactedTitle &&
+        existing.source_type === input.source_type &&
+        existing.status === status &&
+        existing.credibility === redactedCredibility
+      ) {
+        return existing
+      }
+      throw new Error(`source id collision: ${id}`)
+    }
     const createdAt = this.timestamp()
-    const result = this.db
+    this.db
       .query(
-        "INSERT OR IGNORE INTO sources (id, topic_id, locator, title, source_type, status, credibility, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sources (id, topic_id, locator, title, source_type, status, credibility, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id,
         topicId,
-        redactString(locator),
-        input.title ? redactString(input.title) : null,
+        redactedLocator,
+        redactedTitle,
         input.source_type,
         status,
-        input.credibility ? redactString(input.credibility) : null,
+        redactedCredibility,
         createdAt,
       )
     const source = this.db.query("SELECT * FROM sources WHERE id = ?").get(id) as Source | null
     if (!source) throw new Error(`failed to add source: ${id}`)
-    if (result.changes > 0) this.recordEvent("source_added", "source", id, source)
+    this.recordEvent("source_added", "source", id, source)
     return source
   }
 
   listSourcesForTopic(topicId: string): Source[] {
-    this.requireTopic(cleanId(topicId))
-    return this.db.query("SELECT * FROM sources WHERE topic_id = ? ORDER BY created_at, id").all(topicId) as Source[]
+    const id = cleanId(topicId)
+    this.requireTopic(id)
+    return this.db.query("SELECT * FROM sources WHERE topic_id = ? ORDER BY created_at, id").all(id) as Source[]
   }
 
   addNote(input: NoteInput): Note {
@@ -186,20 +210,30 @@ export class ResearchDb {
     const id = cleanId(input.id ?? this.idFactory())
     const content = cleanRequired(input.content, "content")
     const tags = input.tags ?? []
+    const redactedContent = redactString(content)
+    const redactedTags = JSON.stringify(redactValue(tags))
+    const existing = this.noteFromRow(this.db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null)
+    if (existing) {
+      if (existing.topic_id === topicId && existing.source_id === sourceId && existing.content === redactedContent && JSON.stringify(existing.tags) === redactedTags) {
+        return existing
+      }
+      throw new Error(`note id collision: ${id}`)
+    }
     const createdAt = this.timestamp()
-    const result = this.db
-      .query("INSERT OR IGNORE INTO notes (id, topic_id, source_id, content, tags_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(id, topicId, sourceId, redactString(content), JSON.stringify(redactValue(tags)), createdAt)
+    this.db
+      .query("INSERT INTO notes (id, topic_id, source_id, content, tags_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, topicId, sourceId, redactedContent, redactedTags, createdAt)
     const row = this.db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null
     if (!row) throw new Error(`failed to add note: ${id}`)
     const note = this.noteFromRow(row)
-    if (result.changes > 0) this.recordEvent("note_added", "note", id, note)
+    this.recordEvent("note_added", "note", id, note)
     return note
   }
 
   listNotesForTopic(topicId: string): Note[] {
-    this.requireTopic(cleanId(topicId))
-    return (this.db.query("SELECT * FROM notes WHERE topic_id = ? ORDER BY created_at, id").all(topicId) as NoteRow[]).map((row) =>
+    const id = cleanId(topicId)
+    this.requireTopic(id)
+    return (this.db.query("SELECT * FROM notes WHERE topic_id = ? ORDER BY created_at, id").all(id) as NoteRow[]).map((row) =>
       this.noteFromRow(row),
     )
   }
@@ -210,19 +244,27 @@ export class ResearchDb {
     const id = cleanId(input.id ?? this.idFactory())
     assertAllowed(ARTIFACT_KINDS, input.kind, "artifact kind")
     if (!input.path && !input.content) throw new Error("artifact requires path or content")
+    const redactedPath = input.path ? redactString(input.path) : null
+    const redactedContent = input.content ? redactString(input.content) : null
+    const existing = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as Artifact | null
+    if (existing) {
+      if (existing.topic_id === topicId && existing.kind === input.kind && existing.path === redactedPath && existing.content === redactedContent) return existing
+      throw new Error(`artifact id collision: ${id}`)
+    }
     const createdAt = this.timestamp()
-    const result = this.db
-      .query("INSERT OR IGNORE INTO artifacts (id, topic_id, kind, path, content, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(id, topicId, input.kind, input.path ? redactString(input.path) : null, input.content ? redactString(input.content) : null, createdAt)
+    this.db
+      .query("INSERT INTO artifacts (id, topic_id, kind, path, content, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, topicId, input.kind, redactedPath, redactedContent, createdAt)
     const artifact = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as Artifact | null
     if (!artifact) throw new Error(`failed to add artifact: ${id}`)
-    if (result.changes > 0) this.recordEvent("artifact_added", "artifact", id, artifact)
+    this.recordEvent("artifact_added", "artifact", id, artifact)
     return artifact
   }
 
   listArtifactsForTopic(topicId: string): Artifact[] {
-    this.requireTopic(cleanId(topicId))
-    return this.db.query("SELECT * FROM artifacts WHERE topic_id = ? ORDER BY created_at, id").all(topicId) as Artifact[]
+    const id = cleanId(topicId)
+    this.requireTopic(id)
+    return this.db.query("SELECT * FROM artifacts WHERE topic_id = ? ORDER BY created_at, id").all(id) as Artifact[]
   }
 
   private migrate(): void {
@@ -299,7 +341,10 @@ export class ResearchDb {
     if (!source) throw new Error(`source not found for topic: ${sourceId}`)
   }
 
-  private noteFromRow(row: NoteRow): Note {
+  private noteFromRow(row: NoteRow): Note
+  private noteFromRow(row: NoteRow | null): Note | null
+  private noteFromRow(row: NoteRow | null): Note | null {
+    if (!row) return null
     return { id: row.id, topic_id: row.topic_id, source_id: row.source_id, content: row.content, tags: parseTags(row.tags_json), created_at: row.created_at }
   }
 
