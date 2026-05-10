@@ -119,7 +119,10 @@ class EventEmissionClient:
             if hasattr(self._stdout, "buffer"):
                 self._stdout.buffer.write(line.encode("utf-8"))
             else:
-                self._stdout.write(line)
+                try:
+                    self._stdout.write(line)
+                except TypeError:
+                    self._stdout.write(line.encode("utf-8"))
             self._stdout.flush()
 
             # Read ack — line is "kind": "EventEmissionAck" with matching request_id
