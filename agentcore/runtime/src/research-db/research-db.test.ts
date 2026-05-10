@@ -235,6 +235,91 @@ describe("ResearchDb", () => {
     reopened.close()
   })
 
+  test("migration redacts secret-looking legacy row content", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const dbPath = join(dir, ".nxl", "research.db")
+    const sqlite = new Database(dbPath)
+    try {
+      sqlite.exec(`
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE topics (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE sources (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          locator TEXT NOT NULL,
+          title TEXT,
+          source_type TEXT NOT NULL,
+          status TEXT NOT NULL,
+          credibility TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE notes (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
+          content TEXT NOT NULL,
+          tags_json TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE artifacts (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          path TEXT,
+          content TEXT,
+          created_at TEXT NOT NULL,
+          CHECK (path IS NOT NULL OR content IS NOT NULL)
+        );
+        INSERT INTO topics VALUES ('topic_secret', 'token=topicSecret123', 'open', '2026-05-10T12:00:00.000Z', '2026-05-10T12:00:00.000Z');
+        INSERT INTO sources VALUES ('source_secret', 'topic_secret', 'token=sourceSecret123', 'api_key=sourceTitle123', 'file', 'new', 'secret=credSecret123', '2026-05-10T12:00:00.000Z');
+        INSERT INTO notes VALUES ('note_secret', 'topic_secret', 'source_secret', 'password=noteSecret123', '["token=tagSecret123"]', '2026-05-10T12:00:00.000Z');
+        INSERT INTO artifacts VALUES ('artifact_secret', 'topic_secret', 'report', 'secret=pathSecret123', 'sk-artifactSecret123', '2026-05-10T12:00:00.000Z');
+      `)
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openTestDb(dir)
+    const returned = JSON.stringify({
+      topic: db.getTopic("topic_secret"),
+      sources: db.listSourcesForTopic("topic_secret"),
+      notes: db.listNotesForTopic("topic_secret"),
+      artifacts: db.listArtifactsForTopic("topic_secret"),
+    })
+    db.close()
+
+    const migrated = new Database(dbPath)
+    try {
+      const raw = JSON.stringify({
+        topics: migrated.query("SELECT * FROM topics").all(),
+        sources: migrated.query("SELECT * FROM sources").all(),
+        notes: migrated.query("SELECT * FROM notes").all(),
+        artifacts: migrated.query("SELECT * FROM artifacts").all(),
+      })
+
+      for (const serialized of [returned, raw]) {
+        expect(serialized).not.toContain("topicSecret123")
+        expect(serialized).not.toContain("sourceSecret123")
+        expect(serialized).not.toContain("sourceTitle123")
+        expect(serialized).not.toContain("credSecret123")
+        expect(serialized).not.toContain("noteSecret123")
+        expect(serialized).not.toContain("tagSecret123")
+        expect(serialized).not.toContain("pathSecret123")
+        expect(serialized).not.toContain("artifactSecret123")
+        expect(serialized).toContain("[REDACTED]")
+      }
+    } finally {
+      migrated.close()
+    }
+  })
+
   test("duplicate explicit IDs are idempotent", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)

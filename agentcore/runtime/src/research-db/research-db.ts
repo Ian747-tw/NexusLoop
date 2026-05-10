@@ -384,45 +384,45 @@ export class ResearchDb {
   }
 
   private backfillInputHashes(): void {
-    for (const row of this.db.query("SELECT id, title, status FROM topics WHERE input_hash IS NULL").all() as Topic[]) {
-      this.db.query("UPDATE topics SET input_hash = ? WHERE id = ?").run(hashPayload({ title: row.title, status: row.status }), row.id)
+    for (const row of this.db.query("SELECT id, title, status, input_hash FROM topics").all() as TopicRow[]) {
+      const inputHash = row.input_hash ?? hashPayload({ title: row.title, status: row.status })
+      this.db.query("UPDATE topics SET title = ?, input_hash = ? WHERE id = ?").run(redactString(row.title), inputHash, row.id)
     }
 
     for (const row of this.db
-      .query("SELECT id, topic_id, locator, title, source_type, status, credibility FROM sources WHERE input_hash IS NULL")
-      .all() as Source[]) {
+      .query("SELECT id, topic_id, locator, title, source_type, status, credibility, input_hash, created_at FROM sources")
+      .all() as SourceRow[]) {
+      const inputHash =
+        row.input_hash ??
+        hashPayload({
+          topic_id: row.topic_id,
+          locator: row.locator,
+          title: row.title,
+          source_type: row.source_type,
+          status: row.status,
+          credibility: row.credibility,
+        })
       this.db
-        .query("UPDATE sources SET input_hash = ? WHERE id = ?")
-        .run(
-          hashPayload({
-            topic_id: row.topic_id,
-            locator: row.locator,
-            title: row.title,
-            source_type: row.source_type,
-            status: row.status,
-            credibility: row.credibility,
-          }),
-          row.id,
-        )
+        .query("UPDATE sources SET locator = ?, title = ?, credibility = ?, input_hash = ? WHERE id = ?")
+        .run(redactString(row.locator), redactNullable(row.title), redactNullable(row.credibility), inputHash, row.id)
     }
 
     for (const row of this.db
-      .query("SELECT id, topic_id, source_id, content, tags_json, created_at FROM notes WHERE input_hash IS NULL")
+      .query("SELECT id, topic_id, source_id, content, tags_json, input_hash, created_at FROM notes")
       .all() as NoteRow[]) {
+      const inputHash = row.input_hash ?? hashPayload({ topic_id: row.topic_id, source_id: row.source_id, content: row.content, tags: parseTags(row.tags_json) })
       this.db
-        .query("UPDATE notes SET input_hash = ? WHERE id = ?")
-        .run(
-          hashPayload({ topic_id: row.topic_id, source_id: row.source_id, content: row.content, tags: parseTags(row.tags_json) }),
-          row.id,
-        )
+        .query("UPDATE notes SET content = ?, tags_json = ?, input_hash = ? WHERE id = ?")
+        .run(redactString(row.content), JSON.stringify(redactValue(parseTags(row.tags_json))), inputHash, row.id)
     }
 
     for (const row of this.db
-      .query("SELECT id, topic_id, kind, path, content, created_at FROM artifacts WHERE input_hash IS NULL")
-      .all() as Artifact[]) {
+      .query("SELECT id, topic_id, kind, path, content, input_hash, created_at FROM artifacts")
+      .all() as ArtifactRow[]) {
+      const inputHash = row.input_hash ?? hashPayload({ topic_id: row.topic_id, kind: row.kind, path: row.path, content: row.content })
       this.db
-        .query("UPDATE artifacts SET input_hash = ? WHERE id = ?")
-        .run(hashPayload({ topic_id: row.topic_id, kind: row.kind, path: row.path, content: row.content }), row.id)
+        .query("UPDATE artifacts SET path = ?, content = ?, input_hash = ? WHERE id = ?")
+        .run(redactNullable(row.path), redactNullable(row.content), inputHash, row.id)
     }
   }
 
@@ -499,6 +499,10 @@ function assertAllowed<T extends string>(allowed: Set<T>, value: string, field: 
 
 function redactString(value: string): string {
   return redactValue(value)
+}
+
+function redactNullable(value: string | null): string | null {
+  return value === null ? null : redactString(value)
 }
 
 function parseTags(value: string | null): string[] {
