@@ -41,6 +41,21 @@ async function readEventKinds(dir: string): Promise<string[]> {
   }
 }
 
+function instrumentStartupOrder(server: RuntimeServer): string[] {
+  const order: string[] = []
+  const append = server.eventStore.append.bind(server.eventStore)
+  server.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+    order.push(`append:${String(event.kind ?? event.type ?? "unknown")}`)
+    return append(event)
+  }
+  const emit = server.eventBus.emit.bind(server.eventBus)
+  server.eventBus.emit = (event: RuntimeEvent): RuntimeEvent => {
+    order.push(`emit:${event.type}`)
+    return emit(event)
+  }
+  return order
+}
+
 class ThrowingStartAdapter extends FakeOpenCodeAdapter {
   override async startSession(_sessionSpec: SessionSpec): Promise<void> {
     throw new Error("start failed")
@@ -157,11 +172,26 @@ describe("RuntimeServer core", () => {
     await expect(server.start()).rejects.toThrow("start failed")
     expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(server.eventBus.snapshot().map((event) => event.type)).not.toContain("RuntimeReady")
 
     const next = new RuntimeServer({ projectDir: dir })
     await next.start()
     expect((await next.status()).lockHeld).toBe(true)
     await next.shutdown()
+  })
+
+  test("eventStore.append failure does not emit RuntimeReady and releases lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir })
+    server.eventStore.append = async (): Promise<string> => {
+      throw new Error("append failed")
+    }
+
+    await expect(server.start()).rejects.toThrow("append failed")
+
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect(server.eventBus.snapshot().map((event) => event.type)).not.toContain("RuntimeReady")
   })
 
   test("start returns while executor stream is long-lived", async () => {
@@ -190,6 +220,53 @@ describe("RuntimeServer core", () => {
     expect(adapter.startCalls).toBe(2)
     expect(adapter.streamCalls).toBe(1)
     await server.shutdown()
+  })
+
+  test("startNewSession before start rejects without leaking adapter session", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await expect(server.startNewSession()).rejects.toThrow("runtime must be started before starting a new session")
+    expect(adapter.startCalls).toBe(0)
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+  })
+
+  test("successful active start appends runtime_started before readiness events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir })
+    const order = instrumentStartupOrder(server)
+
+    await server.start()
+
+    const runtimeStartedIndex = order.indexOf("append:runtime_started")
+    expect(runtimeStartedIndex).toBeGreaterThanOrEqual(0)
+    for (const eventType of ["RuntimeReady", "ProjectInitialized", "ResumeSummaryLoaded"]) {
+      expect(order.indexOf(`emit:${eventType}`)).toBeGreaterThan(runtimeStartedIndex)
+    }
+    expect(await readEventKinds(dir)).toContain("runtime_started")
+    await server.shutdown()
+  })
+
+  test("successful status and view-records starts append runtime_started before readiness events", async () => {
+    for (const mode of ["status", "view-records"] as const) {
+      const dir = await tempProject()
+      await makeProject(dir)
+      const server = new RuntimeServer({ projectDir: dir, mode })
+      const order = instrumentStartupOrder(server)
+
+      await server.start()
+
+      const runtimeStartedIndex = order.indexOf("append:runtime_started")
+      expect(runtimeStartedIndex).toBeGreaterThanOrEqual(0)
+      for (const eventType of ["RuntimeReady", "ProjectInitialized", "ResumeSummaryLoaded"]) {
+        expect(order.indexOf(`emit:${eventType}`)).toBeGreaterThan(runtimeStartedIndex)
+      }
+      expect(await readEventKinds(dir)).toContain("runtime_started")
+      await server.shutdown()
+    }
   })
 
   test("shutdown releases lock even when adapter shutdown fails", async () => {

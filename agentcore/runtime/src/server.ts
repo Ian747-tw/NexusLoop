@@ -52,16 +52,6 @@ export class RuntimeServer {
     await this.runLock.acquire()
     try {
       this.started = true
-      this.eventBus.emit({
-        type: "RuntimeReady",
-        projectName: projectName(this.projectDir),
-        runtimeStatus: this.mode === "active" ? "ready" : `${this.mode} ready`,
-        providerLabel: this.specSummary?.approvedBy,
-        modelLabel: "fake-opencode-adapter",
-      })
-      this.eventBus.emit({ type: "ProjectInitialized", projectDir: this.projectDir })
-      const records = await this.eventStore.readAll()
-      this.eventBus.emit({ type: "ResumeSummaryLoaded", recordsCount: records.length, lastRunId: await this.eventStore.latestEventId() ?? undefined })
       if (this.mode === "active") {
         await this.adapter.startSession({
           projectDir: this.projectDir,
@@ -69,11 +59,25 @@ export class RuntimeServer {
         })
         this.startExecutorEventPump()
       }
-      await this.eventStore.append({ kind: "runtime_started", mode: this.mode })
+      const recordsBeforeStart = await this.eventStore.readAll()
+      const runtimeStartedId = await this.eventStore.append({ kind: "runtime_started", mode: this.mode })
+      this.emitStartupReadyEvents(recordsBeforeStart.length + 1, runtimeStartedId)
     } catch (error) {
       await this.cleanupFailedStartup()
       throw error
     }
+  }
+
+  private emitStartupReadyEvents(recordsCount: number, lastRunId: string): void {
+    this.eventBus.emit({
+      type: "RuntimeReady",
+      projectName: projectName(this.projectDir),
+      runtimeStatus: this.mode === "active" ? "ready" : `${this.mode} ready`,
+      providerLabel: this.specSummary?.approvedBy,
+      modelLabel: "fake-opencode-adapter",
+    })
+    this.eventBus.emit({ type: "ProjectInitialized", projectDir: this.projectDir })
+    this.eventBus.emit({ type: "ResumeSummaryLoaded", recordsCount, lastRunId })
   }
 
   private startExecutorEventPump(): void {
@@ -168,6 +172,9 @@ export class RuntimeServer {
   }
 
   async startNewSession(): Promise<{ adapter: Record<string, unknown> }> {
+    if (!this.started || !this.runLock.isHeld()) {
+      throw new Error("runtime must be started before starting a new session")
+    }
     await this.adapter.startSession({ projectDir: this.projectDir, objective: this.specSummary?.objective ?? "" })
     this.startExecutorEventPump()
     return { adapter: await this.adapter.getStatus() }
