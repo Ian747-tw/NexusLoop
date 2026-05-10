@@ -584,6 +584,28 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("paginates same-timestamp research events without losing UUID tie-breakers", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.addSource({ id: "source_1", topic_id: "topic_1", locator: "file://source.md", source_type: "file" })
+    db.addNote({ id: "note_1", topic_id: "topic_1", content: "Useful finding" })
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "report", content: "Report" })
+
+    const seen: string[] = []
+    let after_event_id: string | undefined
+    for (let i = 0; i < 4; i++) {
+      const page = db.listResearchEvents({ after_event_id, limit: 1 })
+      expect(page).toHaveLength(1)
+      seen.push(page[0]!.event_type)
+      after_event_id = page[0]!.event_id
+    }
+
+    expect(seen).toEqual(["topic_created", "source_added", "note_added", "artifact_added"])
+    expect(db.listResearchEvents({ after_event_id, limit: 1 })).toEqual([])
+    db.close()
+  })
+
   test("caps and validates research event limits", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)
@@ -623,6 +645,18 @@ describe("ResearchDb", () => {
       },
       latest_event: expect.objectContaining({ event_type: "artifact_added", entity_id: "report_1" }),
     })
+    db.close()
+  })
+
+  test("topic snapshot latest event uses insertion order for same-timestamp events", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.addSource({ id: "source_1", topic_id: "topic_1", locator: "file://source.md", source_type: "file" })
+    db.addNote({ id: "note_1", topic_id: "topic_1", content: "Useful finding" })
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "report", content: "Report" })
+
+    expect(db.getTopicSnapshot("topic_1")?.latest_event).toEqual(expect.objectContaining({ event_type: "artifact_added", entity_id: "artifact_1" }))
     db.close()
   })
 

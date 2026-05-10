@@ -151,6 +151,7 @@ interface ArtifactRow extends Artifact {
 }
 
 interface ResearchEventRow {
+  event_order: number
   event_id: string
   event_type: string
   entity_type: string
@@ -385,19 +386,19 @@ export class ResearchDb {
     }
     if (options.after_event_id !== undefined) {
       const afterEventId = cleanRequired(options.after_event_id, "after_event_id")
-      const after = this.db.query("SELECT event_id, created_at FROM research_events WHERE event_id = ?").get(afterEventId) as
-        | Pick<ResearchEventRow, "event_id" | "created_at">
+      const after = this.db.query("SELECT rowid AS event_order, created_at FROM research_events WHERE event_id = ?").get(afterEventId) as
+        | Pick<ResearchEventRow, "event_order" | "created_at">
         | null
       if (!after) throw new Error(`research event not found: ${afterEventId}`)
-      filters.push("(created_at > ? OR (created_at = ? AND event_id > ?))")
-      params.push(after.created_at, after.created_at, after.event_id)
+      filters.push("(created_at > ? OR (created_at = ? AND rowid > ?))")
+      params.push(after.created_at, after.created_at, after.event_order)
     }
 
     params.push(cleanLimit(options.limit))
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
     return (this.db
       .query(
-        `SELECT event_id, event_type, entity_type, entity_id, payload_json, created_at FROM research_events ${where} ORDER BY created_at ASC, event_id ASC LIMIT ?`,
+        `SELECT rowid AS event_order, event_id, event_type, entity_type, entity_id, payload_json, created_at FROM research_events ${where} ORDER BY created_at ASC, rowid ASC LIMIT ?`,
       )
       .all(...params) as ResearchEventRow[]).map(researchEventFromRow)
   }
@@ -599,13 +600,13 @@ export class ResearchDb {
     const row = this.db
       .query(
         `
-        SELECT event_id, event_type, entity_type, entity_id, payload_json, created_at
+        SELECT rowid AS event_order, event_id, event_type, entity_type, entity_id, payload_json, created_at
         FROM research_events
         WHERE (entity_type = 'topic' AND entity_id = ?)
           OR (entity_type = 'source' AND entity_id IN (SELECT id FROM sources WHERE topic_id = ?))
           OR (entity_type = 'note' AND entity_id IN (SELECT id FROM notes WHERE topic_id = ?))
           OR (entity_type = 'artifact' AND entity_id IN (SELECT id FROM artifacts WHERE topic_id = ?))
-        ORDER BY created_at DESC, event_id DESC
+        ORDER BY created_at DESC, rowid DESC
         LIMIT 1
       `,
       )
