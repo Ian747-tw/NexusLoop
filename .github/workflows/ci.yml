@@ -38,6 +38,12 @@ jobs:
       - name: Install agentcore dependencies
         run: cd agentcore/server-fork && bun install
 
+      - name: Install OpenTUI dependencies
+        run: cd agentcore/tui && bun install
+
+      - name: Install runtime dependencies
+        run: cd agentcore/runtime && bun install
+
       - name: Hide-failure guard (mechanical enforcement of NON_NEGOTIABLE rules)
         run: bash scripts/check_no_hidden_failures.sh origin/main
 
@@ -61,6 +67,9 @@ jobs:
 
       - name: Pytest — agentcore Python tests
         run: uv run pytest agentcore/tests -q -k "not test_ts"
+
+      - name: Runtime TS tests
+        run: cd agentcore/runtime && bun test && bun run typecheck
 
       - name: Audit fork depth
         run: bash scripts/audit-fork-depth.sh
