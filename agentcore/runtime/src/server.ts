@@ -52,7 +52,6 @@ export class RuntimeServer {
     await this.runLock.acquire()
     try {
       this.started = true
-      await this.eventStore.append({ kind: "runtime_started", mode: this.mode })
       this.eventBus.emit({
         type: "RuntimeReady",
         projectName: projectName(this.projectDir),
@@ -70,6 +69,7 @@ export class RuntimeServer {
         })
         this.startExecutorEventPump()
       }
+      await this.eventStore.append({ kind: "runtime_started", mode: this.mode })
     } catch (error) {
       await this.cleanupFailedStartup()
       throw error

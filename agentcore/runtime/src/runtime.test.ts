@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
@@ -11,6 +11,7 @@ import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
+import { RunLock } from "./project/run-lock"
 
 const cleanup: string[] = []
 
@@ -26,6 +27,18 @@ afterEach(async () => {
 
 function timeout(ms: number): Promise<"timeout"> {
   return new Promise((resolve) => setTimeout(() => resolve("timeout"), ms))
+}
+
+async function readEventKinds(dir: string): Promise<string[]> {
+  try {
+    return (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8"))
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line).kind)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    throw error
+  }
 }
 
 class ThrowingStartAdapter extends FakeOpenCodeAdapter {
@@ -83,6 +96,7 @@ describe("RuntimeServer core", () => {
 
     expect(status.specApproved).toBe(true)
     expect(status.lockHeld).toBe(true)
+    expect(await readEventKinds(dir)).toContain("runtime_started")
     expect(server.eventBus.snapshot().map((event) => event.type)).toContain("RuntimeReady")
     await server.shutdown()
   })
@@ -101,6 +115,7 @@ describe("RuntimeServer core", () => {
     const viewServer = new RuntimeServer({ projectDir: viewDir, mode: "view-records" })
     await viewServer.start()
     expect((await viewServer.status()).mode).toBe("view-records")
+    expect(await readEventKinds(viewDir)).toContain("runtime_started")
     await viewServer.shutdown()
 
     const statusDir = await tempProject()
@@ -108,6 +123,7 @@ describe("RuntimeServer core", () => {
     const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status" })
     await statusServer.start()
     expect((await statusServer.status()).mode).toBe("status")
+    expect(await readEventKinds(statusDir)).toContain("runtime_started")
     await statusServer.shutdown()
   })
 
@@ -140,6 +156,7 @@ describe("RuntimeServer core", () => {
 
     await expect(server.start()).rejects.toThrow("start failed")
     expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
 
     const next = new RuntimeServer({ projectDir: dir })
     await next.start()
@@ -196,6 +213,70 @@ describe("RuntimeServer core", () => {
     expect(serialized).not.toContain("Bearer abc.def.ghi12345")
     expect(serialized).toContain("[REDACTED]")
     await server.shutdown()
+  })
+})
+
+describe("RunLock", () => {
+  test("acquire creates lock", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const lock = new RunLock(lockPath)
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+
+    expect(record.pid).toBe(process.pid)
+    expect(typeof record.acquired_at).toBe("string")
+    await lock.release()
+  })
+
+  test("second live lock fails", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const first = new RunLock(lockPath)
+    const second = new RunLock(lockPath)
+
+    await first.acquire()
+    await expect(second.acquire()).rejects.toThrow("runtime lock already held")
+    await first.release()
+  })
+
+  test("stale lock with dead pid is replaced", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-10T00:00:00Z" }) + "\n")
+    const lock = new RunLock(lockPath)
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+
+    expect(record.pid).toBe(process.pid)
+    await lock.release()
+  })
+
+  test("corrupt lock is treated as stale and replaced", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, "not json\n")
+    const lock = new RunLock(lockPath)
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+
+    expect(record.pid).toBe(process.pid)
+    await lock.release()
+  })
+
+  test("lock with current process pid is live and rejected", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquired_at: "2026-05-10T00:00:00Z" }) + "\n")
+    const lock = new RunLock(lockPath)
+
+    await expect(lock.acquire()).rejects.toThrow("runtime lock already held")
   })
 })
 
