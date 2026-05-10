@@ -1457,6 +1457,52 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("event evidence validation uses keyed link payloads instead of ambiguous entity ids", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    db.proposeResearchResult({
+      result_id: "result:valid",
+      result_type: "probe_result",
+      title: "Valid probe",
+      summary: "Valid probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.proposeResearchResult({
+      result_id: "result",
+      result_type: "probe_result",
+      title: "Rejected probe",
+      summary: "Rejected probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "citation", source_type: "file", source_uri: "file://citation.md", quoted_text_or_summary: "Evidence" })
+    db.recordCitation({ citation_id: "valid:citation", source_type: "file", source_uri: "file://stale.md", quoted_text_or_summary: "Stale evidence" })
+    db.addArtifact({ id: "artifact", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    db.addArtifact({ id: "valid:artifact", topic_id: "topic_1", kind: "log", content: "Stale evidence" })
+
+    db.linkResultCitation("result:valid", "citation")
+    db.linkResultCitation("result", "valid:citation")
+    db.linkResultArtifact("result:valid", "artifact")
+    db.linkResultArtifact("result", "valid:artifact")
+    db.rejectResearchResult("result")
+
+    const citationEvents = db.listResearchEvents({ event_type: "ResultCitationLinked" })
+    const artifactEvents = db.listResearchEvents({ event_type: "ResultArtifactLinked" })
+    const validCitationEvent = citationEvents.find((event) => (event.payload as { result_id?: unknown }).result_id === "result:valid")!.event_id
+    const rejectedCitationEvent = citationEvents.find((event) => (event.payload as { result_id?: unknown }).result_id === "result")!.event_id
+    const validArtifactEvent = artifactEvents.find((event) => (event.payload as { result_id?: unknown }).result_id === "result:valid")!.event_id
+    const rejectedArtifactEvent = artifactEvents.find((event) => (event.payload as { result_id?: unknown }).result_id === "result")!.event_id
+
+    expect(() => db.linkCandidateEvidence("candidate_1", "event", rejectedCitationEvent)).toThrow("research event evidence not found")
+    expect(() => db.linkCandidateEvidence("candidate_1", "event", rejectedArtifactEvent)).toThrow("research event evidence not found")
+    expect(db.linkCandidateEvidence("candidate_1", "event", validCitationEvent).evidence_id).toBe(validCitationEvent)
+    expect(db.linkCandidateEvidence("candidate_1", "event", validArtifactEvent).evidence_id).toBe(validArtifactEvent)
+    db.close()
+  })
+
   test("candidate evidence linking fails clearly for missing candidate or evidence", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)

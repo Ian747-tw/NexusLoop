@@ -1705,8 +1705,8 @@ export class ResearchDb {
   }
 
   private isValidEventEvidence(eventId: string): boolean {
-    const row = this.db.query("SELECT entity_type, entity_id, event_type FROM research_events WHERE event_id = ?").get(eventId) as
-      | Pick<ResearchEventRow, "entity_type" | "entity_id" | "event_type">
+    const row = this.db.query("SELECT entity_type, entity_id, event_type, payload_json FROM research_events WHERE event_id = ?").get(eventId) as
+      | Pick<ResearchEventRow, "entity_type" | "entity_id" | "event_type" | "payload_json">
       | null
     if (!row) return false
     if (row.event_type === "ResearchResultProposed" || row.event_type === "ResearchResultAccepted") {
@@ -1716,22 +1716,34 @@ export class ResearchDb {
     if (row.event_type === "CitationRecorded") return this.getCitation(row.entity_id) !== null
     if (row.event_type === "artifact_added") return this.getArtifact(row.entity_id) !== null
     if (row.event_type === "ResultCitationLinked") {
-      const link = this.db.query("SELECT result_id, citation_id FROM result_citations WHERE result_id || ':' || citation_id = ?").get(row.entity_id) as
-        | Pick<ResultCitationLink, "result_id" | "citation_id">
-        | null
+      const link = this.resultCitationLinkFromEventPayload(row.payload_json)
       if (!link) return false
       const result = this.getResearchResult(link.result_id)
-      return (result?.status === "proposed" || result?.status === "accepted") && this.getCitation(link.citation_id) !== null
+      const currentLink = this.db
+        .query("SELECT 1 FROM result_citations WHERE result_id = ? AND citation_id = ?")
+        .get(link.result_id, link.citation_id)
+      return (result?.status === "proposed" || result?.status === "accepted") && this.getCitation(link.citation_id) !== null && currentLink !== null
     }
     if (row.event_type === "ResultArtifactLinked") {
-      const link = this.db.query("SELECT result_id, artifact_id FROM result_artifacts WHERE result_id || ':' || artifact_id = ?").get(row.entity_id) as
-        | Pick<ResultArtifactLink, "result_id" | "artifact_id">
-        | null
+      const link = this.resultArtifactLinkFromEventPayload(row.payload_json)
       if (!link) return false
       const result = this.getResearchResult(link.result_id)
-      return (result?.status === "proposed" || result?.status === "accepted") && this.getArtifact(link.artifact_id) !== null
+      const currentLink = this.db.query("SELECT 1 FROM result_artifacts WHERE result_id = ? AND artifact_id = ?").get(link.result_id, link.artifact_id)
+      return (result?.status === "proposed" || result?.status === "accepted") && this.getArtifact(link.artifact_id) !== null && currentLink !== null
     }
     return false
+  }
+
+  private resultCitationLinkFromEventPayload(payloadJson: string): Pick<ResultCitationLink, "result_id" | "citation_id"> | null {
+    const payload = parseJsonObject(payloadJson)
+    if (!payload || typeof payload.result_id !== "string" || typeof payload.citation_id !== "string") return null
+    return { result_id: payload.result_id, citation_id: payload.citation_id }
+  }
+
+  private resultArtifactLinkFromEventPayload(payloadJson: string): Pick<ResultArtifactLink, "result_id" | "artifact_id"> | null {
+    const payload = parseJsonObject(payloadJson)
+    if (!payload || typeof payload.result_id !== "string" || typeof payload.artifact_id !== "string") return null
+    return { result_id: payload.result_id, artifact_id: payload.artifact_id }
   }
 
   private updateCandidateStatus(candidateId: string, status: CandidateStatus, eventType: string, reason?: string): Candidate {
@@ -1984,6 +1996,16 @@ function parseNullableJson(value: string | null): unknown | null {
   if (value === null) return null
   try {
     return JSON.parse(value) as unknown
+  } catch {
+    return null
+  }
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
   } catch {
     return null
   }
