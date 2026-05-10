@@ -38,5 +38,6 @@ export interface RuntimeStatus {
   runtimeStatus: string
   lockHeld: boolean
   fakeOpenCode: string
+  executorStreamError?: string
   policy: Record<string, unknown>
 }

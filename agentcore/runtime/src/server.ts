@@ -28,6 +28,9 @@ export class RuntimeServer {
   private readonly runLock: RunLock
   private specSummary: SpecSummary | null = null
   private started = false
+  private executorStreamTask: Promise<void> | null = null
+  private executorStreamAbort = false
+  private executorStreamError: string | null = null
 
   constructor(options: RuntimeServerOptions = {}) {
     this.projectDir = locateProjectRoot(options.projectDir)
@@ -47,24 +50,80 @@ export class RuntimeServer {
       this.specSummary = current?.status === "approved" ? this.specService.toSummary(current) : null
     }
     await this.runLock.acquire()
-    this.started = true
-    await this.eventStore.append({ kind: "runtime_started", mode: this.mode })
-    this.eventBus.emit({
-      type: "RuntimeReady",
-      projectName: projectName(this.projectDir),
-      runtimeStatus: this.mode === "active" ? "ready" : `${this.mode} ready`,
-      providerLabel: this.specSummary?.approvedBy,
-      modelLabel: "fake-opencode-adapter",
-    })
-    this.eventBus.emit({ type: "ProjectInitialized", projectDir: this.projectDir })
-    const records = await this.eventStore.readAll()
-    this.eventBus.emit({ type: "ResumeSummaryLoaded", recordsCount: records.length, lastRunId: await this.eventStore.latestEventId() ?? undefined })
-    if (this.mode === "active") {
-      await this.adapter.startSession({
-        projectDir: this.projectDir,
-        objective: this.specSummary?.objective ?? "",
+    try {
+      this.started = true
+      await this.eventStore.append({ kind: "runtime_started", mode: this.mode })
+      this.eventBus.emit({
+        type: "RuntimeReady",
+        projectName: projectName(this.projectDir),
+        runtimeStatus: this.mode === "active" ? "ready" : `${this.mode} ready`,
+        providerLabel: this.specSummary?.approvedBy,
+        modelLabel: "fake-opencode-adapter",
       })
-      for await (const event of this.adapter.streamExecutorEvents()) this.eventBus.emit(event)
+      this.eventBus.emit({ type: "ProjectInitialized", projectDir: this.projectDir })
+      const records = await this.eventStore.readAll()
+      this.eventBus.emit({ type: "ResumeSummaryLoaded", recordsCount: records.length, lastRunId: await this.eventStore.latestEventId() ?? undefined })
+      if (this.mode === "active") {
+        await this.adapter.startSession({
+          projectDir: this.projectDir,
+          objective: this.specSummary?.objective ?? "",
+        })
+        this.startExecutorEventPump()
+      }
+    } catch (error) {
+      await this.cleanupFailedStartup()
+      throw error
+    }
+  }
+
+  private startExecutorEventPump(): void {
+    if (this.executorStreamTask) return
+    this.executorStreamAbort = false
+    this.executorStreamError = null
+
+    let task!: Promise<void>
+    task = (async () => {
+      try {
+        for await (const event of this.adapter.streamExecutorEvents()) {
+          if (this.executorStreamAbort) break
+          this.eventBus.emit(event)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.executorStreamError = message
+        this.eventBus.emit({
+          type: "ExecutorLifecycle",
+          phase: "runtime-event-pump-error",
+          message,
+        })
+      } finally {
+        if (this.executorStreamTask === task) this.executorStreamTask = null
+      }
+    })()
+
+    this.executorStreamTask = task
+  }
+
+  private async cleanupFailedStartup(): Promise<void> {
+    this.executorStreamAbort = true
+    this.started = false
+    try {
+      await this.adapter.shutdown()
+    } catch (error) {
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-startup-cleanup-error",
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+    try {
+      await this.runLock.release()
+    } catch (error) {
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-lock-release-error",
+        message: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
@@ -97,6 +156,7 @@ export class RuntimeServer {
       runtimeStatus: this.started ? "started" : "created",
       lockHeld: this.runLock.isHeld(),
       fakeOpenCode: String((await this.adapter.getStatus()).message ?? ""),
+      executorStreamError: this.executorStreamError ?? undefined,
       policy,
     })
   }
@@ -109,7 +169,7 @@ export class RuntimeServer {
 
   async startNewSession(): Promise<{ adapter: Record<string, unknown> }> {
     await this.adapter.startSession({ projectDir: this.projectDir, objective: this.specSummary?.objective ?? "" })
-    for await (const event of this.adapter.streamExecutorEvents()) this.eventBus.emit(event)
+    this.startExecutorEventPump()
     return { adapter: await this.adapter.getStatus() }
   }
 
@@ -125,10 +185,35 @@ export class RuntimeServer {
 
   async shutdown(reason = "shutdown"): Promise<void> {
     if (!this.started && !this.runLock.isHeld()) return
+    let firstError: unknown = null
+    this.executorStreamAbort = true
     this.eventBus.emit({ type: "RuntimeShutdown", reason })
-    await this.adapter.shutdown()
-    await this.eventStore.append({ kind: "runtime_shutdown", reason })
-    await this.runLock.release()
-    this.started = false
+    try {
+      await this.adapter.shutdown()
+    } catch (error) {
+      firstError ??= error
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-adapter-shutdown-error",
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+    try {
+      await this.eventStore.append({ kind: "runtime_shutdown", reason })
+    } catch (error) {
+      firstError ??= error
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-shutdown-event-error",
+        message: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      try {
+        await this.runLock.release()
+      } finally {
+        this.started = false
+      }
+    }
+    if (firstError) throw firstError
   }
 }

@@ -6,8 +6,10 @@ import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
+import type { RuntimeEvent } from "./events/event-types"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
+import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
 
 const cleanup: string[] = []
@@ -21,6 +23,54 @@ async function tempProject(): Promise<string> {
 afterEach(async () => {
   while (cleanup.length) await rm(cleanup.pop()!, { recursive: true, force: true })
 })
+
+function timeout(ms: number): Promise<"timeout"> {
+  return new Promise((resolve) => setTimeout(() => resolve("timeout"), ms))
+}
+
+class ThrowingStartAdapter extends FakeOpenCodeAdapter {
+  override async startSession(_sessionSpec: SessionSpec): Promise<void> {
+    throw new Error("start failed")
+  }
+}
+
+class ThrowingShutdownAdapter extends FakeOpenCodeAdapter {
+  override async shutdown(): Promise<void> {
+    throw new Error("shutdown failed")
+  }
+}
+
+class LongLivedAdapter implements OpenCodeRuntimeAdapter {
+  streamCalls = 0
+  startCalls = 0
+  private releaseStream: (() => void) | null = null
+
+  async startSession(_sessionSpec: SessionSpec): Promise<void> {
+    this.startCalls += 1
+  }
+
+  async sendMissionPacket(_packet: MissionPacket): Promise<void> {}
+
+  async pauseAtSafeBoundary(_reason: string): Promise<void> {}
+
+  async resumeWithMissionUpdate(_update: MissionUpdate): Promise<void> {}
+
+  async *streamExecutorEvents(): AsyncIterable<RuntimeEvent> {
+    this.streamCalls += 1
+    yield { type: "ExecutorLifecycle", phase: "long-stream-started", message: "stream started" }
+    await new Promise<void>((resolve) => {
+      this.releaseStream = resolve
+    })
+  }
+
+  async shutdown(): Promise<void> {
+    this.releaseStream?.()
+  }
+
+  async getStatus(): Promise<Record<string, unknown>> {
+    return { adapter: "long-lived", message: "long stream adapter" }
+  }
+}
 
 describe("RuntimeServer core", () => {
   test("starts in initialized project with approved spec", async () => {
@@ -81,6 +131,58 @@ describe("RuntimeServer core", () => {
     await first.start()
     await expect(second.start()).rejects.toThrow("runtime lock already held")
     await first.shutdown()
+  })
+
+  test("startup failure after lock acquisition releases run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new ThrowingStartAdapter() })
+
+    await expect(server.start()).rejects.toThrow("start failed")
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+
+    const next = new RuntimeServer({ projectDir: dir })
+    await next.start()
+    expect((await next.status()).lockHeld).toBe(true)
+    await next.shutdown()
+  })
+
+  test("start returns while executor stream is long-lived", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    const result = await Promise.race([server.start().then(() => "started" as const), timeout(100)])
+
+    expect(result).toBe("started")
+    expect(adapter.startCalls).toBe(1)
+    await server.shutdown()
+  })
+
+  test("startNewSession returns while executor stream is long-lived and avoids duplicate pumps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    const result = await Promise.race([server.startNewSession().then(() => "started" as const), timeout(100)])
+
+    expect(result).toBe("started")
+    expect(adapter.startCalls).toBe(2)
+    expect(adapter.streamCalls).toBe(1)
+    await server.shutdown()
+  })
+
+  test("shutdown releases lock even when adapter shutdown fails", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new ThrowingShutdownAdapter() })
+
+    await server.start()
+    await expect(server.shutdown()).rejects.toThrow("shutdown failed")
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
   })
 
   test("status output redacts secret-looking strings", async () => {
