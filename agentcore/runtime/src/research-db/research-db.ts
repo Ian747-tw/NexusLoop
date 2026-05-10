@@ -917,7 +917,8 @@ export class ResearchDb {
       if (existing) return existing
       this.db.query("INSERT INTO result_citations (result_id, citation_id, created_at) VALUES (?, ?, ?)").run(cleanResultId, cleanCitationId, createdAt)
       const link = { result_id: cleanResultId, citation_id: cleanCitationId, created_at: createdAt }
-      this.recordEvent("ResultCitationLinked", "result_citation", `${cleanResultId}:${cleanCitationId}`, link)
+      const eventId = this.recordEvent("ResultCitationLinked", "result_citation", `${cleanResultId}:${cleanCitationId}`, link)
+      this.db.query("UPDATE result_citations SET link_event_id = ? WHERE result_id = ? AND citation_id = ?").run(eventId, cleanResultId, cleanCitationId)
       return link
     })
   }
@@ -935,7 +936,8 @@ export class ResearchDb {
       if (existing) return existing
       this.db.query("INSERT INTO result_artifacts (result_id, artifact_id, created_at) VALUES (?, ?, ?)").run(cleanResultId, cleanArtifactId, createdAt)
       const link = { result_id: cleanResultId, artifact_id: cleanArtifactId, created_at: createdAt }
-      this.recordEvent("ResultArtifactLinked", "result_artifact", `${cleanResultId}:${cleanArtifactId}`, link)
+      const eventId = this.recordEvent("ResultArtifactLinked", "result_artifact", `${cleanResultId}:${cleanArtifactId}`, link)
+      this.db.query("UPDATE result_artifacts SET link_event_id = ? WHERE result_id = ? AND artifact_id = ?").run(eventId, cleanResultId, cleanArtifactId)
       return link
     })
   }
@@ -1465,6 +1467,7 @@ export class ResearchDb {
         result_id TEXT NOT NULL REFERENCES research_results(result_id) ON DELETE CASCADE,
         citation_id TEXT NOT NULL REFERENCES citations(citation_id) ON DELETE CASCADE,
         created_at TEXT NOT NULL,
+        link_event_id TEXT,
         PRIMARY KEY (result_id, citation_id)
       );
 
@@ -1472,6 +1475,7 @@ export class ResearchDb {
         result_id TEXT NOT NULL REFERENCES research_results(result_id) ON DELETE CASCADE,
         artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
         created_at TEXT NOT NULL,
+        link_event_id TEXT,
         PRIMARY KEY (result_id, artifact_id)
       );
 
@@ -1539,6 +1543,8 @@ export class ResearchDb {
     this.ensureColumn("artifacts", "produced_by_mission_id", "TEXT")
     this.ensureColumn("artifacts", "produced_by_run_id", "TEXT")
     this.ensureColumn("artifacts", "description", "TEXT")
+    this.ensureColumn("result_citations", "link_event_id", "TEXT")
+    this.ensureColumn("result_artifacts", "link_event_id", "TEXT")
     this.backfillInputHashes()
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
   }
@@ -1618,12 +1624,14 @@ export class ResearchDb {
     }
   }
 
-  private recordEvent(eventType: string, entityType: string, entityId: string, payload: unknown): void {
+  private recordEvent(eventType: string, entityType: string, entityId: string, payload: unknown): string {
+    const eventId = randomUUID()
     this.db
       .query(
         "INSERT INTO research_events (event_id, event_type, entity_type, entity_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(randomUUID(), eventType, entityType, entityId, JSON.stringify(redactValue(payload)), this.timestamp())
+      .run(eventId, eventType, entityType, entityId, JSON.stringify(redactValue(payload)), this.timestamp())
+    return eventId
   }
 
   private inTransaction<T>(work: () => T): T {
@@ -1716,7 +1724,10 @@ export class ResearchDb {
     if (row.event_type === "CitationRecorded") return this.getCitation(row.entity_id) !== null
     if (row.event_type === "artifact_added") return this.getArtifact(row.entity_id) !== null
     if (row.event_type === "ResultCitationLinked") {
-      const link = this.resultCitationLinkFromEventPayload(row.payload_json)
+      const link =
+        (this.db.query("SELECT result_id, citation_id FROM result_citations WHERE link_event_id = ?").get(eventId) as
+          | Pick<ResultCitationLink, "result_id" | "citation_id">
+          | null) ?? this.resultCitationLinkFromEventPayload(row.payload_json)
       if (!link) return false
       const result = this.getResearchResult(link.result_id)
       const currentLink = this.db
@@ -1725,7 +1736,10 @@ export class ResearchDb {
       return (result?.status === "proposed" || result?.status === "accepted") && this.getCitation(link.citation_id) !== null && currentLink !== null
     }
     if (row.event_type === "ResultArtifactLinked") {
-      const link = this.resultArtifactLinkFromEventPayload(row.payload_json)
+      const link =
+        (this.db.query("SELECT result_id, artifact_id FROM result_artifacts WHERE link_event_id = ?").get(eventId) as
+          | Pick<ResultArtifactLink, "result_id" | "artifact_id">
+          | null) ?? this.resultArtifactLinkFromEventPayload(row.payload_json)
       if (!link) return false
       const result = this.getResearchResult(link.result_id)
       const currentLink = this.db.query("SELECT 1 FROM result_artifacts WHERE result_id = ? AND artifact_id = ?").get(link.result_id, link.artifact_id)
