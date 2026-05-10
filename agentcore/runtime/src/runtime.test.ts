@@ -387,10 +387,12 @@ describe("RuntimeServer core", () => {
 })
 
 describe("RunLock", () => {
+  const lockNow = () => new Date("2026-05-10T12:00:00Z")
+
   test("acquire creates lock", async () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")
-    const lock = new RunLock(lockPath)
+    const lock = new RunLock(lockPath, { now: lockNow })
 
     await lock.acquire()
     const record = JSON.parse(await readFile(lockPath, "utf8"))
@@ -416,7 +418,7 @@ describe("RunLock", () => {
     const lockPath = join(dir, ".nxl", "run.lock")
     await mkdir(join(dir, ".nxl"), { recursive: true })
     await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-10T00:00:00Z" }) + "\n")
-    const lock = new RunLock(lockPath)
+    const lock = new RunLock(lockPath, { now: lockNow })
 
     await lock.acquire()
     const record = JSON.parse(await readFile(lockPath, "utf8"))
@@ -430,7 +432,7 @@ describe("RunLock", () => {
     const lockPath = join(dir, ".nxl", "run.lock")
     await mkdir(join(dir, ".nxl"), { recursive: true })
     await writeFile(lockPath, "not json\n")
-    const lock = new RunLock(lockPath)
+    const lock = new RunLock(lockPath, { now: lockNow })
 
     await lock.acquire()
     const record = JSON.parse(await readFile(lockPath, "utf8"))
@@ -439,14 +441,63 @@ describe("RunLock", () => {
     await lock.release()
   })
 
-  test("lock with current process pid is live and rejected", async () => {
+  test("fresh lock with current process pid is live and rejected", async () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")
     await mkdir(join(dir, ".nxl"), { recursive: true })
-    await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquired_at: "2026-05-10T00:00:00Z" }) + "\n")
-    const lock = new RunLock(lockPath)
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquired_at: lockNow().toISOString() }) + "\n")
+    const lock = new RunLock(lockPath, { now: lockNow })
 
     await expect(lock.acquire()).rejects.toThrow("runtime lock already held")
+  })
+
+  test("old live pid lock is treated as stale and replaced", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquired_at: "2026-05-09T11:59:59Z" }) + "\n")
+    const lock = new RunLock(lockPath, { now: lockNow })
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+
+    expect(record.pid).toBe(process.pid)
+    expect(record.acquired_at).toBe(lockNow().toISOString())
+    await lock.release()
+  })
+
+  test("invalid acquired_at is treated as stale and replaced", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquired_at: "not a date" }) + "\n")
+    const lock = new RunLock(lockPath, { now: lockNow })
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+
+    expect(record.pid).toBe(process.pid)
+    expect(record.acquired_at).toBe(lockNow().toISOString())
+    await lock.release()
+  })
+
+  test("concurrent stale recovery leaves one fresh lock winner", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquired_at: "2026-05-09T11:59:59Z" }) + "\n")
+    const first = new RunLock(lockPath, { now: lockNow })
+    const second = new RunLock(lockPath, { now: lockNow })
+
+    const results = await Promise.allSettled([first.acquire(), second.acquire()])
+    const fulfilled = results.filter((result) => result.status === "fulfilled")
+    const rejected = results.filter((result) => result.status === "rejected")
+
+    expect(fulfilled).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    expect(String((rejected[0] as PromiseRejectedResult).reason)).toContain("runtime lock already held")
+    if (first.isHeld()) await first.release()
+    if (second.isHeld()) await second.release()
   })
 })
 

@@ -80,6 +80,36 @@ RESPONSES_LIST = [
 ]
 
 
+class CountingStdin:
+    def __init__(self) -> None:
+        self.readline_calls = 0
+
+    def readline(self) -> str:
+        self.readline_calls += 1
+        return ""
+
+
+class BrokenTextStdout:
+    def write(self, _line: str) -> None:
+        raise BrokenPipeError("closed")
+
+    def flush(self) -> None:
+        raise AssertionError("flush should not run after write fails")
+
+
+class BrokenBuffer:
+    def write(self, _line: bytes) -> None:
+        raise BrokenPipeError("closed")
+
+
+class BrokenBufferedStdout:
+    def __init__(self) -> None:
+        self.buffer = BrokenBuffer()
+
+    def flush(self) -> None:
+        raise AssertionError("flush should not run after buffer write fails")
+
+
 class EventEmissionFork:
     """Subprocess fork that speaks the EventEmissionRequest/Ack protocol."""
     def __init__(self, responses: list[dict]):
@@ -162,6 +192,32 @@ class TestEventEmissionClient:
             assert time.monotonic() - start < 2.0
         finally:
             fork.stop()
+
+    def test_text_stdout_broken_pipe_raises_immediately_without_reading_stdin(self) -> None:
+        """Broken text stdout must not enter the ack loop."""
+        stdin = CountingStdin()
+        client = EventEmissionClient(stdout=BrokenTextStdout(), stdin=stdin, timeout=5.0)
+
+        start = time.monotonic()
+        with pytest.raises(EventEmissionError) as exc:
+            client.emit({'event_id': 'ev-1', 'kind': 'cycle_started'}, origin_mcp='journal')
+
+        assert "event emission pipe is closed for request_id=" in str(exc.value)
+        assert stdin.readline_calls == 0
+        assert time.monotonic() - start < 0.5
+
+    def test_buffered_stdout_broken_pipe_raises_immediately_without_reading_stdin(self) -> None:
+        """Broken buffered stdout must not enter the ack loop."""
+        stdin = CountingStdin()
+        client = EventEmissionClient(stdout=BrokenBufferedStdout(), stdin=stdin, timeout=5.0)
+
+        start = time.monotonic()
+        with pytest.raises(EventEmissionError) as exc:
+            client.emit({'event_id': 'ev-1', 'kind': 'cycle_started'}, origin_mcp='journal')
+
+        assert "event emission pipe is closed for request_id=" in str(exc.value)
+        assert stdin.readline_calls == 0
+        assert time.monotonic() - start < 0.5
 
     def test_10_sequential_requests_all_succeed(self) -> None:
         """10 sequential emit calls all get their own correct ack."""

@@ -115,7 +115,6 @@ class EventEmissionClient:
 
         # Serialize and send
         line = _json_dumps(msg) + "\n"
-        pipe_closed = False
         with self._lock:
             try:
                 if hasattr(self._stdout, "buffer"):
@@ -127,15 +126,13 @@ class EventEmissionClient:
                         self._stdout.write(line.encode("utf-8"))
                 self._stdout.flush()
             except BrokenPipeError:
-                pipe_closed = True
+                raise EventEmissionError(
+                    f"event emission pipe is closed for request_id={request_id}"
+                )
 
             # Read ack — line is "kind": "EventEmissionAck" with matching request_id
             deadline = time.monotonic() + self._timeout
             while True:
-                if pipe_closed and time.monotonic() >= deadline:
-                    raise EventEmissionTimeoutError(
-                        f"timeout after {self._timeout}s waiting for ack for request_id={request_id}"
-                    )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise EventEmissionTimeoutError(
