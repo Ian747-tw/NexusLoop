@@ -320,6 +320,31 @@ describe("ResearchDb", () => {
     }
   })
 
+  test("repeated open does not rewrite rows that already have fingerprints", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.close()
+
+    const dbPath = join(dir, ".nxl", "research.db")
+    const sqlite = new Database(dbPath)
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER fail_repeated_topic_update
+        BEFORE UPDATE ON topics
+        BEGIN
+          SELECT RAISE(ABORT, 'unexpected repeated rewrite');
+        END;
+      `)
+    } finally {
+      sqlite.close()
+    }
+
+    const reopened = openTestDb(dir)
+    expect(reopened.getTopic("topic_1")?.title).toBe("Topic")
+    reopened.close()
+  })
+
   test("duplicate explicit IDs are idempotent", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
