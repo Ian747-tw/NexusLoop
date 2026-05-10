@@ -1233,7 +1233,10 @@ export class ResearchDb {
 
   startTrial(trialId: string): Trial {
     const id = cleanId(trialId)
-    this.requireTrial(id)
+    const existing = this.getTrial(id)
+    if (!existing) throw new Error(`trial not found: ${id}`)
+    if (existing.status === "running") return existing
+    if (existing.status !== "planned") throw new Error(`trial cannot be started from status: ${existing.status}`)
     const timestamp = this.timestamp()
     return this.inTransaction(() => {
       this.db.query("UPDATE trials SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ? WHERE trial_id = ?").run("running", timestamp, timestamp, id)
@@ -1714,7 +1717,9 @@ export class ResearchDb {
 
   private finishTrial(trialId: string, status: "failed" | "cancelled", eventType: string, reason?: string): Trial {
     const id = cleanId(trialId)
-    this.requireTrial(id)
+    const existing = this.getTrial(id)
+    if (!existing) throw new Error(`trial not found: ${id}`)
+    if (existing.status !== "running" && existing.status !== "planned") throw new Error(`trial cannot be ${status} from status: ${existing.status}`)
     const cleanReason = cleanOptional(reason)
     const timestamp = this.timestamp()
     return this.inTransaction(() => {

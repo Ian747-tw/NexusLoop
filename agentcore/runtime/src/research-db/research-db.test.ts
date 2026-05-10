@@ -1537,6 +1537,33 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("trial start fail and cancel reject terminal state rewrites", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.planTrial({ trial_id: "trial_completed", trial_kind: "probe", config: {} })
+    db.startTrial("trial_completed")
+    const running = db.startTrial("trial_completed")
+    db.completeTrial("trial_completed")
+    db.planTrial({ trial_id: "trial_failed", trial_kind: "probe", config: {} })
+    db.failTrial("trial_failed")
+    db.planTrial({ trial_id: "trial_cancelled", trial_kind: "probe", config: {} })
+    db.cancelTrial("trial_cancelled")
+
+    expect(running.status).toBe("running")
+    expect(db.listResearchEvents({ event_type: "TrialStarted" })).toHaveLength(1)
+    expect(() => db.startTrial("trial_completed")).toThrow("trial cannot be started from status: completed")
+    expect(() => db.startTrial("trial_failed")).toThrow("trial cannot be started from status: failed")
+    expect(() => db.startTrial("trial_cancelled")).toThrow("trial cannot be started from status: cancelled")
+    expect(() => db.failTrial("trial_completed")).toThrow("trial cannot be failed from status: completed")
+    expect(() => db.cancelTrial("trial_completed")).toThrow("trial cannot be cancelled from status: completed")
+    expect(() => db.cancelTrial("trial_failed")).toThrow("trial cannot be cancelled from status: failed")
+    expect(() => db.failTrial("trial_cancelled")).toThrow("trial cannot be failed from status: cancelled")
+    expect(db.getTrial("trial_completed")?.status).toBe("completed")
+    expect(db.getTrial("trial_failed")?.status).toBe("failed")
+    expect(db.getTrial("trial_cancelled")?.status).toBe("cancelled")
+    db.close()
+  })
+
   test("searches candidates by status and hypothesis", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)
