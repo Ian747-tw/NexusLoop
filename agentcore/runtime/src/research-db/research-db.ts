@@ -9,13 +9,62 @@ export type TopicStatus = "open" | "active" | "paused" | "closed"
 export type SourceStatus = "new" | "reviewed" | "rejected"
 export type SourceType = "url" | "file" | "paper" | "note" | "artifact" | "other"
 export type ArtifactKind = "artifact" | "report" | "log" | "dataset" | "snapshot" | "other"
-export type ResearchEntityType = "topic" | "source" | "note" | "artifact"
+export type ArtifactType = "artifact" | "report" | "log" | "dataset" | "snapshot" | "other"
+export type ResearchResultType =
+  | "probe_result"
+  | "smoke_test_result"
+  | "full_training_result"
+  | "evaluation_result"
+  | "ablation_result"
+  | "finding"
+  | "negative_finding"
+  | "bug_diagnosis"
+  | "literature_finding"
+  | "implementation_change"
+  | "checkpoint_selection"
+  | "promotion_decision"
+  | "reproduction_record"
+export type ResearchResultStatus = "proposed" | "accepted" | "rejected" | "superseded"
+export type ResearchResultConfidence = "low" | "medium" | "high"
+export type ResearchResultCreatedBy = "commander" | "executor" | "verifier" | "human" | "system"
+export type CitationSourceType = "paper" | "url" | "file" | "event" | "artifact" | "code" | "user"
+export type ResearchEntityType = "topic" | "source" | "note" | "artifact" | "research_result" | "citation" | "result_citation" | "result_artifact"
 
 const TOPIC_STATUSES = new Set<TopicStatus>(["open", "active", "paused", "closed"])
 const SOURCE_STATUSES = new Set<SourceStatus>(["new", "reviewed", "rejected"])
 const SOURCE_TYPES = new Set<SourceType>(["url", "file", "paper", "note", "artifact", "other"])
 const ARTIFACT_KINDS = new Set<ArtifactKind>(["artifact", "report", "log", "dataset", "snapshot", "other"])
-const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>(["topic", "source", "note", "artifact"])
+const ARTIFACT_TYPES = new Set<ArtifactType>(["artifact", "report", "log", "dataset", "snapshot", "other"])
+const RESEARCH_RESULT_TYPES = new Set<ResearchResultType>([
+  "probe_result",
+  "smoke_test_result",
+  "full_training_result",
+  "evaluation_result",
+  "ablation_result",
+  "finding",
+  "negative_finding",
+  "bug_diagnosis",
+  "literature_finding",
+  "implementation_change",
+  "checkpoint_selection",
+  "promotion_decision",
+  "reproduction_record",
+])
+const RESEARCH_RESULT_STATUSES = new Set<ResearchResultStatus>(["proposed", "accepted", "rejected", "superseded"])
+const RESEARCH_RESULT_CONFIDENCES = new Set<ResearchResultConfidence>(["low", "medium", "high"])
+const RESEARCH_RESULT_CREATED_BY = new Set<ResearchResultCreatedBy>(["commander", "executor", "verifier", "human", "system"])
+const CITATION_SOURCE_TYPES = new Set<CitationSourceType>(["paper", "url", "file", "event", "artifact", "code", "user"])
+const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>([
+  "topic",
+  "source",
+  "note",
+  "artifact",
+  "research_result",
+  "citation",
+  "result_citation",
+  "result_artifact",
+])
+const EVIDENCE_REQUIRED_RESULT_TYPES = new Set<ResearchResultType>(["finding", "literature_finding", "bug_diagnosis", "promotion_decision"])
 const DEFAULT_READ_LIMIT = 100
 const MAX_READ_LIMIT = 500
 
@@ -83,6 +132,12 @@ export interface ArtifactInput {
   kind: ArtifactKind
   path?: string
   content?: string
+  artifact_type?: ArtifactType
+  sha256?: string
+  size_bytes?: number
+  produced_by_mission_id?: string
+  produced_by_run_id?: string
+  description?: string
 }
 
 export interface Artifact {
@@ -91,7 +146,100 @@ export interface Artifact {
   kind: ArtifactKind
   path: string | null
   content: string | null
+  artifact_type: ArtifactType | null
+  sha256: string | null
+  size_bytes: number | null
+  produced_by_mission_id: string | null
+  produced_by_run_id: string | null
+  description: string | null
   created_at: string
+}
+
+export interface ResearchResultInput {
+  result_id?: string
+  result_type: ResearchResultType
+  label?: string
+  title: string
+  summary: string
+  confidence: ResearchResultConfidence
+  mission_id?: string
+  candidate_id?: string
+  hypothesis_id?: string
+  trial_id?: string
+  training_run_id?: string
+  metrics?: unknown
+  reproduction?: unknown
+  created_by: ResearchResultCreatedBy
+}
+
+export interface ResearchResult {
+  result_id: string
+  result_type: ResearchResultType
+  label: string | null
+  title: string
+  summary: string
+  status: ResearchResultStatus
+  confidence: ResearchResultConfidence
+  mission_id: string | null
+  candidate_id: string | null
+  hypothesis_id: string | null
+  trial_id: string | null
+  training_run_id: string | null
+  metrics: unknown | null
+  reproduction: unknown | null
+  created_by: ResearchResultCreatedBy
+  created_at: string
+  updated_at: string
+}
+
+export interface CitationInput {
+  citation_id?: string
+  source_type: CitationSourceType
+  source_uri: string
+  title?: string
+  quoted_text_or_summary: string
+  accessed_at?: string
+  sha256?: string
+  metadata?: unknown
+}
+
+export interface Citation {
+  citation_id: string
+  source_type: CitationSourceType
+  source_uri: string
+  title: string | null
+  quoted_text_or_summary: string
+  accessed_at: string
+  sha256: string | null
+  metadata: unknown | null
+  created_at: string
+}
+
+export interface ResultCitationLink {
+  result_id: string
+  citation_id: string
+  created_at: string
+}
+
+export interface ResultArtifactLink {
+  result_id: string
+  artifact_id: string
+  created_at: string
+}
+
+export interface SearchResearchResultsOptions extends SearchOptions {
+  result_type?: ResearchResultType
+  status?: ResearchResultStatus
+  mission_id?: string
+}
+
+export interface SearchCitationsOptions extends SearchOptions {
+  source_type?: CitationSourceType
+}
+
+export interface WriteBarrierResult {
+  ok: boolean
+  reason?: string
 }
 
 export interface ListResearchEventsOptions {
@@ -147,6 +295,17 @@ interface SourceRow extends Source {
 }
 
 interface ArtifactRow extends Artifact {
+  input_hash: string | null
+}
+
+interface ResearchResultRow extends Omit<ResearchResult, "metrics" | "reproduction"> {
+  metrics_json: string | null
+  reproduction_json: string | null
+  input_hash: string | null
+}
+
+interface CitationRow extends Omit<Citation, "metadata"> {
+  metadata_json: string | null
   input_hash: string | null
 }
 
@@ -339,9 +498,27 @@ export class ResearchDb {
     const path = cleanOptional(input.path)
     const content = cleanOptional(input.content)
     if (!path && !content) throw new Error("artifact requires path or content")
-    const inputHash = hashPayload({ topic_id: topicId, kind: input.kind, path, content })
+    const artifactType = cleanOptionalEnum(input.artifact_type, ARTIFACT_TYPES, "artifact type")
+    const sha256 = cleanOptional(input.sha256)
+    const sizeBytes = cleanOptionalSize(input.size_bytes)
+    const producedByMissionId = input.produced_by_mission_id ? cleanId(input.produced_by_mission_id) : null
+    const producedByRunId = input.produced_by_run_id ? cleanId(input.produced_by_run_id) : null
+    const description = cleanOptional(input.description)
+    const inputHash = hashPayload(compactPayload({
+      topic_id: topicId,
+      kind: input.kind,
+      path,
+      content,
+      artifact_type: artifactType,
+      sha256,
+      size_bytes: sizeBytes,
+      produced_by_mission_id: producedByMissionId,
+      produced_by_run_id: producedByRunId,
+      description,
+    }))
     const redactedPath = path ? redactString(path) : null
     const redactedContent = content ? redactString(content) : null
+    const redactedDescription = description ? redactString(description) : null
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
       const existing = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as ArtifactRow | null
@@ -350,11 +527,27 @@ export class ResearchDb {
         throw new Error(`artifact id collision: ${id}`)
       }
       this.db
-        .query("INSERT INTO artifacts (id, topic_id, kind, path, content, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(id, topicId, input.kind, redactedPath, redactedContent, inputHash, createdAt)
+        .query(
+          "INSERT INTO artifacts (id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          id,
+          topicId,
+          input.kind,
+          redactedPath,
+          redactedContent,
+          artifactType,
+          sha256,
+          sizeBytes,
+          producedByMissionId,
+          producedByRunId,
+          redactedDescription,
+          inputHash,
+          createdAt,
+        )
       const artifact = this.getArtifact(id)
       if (!artifact) throw new Error(`failed to add artifact: ${id}`)
-      this.recordEvent("artifact_added", "artifact", id, artifact)
+      this.recordEvent("ArtifactRecorded", "artifact", id, artifact)
       return artifact
     })
   }
@@ -363,8 +556,281 @@ export class ResearchDb {
     const id = cleanId(topicId)
     this.requireTopic(id)
     return this.db
-      .query("SELECT id, topic_id, kind, path, content, created_at FROM artifacts WHERE topic_id = ? ORDER BY created_at, id")
+      .query(
+        "SELECT id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, created_at FROM artifacts WHERE topic_id = ? ORDER BY created_at, id",
+      )
       .all(id) as Artifact[]
+  }
+
+  proposeResearchResult(input: ResearchResultInput): ResearchResult {
+    const resultId = cleanId(input.result_id ?? this.idFactory())
+    assertAllowed(RESEARCH_RESULT_TYPES, input.result_type, "research result type")
+    const label = cleanOptional(input.label)
+    const title = cleanRequired(input.title, "title")
+    const summary = cleanRequired(input.summary, "summary")
+    assertAllowed(RESEARCH_RESULT_CONFIDENCES, input.confidence, "research result confidence")
+    assertAllowed(RESEARCH_RESULT_CREATED_BY, input.created_by, "research result created_by")
+    const missionId = input.mission_id ? cleanId(input.mission_id) : null
+    const candidateId = input.candidate_id ? cleanId(input.candidate_id) : null
+    const hypothesisId = input.hypothesis_id ? cleanId(input.hypothesis_id) : null
+    const trialId = input.trial_id ? cleanId(input.trial_id) : null
+    const trainingRunId = input.training_run_id ? cleanId(input.training_run_id) : null
+    const metrics = input.metrics ?? null
+    const reproduction = input.reproduction ?? null
+    const inputHash = hashPayload({
+      result_type: input.result_type,
+      label,
+      title,
+      summary,
+      status: "proposed",
+      confidence: input.confidence,
+      mission_id: missionId,
+      candidate_id: candidateId,
+      hypothesis_id: hypothesisId,
+      trial_id: trialId,
+      training_run_id: trainingRunId,
+      metrics,
+      reproduction,
+      created_by: input.created_by,
+    })
+    const redactedMetrics = redactValue(metrics)
+    const redactedReproduction = redactValue(reproduction)
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM research_results WHERE result_id = ?").get(resultId) as ResearchResultRow | null
+      if (existing) {
+        if (existing.input_hash === inputHash) return this.researchResultFromRow(existing)
+        throw new Error(`research result id collision: ${resultId}`)
+      }
+      this.db
+        .query(
+          "INSERT INTO research_results (result_id, result_type, label, title, summary, status, confidence, mission_id, candidate_id, hypothesis_id, trial_id, training_run_id, metrics_json, reproduction_json, created_by, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          resultId,
+          input.result_type,
+          label ? redactString(label) : null,
+          redactString(title),
+          redactString(summary),
+          "proposed",
+          input.confidence,
+          missionId,
+          candidateId,
+          hypothesisId,
+          trialId,
+          trainingRunId,
+          JSON.stringify(redactedMetrics),
+          JSON.stringify(redactedReproduction),
+          input.created_by,
+          inputHash,
+          createdAt,
+          createdAt,
+        )
+      const result = this.getResearchResult(resultId)
+      if (!result) throw new Error(`failed to propose research result: ${resultId}`)
+      this.recordEvent("ResearchResultProposed", "research_result", resultId, result)
+      return result
+    })
+  }
+
+  acceptResearchResult(resultId: string): ResearchResult {
+    const id = cleanId(resultId)
+    const existing = this.getResearchResult(id)
+    if (!existing) throw new Error(`research result not found: ${id}`)
+    this.assertResearchResultHasEvidence(id)
+    const updatedAt = this.timestamp()
+    return this.inTransaction(() => {
+      this.db.query("UPDATE research_results SET status = ?, updated_at = ? WHERE result_id = ?").run("accepted", updatedAt, id)
+      const result = this.getResearchResult(id)
+      if (!result) throw new Error(`research result not found: ${id}`)
+      this.recordEvent("ResearchResultAccepted", "research_result", id, result)
+      return result
+    })
+  }
+
+  rejectResearchResult(resultId: string, reason?: string): ResearchResult {
+    const id = cleanId(resultId)
+    if (!this.getResearchResult(id)) throw new Error(`research result not found: ${id}`)
+    const cleanReason = cleanOptional(reason)
+    const updatedAt = this.timestamp()
+    return this.inTransaction(() => {
+      this.db.query("UPDATE research_results SET status = ?, updated_at = ? WHERE result_id = ?").run("rejected", updatedAt, id)
+      const result = this.getResearchResult(id)
+      if (!result) throw new Error(`research result not found: ${id}`)
+      this.recordEvent("ResearchResultRejected", "research_result", id, { result, reason: cleanReason ? redactString(cleanReason) : null })
+      return result
+    })
+  }
+
+  getResearchResult(resultId: string): ResearchResult | null {
+    const row = this.db.query("SELECT * FROM research_results WHERE result_id = ?").get(cleanId(resultId)) as ResearchResultRow | null
+    return this.researchResultFromRow(row)
+  }
+
+  searchResearchResults(options: SearchResearchResultsOptions = {}): ResearchResult[] {
+    const filters: string[] = []
+    const params: SQLQueryBindings[] = []
+    if (options.result_type !== undefined) {
+      assertAllowed(RESEARCH_RESULT_TYPES, options.result_type, "research result type")
+      filters.push("result_type = ?")
+      params.push(options.result_type)
+    }
+    if (options.status !== undefined) {
+      assertAllowed(RESEARCH_RESULT_STATUSES, options.status, "research result status")
+      filters.push("status = ?")
+      params.push(options.status)
+    }
+    if (options.mission_id !== undefined) {
+      filters.push("mission_id = ?")
+      params.push(cleanId(options.mission_id))
+    }
+    params.push(cleanLimit(options.limit))
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
+    return (this.db.query(`SELECT * FROM research_results ${where} ORDER BY created_at, result_id LIMIT ?`).all(...params) as ResearchResultRow[]).map((row) =>
+      this.researchResultFromRow(row),
+    )
+  }
+
+  recordCitation(input: CitationInput): Citation {
+    const citationId = cleanId(input.citation_id ?? this.idFactory())
+    assertAllowed(CITATION_SOURCE_TYPES, input.source_type, "citation source type")
+    const sourceUri = cleanRequired(input.source_uri, "source_uri")
+    const title = cleanOptional(input.title)
+    const quoted = cleanRequired(input.quoted_text_or_summary, "quoted_text_or_summary")
+    const accessedAt = cleanOptional(input.accessed_at) ?? this.timestamp()
+    const sha256 = cleanOptional(input.sha256)
+    const metadata = input.metadata ?? null
+    const inputHash = hashPayload({ source_type: input.source_type, source_uri: sourceUri, title, quoted_text_or_summary: quoted, accessed_at: accessedAt, sha256, metadata })
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM citations WHERE citation_id = ?").get(citationId) as CitationRow | null
+      if (existing) {
+        if (existing.input_hash === inputHash) return this.citationFromRow(existing)
+        throw new Error(`citation id collision: ${citationId}`)
+      }
+      this.db
+        .query(
+          "INSERT INTO citations (citation_id, source_type, source_uri, title, quoted_text_or_summary, accessed_at, sha256, metadata_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          citationId,
+          input.source_type,
+          redactString(sourceUri),
+          title ? redactString(title) : null,
+          redactString(quoted),
+          accessedAt,
+          sha256,
+          JSON.stringify(redactValue(metadata)),
+          inputHash,
+          createdAt,
+        )
+      const citation = this.getCitation(citationId)
+      if (!citation) throw new Error(`failed to record citation: ${citationId}`)
+      this.recordEvent("CitationRecorded", "citation", citationId, citation)
+      return citation
+    })
+  }
+
+  getCitation(citationId: string): Citation | null {
+    const row = this.db.query("SELECT * FROM citations WHERE citation_id = ?").get(cleanId(citationId)) as CitationRow | null
+    return this.citationFromRow(row)
+  }
+
+  searchCitations(options: SearchCitationsOptions = {}): Citation[] {
+    const filters: string[] = []
+    const params: SQLQueryBindings[] = []
+    if (options.source_type !== undefined) {
+      assertAllowed(CITATION_SOURCE_TYPES, options.source_type, "citation source type")
+      filters.push("source_type = ?")
+      params.push(options.source_type)
+    }
+    params.push(cleanLimit(options.limit))
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
+    return (this.db.query(`SELECT * FROM citations ${where} ORDER BY created_at, citation_id LIMIT ?`).all(...params) as CitationRow[]).map((row) =>
+      this.citationFromRow(row),
+    )
+  }
+
+  linkResultCitation(resultId: string, citationId: string): ResultCitationLink {
+    const cleanResultId = cleanId(resultId)
+    const cleanCitationId = cleanId(citationId)
+    this.requireResearchResult(cleanResultId)
+    this.requireCitation(cleanCitationId)
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db
+        .query("SELECT result_id, citation_id, created_at FROM result_citations WHERE result_id = ? AND citation_id = ?")
+        .get(cleanResultId, cleanCitationId) as ResultCitationLink | null
+      if (existing) return existing
+      this.db.query("INSERT INTO result_citations (result_id, citation_id, created_at) VALUES (?, ?, ?)").run(cleanResultId, cleanCitationId, createdAt)
+      const link = { result_id: cleanResultId, citation_id: cleanCitationId, created_at: createdAt }
+      this.recordEvent("ResultCitationLinked", "result_citation", `${cleanResultId}:${cleanCitationId}`, link)
+      return link
+    })
+  }
+
+  linkResultArtifact(resultId: string, artifactId: string): ResultArtifactLink {
+    const cleanResultId = cleanId(resultId)
+    const cleanArtifactId = cleanId(artifactId)
+    this.requireResearchResult(cleanResultId)
+    this.requireArtifact(cleanArtifactId)
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db
+        .query("SELECT result_id, artifact_id, created_at FROM result_artifacts WHERE result_id = ? AND artifact_id = ?")
+        .get(cleanResultId, cleanArtifactId) as ResultArtifactLink | null
+      if (existing) return existing
+      this.db.query("INSERT INTO result_artifacts (result_id, artifact_id, created_at) VALUES (?, ?, ?)").run(cleanResultId, cleanArtifactId, createdAt)
+      const link = { result_id: cleanResultId, artifact_id: cleanArtifactId, created_at: createdAt }
+      this.recordEvent("ResultArtifactLinked", "result_artifact", `${cleanResultId}:${cleanArtifactId}`, link)
+      return link
+    })
+  }
+
+  listResultCitations(resultId: string): Citation[] {
+    const id = cleanId(resultId)
+    this.requireResearchResult(id)
+    return (this.db
+      .query(
+        "SELECT c.* FROM citations c INNER JOIN result_citations rc ON rc.citation_id = c.citation_id WHERE rc.result_id = ? ORDER BY rc.created_at, c.citation_id",
+      )
+      .all(id) as CitationRow[]).map((row) => this.citationFromRow(row))
+  }
+
+  listResultArtifacts(resultId: string): Artifact[] {
+    const id = cleanId(resultId)
+    this.requireResearchResult(id)
+    return this.db
+      .query(
+        "SELECT a.id, a.topic_id, a.kind, a.path, a.content, a.artifact_type, a.sha256, a.size_bytes, a.produced_by_mission_id, a.produced_by_run_id, a.description, a.created_at FROM artifacts a INNER JOIN result_artifacts ra ON ra.artifact_id = a.id WHERE ra.result_id = ? ORDER BY ra.created_at, a.id",
+      )
+      .all(id) as Artifact[]
+  }
+
+  canCompleteMission(missionId: string): WriteBarrierResult {
+    const id = cleanId(missionId)
+    const result = this.db
+      .query("SELECT result_id FROM research_results WHERE mission_id = ? AND status IN ('proposed', 'accepted') LIMIT 1")
+      .get(id)
+    if (result) return { ok: true }
+    const artifact = this.db.query("SELECT id FROM artifacts WHERE produced_by_mission_id = ? LIMIT 1").get(id)
+    if (artifact) return { ok: true }
+    return { ok: false, reason: `mission has no result evidence: ${id}` }
+  }
+
+  assertMissionHasResultEvidence(missionId: string): void {
+    const verdict = this.canCompleteMission(missionId)
+    if (!verdict.ok) throw new Error(verdict.reason)
+  }
+
+  assertResearchResultHasEvidence(resultId: string): void {
+    const id = cleanId(resultId)
+    const result = this.getResearchResult(id)
+    if (!result) throw new Error(`research result not found: ${id}`)
+    if (!EVIDENCE_REQUIRED_RESULT_TYPES.has(result.result_type)) return
+    const citation = this.db.query("SELECT 1 FROM result_citations WHERE result_id = ? LIMIT 1").get(id)
+    const artifact = this.db.query("SELECT 1 FROM result_artifacts WHERE result_id = ? LIMIT 1").get(id)
+    if (!citation && !artifact) throw new Error(`research result requires linked citation or artifact evidence: ${id}`)
   }
 
   listResearchEvents(options: ListResearchEventsOptions = {}): ResearchEvent[] {
@@ -483,9 +949,63 @@ export class ResearchDb {
         kind TEXT NOT NULL,
         path TEXT,
         content TEXT,
+        artifact_type TEXT,
+        sha256 TEXT,
+        size_bytes INTEGER,
+        produced_by_mission_id TEXT,
+        produced_by_run_id TEXT,
+        description TEXT,
         input_hash TEXT NOT NULL,
         created_at TEXT NOT NULL,
         CHECK (path IS NOT NULL OR content IS NOT NULL)
+      );
+
+      CREATE TABLE IF NOT EXISTS research_results (
+        result_id TEXT PRIMARY KEY,
+        result_type TEXT NOT NULL CHECK (result_type IN ('probe_result', 'smoke_test_result', 'full_training_result', 'evaluation_result', 'ablation_result', 'finding', 'negative_finding', 'bug_diagnosis', 'literature_finding', 'implementation_change', 'checkpoint_selection', 'promotion_decision', 'reproduction_record')),
+        label TEXT,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('proposed', 'accepted', 'rejected', 'superseded')),
+        confidence TEXT NOT NULL CHECK (confidence IN ('low', 'medium', 'high')),
+        mission_id TEXT,
+        candidate_id TEXT,
+        hypothesis_id TEXT,
+        trial_id TEXT,
+        training_run_id TEXT,
+        metrics_json TEXT,
+        reproduction_json TEXT,
+        created_by TEXT NOT NULL CHECK (created_by IN ('commander', 'executor', 'verifier', 'human', 'system')),
+        input_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS citations (
+        citation_id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL CHECK (source_type IN ('paper', 'url', 'file', 'event', 'artifact', 'code', 'user')),
+        source_uri TEXT NOT NULL,
+        title TEXT,
+        quoted_text_or_summary TEXT NOT NULL,
+        accessed_at TEXT NOT NULL,
+        sha256 TEXT,
+        metadata_json TEXT,
+        input_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS result_citations (
+        result_id TEXT NOT NULL REFERENCES research_results(result_id) ON DELETE CASCADE,
+        citation_id TEXT NOT NULL REFERENCES citations(citation_id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (result_id, citation_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS result_artifacts (
+        result_id TEXT NOT NULL REFERENCES research_results(result_id) ON DELETE CASCADE,
+        artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (result_id, artifact_id)
       );
 
       CREATE TABLE IF NOT EXISTS research_events (
@@ -501,6 +1021,12 @@ export class ResearchDb {
     this.ensureColumn("sources", "input_hash", "TEXT")
     this.ensureColumn("notes", "input_hash", "TEXT")
     this.ensureColumn("artifacts", "input_hash", "TEXT")
+    this.ensureColumn("artifacts", "artifact_type", "TEXT")
+    this.ensureColumn("artifacts", "sha256", "TEXT")
+    this.ensureColumn("artifacts", "size_bytes", "INTEGER")
+    this.ensureColumn("artifacts", "produced_by_mission_id", "TEXT")
+    this.ensureColumn("artifacts", "produced_by_run_id", "TEXT")
+    this.ensureColumn("artifacts", "description", "TEXT")
     this.backfillInputHashes()
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
   }
@@ -519,7 +1045,11 @@ export class ResearchDb {
   }
 
   private getArtifact(id: string): Artifact | null {
-    return this.db.query("SELECT id, topic_id, kind, path, content, created_at FROM artifacts WHERE id = ?").get(id) as Artifact | null
+    return this.db
+      .query(
+        "SELECT id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, created_at FROM artifacts WHERE id = ?",
+      )
+      .get(id) as Artifact | null
   }
 
   private backfillInputHashes(): void {
@@ -554,12 +1084,25 @@ export class ResearchDb {
     }
 
     for (const row of this.db
-      .query("SELECT id, topic_id, kind, path, content, input_hash, created_at FROM artifacts WHERE input_hash IS NULL")
+      .query(
+        "SELECT id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, input_hash, created_at FROM artifacts WHERE input_hash IS NULL",
+      )
       .all() as ArtifactRow[]) {
-      const inputHash = hashPayload({ topic_id: row.topic_id, kind: row.kind, path: row.path, content: row.content })
+      const inputHash = hashPayload(compactPayload({
+        topic_id: row.topic_id,
+        kind: row.kind,
+        path: row.path,
+        content: row.content,
+        artifact_type: row.artifact_type,
+        sha256: row.sha256,
+        size_bytes: row.size_bytes,
+        produced_by_mission_id: row.produced_by_mission_id,
+        produced_by_run_id: row.produced_by_run_id,
+        description: row.description,
+      }))
       this.db
-        .query("UPDATE artifacts SET path = ?, content = ?, input_hash = ? WHERE id = ?")
-        .run(redactNullable(row.path), redactNullable(row.content), inputHash, row.id)
+        .query("UPDATE artifacts SET path = ?, content = ?, description = ?, input_hash = ? WHERE id = ?")
+        .run(redactNullable(row.path), redactNullable(row.content), redactNullable(row.description), inputHash, row.id)
     }
   }
 
@@ -596,6 +1139,18 @@ export class ResearchDb {
     if (!source) throw new Error(`source not found for topic: ${sourceId}`)
   }
 
+  private requireArtifact(artifactId: string): void {
+    if (!this.getArtifact(artifactId)) throw new Error(`artifact not found: ${artifactId}`)
+  }
+
+  private requireResearchResult(resultId: string): void {
+    if (!this.getResearchResult(resultId)) throw new Error(`research result not found: ${resultId}`)
+  }
+
+  private requireCitation(citationId: string): void {
+    if (!this.getCitation(citationId)) throw new Error(`citation not found: ${citationId}`)
+  }
+
   private latestEventForTopic(topicId: string): ResearchEvent | null {
     const row = this.db
       .query(
@@ -621,6 +1176,53 @@ export class ResearchDb {
     return { id: row.id, topic_id: row.topic_id, source_id: row.source_id, content: row.content, tags: parseTags(row.tags_json), created_at: row.created_at }
   }
 
+  private researchResultFromRow(row: ResearchResultRow): ResearchResult
+  private researchResultFromRow(row: ResearchResultRow | null): ResearchResult | null
+  private researchResultFromRow(row: ResearchResultRow | null): ResearchResult | null {
+    if (!row) return null
+    assertAllowed(RESEARCH_RESULT_TYPES, row.result_type, "research result type")
+    assertAllowed(RESEARCH_RESULT_STATUSES, row.status, "research result status")
+    assertAllowed(RESEARCH_RESULT_CONFIDENCES, row.confidence, "research result confidence")
+    assertAllowed(RESEARCH_RESULT_CREATED_BY, row.created_by, "research result created_by")
+    return {
+      result_id: row.result_id,
+      result_type: row.result_type,
+      label: row.label,
+      title: row.title,
+      summary: row.summary,
+      status: row.status,
+      confidence: row.confidence,
+      mission_id: row.mission_id,
+      candidate_id: row.candidate_id,
+      hypothesis_id: row.hypothesis_id,
+      trial_id: row.trial_id,
+      training_run_id: row.training_run_id,
+      metrics: parseNullableJson(row.metrics_json),
+      reproduction: parseNullableJson(row.reproduction_json),
+      created_by: row.created_by,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }
+  }
+
+  private citationFromRow(row: CitationRow): Citation
+  private citationFromRow(row: CitationRow | null): Citation | null
+  private citationFromRow(row: CitationRow | null): Citation | null {
+    if (!row) return null
+    assertAllowed(CITATION_SOURCE_TYPES, row.source_type, "citation source type")
+    return {
+      citation_id: row.citation_id,
+      source_type: row.source_type,
+      source_uri: row.source_uri,
+      title: row.title,
+      quoted_text_or_summary: row.quoted_text_or_summary,
+      accessed_at: row.accessed_at,
+      sha256: row.sha256,
+      metadata: parseNullableJson(row.metadata_json),
+      created_at: row.created_at,
+    }
+  }
+
   private timestamp(): string {
     return this.now().toISOString()
   }
@@ -644,6 +1246,19 @@ function cleanOptional(value: string | undefined): string | null {
   return trimmed ? trimmed : null
 }
 
+function cleanOptionalEnum<T extends string>(value: string | undefined, allowed: Set<T>, field: string): T | null {
+  if (value === undefined) return null
+  const trimmed = cleanRequired(value, field)
+  assertAllowed(allowed, trimmed, field)
+  return trimmed
+}
+
+function cleanOptionalSize(value: number | undefined): number | null {
+  if (value === undefined) return null
+  if (!Number.isInteger(value) || value < 0) throw new Error("size_bytes must be a non-negative integer")
+  return value
+}
+
 function cleanLimit(value: number | undefined): number {
   if (value === undefined) return DEFAULT_READ_LIMIT
   if (!Number.isInteger(value) || value <= 0) throw new Error("limit must be a positive integer")
@@ -658,6 +1273,10 @@ function cleanTags(value: string[] | undefined): string[] {
 
 function hashPayload(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
+}
+
+function compactPayload(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined))
 }
 
 function assertAllowed<T extends string>(allowed: Set<T>, value: string, field: string): asserts value is T {
@@ -680,6 +1299,15 @@ function parseTags(value: string | null): string[] {
     return parsed
   } catch {
     return []
+  }
+}
+
+function parseNullableJson(value: string | null): unknown | null {
+  if (value === null) return null
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return null
   }
 }
 
