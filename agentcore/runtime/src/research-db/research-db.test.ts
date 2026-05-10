@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
@@ -131,6 +131,75 @@ describe("ResearchDb", () => {
     const second = openTestDb(dir)
     expect(second.getTopic("topic_1")?.title).toBe("Durable topic")
     second.close()
+  })
+
+  test("migrates legacy rows with input fingerprints for idempotent explicit IDs", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const sqlite = new Database(join(dir, ".nxl", "research.db"), { create: true })
+    try {
+      sqlite.exec(`
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE topics (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE sources (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          locator TEXT NOT NULL,
+          title TEXT,
+          source_type TEXT NOT NULL,
+          status TEXT NOT NULL,
+          credibility TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE notes (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
+          content TEXT NOT NULL,
+          tags_json TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE artifacts (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          path TEXT,
+          content TEXT,
+          created_at TEXT NOT NULL,
+          CHECK (path IS NOT NULL OR content IS NOT NULL)
+        );
+        INSERT INTO topics VALUES ('topic_legacy', 'Legacy topic', 'open', '2026-05-10T12:00:00.000Z', '2026-05-10T12:00:00.000Z');
+        INSERT INTO sources VALUES ('source_legacy', 'topic_legacy', 'file://legacy.md', 'Legacy source', 'file', 'new', 'primary', '2026-05-10T12:00:00.000Z');
+        INSERT INTO notes VALUES ('note_legacy', 'topic_legacy', 'source_legacy', 'Legacy note', '["legacy"]', '2026-05-10T12:00:00.000Z');
+        INSERT INTO artifacts VALUES ('artifact_legacy', 'topic_legacy', 'report', NULL, 'Legacy report', '2026-05-10T12:00:00.000Z');
+      `)
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openTestDb(dir)
+    expect(db.createTopic({ id: "topic_legacy", title: "Legacy topic" }).id).toBe("topic_legacy")
+    expect(
+      db.addSource({
+        id: "source_legacy",
+        topic_id: "topic_legacy",
+        locator: "file://legacy.md",
+        title: "Legacy source",
+        source_type: "file",
+        credibility: "primary",
+      }).id,
+    ).toBe("source_legacy")
+    expect(db.addNote({ id: "note_legacy", topic_id: "topic_legacy", source_id: "source_legacy", content: "Legacy note", tags: ["legacy"] }).id).toBe(
+      "note_legacy",
+    )
+    expect(db.addArtifact({ id: "artifact_legacy", topic_id: "topic_legacy", kind: "report", content: "Legacy report" }).id).toBe("artifact_legacy")
+    db.close()
   })
 
   test("duplicate explicit IDs are idempotent", async () => {

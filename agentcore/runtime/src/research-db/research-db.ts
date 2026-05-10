@@ -141,13 +141,13 @@ export class ResearchDb {
     assertAllowed(TOPIC_STATUSES, status, "topic status")
     const inputHash = hashPayload({ title, status })
     const redactedTitle = redactString(title)
-    const existing = this.db.query("SELECT * FROM topics WHERE id = ?").get(id) as TopicRow | null
-    if (existing) {
-      if (existing.input_hash === inputHash) return this.getTopic(id) as Topic
-      throw new Error(`topic id collision: ${id}`)
-    }
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM topics WHERE id = ?").get(id) as TopicRow | null
+      if (existing) {
+        if (existing.input_hash === inputHash) return this.getTopic(id) as Topic
+        throw new Error(`topic id collision: ${id}`)
+      }
       this.db
         .query("INSERT INTO topics (id, title, status, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
         .run(id, redactedTitle, status, inputHash, createdAt, createdAt)
@@ -189,13 +189,13 @@ export class ResearchDb {
     const redactedLocator = redactString(locator)
     const redactedTitle = title ? redactString(title) : null
     const redactedCredibility = credibility ? redactString(credibility) : null
-    const existing = this.db.query("SELECT * FROM sources WHERE id = ?").get(id) as SourceRow | null
-    if (existing) {
-      if (existing.input_hash === inputHash) return this.getSource(id) as Source
-      throw new Error(`source id collision: ${id}`)
-    }
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM sources WHERE id = ?").get(id) as SourceRow | null
+      if (existing) {
+        if (existing.input_hash === inputHash) return this.getSource(id) as Source
+        throw new Error(`source id collision: ${id}`)
+      }
       this.db
         .query(
           "INSERT INTO sources (id, topic_id, locator, title, source_type, status, credibility, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -237,14 +237,14 @@ export class ResearchDb {
     const inputHash = hashPayload({ topic_id: topicId, source_id: sourceId, content, tags })
     const redactedContent = redactString(content)
     const redactedTags = JSON.stringify(redactValue(tags))
-    const existing = this.noteFromRow(this.db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null)
-    if (existing) {
-      const existingRow = this.db.query("SELECT input_hash FROM notes WHERE id = ?").get(id) as { input_hash: string | null } | null
-      if (existingRow?.input_hash === inputHash) return existing
-      throw new Error(`note id collision: ${id}`)
-    }
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
+      const existingRow = this.db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null
+      const existing = this.noteFromRow(existingRow)
+      if (existing) {
+        if (existingRow?.input_hash === inputHash) return existing
+        throw new Error(`note id collision: ${id}`)
+      }
       this.db
         .query("INSERT INTO notes (id, topic_id, source_id, content, tags_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(id, topicId, sourceId, redactedContent, redactedTags, inputHash, createdAt)
@@ -275,13 +275,13 @@ export class ResearchDb {
     const inputHash = hashPayload({ topic_id: topicId, kind: input.kind, path, content })
     const redactedPath = path ? redactString(path) : null
     const redactedContent = content ? redactString(content) : null
-    const existing = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as ArtifactRow | null
-    if (existing) {
-      if (existing.input_hash === inputHash) return this.getArtifact(id) as Artifact
-      throw new Error(`artifact id collision: ${id}`)
-    }
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as ArtifactRow | null
+      if (existing) {
+        if (existing.input_hash === inputHash) return this.getArtifact(id) as Artifact
+        throw new Error(`artifact id collision: ${id}`)
+      }
       this.db
         .query("INSERT INTO artifacts (id, topic_id, kind, path, content, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(id, topicId, input.kind, redactedPath, redactedContent, inputHash, createdAt)
@@ -362,6 +362,7 @@ export class ResearchDb {
     this.ensureColumn("sources", "input_hash", "TEXT")
     this.ensureColumn("notes", "input_hash", "TEXT")
     this.ensureColumn("artifacts", "input_hash", "TEXT")
+    this.backfillInputHashes()
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
   }
 
@@ -380,6 +381,49 @@ export class ResearchDb {
 
   private getArtifact(id: string): Artifact | null {
     return this.db.query("SELECT id, topic_id, kind, path, content, created_at FROM artifacts WHERE id = ?").get(id) as Artifact | null
+  }
+
+  private backfillInputHashes(): void {
+    for (const row of this.db.query("SELECT id, title, status FROM topics WHERE input_hash IS NULL").all() as Topic[]) {
+      this.db.query("UPDATE topics SET input_hash = ? WHERE id = ?").run(hashPayload({ title: row.title, status: row.status }), row.id)
+    }
+
+    for (const row of this.db
+      .query("SELECT id, topic_id, locator, title, source_type, status, credibility FROM sources WHERE input_hash IS NULL")
+      .all() as Source[]) {
+      this.db
+        .query("UPDATE sources SET input_hash = ? WHERE id = ?")
+        .run(
+          hashPayload({
+            topic_id: row.topic_id,
+            locator: row.locator,
+            title: row.title,
+            source_type: row.source_type,
+            status: row.status,
+            credibility: row.credibility,
+          }),
+          row.id,
+        )
+    }
+
+    for (const row of this.db
+      .query("SELECT id, topic_id, source_id, content, tags_json, created_at FROM notes WHERE input_hash IS NULL")
+      .all() as NoteRow[]) {
+      this.db
+        .query("UPDATE notes SET input_hash = ? WHERE id = ?")
+        .run(
+          hashPayload({ topic_id: row.topic_id, source_id: row.source_id, content: row.content, tags: parseTags(row.tags_json) }),
+          row.id,
+        )
+    }
+
+    for (const row of this.db
+      .query("SELECT id, topic_id, kind, path, content, created_at FROM artifacts WHERE input_hash IS NULL")
+      .all() as Artifact[]) {
+      this.db
+        .query("UPDATE artifacts SET input_hash = ? WHERE id = ?")
+        .run(hashPayload({ topic_id: row.topic_id, kind: row.kind, path: row.path, content: row.content }), row.id)
+    }
   }
 
   private recordEvent(eventType: string, entityType: string, entityId: string, payload: unknown): void {
