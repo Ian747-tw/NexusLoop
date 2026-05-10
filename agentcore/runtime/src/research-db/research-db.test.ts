@@ -542,7 +542,7 @@ describe("ResearchDb", () => {
     const events = db.listResearchEvents()
 
     expect(events.map((event) => event.entity_type)).toEqual(["topic", "source", "note", "artifact"])
-    expect(events.map((event) => event.event_type)).toEqual(["topic_created", "source_added", "note_added", "ArtifactRecorded"])
+    expect(events.map((event) => event.event_type)).toEqual(["topic_created", "source_added", "note_added", "artifact_added"])
     expect(events.map((event) => event.payload)).toEqual([
       db.getTopic("topic_1"),
       db.listSourcesForTopic("topic_1")[0],
@@ -602,7 +602,7 @@ describe("ResearchDb", () => {
       after_event_id = page[0]!.event_id
     }
 
-    expect(seen).toEqual(["topic_created", "source_added", "note_added", "ArtifactRecorded"])
+    expect(seen).toEqual(["topic_created", "source_added", "note_added", "artifact_added"])
     expect(db.listResearchEvents({ after_event_id, limit: 1 })).toEqual([])
     db.close()
   })
@@ -644,7 +644,7 @@ describe("ResearchDb", () => {
         reviewed_source_count: 1,
         rejected_source_count: 1,
       },
-      latest_event: expect.objectContaining({ event_type: "ArtifactRecorded", entity_id: "report_1" }),
+      latest_event: expect.objectContaining({ event_type: "artifact_added", entity_id: "report_1" }),
     })
     db.close()
   })
@@ -657,7 +657,7 @@ describe("ResearchDb", () => {
     db.addNote({ id: "note_1", topic_id: "topic_1", content: "Useful finding" })
     db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "report", content: "Report" })
 
-    expect(db.getTopicSnapshot("topic_1")?.latest_event).toEqual(expect.objectContaining({ event_type: "ArtifactRecorded", entity_id: "artifact_1" }))
+    expect(db.getTopicSnapshot("topic_1")?.latest_event).toEqual(expect.objectContaining({ event_type: "artifact_added", entity_id: "artifact_1" }))
     db.close()
   })
 
@@ -868,6 +868,37 @@ describe("ResearchDb", () => {
     db.linkResultCitation("finding_1", "citation_1")
 
     expect(db.acceptResearchResult("finding_1").status).toBe("accepted")
+    db.close()
+  })
+
+  test("accepting an already accepted result is idempotent", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Accepted once",
+      confidence: "medium",
+      created_by: "executor",
+    })
+
+    const first = db.acceptResearchResult("result_1")
+    const second = db.acceptResearchResult("result_1")
+
+    expect(second).toEqual(first)
+    expect(db.listResearchEvents({ event_type: "ResearchResultAccepted" })).toHaveLength(1)
+    db.close()
+  })
+
+  test("artifact recording preserves the existing artifact_added event type", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "report", content: "Report", description: "metadata" })
+
+    expect(db.listResearchEvents({ entity_type: "artifact" }).map((event) => event.event_type)).toEqual(["artifact_added"])
     db.close()
   })
 

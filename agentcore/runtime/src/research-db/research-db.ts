@@ -544,10 +544,10 @@ export class ResearchDb {
           redactedDescription,
           inputHash,
           createdAt,
-        )
+      )
       const artifact = this.getArtifact(id)
       if (!artifact) throw new Error(`failed to add artifact: ${id}`)
-      this.recordEvent("ArtifactRecorded", "artifact", id, artifact)
+      this.recordEvent("artifact_added", "artifact", id, artifact)
       return artifact
     })
   }
@@ -637,6 +637,7 @@ export class ResearchDb {
     const id = cleanId(resultId)
     const existing = this.getResearchResult(id)
     if (!existing) throw new Error(`research result not found: ${id}`)
+    if (existing.status === "accepted") return existing
     this.assertResearchResultHasEvidence(id)
     const updatedAt = this.timestamp()
     return this.inTransaction(() => {
