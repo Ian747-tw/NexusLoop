@@ -1530,6 +1530,49 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("migration backfills legacy link event ids when payload ids were redacted", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "token=resultSecret123",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "sk-citationSecret123", source_type: "file", source_uri: "file://evidence.md", quoted_text_or_summary: "Evidence" })
+    db.addArtifact({ id: "sk-artifactSecret123", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    db.linkResultCitation("token=resultSecret123", "sk-citationSecret123")
+    db.linkResultArtifact("token=resultSecret123", "sk-artifactSecret123")
+    const citationEvent = db.listResearchEvents({ event_type: "ResultCitationLinked" })[0]!
+    const artifactEvent = db.listResearchEvents({ event_type: "ResultArtifactLinked" })[0]!
+    expect(JSON.stringify(citationEvent.payload)).toContain("[REDACTED]")
+    expect(JSON.stringify(artifactEvent.payload)).toContain("[REDACTED]")
+    db.close()
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.query("UPDATE result_citations SET link_event_id = NULL").run()
+      sqlite.query("UPDATE result_artifacts SET link_event_id = NULL").run()
+      expect(sqlite.query("SELECT link_event_id FROM result_citations").get()).toEqual({ link_event_id: null })
+      expect(sqlite.query("SELECT link_event_id FROM result_artifacts").get()).toEqual({ link_event_id: null })
+    } finally {
+      sqlite.close()
+    }
+
+    let next = 100
+    const reopened = ResearchDb.open(dir, {
+      now: () => new Date("2026-05-10T12:00:01Z"),
+      idFactory: () => `after_${next++}`,
+    })
+    reopened.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    expect(reopened.linkCandidateEvidence("candidate_1", "event", citationEvent.event_id).evidence_id).toBe(citationEvent.event_id)
+    expect(reopened.linkCandidateEvidence("candidate_1", "event", artifactEvent.event_id).evidence_id).toBe(artifactEvent.event_id)
+    reopened.close()
+  })
+
   test("candidate evidence linking fails clearly for missing candidate or evidence", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)

@@ -1545,6 +1545,7 @@ export class ResearchDb {
     this.ensureColumn("artifacts", "description", "TEXT")
     this.ensureColumn("result_citations", "link_event_id", "TEXT")
     this.ensureColumn("result_artifacts", "link_event_id", "TEXT")
+    this.backfillLinkEventIds()
     this.backfillInputHashes()
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
   }
@@ -1568,6 +1569,36 @@ export class ResearchDb {
         "SELECT id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, created_at FROM artifacts WHERE id = ?",
       )
       .get(id) as Artifact | null
+  }
+
+  private backfillLinkEventIds(): void {
+    for (const row of this.db
+      .query(
+        "SELECT event_id, entity_id FROM research_events WHERE event_type = 'ResultCitationLinked' AND entity_type = 'result_citation'",
+      )
+      .all() as { event_id: string; entity_id: string }[]) {
+      const links = this.db
+        .query("SELECT result_id, citation_id FROM result_citations WHERE link_event_id IS NULL AND result_id || ':' || citation_id = ?")
+        .all(row.entity_id) as Pick<ResultCitationLink, "result_id" | "citation_id">[]
+      if (links.length !== 1) continue
+      this.db
+        .query("UPDATE result_citations SET link_event_id = ? WHERE result_id = ? AND citation_id = ? AND link_event_id IS NULL")
+        .run(row.event_id, links[0]!.result_id, links[0]!.citation_id)
+    }
+
+    for (const row of this.db
+      .query(
+        "SELECT event_id, entity_id FROM research_events WHERE event_type = 'ResultArtifactLinked' AND entity_type = 'result_artifact'",
+      )
+      .all() as { event_id: string; entity_id: string }[]) {
+      const links = this.db
+        .query("SELECT result_id, artifact_id FROM result_artifacts WHERE link_event_id IS NULL AND result_id || ':' || artifact_id = ?")
+        .all(row.entity_id) as Pick<ResultArtifactLink, "result_id" | "artifact_id">[]
+      if (links.length !== 1) continue
+      this.db
+        .query("UPDATE result_artifacts SET link_event_id = ? WHERE result_id = ? AND artifact_id = ? AND link_event_id IS NULL")
+        .run(row.event_id, links[0]!.result_id, links[0]!.artifact_id)
+    }
   }
 
   private backfillInputHashes(): void {
