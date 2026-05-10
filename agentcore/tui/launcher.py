@@ -17,21 +17,22 @@ def _ensure_dependencies(tui_dir: Path, env: dict[str, str]) -> int:
     if (tui_dir / "node_modules").is_dir():
         return 0
 
-    if env.get("NXL_TUI_AUTO_INSTALL") == "1":
-        result = subprocess.run(
-            ["bun", "install", "--frozen-lockfile"],
-            cwd=str(tui_dir),
-            env=env,
-            check=False,
+    if env.get("NXL_TUI_AUTO_INSTALL") == "0":
+        print(
+            "NexusLoop OpenTUI dependencies are not installed. "
+            "Run: cd agentcore/tui && bun install --frozen-lockfile",
+            flush=True,
         )
-        return result.returncode
+        return 1
 
-    print(
-        "NexusLoop OpenTUI dependencies are not installed. "
-        "Run: cd agentcore/tui && bun install --frozen-lockfile",
-        flush=True,
+    print("Installing NexusLoop OpenTUI dependencies with bun...", flush=True)
+    result = subprocess.run(
+        ["bun", "install", "--frozen-lockfile"],
+        cwd=str(tui_dir),
+        env=env,
+        check=False,
     )
-    return 1
+    return result.returncode
 
 
 def run(project_dir: Path) -> int:
