@@ -1467,8 +1467,9 @@ describe("ResearchDb", () => {
     expect(db.listResearchEvents({ entity_type: "candidate" }).map((event) => event.event_type)).toContain("CandidatePromoted")
 
     db.createCandidate({ candidate_id: "candidate_stale", claim: "Stale", source: "Commander" })
-    db.linkCandidateEvidence("candidate_stale", "research_result", "result_1")
+    const staleLink = db.linkCandidateEvidence("candidate_stale", "research_result", "result_1")
     db.rejectResearchResult("result_1")
+    expect(db.linkCandidateEvidence("candidate_stale", "research_result", "result_1")).toEqual(staleLink)
     expect(db.canPromoteCandidate("candidate_stale")).toEqual({ ok: false, reason: "candidate has no promotion evidence: candidate_stale" })
 
     db.createCandidate({ candidate_id: "candidate_2", claim: "Rejected", source: "Commander" })

@@ -1134,13 +1134,13 @@ export class ResearchDb {
     assertAllowed(CANDIDATE_EVIDENCE_TYPES, evidenceType, "candidate evidence type")
     const cleanEvidenceId = cleanId(evidenceId)
     this.requireCandidate(cleanCandidateId)
+    const existing = this.db
+      .query("SELECT candidate_id, evidence_type, evidence_id, created_at FROM candidate_evidence WHERE candidate_id = ? AND evidence_type = ? AND evidence_id = ?")
+      .get(cleanCandidateId, evidenceType, cleanEvidenceId) as CandidateEvidenceLink | null
+    if (existing) return existing
     this.requireCandidateEvidence(evidenceType, cleanEvidenceId)
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
-      const existing = this.db
-        .query("SELECT candidate_id, evidence_type, evidence_id, created_at FROM candidate_evidence WHERE candidate_id = ? AND evidence_type = ? AND evidence_id = ?")
-        .get(cleanCandidateId, evidenceType, cleanEvidenceId) as CandidateEvidenceLink | null
-      if (existing) return existing
       this.db
         .query("INSERT INTO candidate_evidence (candidate_id, evidence_type, evidence_id, created_at) VALUES (?, ?, ?, ?)")
         .run(cleanCandidateId, evidenceType, cleanEvidenceId, createdAt)
