@@ -28,7 +28,23 @@ export type ResearchResultStatus = "proposed" | "accepted" | "rejected" | "super
 export type ResearchResultConfidence = "low" | "medium" | "high"
 export type ResearchResultCreatedBy = "commander" | "executor" | "verifier" | "human" | "system"
 export type CitationSourceType = "paper" | "url" | "file" | "event" | "artifact" | "code" | "user"
-export type ResearchEntityType = "topic" | "source" | "note" | "artifact" | "research_result" | "citation" | "result_citation" | "result_artifact"
+export type HypothesisStatus = "active" | "paused" | "rejected" | "promoted" | "needs_more_evidence"
+export type CandidateStatus = "active" | "paused" | "rejected" | "promoted" | "needs_more_evidence"
+export type TrialStatus = "planned" | "running" | "completed" | "failed" | "cancelled"
+export type CandidateEvidenceType = "research_result" | "citation" | "artifact" | "event"
+export type ResearchEntityType =
+  | "topic"
+  | "source"
+  | "note"
+  | "artifact"
+  | "research_result"
+  | "citation"
+  | "result_citation"
+  | "result_artifact"
+  | "hypothesis"
+  | "candidate"
+  | "trial"
+  | "candidate_evidence"
 
 const TOPIC_STATUSES = new Set<TopicStatus>(["open", "active", "paused", "closed"])
 const SOURCE_STATUSES = new Set<SourceStatus>(["new", "reviewed", "rejected"])
@@ -54,6 +70,10 @@ const RESEARCH_RESULT_STATUSES = new Set<ResearchResultStatus>(["proposed", "acc
 const RESEARCH_RESULT_CONFIDENCES = new Set<ResearchResultConfidence>(["low", "medium", "high"])
 const RESEARCH_RESULT_CREATED_BY = new Set<ResearchResultCreatedBy>(["commander", "executor", "verifier", "human", "system"])
 const CITATION_SOURCE_TYPES = new Set<CitationSourceType>(["paper", "url", "file", "event", "artifact", "code", "user"])
+const HYPOTHESIS_STATUSES = new Set<HypothesisStatus>(["active", "paused", "rejected", "promoted", "needs_more_evidence"])
+const CANDIDATE_STATUSES = new Set<CandidateStatus>(["active", "paused", "rejected", "promoted", "needs_more_evidence"])
+const TRIAL_STATUSES = new Set<TrialStatus>(["planned", "running", "completed", "failed", "cancelled"])
+const CANDIDATE_EVIDENCE_TYPES = new Set<CandidateEvidenceType>(["research_result", "citation", "artifact", "event"])
 const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>([
   "topic",
   "source",
@@ -63,6 +83,10 @@ const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>([
   "citation",
   "result_citation",
   "result_artifact",
+  "hypothesis",
+  "candidate",
+  "trial",
+  "candidate_evidence",
 ])
 const EVIDENCE_REQUIRED_RESULT_TYPES = new Set<ResearchResultType>([
   "finding",
@@ -235,6 +259,79 @@ export interface ResultArtifactLink {
   created_at: string
 }
 
+export interface HypothesisInput {
+  hypothesis_id?: string
+  claim: string
+  source: string
+  status?: HypothesisStatus
+}
+
+export interface Hypothesis {
+  hypothesis_id: string
+  claim: string
+  source: string
+  status: HypothesisStatus
+  input_hash: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CandidateInput {
+  candidate_id?: string
+  hypothesis_id?: string
+  claim: string
+  source: string
+  status?: CandidateStatus
+}
+
+export interface Candidate {
+  candidate_id: string
+  hypothesis_id: string | null
+  claim: string
+  source: string
+  status: CandidateStatus
+  commander_score: number | null
+  rank_reason: string | null
+  input_hash: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CandidateEvidenceLink {
+  candidate_id: string
+  evidence_type: CandidateEvidenceType
+  evidence_id: string
+  created_at: string
+}
+
+export interface CandidateRankingInput {
+  candidate_id: string
+  commander_score: number
+  rank_reason: string
+}
+
+export interface TrialInput {
+  trial_id?: string
+  hypothesis_id?: string
+  candidate_id?: string
+  trial_kind: string
+  config: unknown
+}
+
+export interface Trial {
+  trial_id: string
+  hypothesis_id: string | null
+  candidate_id: string | null
+  trial_kind: string
+  status: TrialStatus
+  config: unknown
+  input_hash: string
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface SearchResearchResultsOptions extends SearchOptions {
   result_type?: ResearchResultType
   status?: ResearchResultStatus
@@ -243,6 +340,21 @@ export interface SearchResearchResultsOptions extends SearchOptions {
 
 export interface SearchCitationsOptions extends SearchOptions {
   source_type?: CitationSourceType
+}
+
+export interface SearchHypothesesOptions extends SearchOptions {
+  status?: HypothesisStatus
+}
+
+export interface SearchCandidatesOptions extends SearchOptions {
+  status?: CandidateStatus
+  hypothesis_id?: string
+}
+
+export interface SearchTrialsOptions extends SearchOptions {
+  status?: TrialStatus
+  candidate_id?: string
+  hypothesis_id?: string
 }
 
 export interface WriteBarrierResult {
@@ -315,6 +427,19 @@ interface ResearchResultRow extends Omit<ResearchResult, "metrics" | "reproducti
 interface CitationRow extends Omit<Citation, "metadata"> {
   metadata_json: string | null
   input_hash: string | null
+}
+
+interface HypothesisRow extends Hypothesis {
+  input_hash: string
+}
+
+interface CandidateRow extends Candidate {
+  input_hash: string
+}
+
+interface TrialRow extends Omit<Trial, "config"> {
+  config_json: string
+  input_hash: string
 }
 
 interface ResearchEventRow {
@@ -835,6 +960,313 @@ export class ResearchDb {
       .all(id) as Artifact[]
   }
 
+  createHypothesis(input: HypothesisInput): Hypothesis {
+    const hypothesisId = cleanId(input.hypothesis_id ?? this.idFactory())
+    const claim = cleanRequired(input.claim, "claim")
+    const source = cleanRequired(input.source, "source")
+    const status = input.status ?? "active"
+    assertAllowed(HYPOTHESIS_STATUSES, status, "hypothesis status")
+    const inputHash = hashPayload({ claim, source, status })
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM hypotheses WHERE hypothesis_id = ?").get(hypothesisId) as HypothesisRow | null
+      if (existing) {
+        if (existing.input_hash === inputHash) return this.hypothesisFromRow(existing)
+        throw new Error(`hypothesis id collision: ${hypothesisId}`)
+      }
+      this.db
+        .query("INSERT INTO hypotheses (hypothesis_id, claim, source, status, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(hypothesisId, redactString(claim), redactString(source), status, inputHash, createdAt, createdAt)
+      const hypothesis = this.getHypothesis(hypothesisId)
+      if (!hypothesis) throw new Error(`failed to create hypothesis: ${hypothesisId}`)
+      this.recordEvent("HypothesisCreated", "hypothesis", hypothesisId, hypothesis)
+      return hypothesis
+    })
+  }
+
+  getHypothesis(hypothesisId: string): Hypothesis | null {
+    const row = this.db.query("SELECT * FROM hypotheses WHERE hypothesis_id = ?").get(cleanId(hypothesisId)) as HypothesisRow | null
+    return this.hypothesisFromRow(row)
+  }
+
+  searchHypotheses(options: SearchHypothesesOptions = {}): Hypothesis[] {
+    const filters: string[] = []
+    const params: SQLQueryBindings[] = []
+    if (options.status !== undefined) {
+      assertAllowed(HYPOTHESIS_STATUSES, options.status, "hypothesis status")
+      filters.push("status = ?")
+      params.push(options.status)
+    }
+    params.push(cleanLimit(options.limit))
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
+    return (this.db.query(`SELECT * FROM hypotheses ${where} ORDER BY created_at, hypothesis_id LIMIT ?`).all(...params) as HypothesisRow[]).map((row) =>
+      this.hypothesisFromRow(row),
+    )
+  }
+
+  updateHypothesisStatus(hypothesisId: string, status: HypothesisStatus): Hypothesis {
+    const id = cleanId(hypothesisId)
+    assertAllowed(HYPOTHESIS_STATUSES, status, "hypothesis status")
+    this.requireHypothesis(id)
+    const updatedAt = this.timestamp()
+    return this.inTransaction(() => {
+      this.db.query("UPDATE hypotheses SET status = ?, updated_at = ? WHERE hypothesis_id = ?").run(status, updatedAt, id)
+      const hypothesis = this.getHypothesis(id)
+      if (!hypothesis) throw new Error(`hypothesis not found: ${id}`)
+      this.recordEvent("HypothesisStatusUpdated", "hypothesis", id, hypothesis)
+      return hypothesis
+    })
+  }
+
+  createCandidate(input: CandidateInput): Candidate {
+    const candidateId = cleanId(input.candidate_id ?? this.idFactory())
+    const hypothesisId = input.hypothesis_id ? cleanId(input.hypothesis_id) : null
+    if (hypothesisId) this.requireHypothesis(hypothesisId)
+    const claim = cleanRequired(input.claim, "claim")
+    const source = cleanRequired(input.source, "source")
+    const status = input.status ?? "active"
+    assertAllowed(CANDIDATE_STATUSES, status, "candidate status")
+    const inputHash = hashPayload({ hypothesis_id: hypothesisId, claim, source, status })
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM candidates WHERE candidate_id = ?").get(candidateId) as CandidateRow | null
+      if (existing) {
+        if (existing.input_hash === inputHash) return this.candidateFromRow(existing)
+        throw new Error(`candidate id collision: ${candidateId}`)
+      }
+      this.db
+        .query(
+          "INSERT INTO candidates (candidate_id, hypothesis_id, claim, source, status, commander_score, rank_reason, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(candidateId, hypothesisId, redactString(claim), redactString(source), status, null, null, inputHash, createdAt, createdAt)
+      const candidate = this.getCandidate(candidateId)
+      if (!candidate) throw new Error(`failed to create candidate: ${candidateId}`)
+      this.recordEvent("CandidateCreated", "candidate", candidateId, candidate)
+      return candidate
+    })
+  }
+
+  getCandidate(candidateId: string): Candidate | null {
+    const row = this.db.query("SELECT * FROM candidates WHERE candidate_id = ?").get(cleanId(candidateId)) as CandidateRow | null
+    return this.candidateFromRow(row)
+  }
+
+  searchCandidates(options: SearchCandidatesOptions = {}): Candidate[] {
+    const filters: string[] = []
+    const params: SQLQueryBindings[] = []
+    if (options.status !== undefined) {
+      assertAllowed(CANDIDATE_STATUSES, options.status, "candidate status")
+      filters.push("status = ?")
+      params.push(options.status)
+    }
+    if (options.hypothesis_id !== undefined) {
+      filters.push("hypothesis_id = ?")
+      params.push(cleanId(options.hypothesis_id))
+    }
+    params.push(cleanLimit(options.limit))
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
+    return (this.db.query(`SELECT * FROM candidates ${where} ORDER BY created_at, candidate_id LIMIT ?`).all(...params) as CandidateRow[]).map((row) =>
+      this.candidateFromRow(row),
+    )
+  }
+
+  rankCandidate(input: CandidateRankingInput): Candidate {
+    const candidateId = cleanId(input.candidate_id)
+    if (!Number.isFinite(input.commander_score)) throw new Error("commander_score must be a finite number")
+    const rankReason = cleanRequired(input.rank_reason, "rank_reason")
+    this.requireCandidate(candidateId)
+    const updatedAt = this.timestamp()
+    return this.inTransaction(() => {
+      this.db
+        .query("UPDATE candidates SET commander_score = ?, rank_reason = ?, updated_at = ? WHERE candidate_id = ?")
+        .run(input.commander_score, redactString(rankReason), updatedAt, candidateId)
+      const candidate = this.getCandidate(candidateId)
+      if (!candidate) throw new Error(`candidate not found: ${candidateId}`)
+      this.recordEvent("CandidateRanked", "candidate", candidateId, candidate)
+      return candidate
+    })
+  }
+
+  selectCandidate(candidateId: string): Candidate {
+    return this.updateCandidateStatus(candidateId, "active", "CandidateSelected")
+  }
+
+  rejectCandidate(candidateId: string, reason?: string): Candidate {
+    return this.updateCandidateStatus(candidateId, "rejected", "CandidateRejected", reason)
+  }
+
+  markCandidateNeedsMoreEvidence(candidateId: string, reason?: string): Candidate {
+    return this.updateCandidateStatus(candidateId, "needs_more_evidence", "CandidateNeedsMoreEvidence", reason)
+  }
+
+  proposeCandidatePromotion(candidateId: string, evidenceIds?: string[]): Candidate | WriteBarrierResult {
+    const id = cleanId(candidateId)
+    this.requireCandidate(id)
+    if (evidenceIds !== undefined) {
+      for (const evidenceId of evidenceIds) {
+        const cleanEvidenceId = cleanId(evidenceId)
+        if (!this.listCandidateEvidence(id).some((link) => link.evidence_id === cleanEvidenceId)) {
+          throw new Error(`candidate evidence not linked: ${cleanEvidenceId}`)
+        }
+      }
+    }
+    const verdict = this.canPromoteCandidate(id)
+    if (!verdict.ok) return verdict
+    const candidate = this.getCandidate(id)
+    if (!candidate) throw new Error(`candidate not found: ${id}`)
+    return this.inTransaction(() => {
+      this.recordEvent("CandidatePromotionProposed", "candidate", id, { candidate, evidence_ids: evidenceIds?.map(cleanId) ?? [] })
+      return candidate
+    })
+  }
+
+  promoteCandidate(candidateId: string): Candidate {
+    const id = cleanId(candidateId)
+    this.assertCandidateHasPromotionEvidence(id)
+    const candidate = this.getCandidate(id)
+    if (!candidate) throw new Error(`candidate not found: ${id}`)
+    if (candidate.status === "rejected") throw new Error(`candidate already rejected: ${id}`)
+    return this.updateCandidateStatus(id, "promoted", "CandidatePromoted")
+  }
+
+  linkCandidateEvidence(candidateId: string, evidenceType: CandidateEvidenceType, evidenceId: string): CandidateEvidenceLink {
+    const cleanCandidateId = cleanId(candidateId)
+    assertAllowed(CANDIDATE_EVIDENCE_TYPES, evidenceType, "candidate evidence type")
+    const cleanEvidenceId = cleanId(evidenceId)
+    this.requireCandidate(cleanCandidateId)
+    this.requireCandidateEvidence(evidenceType, cleanEvidenceId)
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db
+        .query("SELECT candidate_id, evidence_type, evidence_id, created_at FROM candidate_evidence WHERE candidate_id = ? AND evidence_type = ? AND evidence_id = ?")
+        .get(cleanCandidateId, evidenceType, cleanEvidenceId) as CandidateEvidenceLink | null
+      if (existing) return existing
+      this.db
+        .query("INSERT INTO candidate_evidence (candidate_id, evidence_type, evidence_id, created_at) VALUES (?, ?, ?, ?)")
+        .run(cleanCandidateId, evidenceType, cleanEvidenceId, createdAt)
+      const link = { candidate_id: cleanCandidateId, evidence_type: evidenceType, evidence_id: cleanEvidenceId, created_at: createdAt }
+      this.recordEvent("CandidateEvidenceLinked", "candidate_evidence", `${cleanCandidateId}:${evidenceType}:${cleanEvidenceId}`, link)
+      return link
+    })
+  }
+
+  listCandidateEvidence(candidateId: string): CandidateEvidenceLink[] {
+    const id = cleanId(candidateId)
+    this.requireCandidate(id)
+    return this.db
+      .query(
+        "SELECT candidate_id, evidence_type, evidence_id, created_at FROM candidate_evidence WHERE candidate_id = ? ORDER BY created_at, evidence_type, evidence_id",
+      )
+      .all(id) as CandidateEvidenceLink[]
+  }
+
+  canPromoteCandidate(candidateId: string): WriteBarrierResult {
+    const id = cleanId(candidateId)
+    const candidate = this.getCandidate(id)
+    if (!candidate) return { ok: false, reason: `candidate not found: ${id}` }
+    if (candidate.status === "rejected") return { ok: false, reason: `candidate already rejected: ${id}` }
+    const evidence = this.listCandidateEvidence(id)
+    if (!evidence.some((link) => this.isValidCandidateEvidence(link))) return { ok: false, reason: `candidate has no promotion evidence: ${id}` }
+    return { ok: true }
+  }
+
+  assertCandidateHasPromotionEvidence(candidateId: string): void {
+    const verdict = this.canPromoteCandidate(candidateId)
+    if (!verdict.ok) throw new Error(verdict.reason)
+  }
+
+  planTrial(input: TrialInput): Trial {
+    const trialId = cleanId(input.trial_id ?? this.idFactory())
+    const hypothesisId = input.hypothesis_id ? cleanId(input.hypothesis_id) : null
+    const candidateId = input.candidate_id ? cleanId(input.candidate_id) : null
+    if (hypothesisId) this.requireHypothesis(hypothesisId)
+    if (candidateId) this.requireCandidate(candidateId)
+    const trialKind = cleanRequired(input.trial_kind, "trial_kind")
+    const config = input.config ?? null
+    const inputHash = hashPayload({ hypothesis_id: hypothesisId, candidate_id: candidateId, trial_kind: trialKind, status: "planned", config })
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM trials WHERE trial_id = ?").get(trialId) as TrialRow | null
+      if (existing) {
+        if (existing.input_hash === inputHash) return this.trialFromRow(existing)
+        throw new Error(`trial id collision: ${trialId}`)
+      }
+      this.db
+        .query(
+          "INSERT INTO trials (trial_id, hypothesis_id, candidate_id, trial_kind, status, config_json, input_hash, started_at, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(trialId, hypothesisId, candidateId, redactString(trialKind), "planned", JSON.stringify(redactValue(config)), inputHash, null, null, createdAt, createdAt)
+      const trial = this.getTrial(trialId)
+      if (!trial) throw new Error(`failed to plan trial: ${trialId}`)
+      this.recordEvent("TrialPlanned", "trial", trialId, trial)
+      return trial
+    })
+  }
+
+  getTrial(trialId: string): Trial | null {
+    const row = this.db.query("SELECT * FROM trials WHERE trial_id = ?").get(cleanId(trialId)) as TrialRow | null
+    return this.trialFromRow(row)
+  }
+
+  searchTrials(options: SearchTrialsOptions = {}): Trial[] {
+    const filters: string[] = []
+    const params: SQLQueryBindings[] = []
+    if (options.status !== undefined) {
+      assertAllowed(TRIAL_STATUSES, options.status, "trial status")
+      filters.push("status = ?")
+      params.push(options.status)
+    }
+    if (options.candidate_id !== undefined) {
+      filters.push("candidate_id = ?")
+      params.push(cleanId(options.candidate_id))
+    }
+    if (options.hypothesis_id !== undefined) {
+      filters.push("hypothesis_id = ?")
+      params.push(cleanId(options.hypothesis_id))
+    }
+    params.push(cleanLimit(options.limit))
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
+    return (this.db.query(`SELECT * FROM trials ${where} ORDER BY created_at, trial_id LIMIT ?`).all(...params) as TrialRow[]).map((row) =>
+      this.trialFromRow(row),
+    )
+  }
+
+  startTrial(trialId: string): Trial {
+    const id = cleanId(trialId)
+    this.requireTrial(id)
+    const timestamp = this.timestamp()
+    return this.inTransaction(() => {
+      this.db.query("UPDATE trials SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ? WHERE trial_id = ?").run("running", timestamp, timestamp, id)
+      const trial = this.getTrial(id)
+      if (!trial) throw new Error(`trial not found: ${id}`)
+      this.recordEvent("TrialStarted", "trial", id, trial)
+      return trial
+    })
+  }
+
+  completeTrial(trialId: string): Trial {
+    const id = cleanId(trialId)
+    const existing = this.getTrial(id)
+    if (!existing) throw new Error(`trial not found: ${id}`)
+    if (existing.status !== "running" && existing.status !== "planned") throw new Error(`trial cannot be completed from status: ${existing.status}`)
+    const timestamp = this.timestamp()
+    return this.inTransaction(() => {
+      this.db.query("UPDATE trials SET status = ?, completed_at = ?, updated_at = ? WHERE trial_id = ?").run("completed", timestamp, timestamp, id)
+      const trial = this.getTrial(id)
+      if (!trial) throw new Error(`trial not found: ${id}`)
+      this.recordEvent("TrialCompleted", "trial", id, trial)
+      return trial
+    })
+  }
+
+  failTrial(trialId: string, reason?: string): Trial {
+    return this.finishTrial(trialId, "failed", "TrialFailed", reason)
+  }
+
+  cancelTrial(trialId: string, reason?: string): Trial {
+    return this.finishTrial(trialId, "cancelled", "TrialCancelled", reason)
+  }
+
   canCompleteMission(missionId: string): WriteBarrierResult {
     const id = cleanId(missionId)
     const result = this.db
@@ -1036,6 +1468,51 @@ export class ResearchDb {
         PRIMARY KEY (result_id, artifact_id)
       );
 
+      CREATE TABLE IF NOT EXISTS hypotheses (
+        hypothesis_id TEXT PRIMARY KEY,
+        claim TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'paused', 'rejected', 'promoted', 'needs_more_evidence')),
+        input_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS candidates (
+        candidate_id TEXT PRIMARY KEY,
+        hypothesis_id TEXT REFERENCES hypotheses(hypothesis_id) ON DELETE SET NULL,
+        claim TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'paused', 'rejected', 'promoted', 'needs_more_evidence')),
+        commander_score REAL,
+        rank_reason TEXT,
+        input_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS trials (
+        trial_id TEXT PRIMARY KEY,
+        hypothesis_id TEXT REFERENCES hypotheses(hypothesis_id) ON DELETE SET NULL,
+        candidate_id TEXT REFERENCES candidates(candidate_id) ON DELETE SET NULL,
+        trial_kind TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('planned', 'running', 'completed', 'failed', 'cancelled')),
+        config_json TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS candidate_evidence (
+        candidate_id TEXT NOT NULL REFERENCES candidates(candidate_id) ON DELETE CASCADE,
+        evidence_type TEXT NOT NULL CHECK (evidence_type IN ('research_result', 'citation', 'artifact', 'event')),
+        evidence_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (candidate_id, evidence_type, evidence_id)
+      );
+
       CREATE TABLE IF NOT EXISTS research_events (
         event_id TEXT PRIMARY KEY,
         event_type TEXT NOT NULL,
@@ -1179,6 +1656,76 @@ export class ResearchDb {
     if (!this.getCitation(citationId)) throw new Error(`citation not found: ${citationId}`)
   }
 
+  private requireHypothesis(hypothesisId: string): void {
+    if (!this.getHypothesis(hypothesisId)) throw new Error(`hypothesis not found: ${hypothesisId}`)
+  }
+
+  private requireCandidate(candidateId: string): void {
+    if (!this.getCandidate(candidateId)) throw new Error(`candidate not found: ${candidateId}`)
+  }
+
+  private requireTrial(trialId: string): void {
+    if (!this.getTrial(trialId)) throw new Error(`trial not found: ${trialId}`)
+  }
+
+  private requireCandidateEvidence(evidenceType: CandidateEvidenceType, evidenceId: string): void {
+    if (evidenceType === "research_result") {
+      const result = this.getResearchResult(evidenceId)
+      if (!result || (result.status !== "accepted" && result.status !== "proposed")) throw new Error(`research result evidence not found: ${evidenceId}`)
+      return
+    }
+    if (evidenceType === "citation") {
+      this.requireCitation(evidenceId)
+      return
+    }
+    if (evidenceType === "artifact") {
+      this.requireArtifact(evidenceId)
+      return
+    }
+    if (!this.db.query("SELECT event_id FROM research_events WHERE event_id = ?").get(evidenceId)) {
+      throw new Error(`research event evidence not found: ${evidenceId}`)
+    }
+  }
+
+  private isValidCandidateEvidence(link: CandidateEvidenceLink): boolean {
+    if (link.evidence_type === "research_result") {
+      const result = this.getResearchResult(link.evidence_id)
+      return result?.status === "accepted" || result?.status === "proposed"
+    }
+    if (link.evidence_type === "citation") return this.getCitation(link.evidence_id) !== null
+    if (link.evidence_type === "artifact") return this.getArtifact(link.evidence_id) !== null
+    return this.db.query("SELECT event_id FROM research_events WHERE event_id = ?").get(link.evidence_id) !== null
+  }
+
+  private updateCandidateStatus(candidateId: string, status: CandidateStatus, eventType: string, reason?: string): Candidate {
+    const id = cleanId(candidateId)
+    assertAllowed(CANDIDATE_STATUSES, status, "candidate status")
+    this.requireCandidate(id)
+    const cleanReason = cleanOptional(reason)
+    const updatedAt = this.timestamp()
+    return this.inTransaction(() => {
+      this.db.query("UPDATE candidates SET status = ?, updated_at = ? WHERE candidate_id = ?").run(status, updatedAt, id)
+      const candidate = this.getCandidate(id)
+      if (!candidate) throw new Error(`candidate not found: ${id}`)
+      this.recordEvent(eventType, "candidate", id, { candidate, reason: cleanReason ? redactString(cleanReason) : null })
+      return candidate
+    })
+  }
+
+  private finishTrial(trialId: string, status: "failed" | "cancelled", eventType: string, reason?: string): Trial {
+    const id = cleanId(trialId)
+    this.requireTrial(id)
+    const cleanReason = cleanOptional(reason)
+    const timestamp = this.timestamp()
+    return this.inTransaction(() => {
+      this.db.query("UPDATE trials SET status = ?, completed_at = ?, updated_at = ? WHERE trial_id = ?").run(status, timestamp, timestamp, id)
+      const trial = this.getTrial(id)
+      if (!trial) throw new Error(`trial not found: ${id}`)
+      this.recordEvent(eventType, "trial", id, { trial, reason: cleanReason ? redactString(cleanReason) : null })
+      return trial
+    })
+  }
+
   private latestEventForTopic(topicId: string): ResearchEvent | null {
     const row = this.db
       .query(
@@ -1248,6 +1795,42 @@ export class ResearchDb {
       sha256: row.sha256,
       metadata: parseNullableJson(row.metadata_json),
       created_at: row.created_at,
+    }
+  }
+
+  private hypothesisFromRow(row: HypothesisRow): Hypothesis
+  private hypothesisFromRow(row: HypothesisRow | null): Hypothesis | null
+  private hypothesisFromRow(row: HypothesisRow | null): Hypothesis | null {
+    if (!row) return null
+    assertAllowed(HYPOTHESIS_STATUSES, row.status, "hypothesis status")
+    return row
+  }
+
+  private candidateFromRow(row: CandidateRow): Candidate
+  private candidateFromRow(row: CandidateRow | null): Candidate | null
+  private candidateFromRow(row: CandidateRow | null): Candidate | null {
+    if (!row) return null
+    assertAllowed(CANDIDATE_STATUSES, row.status, "candidate status")
+    return row
+  }
+
+  private trialFromRow(row: TrialRow): Trial
+  private trialFromRow(row: TrialRow | null): Trial | null
+  private trialFromRow(row: TrialRow | null): Trial | null {
+    if (!row) return null
+    assertAllowed(TRIAL_STATUSES, row.status, "trial status")
+    return {
+      trial_id: row.trial_id,
+      hypothesis_id: row.hypothesis_id,
+      candidate_id: row.candidate_id,
+      trial_kind: row.trial_kind,
+      status: row.status,
+      config: parseNullableJson(row.config_json),
+      input_hash: row.input_hash,
+      started_at: row.started_at,
+      completed_at: row.completed_at,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
     }
   }
 
