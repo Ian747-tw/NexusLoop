@@ -173,6 +173,26 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("duplicate explicit IDs detect collisions before redaction", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_secret", title: "token=alpha123" })
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.addSource({ id: "source_secret", topic_id: "topic_1", locator: "token=alpha123", source_type: "url" })
+    db.addNote({ id: "note_secret", topic_id: "topic_1", content: "token=alpha123" })
+    db.addArtifact({ id: "artifact_secret", topic_id: "topic_1", kind: "report", content: "token=alpha123" })
+
+    expect(() => db.createTopic({ id: "topic_secret", title: "token=beta456" })).toThrow("topic id collision")
+    expect(() => db.addSource({ id: "source_secret", topic_id: "topic_1", locator: "token=beta456", source_type: "url" })).toThrow(
+      "source id collision",
+    )
+    expect(() => db.addNote({ id: "note_secret", topic_id: "topic_1", content: "token=beta456" })).toThrow("note id collision")
+    expect(() => db.addArtifact({ id: "artifact_secret", topic_id: "topic_1", kind: "report", content: "token=beta456" })).toThrow(
+      "artifact id collision",
+    )
+    db.close()
+  })
+
   test("domain writes roll back when event append fails", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)

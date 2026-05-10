@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { Database } from "bun:sqlite"
@@ -91,6 +91,19 @@ export interface Artifact {
 
 interface NoteRow extends Omit<Note, "tags"> {
   tags_json: string | null
+  input_hash?: string | null
+}
+
+interface TopicRow extends Topic {
+  input_hash: string | null
+}
+
+interface SourceRow extends Source {
+  input_hash: string | null
+}
+
+interface ArtifactRow extends Artifact {
+  input_hash: string | null
 }
 
 export class ResearchDb {
@@ -126,17 +139,18 @@ export class ResearchDb {
     const title = cleanRequired(input.title, "title")
     const status = input.status ?? "open"
     assertAllowed(TOPIC_STATUSES, status, "topic status")
+    const inputHash = hashPayload({ title, status })
     const redactedTitle = redactString(title)
-    const existing = this.getTopic(id)
+    const existing = this.db.query("SELECT * FROM topics WHERE id = ?").get(id) as TopicRow | null
     if (existing) {
-      if (existing.title === redactedTitle && existing.status === status) return existing
+      if (existing.input_hash === inputHash) return this.getTopic(id) as Topic
       throw new Error(`topic id collision: ${id}`)
     }
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
       this.db
-        .query("INSERT INTO topics (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-        .run(id, redactedTitle, status, createdAt, createdAt)
+        .query("INSERT INTO topics (id, title, status, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(id, redactedTitle, status, inputHash, createdAt, createdAt)
       const topic = this.getTopic(id)
       if (!topic) throw new Error(`failed to create topic: ${id}`)
       this.recordEvent("topic_created", "topic", id, topic)
@@ -145,11 +159,13 @@ export class ResearchDb {
   }
 
   getTopic(id: string): Topic | null {
-    return this.db.query("SELECT * FROM topics WHERE id = ?").get(cleanId(id)) as Topic | null
+    return this.db
+      .query("SELECT id, title, status, created_at, updated_at FROM topics WHERE id = ?")
+      .get(cleanId(id)) as Topic | null
   }
 
   listTopics(): Topic[] {
-    return this.db.query("SELECT * FROM topics ORDER BY created_at, id").all() as Topic[]
+    return this.db.query("SELECT id, title, status, created_at, updated_at FROM topics ORDER BY created_at, id").all() as Topic[]
   }
 
   addSource(input: SourceInput): Source {
@@ -160,28 +176,29 @@ export class ResearchDb {
     assertAllowed(SOURCE_TYPES, input.source_type, "source type")
     const status = input.status ?? "new"
     assertAllowed(SOURCE_STATUSES, status, "source status")
+    const title = cleanOptional(input.title)
+    const credibility = cleanOptional(input.credibility)
+    const inputHash = hashPayload({
+      topic_id: topicId,
+      locator,
+      title,
+      source_type: input.source_type,
+      status,
+      credibility,
+    })
     const redactedLocator = redactString(locator)
-    const redactedTitle = input.title ? redactString(input.title) : null
-    const redactedCredibility = input.credibility ? redactString(input.credibility) : null
-    const existing = this.db.query("SELECT * FROM sources WHERE id = ?").get(id) as Source | null
+    const redactedTitle = title ? redactString(title) : null
+    const redactedCredibility = credibility ? redactString(credibility) : null
+    const existing = this.db.query("SELECT * FROM sources WHERE id = ?").get(id) as SourceRow | null
     if (existing) {
-      if (
-        existing.topic_id === topicId &&
-        existing.locator === redactedLocator &&
-        existing.title === redactedTitle &&
-        existing.source_type === input.source_type &&
-        existing.status === status &&
-        existing.credibility === redactedCredibility
-      ) {
-        return existing
-      }
+      if (existing.input_hash === inputHash) return this.getSource(id) as Source
       throw new Error(`source id collision: ${id}`)
     }
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
       this.db
         .query(
-          "INSERT INTO sources (id, topic_id, locator, title, source_type, status, credibility, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO sources (id, topic_id, locator, title, source_type, status, credibility, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run(
           id,
@@ -191,9 +208,10 @@ export class ResearchDb {
           input.source_type,
           status,
           redactedCredibility,
+          inputHash,
           createdAt,
         )
-      const source = this.db.query("SELECT * FROM sources WHERE id = ?").get(id) as Source | null
+      const source = this.getSource(id)
       if (!source) throw new Error(`failed to add source: ${id}`)
       this.recordEvent("source_added", "source", id, source)
       return source
@@ -203,7 +221,9 @@ export class ResearchDb {
   listSourcesForTopic(topicId: string): Source[] {
     const id = cleanId(topicId)
     this.requireTopic(id)
-    return this.db.query("SELECT * FROM sources WHERE topic_id = ? ORDER BY created_at, id").all(id) as Source[]
+    return this.db
+      .query("SELECT id, topic_id, locator, title, source_type, status, credibility, created_at FROM sources WHERE topic_id = ? ORDER BY created_at, id")
+      .all(id) as Source[]
   }
 
   addNote(input: NoteInput): Note {
@@ -214,20 +234,20 @@ export class ResearchDb {
     const id = cleanId(input.id ?? this.idFactory())
     const content = cleanRequired(input.content, "content")
     const tags = input.tags ?? []
+    const inputHash = hashPayload({ topic_id: topicId, source_id: sourceId, content, tags })
     const redactedContent = redactString(content)
     const redactedTags = JSON.stringify(redactValue(tags))
     const existing = this.noteFromRow(this.db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null)
     if (existing) {
-      if (existing.topic_id === topicId && existing.source_id === sourceId && existing.content === redactedContent && JSON.stringify(existing.tags) === redactedTags) {
-        return existing
-      }
+      const existingRow = this.db.query("SELECT input_hash FROM notes WHERE id = ?").get(id) as { input_hash: string | null } | null
+      if (existingRow?.input_hash === inputHash) return existing
       throw new Error(`note id collision: ${id}`)
     }
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
       this.db
-        .query("INSERT INTO notes (id, topic_id, source_id, content, tags_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(id, topicId, sourceId, redactedContent, redactedTags, createdAt)
+        .query("INSERT INTO notes (id, topic_id, source_id, content, tags_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(id, topicId, sourceId, redactedContent, redactedTags, inputHash, createdAt)
       const row = this.db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null
       if (!row) throw new Error(`failed to add note: ${id}`)
       const note = this.noteFromRow(row)
@@ -252,19 +272,20 @@ export class ResearchDb {
     const path = cleanOptional(input.path)
     const content = cleanOptional(input.content)
     if (!path && !content) throw new Error("artifact requires path or content")
+    const inputHash = hashPayload({ topic_id: topicId, kind: input.kind, path, content })
     const redactedPath = path ? redactString(path) : null
     const redactedContent = content ? redactString(content) : null
-    const existing = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as Artifact | null
+    const existing = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as ArtifactRow | null
     if (existing) {
-      if (existing.topic_id === topicId && existing.kind === input.kind && existing.path === redactedPath && existing.content === redactedContent) return existing
+      if (existing.input_hash === inputHash) return this.getArtifact(id) as Artifact
       throw new Error(`artifact id collision: ${id}`)
     }
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
       this.db
-        .query("INSERT INTO artifacts (id, topic_id, kind, path, content, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(id, topicId, input.kind, redactedPath, redactedContent, createdAt)
-      const artifact = this.db.query("SELECT * FROM artifacts WHERE id = ?").get(id) as Artifact | null
+        .query("INSERT INTO artifacts (id, topic_id, kind, path, content, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(id, topicId, input.kind, redactedPath, redactedContent, inputHash, createdAt)
+      const artifact = this.getArtifact(id)
       if (!artifact) throw new Error(`failed to add artifact: ${id}`)
       this.recordEvent("artifact_added", "artifact", id, artifact)
       return artifact
@@ -274,7 +295,9 @@ export class ResearchDb {
   listArtifactsForTopic(topicId: string): Artifact[] {
     const id = cleanId(topicId)
     this.requireTopic(id)
-    return this.db.query("SELECT * FROM artifacts WHERE topic_id = ? ORDER BY created_at, id").all(id) as Artifact[]
+    return this.db
+      .query("SELECT id, topic_id, kind, path, content, created_at FROM artifacts WHERE topic_id = ? ORDER BY created_at, id")
+      .all(id) as Artifact[]
   }
 
   private migrate(): void {
@@ -288,6 +311,7 @@ export class ResearchDb {
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('open', 'active', 'paused', 'closed')),
+        input_hash TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -300,6 +324,7 @@ export class ResearchDb {
         source_type TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('new', 'reviewed', 'rejected')),
         credibility TEXT,
+        input_hash TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
 
@@ -309,6 +334,7 @@ export class ResearchDb {
         source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
         content TEXT NOT NULL,
         tags_json TEXT,
+        input_hash TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
 
@@ -318,6 +344,7 @@ export class ResearchDb {
         kind TEXT NOT NULL,
         path TEXT,
         content TEXT,
+        input_hash TEXT NOT NULL,
         created_at TEXT NOT NULL,
         CHECK (path IS NOT NULL OR content IS NOT NULL)
       );
@@ -331,7 +358,28 @@ export class ResearchDb {
         created_at TEXT NOT NULL
       );
     `)
+    this.ensureColumn("topics", "input_hash", "TEXT")
+    this.ensureColumn("sources", "input_hash", "TEXT")
+    this.ensureColumn("notes", "input_hash", "TEXT")
+    this.ensureColumn("artifacts", "input_hash", "TEXT")
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]
+    if (!columns.some((row) => row.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
+  }
+
+  private getSource(id: string): Source | null {
+    return this.db
+      .query("SELECT id, topic_id, locator, title, source_type, status, credibility, created_at FROM sources WHERE id = ?")
+      .get(id) as Source | null
+  }
+
+  private getArtifact(id: string): Artifact | null {
+    return this.db.query("SELECT id, topic_id, kind, path, content, created_at FROM artifacts WHERE id = ?").get(id) as Artifact | null
   }
 
   private recordEvent(eventType: string, entityType: string, entityId: string, payload: unknown): void {
@@ -395,6 +443,10 @@ function cleanOptional(value: string | undefined): string | null {
   if (value === undefined) return null
   const trimmed = value.trim()
   return trimmed ? trimmed : null
+}
+
+function hashPayload(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
 
 function assertAllowed<T extends string>(allowed: Set<T>, value: string, field: string): asserts value is T {
