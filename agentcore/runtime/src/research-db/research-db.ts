@@ -1685,7 +1685,7 @@ export class ResearchDb {
       this.requireArtifact(evidenceId)
       return
     }
-    if (!this.db.query("SELECT event_id FROM research_events WHERE event_id = ?").get(evidenceId)) {
+    if (!this.isValidEventEvidence(evidenceId)) {
       throw new Error(`research event evidence not found: ${evidenceId}`)
     }
   }
@@ -1697,7 +1697,21 @@ export class ResearchDb {
     }
     if (link.evidence_type === "citation") return this.getCitation(link.evidence_id) !== null
     if (link.evidence_type === "artifact") return this.getArtifact(link.evidence_id) !== null
-    return this.db.query("SELECT event_id FROM research_events WHERE event_id = ?").get(link.evidence_id) !== null
+    return this.isValidEventEvidence(link.evidence_id)
+  }
+
+  private isValidEventEvidence(eventId: string): boolean {
+    const row = this.db.query("SELECT entity_type, event_type FROM research_events WHERE event_id = ?").get(eventId) as
+      | Pick<ResearchEventRow, "entity_type" | "event_type">
+      | null
+    if (!row) return false
+    return (
+      row.entity_type === "research_result" ||
+      row.entity_type === "citation" ||
+      row.entity_type === "artifact" ||
+      row.entity_type === "result_citation" ||
+      row.entity_type === "result_artifact"
+    )
   }
 
   private updateCandidateStatus(candidateId: string, status: CandidateStatus, eventType: string, reason?: string): Candidate {

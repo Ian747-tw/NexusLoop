@@ -1419,7 +1419,7 @@ describe("ResearchDb", () => {
     })
     db.recordCitation({ citation_id: "citation_1", source_type: "file", source_uri: "file://evidence.md", quoted_text_or_summary: "Evidence" })
     db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "log", content: "Evidence" })
-    const eventId = db.listResearchEvents()[0]!.event_id
+    const eventId = db.listResearchEvents({ entity_type: "research_result" })[0]!.event_id
 
     const resultLink = db.linkCandidateEvidence(" candidate_1 ", "research_result", " result_1 ")
     const citationLink = db.linkCandidateEvidence("candidate_1", "citation", "citation_1")
@@ -1442,6 +1442,17 @@ describe("ResearchDb", () => {
     expect(() => db.linkCandidateEvidence("candidate_1", "artifact", "missing")).toThrow("artifact not found: missing")
     expect(() => db.linkCandidateEvidence("candidate_1", "research_result", "missing")).toThrow("research result evidence not found: missing")
     expect(() => db.linkCandidateEvidence("candidate_1", "event", "missing")).toThrow("research event evidence not found: missing")
+    db.close()
+  })
+
+  test("candidate lifecycle events do not satisfy promotion evidence", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    const candidateCreatedEvent = db.listResearchEvents({ entity_type: "candidate" })[0]!.event_id
+
+    expect(() => db.linkCandidateEvidence("candidate_1", "event", candidateCreatedEvent)).toThrow("research event evidence not found")
+    expect(db.canPromoteCandidate("candidate_1")).toEqual({ ok: false, reason: "candidate has no promotion evidence: candidate_1" })
     db.close()
   })
 
