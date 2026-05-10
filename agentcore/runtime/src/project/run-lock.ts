@@ -60,7 +60,10 @@ export class RunLock {
   private async removeIfStale(): Promise<boolean> {
     const candidate = await this.readLockCandidate()
     if (!candidate) return true
-    if (candidate.record && !this.isExpired(candidate.record.acquired_at) && this.isProcessLive(candidate.record.pid)) return false
+    if (candidate.record) {
+      if (this.isProcessLive(candidate.record.pid)) return false
+      if (!this.isExpired(candidate.record.acquired_at)) return false
+    }
     await this.beforeRemoveStale?.()
     const current = await this.readLockCandidate()
     if (!current || current.raw !== candidate.raw) return false

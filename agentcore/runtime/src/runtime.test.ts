@@ -438,11 +438,11 @@ describe("RunLock", () => {
     await first.release()
   })
 
-  test("stale lock with dead pid is replaced", async () => {
+  test("expired lock with dead pid is replaced", async () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")
     await mkdir(join(dir, ".nxl"), { recursive: true })
-    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-10T00:00:00Z", token: "dead-token" }) + "\n")
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-09T11:59:59Z", token: "dead-token" }) + "\n")
     const lock = new RunLock(lockPath, { now: lockNow })
 
     await lock.acquire()
@@ -476,19 +476,17 @@ describe("RunLock", () => {
     await expect(lock.acquire()).rejects.toThrow("runtime lock already held")
   })
 
-  test("old live pid lock is treated as stale and replaced", async () => {
+  test("old live pid lock is preserved", async () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")
+    const oldLiveRecord = { pid: process.pid, acquired_at: "2026-05-09T11:59:59Z", token: "old-live-token" }
     await mkdir(join(dir, ".nxl"), { recursive: true })
-    await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquired_at: "2026-05-09T11:59:59Z", token: "old-token" }) + "\n")
+    await writeFile(lockPath, JSON.stringify(oldLiveRecord) + "\n")
     const lock = new RunLock(lockPath, { now: lockNow })
 
-    await lock.acquire()
-    const record = JSON.parse(await readFile(lockPath, "utf8"))
+    await expect(lock.acquire()).rejects.toThrow("runtime lock already held")
 
-    expect(record.pid).toBe(process.pid)
-    expect(record.acquired_at).toBe(lockNow().toISOString())
-    await lock.release()
+    expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(oldLiveRecord)
   })
 
   test("invalid acquired_at is treated as stale and replaced", async () => {
@@ -511,7 +509,7 @@ describe("RunLock", () => {
     const lockPath = join(dir, ".nxl", "run.lock")
     const replacement = { pid: process.pid, acquired_at: lockNow().toISOString(), token: "replacement-token" }
     await mkdir(join(dir, ".nxl"), { recursive: true })
-    await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquired_at: "2026-05-09T11:59:59Z", token: "old-token" }) + "\n")
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-09T11:59:59Z", token: "old-token" }) + "\n")
     const lock = new RunLock(lockPath, {
       now: lockNow,
       beforeRemoveStale: async () => {
@@ -527,7 +525,7 @@ describe("RunLock", () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")
     await mkdir(join(dir, ".nxl"), { recursive: true })
-    await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquired_at: "2026-05-09T11:59:59Z", token: "old-token" }) + "\n")
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-09T11:59:59Z", token: "old-token" }) + "\n")
     const first = new RunLock(lockPath, { now: lockNow })
     const second = new RunLock(lockPath, { now: lockNow })
 
