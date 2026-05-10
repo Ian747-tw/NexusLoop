@@ -4,6 +4,7 @@ import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec 
 export class FakeOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   private phase = "new"
   private readonly events: RuntimeEvent[] = []
+  private streamCursor = 0
 
   async startSession(sessionSpec: SessionSpec): Promise<void> {
     this.phase = "started"
@@ -33,7 +34,10 @@ export class FakeOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   }
 
   async *streamExecutorEvents(): AsyncIterable<RuntimeEvent> {
-    for (const event of this.events) yield event
+    while (this.streamCursor < this.events.length) {
+      yield this.events[this.streamCursor]
+      this.streamCursor += 1
+    }
   }
 
   async shutdown(): Promise<void> {

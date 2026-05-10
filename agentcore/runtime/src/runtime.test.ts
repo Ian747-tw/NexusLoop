@@ -452,6 +452,22 @@ describe("RunLock", () => {
     await lock.release()
   })
 
+  test("fresh modern lock with dead pid is replaced", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: lockNow().toISOString(), token: "fresh-dead-token" }) + "\n")
+    const lock = new RunLock(lockPath, { now: lockNow })
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+
+    expect(record.pid).toBe(process.pid)
+    expect(record.acquired_at).toBe(lockNow().toISOString())
+    expect(typeof record.token).toBe("string")
+    await lock.release()
+  })
+
   test("corrupt lock is treated as stale and replaced", async () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")
@@ -625,6 +641,25 @@ describe("FakeOpenCodeAdapter", () => {
     expect(events[0]?.type).toBe("ExecutorLifecycle")
     if (events[0]?.type === "ExecutorLifecycle") {
       expect(events[0].message).toContain("Real OpenCode session spawn is not implemented")
+    }
+  })
+
+  test("streams only new fake events per stream session", async () => {
+    const adapter = new FakeOpenCodeAdapter()
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+
+    const first = []
+    for await (const event of adapter.streamExecutorEvents()) first.push(event)
+
+    await adapter.sendMissionPacket({ missionId: "m2", message: "next" })
+    const second = []
+    for await (const event of adapter.streamExecutorEvents()) second.push(event)
+
+    expect(first).toHaveLength(1)
+    expect(second).toHaveLength(1)
+    expect(second[0]?.type).toBe("ExecutorLifecycle")
+    if (second[0]?.type === "ExecutorLifecycle") {
+      expect(second[0].phase).toBe("fake-mission-packet")
     }
   })
 })

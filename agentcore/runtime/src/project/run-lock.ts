@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { mkdir, open, readFile, rm } from "node:fs/promises"
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises"
 import { dirname } from "node:path"
 
 interface LockRecord {
@@ -67,13 +67,19 @@ export class RunLock {
     if (!candidate) return true
     if (candidate.kind === "modern") {
       if (this.isProcessLive(candidate.record.pid)) return false
-      if (!this.isExpired(candidate.record.acquired_at)) return false
     }
     if (candidate.kind === "legacy" && this.isProcessLive(candidate.pid)) return false
     await this.beforeRemoveStale?.()
     const current = await this.readLockCandidate()
     if (!current || current.raw !== candidate.raw) return false
-    await rm(this.lockPath, { force: true })
+    const stalePath = `${this.lockPath}.${this.token}.stale`
+    try {
+      await rename(this.lockPath, stalePath)
+      await rm(stalePath, { force: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+      throw error
+    }
     return true
   }
 
