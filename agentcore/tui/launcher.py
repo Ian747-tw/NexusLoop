@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -25,8 +26,16 @@ def _ensure_dependencies(tui_dir: Path, env: dict[str, str]) -> int:
         )
         return result.returncode
 
+    if env.get("NXL_TUI_AUTO_INSTALL") in ("0", None):
+        print(
+            "NexusLoop OpenTUI dependencies are not installed. "
+            "Run: cd agentcore/tui && bun install --frozen-lockfile",
+            flush=True,
+        )
+        return 1
+
     print(
-        "NexusLoop OpenTUI dependencies are not installed. "
+        "NXL_TUI_AUTO_INSTALL must be 1 to install dependencies automatically. "
         "Run: cd agentcore/tui && bun install --frozen-lockfile",
         flush=True,
     )
@@ -43,5 +52,6 @@ def run(project_dir: Path) -> int:
 
     entry = tui_dir / "src" / "index.tsx"
     env["NXL_PROJECT_DIR"] = str(project_dir)
+    env["NXL_PYTHON_EXECUTABLE"] = sys.executable
 
     return subprocess.call(["bun", "run", str(entry)], cwd=str(tui_dir), env=env)

@@ -62,4 +62,40 @@ describe("TUI runtime event reducer", () => {
     expect(state.approval.specApprovals.at(-1)?.title).toBe("spec approval: approval-1")
     expect(state.approval.specApprovals.at(-1)?.detail).toBe("Approve spec candidate?")
   })
+
+  test("provider and spec onboarding state never stores API keys", () => {
+    let state = initialState("/tmp/demo")
+    state = reduceRuntimeEvent(state, {
+      type: "ProviderOnboardingState",
+      provider: "openai",
+      model: "gpt-test",
+      credentialSource: "secure_store",
+      connectionStatus: "not tested",
+    })
+    state = reduceRuntimeEvent(state, {
+      type: "ProjectSpecOnboardingState",
+      plainTextSpec: "Build with sk-test-SECRET123",
+      gpuQuota: "0 GB",
+      wakeHooks: "30-120 min",
+      maxParallelRuns: 1,
+      approvalRequirements: ["spec_changes"],
+    })
+    state = reduceRuntimeEvent(state, {
+      type: "SpecApprovalSummary",
+      specId: "spec_1",
+      objective: "Use sk-test-SECRET123",
+      successMetrics: ["reward >= 475"],
+      computeLimits: "cpu only",
+      wakeHookPolicy: "default 60 min",
+      userRules: ["never log Bearer abc.def.ghi"],
+      riskyFields: ["objective"],
+    })
+
+    const serialized = JSON.stringify(state)
+    expect(serialized).not.toContain("sk-test-SECRET123")
+    expect(serialized).not.toContain("Bearer abc.def.ghi")
+    expect(serialized).toContain("[REDACTED]")
+    expect(state.providerOnboarding.provider).toBe("openai")
+    expect(state.projectOnboarding.gpuQuota).toBe("0 GB")
+  })
 })

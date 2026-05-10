@@ -47,6 +47,23 @@ export type ApprovalState = {
   clarifications: StreamLine[]
 }
 
+export type ProviderOnboardingState = {
+  provider: string
+  model: string
+  credentialSource: string
+  localEndpoint: string
+  connectionStatus: string
+}
+
+export type ProjectOnboardingState = {
+  plainTextSpec: string
+  gpuQuota: string
+  wakeHooks: string
+  maxParallelRuns: number
+  approvalRequirements: string[]
+  riskyFields: string[]
+}
+
 export type SearchState = {
   query: string
   recordFilters: string[]
@@ -68,6 +85,8 @@ export type UiState = {
   systemActions: StreamLine[]
   search: SearchState
   approval: ApprovalState
+  providerOnboarding: ProviderOnboardingState
+  projectOnboarding: ProjectOnboardingState
   messageDraft: string
   submittedMessages: string[]
   lastCommand?: string
@@ -116,9 +135,24 @@ export function initialState(projectDir: string): UiState {
       records: [],
     },
     approval: {
-      specApprovals: [{ title: "Spec approval", detail: "Placeholder: waiting for runtime request" }],
-      candidateApprovals: [{ title: "Candidate approval", detail: "Placeholder: waiting for runtime request" }],
-      clarifications: [{ title: "Commander clarification", detail: "Placeholder: no open question" }],
+      specApprovals: [],
+      candidateApprovals: [],
+      clarifications: [],
+    },
+    providerOnboarding: {
+      provider: "not configured",
+      model: "not configured",
+      credentialSource: "not selected",
+      localEndpoint: "",
+      connectionStatus: "not tested",
+    },
+    projectOnboarding: {
+      plainTextSpec: "",
+      gpuQuota: "unset",
+      wakeHooks: "unset",
+      maxParallelRuns: 1,
+      approvalRequirements: [],
+      riskyFields: [],
     },
     messageDraft: "",
     submittedMessages: [],

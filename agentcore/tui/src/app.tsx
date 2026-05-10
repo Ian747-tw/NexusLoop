@@ -187,6 +187,24 @@ function ApprovalPanel(props: { state: UiState }) {
   )
 }
 
+function OnboardingPanel(props: { state: UiState }) {
+  const provider = props.state.providerOnboarding
+  const project = props.state.projectOnboarding
+  return (
+    <Panel title="Onboarding" focus="system-actions" state={props.state}>
+      <text fg={color.text}>provider: {provider.provider}</text>
+      <text fg={color.text}>model: {provider.model}</text>
+      <text fg={color.muted}>credential: {provider.credentialSource}</text>
+      <text fg={color.muted}>connection: {provider.connectionStatus}</text>
+      <text fg={color.text}>gpu quota: {project.gpuQuota}</text>
+      <text fg={color.text}>wake hooks: {project.wakeHooks}</text>
+      <text fg={color.text}>max parallel runs: {project.maxParallelRuns}</text>
+      <text fg={color.muted}>approvals: {project.approvalRequirements.join(", ") || "none"}</text>
+      <text fg={color.warning}>risky fields: {project.riskyFields.join(", ") || "none"}</text>
+    </Panel>
+  )
+}
+
 function MessageBox(props: { state: UiState; onDraft: (value: string) => void; onSubmit: () => void }) {
   let textarea: TextareaRenderable | undefined
   return (
@@ -248,6 +266,7 @@ function MainShell(props: { state: UiState; onDraft: (value: string) => void; on
               items={props.state.systemActions}
               empty="No runtime actions yet."
             />
+            <OnboardingPanel state={props.state} />
           </box>
           <box flexGrow={2} minWidth={0} gap={1}>
             <CommanderPanel state={props.state} />

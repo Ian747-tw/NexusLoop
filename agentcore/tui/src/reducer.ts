@@ -1,5 +1,6 @@
 import type { RuntimeEvent } from "./events"
 import { initialState, type UiState } from "./state"
+import { redactText } from "./redaction"
 
 function append<T>(items: T[], item: T, limit = 12): T[] {
   return [...items, item].slice(-limit)
@@ -100,7 +101,7 @@ export function reduceRuntimeEvent(state: UiState, event: RuntimeEvent): UiState
         ...state,
         systemActions: append(state.systemActions, {
           title: "user intervention routing",
-          detail: `${event.route}: ${event.message}`,
+          detail: redactText(`${event.route}: ${event.message}`),
         }),
       }
     case "WakeHookFired":
@@ -130,7 +131,7 @@ export function reduceRuntimeEvent(state: UiState, event: RuntimeEvent): UiState
         },
       }
     case "ApprovalRequested": {
-      const item = { title: `${event.kind} approval: ${event.approvalId}`, detail: event.prompt }
+      const item = { title: `${event.kind} approval: ${event.approvalId}`, detail: redactText(event.prompt) }
       return {
         ...state,
         focus: "approval",
@@ -148,9 +149,66 @@ export function reduceRuntimeEvent(state: UiState, event: RuntimeEvent): UiState
           ...state.approval,
           clarifications: append(state.approval.clarifications, {
             title: `${event.source} clarification: ${event.clarificationId}`,
-            detail: event.prompt,
+            detail: redactText(event.prompt),
           }),
         },
+      }
+    case "ProviderOnboardingState":
+      return {
+        ...state,
+        providerOnboarding: {
+          provider: event.provider,
+          model: event.model,
+          credentialSource: event.credentialSource,
+          localEndpoint: event.localEndpoint ?? "",
+          connectionStatus: event.connectionStatus,
+        },
+        header: {
+          ...state.header,
+          providerStatus: `provider: ${event.provider}`,
+          modelStatus: `model: ${event.model}`,
+        },
+      }
+    case "ProjectSpecOnboardingState":
+      return {
+        ...state,
+        projectOnboarding: {
+          ...state.projectOnboarding,
+          plainTextSpec: redactText(event.plainTextSpec ?? state.projectOnboarding.plainTextSpec),
+          gpuQuota: event.gpuQuota,
+          wakeHooks: event.wakeHooks,
+          maxParallelRuns: event.maxParallelRuns,
+          approvalRequirements: event.approvalRequirements,
+        },
+      }
+    case "SpecApprovalSummary":
+      return {
+        ...state,
+        focus: "approval",
+        projectOnboarding: { ...state.projectOnboarding, riskyFields: event.riskyFields },
+        approval: {
+          ...state.approval,
+          specApprovals: append(state.approval.specApprovals, {
+            title: `spec approval summary: ${event.specId}`,
+            detail: redactText([
+              event.objective,
+              `metrics=${event.successMetrics.join(", ")}`,
+              `compute=${event.computeLimits}`,
+              `wake=${event.wakeHookPolicy}`,
+              `rules=${event.userRules.join(", ") || "none"}`,
+              `risky=${event.riskyFields.join(", ") || "none"}`,
+            ].join(" | ")),
+          }),
+        },
+      }
+    case "SpecChangeIntentDetected":
+      return {
+        ...state,
+        focus: "approval",
+        systemActions: append(state.systemActions, {
+          title: "spec change intent detected",
+          detail: `${redactText(event.summary)}${event.pauseRecommended ? " | commander should review pause" : ""}`,
+        }),
       }
   }
 }

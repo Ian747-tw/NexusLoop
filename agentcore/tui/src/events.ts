@@ -14,6 +14,19 @@ export type RuntimeEvent =
   | { type: "ResearchResultAccepted"; resultId: string; label: string; summary: string }
   | { type: "ApprovalRequested"; approvalId: string; kind: "spec" | "candidate"; prompt: string }
   | { type: "ClarificationRequested"; clarificationId: string; source: "commander" | "executor" | "runtime"; prompt: string }
+  | { type: "ProviderOnboardingState"; provider: string; model: string; credentialSource: string; localEndpoint?: string; connectionStatus: string }
+  | { type: "ProjectSpecOnboardingState"; plainTextSpec?: string; gpuQuota: string; wakeHooks: string; maxParallelRuns: number; approvalRequirements: string[] }
+  | {
+      type: "SpecApprovalSummary"
+      specId: string
+      objective: string
+      successMetrics: string[]
+      computeLimits: string
+      wakeHookPolicy: string
+      userRules: string[]
+      riskyFields: string[]
+    }
+  | { type: "SpecChangeIntentDetected"; summary: string; pauseRecommended: boolean }
 
 export type RuntimeEventType = RuntimeEvent["type"]
 
@@ -33,4 +46,8 @@ export const supportedRuntimeEventTypes: RuntimeEventType[] = [
   "ResearchResultAccepted",
   "ApprovalRequested",
   "ClarificationRequested",
+  "ProviderOnboardingState",
+  "ProjectSpecOnboardingState",
+  "SpecApprovalSummary",
+  "SpecChangeIntentDetected",
 ]
