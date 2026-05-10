@@ -1572,32 +1572,48 @@ export class ResearchDb {
   }
 
   private backfillLinkEventIds(): void {
-    for (const row of this.db
+    const citationEntityIds = this.db
       .query(
-        "SELECT event_id, entity_id FROM research_events WHERE event_type = 'ResultCitationLinked' AND entity_type = 'result_citation'",
+        "SELECT DISTINCT entity_id FROM research_events WHERE event_type = 'ResultCitationLinked' AND entity_type = 'result_citation' ORDER BY rowid",
       )
-      .all() as { event_id: string; entity_id: string }[]) {
+      .all() as { entity_id: string }[]
+    for (const row of citationEntityIds) {
+      const events = this.db
+        .query(
+          "SELECT event_id FROM research_events WHERE event_type = 'ResultCitationLinked' AND entity_type = 'result_citation' AND entity_id = ? AND NOT EXISTS (SELECT 1 FROM result_citations WHERE link_event_id = research_events.event_id) ORDER BY rowid",
+        )
+        .all(row.entity_id) as { event_id: string }[]
       const links = this.db
-        .query("SELECT result_id, citation_id FROM result_citations WHERE link_event_id IS NULL AND result_id || ':' || citation_id = ?")
+        .query("SELECT result_id, citation_id FROM result_citations WHERE link_event_id IS NULL AND result_id || ':' || citation_id = ? ORDER BY rowid")
         .all(row.entity_id) as Pick<ResultCitationLink, "result_id" | "citation_id">[]
-      if (links.length !== 1) continue
-      this.db
-        .query("UPDATE result_citations SET link_event_id = ? WHERE result_id = ? AND citation_id = ? AND link_event_id IS NULL")
-        .run(row.event_id, links[0]!.result_id, links[0]!.citation_id)
+      if (events.length === 0 || events.length !== links.length) continue
+      for (let index = 0; index < events.length; index++) {
+        this.db
+          .query("UPDATE result_citations SET link_event_id = ? WHERE result_id = ? AND citation_id = ? AND link_event_id IS NULL")
+          .run(events[index]!.event_id, links[index]!.result_id, links[index]!.citation_id)
+      }
     }
 
-    for (const row of this.db
+    const artifactEntityIds = this.db
       .query(
-        "SELECT event_id, entity_id FROM research_events WHERE event_type = 'ResultArtifactLinked' AND entity_type = 'result_artifact'",
+        "SELECT DISTINCT entity_id FROM research_events WHERE event_type = 'ResultArtifactLinked' AND entity_type = 'result_artifact' ORDER BY rowid",
       )
-      .all() as { event_id: string; entity_id: string }[]) {
+      .all() as { entity_id: string }[]
+    for (const row of artifactEntityIds) {
+      const events = this.db
+        .query(
+          "SELECT event_id FROM research_events WHERE event_type = 'ResultArtifactLinked' AND entity_type = 'result_artifact' AND entity_id = ? AND NOT EXISTS (SELECT 1 FROM result_artifacts WHERE link_event_id = research_events.event_id) ORDER BY rowid",
+        )
+        .all(row.entity_id) as { event_id: string }[]
       const links = this.db
-        .query("SELECT result_id, artifact_id FROM result_artifacts WHERE link_event_id IS NULL AND result_id || ':' || artifact_id = ?")
+        .query("SELECT result_id, artifact_id FROM result_artifacts WHERE link_event_id IS NULL AND result_id || ':' || artifact_id = ? ORDER BY rowid")
         .all(row.entity_id) as Pick<ResultArtifactLink, "result_id" | "artifact_id">[]
-      if (links.length !== 1) continue
-      this.db
-        .query("UPDATE result_artifacts SET link_event_id = ? WHERE result_id = ? AND artifact_id = ? AND link_event_id IS NULL")
-        .run(row.event_id, links[0]!.result_id, links[0]!.artifact_id)
+      if (events.length === 0 || events.length !== links.length) continue
+      for (let index = 0; index < events.length; index++) {
+        this.db
+          .query("UPDATE result_artifacts SET link_event_id = ? WHERE result_id = ? AND artifact_id = ? AND link_event_id IS NULL")
+          .run(events[index]!.event_id, links[index]!.result_id, links[index]!.artifact_id)
+      }
     }
   }
 

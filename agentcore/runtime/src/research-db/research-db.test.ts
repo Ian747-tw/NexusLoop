@@ -1573,6 +1573,64 @@ describe("ResearchDb", () => {
     reopened.close()
   })
 
+  test("migration backfills ambiguous legacy link event ids by insertion order", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "token=result:aSecret123",
+      result_type: "probe_result",
+      title: "Valid probe",
+      summary: "Valid probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.proposeResearchResult({
+      result_id: "token=result",
+      result_type: "probe_result",
+      title: "Rejected probe",
+      summary: "Rejected probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "citation", source_type: "file", source_uri: "file://valid.md", quoted_text_or_summary: "Evidence" })
+    db.recordCitation({ citation_id: "aSecret123:citation", source_type: "file", source_uri: "file://rejected.md", quoted_text_or_summary: "Rejected evidence" })
+    db.addArtifact({ id: "artifact", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    db.addArtifact({ id: "aSecret123:artifact", topic_id: "topic_1", kind: "log", content: "Rejected evidence" })
+    db.linkResultCitation("token=result:aSecret123", "citation")
+    db.linkResultCitation("token=result", "aSecret123:citation")
+    db.linkResultArtifact("token=result:aSecret123", "artifact")
+    db.linkResultArtifact("token=result", "aSecret123:artifact")
+    db.rejectResearchResult("token=result")
+    const citationEvents = db.listResearchEvents({ event_type: "ResultCitationLinked" })
+    const artifactEvents = db.listResearchEvents({ event_type: "ResultArtifactLinked" })
+    expect(citationEvents.map((event) => event.entity_id)).toEqual(["token=result:aSecret123:citation", "token=result:aSecret123:citation"])
+    expect(artifactEvents.map((event) => event.entity_id)).toEqual(["token=result:aSecret123:artifact", "token=result:aSecret123:artifact"])
+    expect(JSON.stringify(citationEvents[0]!.payload)).toContain("[REDACTED]")
+    expect(JSON.stringify(artifactEvents[0]!.payload)).toContain("[REDACTED]")
+    db.close()
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.query("UPDATE result_citations SET link_event_id = NULL").run()
+      sqlite.query("UPDATE result_artifacts SET link_event_id = NULL").run()
+    } finally {
+      sqlite.close()
+    }
+
+    let next = 200
+    const reopened = ResearchDb.open(dir, {
+      now: () => new Date("2026-05-10T12:00:02Z"),
+      idFactory: () => `after_${next++}`,
+    })
+    reopened.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    expect(reopened.linkCandidateEvidence("candidate_1", "event", citationEvents[0]!.event_id).evidence_id).toBe(citationEvents[0]!.event_id)
+    expect(reopened.linkCandidateEvidence("candidate_1", "event", artifactEvents[0]!.event_id).evidence_id).toBe(artifactEvents[0]!.event_id)
+    expect(() => reopened.linkCandidateEvidence("candidate_1", "event", citationEvents[1]!.event_id)).toThrow("research event evidence not found")
+    expect(() => reopened.linkCandidateEvidence("candidate_1", "event", artifactEvents[1]!.event_id)).toThrow("research event evidence not found")
+    reopened.close()
+  })
+
   test("candidate evidence linking fails clearly for missing candidate or evidence", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
