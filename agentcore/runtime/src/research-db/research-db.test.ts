@@ -457,7 +457,26 @@ describe("ResearchDb", () => {
     }
   })
 
-  test("research events are not appended to JSONL when commit fails", async () => {
+  test("domain writes roll back when JSONL append fails", async () => {
+    const dir = await tempProject()
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    await mkdir(eventsPath, { recursive: true })
+    const db = ResearchDb.open(dir, {
+      eventsPath,
+      now: () => new Date("2026-05-10T12:00:00Z"),
+      idFactory: () => "id_1",
+    })
+    try {
+      expect(() => db.createTopic({ id: "topic_jsonl_failure", title: "JSONL failure" })).toThrow()
+      expect(db.getTopic("topic_jsonl_failure")).toBeNull()
+      expect(db.listResearchEvents({ limit: 10 })).toEqual([])
+      expect(db.getProjectionStatus()).toMatchObject({ last_event_id: null, applied_count: 0 })
+    } finally {
+      db.close()
+    }
+  })
+
+  test("commit failure after JSONL append rebuilds the projection from the source log", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
     const sqlite = (db as unknown as { db: Database }).db
@@ -472,9 +491,18 @@ describe("ResearchDb", () => {
     }) as typeof sqlite.exec
 
     try {
-      expect(() => db.createTopic({ id: "topic_commit_failure", title: "Commit failure" })).toThrow("forced commit failure")
-      expect(db.getTopic("topic_commit_failure")).toBeNull()
-      expect(existsSync(join(dir, ".nxl", "events.jsonl"))).toBe(false)
+      const topic = db.createTopic({ id: "topic_commit_failure", title: "Commit failure" })
+      expect(topic.id).toBe("topic_commit_failure")
+      expect(db.getTopic("topic_commit_failure")).toMatchObject({ id: "topic_commit_failure", title: "Commit failure" })
+      const lines = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).trim().split(/\r?\n/)
+      expect(lines).toHaveLength(1)
+      expect(JSON.parse(lines[0]!) as Record<string, unknown>).toMatchObject({
+        kind: "research_event",
+        event_type: "topic_created",
+        entity_type: "topic",
+        entity_id: "topic_commit_failure",
+      })
+      expect(db.checkProjectionIntegrity()).toMatchObject({ ok: true, stale: false, pending_count: 0 })
     } finally {
       sqlite.exec = originalExec as typeof sqlite.exec
       db.close()
@@ -2724,6 +2752,30 @@ describe("ResearchDb", () => {
 
     const reopened = ResearchDb.open(dir, { appendEvents: false })
     expect(reopened.checkProjectionIntegrity()).toEqual({ ok: true, stale: false })
+    reopened.close()
+  })
+
+  test("integrity reports stale when event log is truncated before projection cursor", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic 1" })
+    db.createTopic({ id: "topic_2", title: "Topic 2" })
+    const status = db.getProjectionStatus()
+    expect(status.applied_count).toBe(2)
+    db.close()
+
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const lines = (await readFile(eventsPath, "utf8")).trim().split(/\r?\n/)
+    await writeFile(eventsPath, `${lines[1]}\n`, "utf8")
+
+    const reopened = ResearchDb.open(dir, { appendEvents: false })
+    expect(reopened.checkProjectionIntegrity()).toMatchObject({
+      ok: false,
+      stale: true,
+      reason: "events missing before projection cursor",
+      last_event_id: status.last_event_id,
+      pending_count: 0,
+    })
     reopened.close()
   })
 

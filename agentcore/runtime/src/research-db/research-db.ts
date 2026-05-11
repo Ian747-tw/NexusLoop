@@ -1973,6 +1973,16 @@ export class ResearchDb {
     }
     const cursorIndex = researchEvents.findIndex((item) => String(item.event.event_id) === status.last_event_id)
     if (cursorIndex < 0) return { ok: false, stale: true, reason: "last_event_id not found in events log", last_event_id: status.last_event_id }
+    const appliedThroughCursor = cursorIndex + 1
+    if (appliedThroughCursor < status.applied_count) {
+      return {
+        ok: false,
+        stale: true,
+        reason: "events missing before projection cursor",
+        last_event_id: status.last_event_id,
+        pending_count: 0,
+      }
+    }
     const pendingCount = researchEvents.length - cursorIndex - 1
     if (pendingCount > 0) {
       return { ok: false, stale: true, reason: "events exist after projection cursor", last_event_id: status.last_event_id, pending_count: pendingCount }
@@ -2942,21 +2952,34 @@ export class ResearchDb {
     if (this.pendingJsonlEvents !== null) throw new Error("nested ResearchDb transaction is not supported")
     this.pendingJsonlEvents = []
     let committed = false
+    let appended = false
+    let hasResult = false
+    let result: T
     this.db.exec("BEGIN IMMEDIATE")
     try {
-      const result = work()
+      result = work()
+      hasResult = true
+      const jsonlEvents = this.pendingJsonlEvents
+      for (const event of jsonlEvents) this.appendJsonlEvent(event)
+      appended = true
       this.db.exec("COMMIT")
       committed = true
-      const jsonlEvents = this.pendingJsonlEvents
       this.pendingJsonlEvents = null
-      for (const event of jsonlEvents) this.appendJsonlEvent(event)
       return result
     } catch (error) {
       this.pendingJsonlEvents = null
+      let rolledBack = false
       try {
-        if (!committed) this.db.exec("ROLLBACK")
+        if (!committed) {
+          this.db.exec("ROLLBACK")
+          rolledBack = true
+        }
       } catch {
         // SQLite may already have rolled the transaction back; keep the original failure visible.
+      }
+      if (appended && hasResult && rolledBack) {
+        this.rebuildFromEvents(this.eventsPath)
+        return result!
       }
       throw error
     }
