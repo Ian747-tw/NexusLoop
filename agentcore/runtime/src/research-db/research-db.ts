@@ -1576,7 +1576,7 @@ export class ResearchDb {
     const artifactId = cleanId(input.artifact_id)
     const artifact = this.getArtifact(artifactId)
     if (!artifact) throw new Error(`artifact not found: ${artifactId}`)
-    if (artifact.produced_by_run_id !== null && artifact.produced_by_run_id !== trainingRunId) {
+    if (artifact.produced_by_run_id !== trainingRunId) {
       throw new Error(`checkpoint artifact run mismatch: ${artifactId}`)
     }
     const checkpointId = cleanId(input.checkpoint_id ?? this.idFactory())
@@ -1649,7 +1649,7 @@ export class ResearchDb {
     if (existing.label === "full_training") {
       const hasReproduction = (reproduction !== undefined && reproduction !== null) || existing.reproduction !== null
       if (!hasReproduction) throw new Error(`full training run requires reproduction before completion: ${id}`)
-      const hasMetricsEvidence = metricsPath !== null || existing.metrics_path !== null
+      const hasMetricsEvidence = metricsPath !== null || existing.metrics_path !== null || existing.last_metric !== null
       if (!hasMetricsEvidence) throw new Error(`full training run requires metrics evidence before completion: ${id}`)
     }
     const completedAt = this.timestamp()
