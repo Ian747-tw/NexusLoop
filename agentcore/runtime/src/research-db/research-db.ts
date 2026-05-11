@@ -655,6 +655,7 @@ export class ResearchDb {
   private readonly appendEvents: boolean
   private readonly now: () => Date
   private readonly idFactory: () => string
+  private pendingJsonlEvents: ResearchJsonlEvent[] | null = null
 
   private constructor(
     db: Database,
@@ -1959,7 +1960,12 @@ export class ResearchDb {
 
     const researchEvents = uniqueResearchEvents(parsed)
     const status = this.getProjectionStatus()
-    if (!status.updated_at) return { ok: false, stale: true, reason: "missing projection metadata", pending_count: researchEvents.length }
+    if (!status.updated_at) {
+      const projectedRows = this.countProjectedRows()
+      return researchEvents.length === 0 && projectedRows === 0
+        ? { ok: true, stale: false }
+        : { ok: false, stale: true, reason: "missing projection metadata", pending_count: researchEvents.length || projectedRows }
+    }
     if (!status.last_event_id) {
       return researchEvents.length === 0
         ? { ok: true, stale: false }
@@ -2875,8 +2881,7 @@ export class ResearchDb {
       .run(eventId, eventType, entityType, entityId, JSON.stringify(redactedPayload), createdAt)
     this.upsertProjectionStatus(eventId, createdAt, this.countProjectedEvents(), null)
     if (this.appendEvents) {
-      mkdirSync(dirname(this.eventsPath), { recursive: true })
-      appendDurableJsonl(this.eventsPath, {
+      this.queueJsonlEvent({
         event_id: eventId,
         timestamp: createdAt,
         kind: "research_event",
@@ -2934,19 +2939,40 @@ export class ResearchDb {
   }
 
   private inTransaction<T>(work: () => T): T {
+    if (this.pendingJsonlEvents !== null) throw new Error("nested ResearchDb transaction is not supported")
+    this.pendingJsonlEvents = []
+    let committed = false
     this.db.exec("BEGIN IMMEDIATE")
     try {
       const result = work()
       this.db.exec("COMMIT")
+      committed = true
+      const jsonlEvents = this.pendingJsonlEvents
+      this.pendingJsonlEvents = null
+      for (const event of jsonlEvents) this.appendJsonlEvent(event)
       return result
     } catch (error) {
+      this.pendingJsonlEvents = null
       try {
-        this.db.exec("ROLLBACK")
+        if (!committed) this.db.exec("ROLLBACK")
       } catch {
         // SQLite may already have rolled the transaction back; keep the original failure visible.
       }
       throw error
     }
+  }
+
+  private queueJsonlEvent(event: ResearchJsonlEvent): void {
+    if (this.pendingJsonlEvents) {
+      this.pendingJsonlEvents.push(event)
+      return
+    }
+    this.appendJsonlEvent(event)
+  }
+
+  private appendJsonlEvent(event: ResearchJsonlEvent): void {
+    mkdirSync(dirname(this.eventsPath), { recursive: true })
+    appendDurableJsonl(this.eventsPath, event)
   }
 
   private requireTopic(topicId: string): void {

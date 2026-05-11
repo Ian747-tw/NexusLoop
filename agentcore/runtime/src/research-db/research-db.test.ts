@@ -457,6 +457,30 @@ describe("ResearchDb", () => {
     }
   })
 
+  test("research events are not appended to JSONL when commit fails", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = (db as unknown as { db: Database }).db
+    const originalExec = sqlite.exec.bind(sqlite)
+    let failCommit = true
+    sqlite.exec = ((sql: string) => {
+      if (sql === "COMMIT" && failCommit) {
+        failCommit = false
+        throw new Error("forced commit failure")
+      }
+      return originalExec(sql)
+    }) as typeof sqlite.exec
+
+    try {
+      expect(() => db.createTopic({ id: "topic_commit_failure", title: "Commit failure" })).toThrow("forced commit failure")
+      expect(db.getTopic("topic_commit_failure")).toBeNull()
+      expect(existsSync(join(dir, ".nxl", "events.jsonl"))).toBe(false)
+    } finally {
+      sqlite.exec = originalExec as typeof sqlite.exec
+      db.close()
+    }
+  })
+
   test("transaction wrapper preserves the original sqlite failure when rollback already happened", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
@@ -2684,6 +2708,22 @@ describe("ResearchDb", () => {
       reason: "event log missing",
       pending_count: 2,
     })
+    reopened.close()
+  })
+
+  test("integrity treats missing projection metadata as healthy when no research events exist", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.close()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(
+      join(dir, ".nxl", "events.jsonl"),
+      JSON.stringify({ event_id: "runtime_1", timestamp: "2026-05-10T12:00:00.000Z", kind: "RuntimeReady", projectName: "nxl" }) + "\n",
+      "utf8",
+    )
+
+    const reopened = ResearchDb.open(dir, { appendEvents: false })
+    expect(reopened.checkProjectionIntegrity()).toEqual({ ok: true, stale: false })
     reopened.close()
   })
 
