@@ -10,6 +10,7 @@ import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
+import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
 import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
 import { RunLock } from "./project/run-lock"
@@ -26,6 +27,7 @@ import {
 } from "./research-db/research-db"
 
 const cleanup: string[] = []
+const NON_BLOCKING_START_TIMEOUT_MS = 1000
 
 async function tempProject(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "nxl-runtime-"))
@@ -112,6 +114,64 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
 
   async getStatus(): Promise<Record<string, unknown>> {
     return { adapter: "long-lived", message: "long stream adapter" }
+  }
+}
+
+type ProcessEventName = "exit" | "error"
+type ProcessListener = (...args: unknown[]) => void
+
+class FakeProcessEventSource implements OpenCodeProcessEventSource {
+  private readonly listeners = new Map<string, ProcessListener[]>()
+
+  on(event: "data", listener: (data: unknown) => void): void {
+    const listeners = this.listeners.get(event) ?? []
+    listeners.push(listener as ProcessListener)
+    this.listeners.set(event, listeners)
+  }
+
+  emitData(data: unknown): void {
+    for (const listener of this.listeners.get("data") ?? []) listener(data)
+  }
+}
+
+class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
+  readonly stdout = new FakeProcessEventSource()
+  readonly stderr = new FakeProcessEventSource()
+  readonly stdinWrites: string[] = []
+  stdinEnded = false
+  killedWith: NodeJS.Signals | undefined
+  private readonly exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
+  private readonly errorListeners: Array<(error: Error) => void> = []
+
+  constructor(readonly pid = 4242) {}
+
+  stdin = {
+    write: (data: string) => {
+      this.stdinWrites.push(data)
+      return true
+    },
+    end: () => {
+      this.stdinEnded = true
+    },
+  }
+
+  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void
+  on(event: "error", listener: (error: Error) => void): void
+  on(event: ProcessEventName, listener: ((code: number | null, signal: NodeJS.Signals | null) => void) | ((error: Error) => void)): void {
+    if (event === "exit") this.exitListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
+    else this.errorListeners.push(listener as (error: Error) => void)
+  }
+
+  kill(signal?: NodeJS.Signals): void {
+    this.killedWith = signal
+  }
+
+  emitExit(code: number | null, signal: NodeJS.Signals | null): void {
+    for (const listener of this.exitListeners) listener(code, signal)
+  }
+
+  emitError(error: Error): void {
+    for (const listener of this.errorListeners) listener(error)
   }
 }
 
@@ -301,7 +361,7 @@ describe("RuntimeServer core", () => {
     const adapter = new LongLivedAdapter()
     const server = new RuntimeServer({ projectDir: dir, adapter })
 
-    const result = await Promise.race([server.start().then(() => "started" as const), timeout(100)])
+    const result = await Promise.race([server.start().then(() => "started" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
 
     expect(result).toBe("started")
     expect(adapter.startCalls).toBe(1)
@@ -315,7 +375,7 @@ describe("RuntimeServer core", () => {
     const server = new RuntimeServer({ projectDir: dir, adapter })
 
     await server.start()
-    const result = await Promise.race([server.startNewSession().then(() => "started" as const), timeout(100)])
+    const result = await Promise.race([server.startNewSession().then(() => "started" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
 
     expect(result).toBe("started")
     expect(adapter.startCalls).toBe(2)
@@ -1097,5 +1157,147 @@ describe("FakeOpenCodeAdapter", () => {
     if (second[0]?.type === "ExecutorLifecycle") {
       expect(second[0].phase).toBe("fake-mission-packet")
     }
+  })
+})
+
+describe("ProcessOpenCodeAdapter", () => {
+  test("starts with fake spawn and emits lifecycle start event", async () => {
+    const process = new FakeSpawnedProcess(1234)
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test objective" })
+
+    const events = []
+    for await (const event of adapter.streamExecutorEvents()) events.push(event)
+
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: "ExecutorLifecycle", phase: "process-started" })
+    expect(events[0]?.type === "ExecutorLifecycle" ? events[0].message : "").toContain("pid 1234")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ adapter: "process", phase: "running", pid: 1234, command: "opencode" })
+  })
+
+  test("spawn failure rejects startSession and records redacted error in status", async () => {
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "/usr/bin/opencode",
+      cwd: "/tmp/demo",
+      spawn: () => {
+        throw new Error("spawn failed token=super-secret-token")
+      },
+    })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })).rejects.toThrow("OpenCode process spawn failed: spawn failed [REDACTED]")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ adapter: "process", phase: "failed", command: "opencode", lastError: "OpenCode process spawn failed: spawn failed [REDACTED]" })
+    expect(JSON.stringify(status)).not.toContain("super-secret-token")
+  })
+
+  test("shutdown before start is safe", async () => {
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => new FakeSpawnedProcess() })
+
+    await expect(adapter.shutdown()).resolves.toBeUndefined()
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+  })
+
+  test("shutdown twice is safe", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await adapter.shutdown()
+    await adapter.shutdown()
+
+    expect(process.stdinEnded).toBe(true)
+    expect(process.killedWith).toBe("SIGTERM")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+  })
+
+  test("unexpected process exit surfaces lifecycle event and status error", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    for await (const _event of adapter.streamExecutorEvents()) {
+      // drain start event
+    }
+    process.emitExit(7, null)
+
+    const events = []
+    for await (const event of adapter.streamExecutorEvents()) events.push(event)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-exited", message: "OpenCode process exited unexpectedly with code 7" }])
+    expect(status).toMatchObject({ phase: "exited", lastError: "OpenCode process exited unexpectedly with code 7" })
+  })
+
+  test("streamExecutorEvents drains only new events", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    const first = []
+    for await (const event of adapter.streamExecutorEvents()) first.push(event)
+
+    const second = []
+    for await (const event of adapter.streamExecutorEvents()) second.push(event)
+
+    process.stdout.emitData("hello")
+    const third = []
+    for await (const event of adapter.streamExecutorEvents()) third.push(event)
+
+    expect(first).toHaveLength(1)
+    expect(second).toHaveLength(0)
+    expect(third).toHaveLength(1)
+    expect(third[0]).toMatchObject({ type: "ExecutorLifecycle", phase: "process-stdout", message: "hello" })
+  })
+
+  test("stdout stderr and status text are redacted", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "/opt/opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=objective-secret" })
+    process.stdout.emitData("stdout token=stdout-secret")
+    process.stderr.emitData("stderr Bearer abc.def.ghi12345")
+    process.emitError(new Error("process error api_key=error-secret"))
+
+    const events = []
+    for await (const event of adapter.streamExecutorEvents()) events.push(event)
+    const serialized = JSON.stringify({ events, status: await adapter.getStatus() })
+
+    expect(serialized).toContain("[REDACTED]")
+    expect(serialized).not.toContain("objective-secret")
+    expect(serialized).not.toContain("stdout-secret")
+    expect(serialized).not.toContain("abc.def.ghi12345")
+    expect(serialized).not.toContain("error-secret")
+    expect(serialized).not.toContain("/opt/opencode")
+  })
+
+  test("sendMissionPacket fails clearly when real transport is not implemented", async () => {
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => new FakeSpawnedProcess() })
+
+    await expect(adapter.sendMissionPacket({ missionId: "m1", message: "hello" })).rejects.toThrow("real mission packet transport not implemented")
+  })
+
+  test("RuntimeServer can use injected process adapter with fake spawn without blocking start", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    const result = await Promise.race([server.start().then(() => "started" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
+
+    expect(result).toBe("started")
+    expect(await server.status()).toMatchObject({ runtimeStatus: "started", lockHeld: true })
+    expect(server.eventBus.snapshot().map((event) => event.type)).toContain("RuntimeReady")
+    await server.shutdown()
   })
 })
