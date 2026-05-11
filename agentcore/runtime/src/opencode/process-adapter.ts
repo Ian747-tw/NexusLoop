@@ -56,6 +56,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   private phase: ProcessAdapterPhase = "new"
   private process: OpenCodeSpawnedProcess | null = null
   private readonly expectedExitProcesses = new WeakSet<object>()
+  private readonly terminalProcesses = new WeakMap<object, string>()
   private readonly exitWaiters = new WeakMap<object, Set<() => void>>()
   private readonly terminatingProcesses = new Set<OpenCodeSpawnedProcess>()
   private readonly streamWaiters = new Set<() => void>()
@@ -85,9 +86,11 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
     try {
       const child = this.spawn(this.command, this.args, { cwd, env: this.env })
       this.process = child
-      await this.waitForProcessSpawn(child, this.spawnTimeoutMs)
-      this.phase = "running"
       this.attachProcessListeners(child)
+      await this.waitForProcessSpawn(child, this.spawnTimeoutMs)
+      const terminalError = this.terminalProcesses.get(child)
+      if (terminalError) throw new Error(terminalError)
+      this.phase = "running"
       this.queue("process-started", `OpenCode process started: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
     } catch (error) {
       this.phase = "failed"
@@ -116,6 +119,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       while (this.streamCursor < this.events.length) {
         const event = this.events[this.streamCursor]
         this.streamCursor += 1
+        this.compactDrainedEvents()
         yield event
       }
       if (this.streamClosed) break
@@ -191,9 +195,12 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       }
       this.phase = "failed"
       this.lastError = redactText(`OpenCode process error: ${errorMessage(error)}`)
+      this.terminalProcesses.set(child, this.lastError)
       this.queue("process-error", this.lastError)
     })
     child.on("exit", (code, signal) => {
+      const message = exitMessage("OpenCode process exited", code, signal)
+      this.terminalProcesses.set(child, message)
       this.terminatingProcesses.delete(child)
       if (this.process === child) this.process = null
       const exitWaiters = this.exitWaiters.get(child)
@@ -201,7 +208,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       for (const waiter of exitWaiters ?? []) waiter()
       if (this.shutdownRequested || this.expectedExitProcesses.has(child)) {
         if (this.shutdownRequested) this.phase = "shutdown"
-        this.queue("process-exited", exitMessage("OpenCode process exited", code, signal))
+        this.queue("process-exited", message)
         if (this.shutdownRequested) this.closeStream()
         return
       }
@@ -215,6 +222,12 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   private queue(phase: string, message: string): void {
     this.events.push({ type: "ExecutorLifecycle", phase, message: redactText(message) })
     this.notifyStream()
+  }
+
+  private compactDrainedEvents(): void {
+    if (this.streamCursor === 0) return
+    this.events.splice(0, this.streamCursor)
+    this.streamCursor = 0
   }
 
   private closeStream(): void {
@@ -260,6 +273,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       const timeout = setTimeout(() => finish(() => reject(new Error(`timed out after ${timeoutMs}ms`))), timeoutMs)
       child.on("spawn", () => finish(resolve))
       child.on("error", (error) => finish(() => reject(error)))
+      child.on("exit", (code, signal) => finish(() => reject(new Error(exitMessage("OpenCode process exited before spawn", code, signal)))))
     })
   }
 }

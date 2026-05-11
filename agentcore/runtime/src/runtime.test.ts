@@ -1257,6 +1257,22 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(await adapter.getStatus())).not.toContain("spawn-secret")
   })
 
+  test("immediate post-spawn exit rejects startSession before readiness", async () => {
+    const process = new FakeSpawnedProcess(4242, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+    })
+
+    const started = adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.emitSpawn()
+    process.emitExit(2, null)
+
+    await expect(started).rejects.toThrow("OpenCode process spawn failed: OpenCode process exited with code 2")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ adapter: "process", phase: "failed", pid: undefined })
+  })
+
   test("shutdown before start is safe", async () => {
     const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => new FakeSpawnedProcess() })
 
@@ -1359,6 +1375,24 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(first).toHaveLength(1)
     expect(second).toHaveLength(1)
     expect(second[0]).toMatchObject({ type: "ExecutorLifecycle", phase: "process-stdout", message: "hello" })
+  })
+
+  test("streamExecutorEvents compacts drained process events", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdout.emitData("one")
+    process.stderr.emitData("two")
+    await readProcessEvents(adapter, 3)
+
+    expect((adapter as unknown as { events: RuntimeEvent[] }).events).toHaveLength(0)
+
+    process.stdout.emitData("three")
+    const next = await readProcessEvents(adapter, 1)
+
+    expect(next).toEqual([{ type: "ExecutorLifecycle", phase: "process-stdout", message: "three" }])
+    expect((adapter as unknown as { events: RuntimeEvent[] }).events).toHaveLength(0)
   })
 
   test("stdout stderr and status text are redacted", async () => {
