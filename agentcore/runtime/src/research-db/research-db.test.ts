@@ -2969,5 +2969,28 @@ describe("ResearchDb", () => {
     })
     expect(() => malformedResearch.rebuildFromEvents()).toThrow("malformed research event: invalid or missing entity_type for topic_created at line 1")
     malformedResearch.close()
+
+    const mismatchedResearchDir = await tempProject()
+    await mkdir(join(mismatchedResearchDir, ".nxl"), { recursive: true })
+    await writeFile(
+      join(mismatchedResearchDir, ".nxl", "events.jsonl"),
+      JSON.stringify({
+        event_id: "evt_mismatched_research",
+        timestamp: "2026-05-10T12:00:00.000Z",
+        event_type: "topic_created",
+        entity_type: "candidate",
+        entity_id: "topic_1",
+        payload: { id: "topic_1", title: "Topic", status: "open", created_at: "2026-05-10T12:00:00.000Z", updated_at: "2026-05-10T12:00:00.000Z" },
+      }) + "\n",
+      "utf8",
+    )
+    const mismatchedResearch = ResearchDb.open(mismatchedResearchDir, { appendEvents: false })
+    expect(mismatchedResearch.checkProjectionIntegrity()).toMatchObject({
+      ok: false,
+      reason: "malformed research event: expected entity_type topic for topic_created but got candidate",
+      unsupported_event_type: "topic_created",
+    })
+    expect(() => mismatchedResearch.rebuildFromEvents()).toThrow("malformed research event: expected entity_type topic for topic_created but got candidate at line 1")
+    mismatchedResearch.close()
   })
 })

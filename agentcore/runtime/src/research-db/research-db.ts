@@ -649,6 +649,41 @@ const SUPPORTED_RESEARCH_EVENT_TYPES = new Set([
   "TrainingRunFailed",
   "TrainingRunCancelled",
 ])
+const RESEARCH_EVENT_ENTITY_TYPES: Record<string, ResearchEntityType> = {
+  topic_created: "topic",
+  source_added: "source",
+  note_added: "note",
+  artifact_added: "artifact",
+  ResearchResultProposed: "research_result",
+  ResearchResultAccepted: "research_result",
+  ResearchResultRejected: "research_result",
+  CitationRecorded: "citation",
+  ResultCitationLinked: "result_citation",
+  ResultArtifactLinked: "result_artifact",
+  HypothesisCreated: "hypothesis",
+  HypothesisStatusUpdated: "hypothesis",
+  CandidateCreated: "candidate",
+  CandidateEvidenceLinked: "candidate_evidence",
+  CandidateRanked: "candidate",
+  CandidateSelected: "candidate",
+  CandidateRejected: "candidate",
+  CandidatePromotionProposed: "candidate",
+  CandidatePromoted: "candidate",
+  CandidateNeedsMoreEvidence: "candidate",
+  TrialPlanned: "trial",
+  TrialStarted: "trial",
+  TrialCompleted: "trial",
+  TrialFailed: "trial",
+  TrialCancelled: "trial",
+  TrainingRunPlanned: "training_run",
+  TrainingRunStarted: "training_run",
+  TrainingProgressObserved: "training_run",
+  TrainingCheckpointObserved: "training_checkpoint",
+  ReproductionRecipeRecorded: "reproduction_record",
+  TrainingRunCompleted: "training_run",
+  TrainingRunFailed: "training_run",
+  TrainingRunCancelled: "training_run",
+}
 
 export class ResearchDb {
   private readonly db: Database
@@ -3531,12 +3566,18 @@ function normalizeResearchEvent(event: ResearchJsonlEvent): {
   const isResearchKind = event.kind === "research_event" || event.kind === "research_db_event" || entityType === "research_event"
   const hasSupportedEventType = eventType !== "" && SUPPORTED_RESEARCH_EVENT_TYPES.has(eventType)
   const hasResearchEntityType = RESEARCH_ENTITY_TYPES.has(entityType as ResearchEntityType)
+  const expectedEntityType = hasSupportedEventType ? RESEARCH_EVENT_ENTITY_TYPES[eventType] : undefined
   const isResearchDomain = eventType !== "" && (hasSupportedEventType || entityType !== "")
   const research = isResearchKind || hasSupportedEventType || (isResearchDomain && hasResearchEntityType)
-  const malformedReason = hasSupportedEventType && !hasResearchEntityType ? `malformed research event: invalid or missing entity_type for ${eventType}` : null
+  const malformedReason =
+    hasSupportedEventType && !hasResearchEntityType
+      ? `malformed research event: invalid or missing entity_type for ${eventType}`
+      : hasSupportedEventType && expectedEntityType !== entityType
+        ? `malformed research event: expected entity_type ${expectedEntityType} for ${eventType} but got ${entityType}`
+        : null
   return {
     research,
-    supported: hasSupportedEventType && hasResearchEntityType,
+    supported: hasSupportedEventType && expectedEntityType === entityType,
     malformedReason,
     event_id: typeof event.event_id === "string" ? event.event_id : "",
     timestamp: typeof event.timestamp === "string" ? event.timestamp : "",
