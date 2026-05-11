@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, mock, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
@@ -453,6 +453,186 @@ describe("ResearchDb", () => {
       expect(db.getTopic("topic_rollback")).toBeNull()
     } finally {
       sqlite.close()
+      db.close()
+    }
+  })
+
+  test("domain writes roll back when JSONL append fails", async () => {
+    const dir = await tempProject()
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    await mkdir(eventsPath, { recursive: true })
+    const db = ResearchDb.open(dir, {
+      eventsPath,
+      now: () => new Date("2026-05-10T12:00:00Z"),
+      idFactory: () => "id_1",
+    })
+    try {
+      expect(() => db.createTopic({ id: "topic_jsonl_failure", title: "JSONL failure" })).toThrow()
+      expect(db.getTopic("topic_jsonl_failure")).toBeNull()
+      expect(db.listResearchEvents({ limit: 10 })).toEqual([])
+      expect(db.getProjectionStatus()).toMatchObject({ last_event_id: null, applied_count: 0 })
+    } finally {
+      db.close()
+    }
+  })
+
+  test("begin transaction failure clears pending JSONL transaction state", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = (db as unknown as { db: Database }).db
+    const originalExec = sqlite.exec.bind(sqlite)
+    let failBegin = true
+    sqlite.exec = ((sql: string) => {
+      if (sql === "BEGIN IMMEDIATE" && failBegin) {
+        failBegin = false
+        throw new Error("forced begin failure")
+      }
+      return originalExec(sql)
+    }) as typeof sqlite.exec
+
+    try {
+      expect(() => db.createTopic({ id: "topic_begin_failure", title: "Begin failure" })).toThrow("forced begin failure")
+
+      db.createTopic({ id: "topic_after_begin_failure", title: "After begin failure" })
+
+      expect(db.getTopic("topic_begin_failure")).toBeNull()
+      expect(db.getTopic("topic_after_begin_failure")).toMatchObject({
+        id: "topic_after_begin_failure",
+        title: "After begin failure",
+      })
+      expect(db.listResearchEvents({ limit: 10 }).map((event) => event.entity_id)).toEqual(["topic_after_begin_failure"])
+    } finally {
+      sqlite.exec = originalExec as typeof sqlite.exec
+      db.close()
+    }
+  })
+
+  test("durable JSONL append retries short writes before commit", async () => {
+    const realFs = await import("node:fs")
+    const realWriteSync = realFs.writeSync.bind(realFs)
+    const writeLengths: number[] = []
+    mock.module("node:fs", () => ({
+      ...realFs,
+      writeSync: ((fd: number, buffer: NodeJS.ArrayBufferView | string, offset?: number | null, length?: number | string, position?: number | null) => {
+        if (Buffer.isBuffer(buffer)) {
+          const start = typeof offset === "number" ? offset : 0
+          const remaining = typeof length === "number" ? length : buffer.length - start
+          const chunkLength = Math.max(1, Math.min(remaining, 7))
+          writeLengths.push(chunkLength)
+          return realWriteSync(fd, buffer, start, chunkLength, position ?? null)
+        }
+        const text = String(buffer)
+        const chunk = text.slice(0, Math.max(1, Math.min(text.length, 7)))
+        writeLengths.push(chunk.length)
+        return realWriteSync(fd, chunk, offset ?? null, typeof length === "string" ? (length as BufferEncoding) : undefined)
+      }) as typeof realFs.writeSync,
+    }))
+
+    const { ResearchDb: ShortWriteResearchDb } = await import(`./research-db.ts?short-write=${Date.now()}`)
+    const dir = await tempProject()
+    const db = ShortWriteResearchDb.open(dir, {
+      now: () => new Date("2026-05-10T12:00:00Z"),
+      idFactory: () => "id_1",
+    })
+    try {
+      db.createTopic({ id: "topic_short_write", title: "Short write topic" })
+      const lines = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).trim().split(/\r?\n/)
+      expect(lines).toHaveLength(1)
+      expect(JSON.parse(lines[0]!) as Record<string, unknown>).toMatchObject({
+        kind: "research_event",
+        event_type: "topic_created",
+        entity_id: "topic_short_write",
+      })
+      expect(writeLengths.length).toBeGreaterThan(1)
+    } finally {
+      db.close()
+      mock.restore()
+    }
+  })
+
+  test("commit failure after JSONL append rebuilds the projection from the source log", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = (db as unknown as { db: Database }).db
+    const originalExec = sqlite.exec.bind(sqlite)
+    let failCommit = true
+    sqlite.exec = ((sql: string) => {
+      if (sql === "COMMIT" && failCommit) {
+        failCommit = false
+        throw new Error("forced commit failure")
+      }
+      return originalExec(sql)
+    }) as typeof sqlite.exec
+
+    try {
+      const topic = db.createTopic({ id: "topic_commit_failure", title: "Commit failure" })
+      expect(topic.id).toBe("topic_commit_failure")
+      expect(db.getTopic("topic_commit_failure")).toMatchObject({ id: "topic_commit_failure", title: "Commit failure" })
+      const lines = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).trim().split(/\r?\n/)
+      expect(lines).toHaveLength(1)
+      expect(JSON.parse(lines[0]!) as Record<string, unknown>).toMatchObject({
+        kind: "research_event",
+        event_type: "topic_created",
+        entity_type: "topic",
+        entity_id: "topic_commit_failure",
+      })
+      expect(db.checkProjectionIntegrity()).toMatchObject({ ok: true, stale: false, pending_count: 0 })
+    } finally {
+      sqlite.exec = originalExec as typeof sqlite.exec
+      db.close()
+    }
+  })
+
+  test("commit failure after SQLite auto-rollback still rebuilds from appended JSONL", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = (db as unknown as { db: Database }).db
+    const originalExec = sqlite.exec.bind(sqlite)
+    let failCommit = true
+    sqlite.exec = ((sql: string) => {
+      if (sql === "COMMIT" && failCommit) {
+        failCommit = false
+        originalExec("ROLLBACK")
+        throw new Error("forced commit failure after auto rollback")
+      }
+      return originalExec(sql)
+    }) as typeof sqlite.exec
+
+    try {
+      const topic = db.createTopic({ id: "topic_auto_rollback", title: "Auto rollback" })
+      expect(topic.id).toBe("topic_auto_rollback")
+      expect(db.getTopic("topic_auto_rollback")).toMatchObject({ id: "topic_auto_rollback", title: "Auto rollback" })
+      expect(db.checkProjectionIntegrity()).toMatchObject({ ok: true, stale: false, pending_count: 0 })
+    } finally {
+      sqlite.exec = originalExec as typeof sqlite.exec
+      db.close()
+    }
+  })
+
+  test("commit failure without JSONL appends still throws and rolls back", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, {
+      appendEvents: false,
+      now: () => new Date("2026-05-10T12:00:00Z"),
+      idFactory: () => "id_1",
+    })
+    const sqlite = (db as unknown as { db: Database }).db
+    const originalExec = sqlite.exec.bind(sqlite)
+    let failCommit = true
+    sqlite.exec = ((sql: string) => {
+      if (sql === "COMMIT" && failCommit) {
+        failCommit = false
+        throw new Error("forced commit failure")
+      }
+      return originalExec(sql)
+    }) as typeof sqlite.exec
+
+    try {
+      expect(() => db.createTopic({ id: "topic_no_jsonl", title: "No JSONL" })).toThrow("forced commit failure")
+      expect(db.getTopic("topic_no_jsonl")).toBeNull()
+      expect(existsSync(join(dir, ".nxl", "events.jsonl"))).toBe(false)
+    } finally {
+      sqlite.exec = originalExec as typeof sqlite.exec
       db.close()
     }
   })
@@ -2269,5 +2449,603 @@ describe("ResearchDb", () => {
       sqlite.close()
       db.close()
     }
+  })
+
+  test("empty event log rebuild creates empty projection metadata", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    await writeFile(eventsPath, "", "utf8")
+
+    const rebuilt = ResearchDb.rebuildFromEvents(dir, eventsPath, { now: () => new Date("2026-05-10T13:00:00Z") })
+
+    expect(rebuilt.listTopics()).toEqual([])
+    expect(rebuilt.getProjectionStatus()).toEqual({
+      projection_name: "research_db_v1",
+      last_event_id: null,
+      last_event_timestamp: null,
+      applied_count: 0,
+      rebuilt_at: "2026-05-10T13:00:00.000Z",
+      updated_at: "2026-05-10T13:00:00.000Z",
+    })
+    expect(rebuilt.checkProjectionIntegrity(eventsPath)).toEqual({ ok: true, stale: false })
+    rebuilt.close()
+  })
+
+  test("rebuild fails clearly when event log is missing and preserves existing projection", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.close()
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    await rm(eventsPath, { force: true })
+
+    expect(() => ResearchDb.rebuildFromEvents(dir, eventsPath)).toThrow(`event log missing: ${eventsPath}`)
+
+    const reopened = ResearchDb.open(dir, { appendEvents: false })
+    expect(reopened.listTopics().map((topic) => topic.id)).toEqual(["topic_1"])
+    expect(reopened.checkProjectionIntegrity(eventsPath)).toMatchObject({
+      ok: false,
+      stale: true,
+      reason: "event log missing",
+    })
+    reopened.close()
+  })
+
+  test("delete research db and rebuild topic source note artifact projection from events jsonl", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const topic = db.createTopic({ id: "topic_1", title: "Projection topic", status: "active" })
+    const source = db.addSource({ id: "source_1", topic_id: topic.id, locator: "file://source.md", title: "Source", source_type: "file" })
+    const note = db.addNote({ id: "note_1", topic_id: topic.id, source_id: source.id, content: "note", tags: ["tag"] })
+    const artifact = db.addArtifact({ id: "artifact_1", topic_id: topic.id, kind: "report", content: "report" })
+    const before = {
+      topics: db.listTopics(),
+      sources: db.listSourcesForTopic(topic.id),
+      notes: db.listNotesForTopic(topic.id),
+      artifacts: db.listArtifactsForTopic(topic.id),
+    }
+    expect(before).toEqual({ topics: [topic], sources: [source], notes: [note], artifacts: [artifact] })
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(rebuilt.listTopics()).toEqual(before.topics)
+    expect(rebuilt.listSourcesForTopic(topic.id)).toEqual(before.sources)
+    expect(rebuilt.listNotesForTopic(topic.id)).toEqual(before.notes)
+    expect(rebuilt.listArtifactsForTopic(topic.id)).toEqual(before.artifacts)
+    expect(rebuilt.getProjectionStatus().applied_count).toBe(4)
+    rebuilt.close()
+  })
+
+  test("rebuild replays result status citation links artifact links and redacted payloads", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "result_accept",
+      result_type: "probe_result",
+      title: "sk-test-SECRET123 accepted",
+      summary: "Accepted summary",
+      confidence: "high",
+      metrics: { token: "sk-test-SECRET123" },
+      created_by: "commander",
+    })
+    db.acceptResearchResult("result_accept")
+    db.proposeResearchResult({
+      result_id: "result_reject",
+      result_type: "probe_result",
+      title: "Rejected",
+      summary: "Rejected summary",
+      confidence: "low",
+      created_by: "executor",
+    })
+    db.rejectResearchResult("result_reject", "bad evidence")
+    const citation = db.recordCitation({
+      citation_id: "citation_1",
+      source_type: "url",
+      source_uri: "https://example.test",
+      quoted_text_or_summary: "source summary",
+    })
+    const artifact = db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "log", content: "log" })
+    db.linkResultCitation("result_accept", citation.citation_id)
+    db.linkResultArtifact("result_accept", artifact.id)
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(rebuilt.getResearchResult("result_accept")?.status).toBe("accepted")
+    expect(rebuilt.getResearchResult("result_reject")?.status).toBe("rejected")
+    expect(rebuilt.listResultCitations("result_accept").map((row) => row.citation_id)).toEqual(["citation_1"])
+    expect(rebuilt.listResultArtifacts("result_accept").map((row) => row.id)).toEqual(["artifact_1"])
+    expect(rebuilt.getResearchResult("result_accept")?.title).toContain("[REDACTED")
+    expect(await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).not.toContain("sk-test-SECRET123")
+    rebuilt.close()
+  })
+
+  test("rebuild replays hypotheses candidate ranking evidence promotion and trial states", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Claim", source: "Source" })
+    db.updateHypothesisStatus("hypothesis_1", "needs_more_evidence")
+    db.createCandidate({ candidate_id: "candidate_1", hypothesis_id: "hypothesis_1", claim: "Candidate", source: "Commander" })
+    db.rankCandidate({ candidate_id: "candidate_1", commander_score: 0.7, rank_reason: "promising" })
+    db.selectCandidate("candidate_1")
+    db.markCandidateNeedsMoreEvidence("candidate_1", "need citation")
+    db.recordCitation({ citation_id: "citation_1", source_type: "url", source_uri: "https://example.test", quoted_text_or_summary: "summary" })
+    db.linkCandidateEvidence("candidate_1", "citation", "citation_1")
+    db.proposeCandidatePromotion("candidate_1", ["citation_1"])
+    db.promoteCandidate("candidate_1")
+    db.createCandidate({ candidate_id: "candidate_rejected", hypothesis_id: "hypothesis_1", claim: "Bad candidate", source: "Commander" })
+    db.rejectCandidate("candidate_rejected", "bad")
+    db.planTrial({ trial_id: "trial_complete", hypothesis_id: "hypothesis_1", candidate_id: "candidate_1", trial_kind: "eval", config: { metric: "loss" } })
+    db.startTrial("trial_complete")
+    db.completeTrial("trial_complete")
+    db.planTrial({ trial_id: "trial_failed", trial_kind: "eval", config: {} })
+    db.failTrial("trial_failed", "failed")
+    db.planTrial({ trial_id: "trial_cancelled", trial_kind: "eval", config: {} })
+    db.cancelTrial("trial_cancelled", "cancelled")
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(rebuilt.getHypothesis("hypothesis_1")?.status).toBe("needs_more_evidence")
+    expect(rebuilt.getCandidate("candidate_1")?.status).toBe("promoted")
+    expect(rebuilt.getCandidate("candidate_1")?.commander_score).toBe(0.7)
+    expect(rebuilt.getCandidate("candidate_rejected")?.status).toBe("rejected")
+    expect(rebuilt.listCandidateEvidence("candidate_1").map((row) => row.evidence_id)).toEqual(["citation_1"])
+    expect(rebuilt.getTrial("trial_complete")?.status).toBe("completed")
+    expect(rebuilt.getTrial("trial_failed")?.status).toBe("failed")
+    expect(rebuilt.getTrial("trial_cancelled")?.status).toBe("cancelled")
+    rebuilt.close()
+  })
+
+  test("rebuild fails candidate promotion event without prior evidence", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const candidate = {
+      candidate_id: "candidate_1",
+      hypothesis_id: null,
+      claim: "Claim",
+      source: "Source",
+      status: "active",
+      commander_score: null,
+      rank_reason: null,
+      input_hash: "ignored",
+      created_at: "2026-05-10T12:00:00.000Z",
+      updated_at: "2026-05-10T12:00:00.000Z",
+    }
+    await writeFile(
+      eventsPath,
+      [
+        JSON.stringify({ event_id: "evt_1", timestamp: "2026-05-10T12:00:00.000Z", kind: "research_event", event_type: "CandidateCreated", entity_type: "candidate", entity_id: "candidate_1", payload: candidate }),
+        JSON.stringify({ event_id: "evt_2", timestamp: "2026-05-10T12:00:01.000Z", kind: "research_event", event_type: "CandidatePromoted", entity_type: "candidate", entity_id: "candidate_1", payload: { candidate: { ...candidate, status: "promoted" } } }),
+      ].join("\n") + "\n",
+      "utf8",
+    )
+
+    expect(() => ResearchDb.rebuildFromEvents(dir, eventsPath)).toThrow("candidate promotion event has no evidence")
+  })
+
+  test("rebuild replays training lifecycle checkpoint reproduction and terminal states", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.planTrainingRun({ training_run_id: "run_completed", label: "probe", log_path: "/tmp/train.log" })
+    db.startTrainingRun("run_completed", { pid: 123, metrics_path: "/tmp/metrics.json", checkpoint_dir: "/tmp/checkpoints" })
+    db.observeTrainingProgress({ training_run_id: "run_completed", step: 10, metric: { loss: 0.2 }, metrics_path: "/tmp/metrics.json" })
+    db.addArtifact({ id: "checkpoint_artifact", topic_id: "topic_1", kind: "snapshot", content: "ckpt", produced_by_run_id: "run_completed" })
+    db.recordTrainingCheckpoint({ checkpoint_id: "checkpoint_1", training_run_id: "run_completed", artifact_id: "checkpoint_artifact", step: 10, metric: { loss: 0.2 } })
+    db.recordReproductionRecipe("run_completed", { command: "bun train" })
+    db.completeTrainingRun("run_completed", { metrics_path: "/tmp/final.json" })
+    db.planTrainingRun({ training_run_id: "run_failed", label: "debug_run" })
+    db.failTrainingRun("run_failed", "failed")
+    db.planTrainingRun({ training_run_id: "run_cancelled", label: "debug_run" })
+    db.cancelTrainingRun("run_cancelled", "cancelled")
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(rebuilt.getTrainingRun("run_completed")?.status).toBe("completed")
+    expect(rebuilt.getTrainingRun("run_completed")?.latest_checkpoint_id).toBe("checkpoint_1")
+    expect(rebuilt.getTrainingRun("run_completed")?.reproduction).toEqual({ command: "bun train" })
+    expect(rebuilt.getTrainingCheckpoint("checkpoint_1")?.artifact_id).toBe("checkpoint_artifact")
+    expect(rebuilt.getTrainingRun("run_failed")?.status).toBe("failed")
+    expect(rebuilt.getTrainingRun("run_cancelled")?.status).toBe("cancelled")
+    rebuilt.close()
+  })
+
+  test("rebuild preserves training last metric when checkpoint has no metric", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.planTrainingRun({ training_run_id: "training_1", label: "probe" })
+    db.startTrainingRun("training_1")
+    db.observeTrainingProgress({ training_run_id: "training_1", step: 10, metric: { loss: 0.2 } })
+    db.addArtifact({ id: "checkpoint_artifact", topic_id: "topic_1", kind: "snapshot", content: "ckpt", produced_by_run_id: "training_1" })
+    db.recordTrainingCheckpoint({ checkpoint_id: "checkpoint_1", training_run_id: "training_1", artifact_id: "checkpoint_artifact", step: 11 })
+
+    const before = db.getTrainingRun("training_1")
+    expect(before?.last_step).toBe(11)
+    expect(before?.last_metric).toEqual({ loss: 0.2 })
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(rebuilt.getTrainingRun("training_1")?.last_step).toBe(11)
+    expect(rebuilt.getTrainingRun("training_1")?.last_metric).toEqual({ loss: 0.2 })
+    expect(rebuilt.getTrainingCheckpoint("checkpoint_1")?.metric).toBeNull()
+    rebuilt.close()
+  })
+
+  test("rebuild is idempotent and projection metadata records last applied event", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.addSource({ id: "source_1", topic_id: "topic_1", locator: "file://source", source_type: "file" })
+    db.close()
+
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+    rebuilt.rebuildFromEvents()
+    expect(rebuilt.listTopics().length).toBe(1)
+    expect(rebuilt.listSourcesForTopic("topic_1").length).toBe(1)
+    const status = rebuilt.getProjectionStatus()
+    const lastEvent = rebuilt.listResearchEvents({ limit: 10 }).at(-1)
+    if (!lastEvent) throw new Error("expected rebuilt research event")
+    expect(status.applied_count).toBe(2)
+    expect(status.last_event_id).toBe(lastEvent.event_id)
+    expect(status.last_event_timestamp).toBe(lastEvent.created_at)
+    rebuilt.close()
+  })
+
+  test("citation explicit ID retry remains idempotent after rebuild with generated accessed_at", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const citation = db.recordCitation({
+      citation_id: "citation_retry",
+      source_type: "url",
+      source_uri: "https://example.test/paper",
+      title: "Paper",
+      quoted_text_or_summary: "Useful summary",
+    })
+    const eventsBefore = db.listResearchEvents({ limit: 10 })
+    db.close()
+    const jsonlBefore = await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")
+    expect(jsonlBefore).toContain('"input_hash"')
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir, undefined, {
+      now: () => new Date("2026-05-10T13:00:00Z"),
+      idFactory: () => "unused",
+    })
+    const retry = rebuilt.recordCitation({
+      citation_id: "citation_retry",
+      source_type: "url",
+      source_uri: "https://example.test/paper",
+      title: "Paper",
+      quoted_text_or_summary: "Useful summary",
+    })
+
+    expect(retry).toEqual(citation)
+    expect(rebuilt.searchCitations({ limit: 10 }).map((row) => row.citation_id)).toEqual(["citation_retry"])
+    expect(rebuilt.listResearchEvents({ limit: 10 }).length).toBe(eventsBefore.length)
+    expect(await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).toBe(jsonlBefore)
+    rebuilt.close()
+  })
+
+  test("secret-redacted explicit ID retry remains idempotent after rebuild", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const topic = db.createTopic({ id: "topic_secret", title: "sk-test-SECRET123 topic" })
+    expect(topic.title).toContain("[REDACTED")
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+    const retry = rebuilt.createTopic({ id: "topic_secret", title: "sk-test-SECRET123 topic" })
+
+    expect(retry).toEqual(topic)
+    expect(rebuilt.listTopics().length).toBe(1)
+    expect(await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).not.toContain("sk-test-SECRET123")
+    rebuilt.close()
+  })
+
+  test("conflicting duplicate explicit ID after rebuild still throws", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_conflict", title: "Original topic" })
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(() => rebuilt.createTopic({ id: "topic_conflict", title: "Different topic" })).toThrow("topic id collision")
+    expect(rebuilt.listTopics().map((row) => row.id)).toEqual(["topic_conflict"])
+    rebuilt.close()
+  })
+
+  test("rejected explicit result retry remains idempotent after rebuild", async () => {
+    const dir = await tempProject()
+    const input = {
+      result_id: "result_rejected_retry",
+      result_type: "probe_result" as const,
+      title: "Rejected retry result",
+      summary: "Original summary",
+      confidence: "medium" as const,
+      created_by: "executor" as const,
+    }
+    const db = openSequencedTestDb(dir)
+    const proposed = db.proposeResearchResult(input)
+    const rejected = db.rejectResearchResult(input.result_id, "not enough signal")
+    const publicRejectedEvent = db.listResearchEvents({ event_type: "ResearchResultRejected" })[0]
+    expect(JSON.stringify(publicRejectedEvent?.payload)).not.toContain("input_hash")
+    db.close()
+
+    const rawEvents = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8"))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { event_type?: string; payload?: { input_hash?: string; result?: { input_hash?: string } } })
+    const rejectedEvent = rawEvents.find((event) => event.event_type === "ResearchResultRejected")
+    expect(rejectedEvent?.payload?.input_hash).toBeUndefined()
+    expect(typeof rejectedEvent?.payload?.result?.input_hash).toBe("string")
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+    const retry = rebuilt.proposeResearchResult(input)
+
+    expect(retry).toEqual(rejected)
+    expect(retry.result_id).toBe(proposed.result_id)
+    expect(rebuilt.searchResearchResults({ limit: 10 }).map((row) => row.result_id)).toEqual([input.result_id])
+    expect(() => rebuilt.proposeResearchResult({ ...input, title: "Different title" })).toThrow("research result id collision")
+    rebuilt.close()
+  })
+
+  test("static rebuild helper keeps JSONL mirroring enabled for future writes", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir, undefined, {
+      now: () => new Date("2026-05-10T13:00:00Z"),
+      idFactory: () => "topic_2",
+    })
+    const before = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).trim().split(/\r?\n/).length
+    rebuilt.createTopic({ title: "New topic" })
+    const after = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).trim().split(/\r?\n/)
+
+    expect(after.length).toBe(before + 1)
+    expect(JSON.parse(after.at(-1)!) as Record<string, unknown>).toMatchObject({
+      kind: "research_event",
+      event_type: "topic_created",
+      entity_id: "topic_2",
+    })
+    rebuilt.close()
+  })
+
+  test("duplicate replayed event IDs do not move projection cursor or report false stale", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic 1" })
+    db.createTopic({ id: "topic_2", title: "Topic 2" })
+    db.close()
+
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const lines = (await readFile(eventsPath, "utf8")).trim().split(/\r?\n/)
+    await writeFile(eventsPath, `${lines.join("\n")}\n${lines[0]}\n`, "utf8")
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+    const status = rebuilt.getProjectionStatus()
+
+    expect(rebuilt.listTopics().map((topic) => topic.id)).toEqual(["topic_1", "topic_2"])
+    expect(rebuilt.listResearchEvents({ limit: 10 }).length).toBe(2)
+    expect(status.applied_count).toBe(2)
+    expect(status.last_event_id).toBe((JSON.parse(lines[1]!) as { event_id: string }).event_id)
+    expect(rebuilt.checkProjectionIntegrity()).toEqual({
+      ok: true,
+      stale: false,
+      last_event_id: status.last_event_id ?? undefined,
+      pending_count: 0,
+    })
+    rebuilt.close()
+  })
+
+  test("duplicate topic event with new event ID does not cascade-delete projected children", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic 1" })
+    db.addSource({ id: "source_1", topic_id: "topic_1", locator: "file://source.md", source_type: "file" })
+    db.close()
+
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const lines = (await readFile(eventsPath, "utf8")).trim().split(/\r?\n/)
+    const duplicateTopic = JSON.parse(lines[0]!) as Record<string, unknown>
+    duplicateTopic.event_id = "evt_duplicate_topic"
+    await writeFile(eventsPath, `${lines.join("\n")}\n${JSON.stringify(duplicateTopic)}\n`, "utf8")
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(rebuilt.listTopics().map((topic) => topic.id)).toEqual(["topic_1"])
+    expect(rebuilt.listSourcesForTopic("topic_1").map((source) => source.id)).toEqual(["source_1"])
+    const projectedEventIds = new Set(rebuilt.listResearchEvents({ limit: 10 }).map((event) => event.event_id))
+    expect(projectedEventIds).toEqual(
+      new Set([
+        (JSON.parse(lines[0]!) as { event_id: string }).event_id,
+        (JSON.parse(lines[1]!) as { event_id: string }).event_id,
+        "evt_duplicate_topic",
+      ]),
+    )
+    rebuilt.close()
+  })
+
+  test("integrity reports missing event log stale for non-empty projection without metadata", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.close()
+    await rm(join(dir, ".nxl", "events.jsonl"), { force: true })
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.query("DELETE FROM research_projection").run()
+    } finally {
+      sqlite.close()
+    }
+
+    const reopened = ResearchDb.open(dir, { appendEvents: false })
+    expect(reopened.checkProjectionIntegrity()).toMatchObject({
+      ok: false,
+      stale: true,
+      reason: "event log missing",
+      pending_count: 2,
+    })
+    reopened.close()
+  })
+
+  test("integrity treats missing projection metadata as healthy when no research events exist", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.close()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(
+      join(dir, ".nxl", "events.jsonl"),
+      JSON.stringify({ event_id: "runtime_1", timestamp: "2026-05-10T12:00:00.000Z", kind: "RuntimeReady", projectName: "nxl" }) + "\n",
+      "utf8",
+    )
+
+    const reopened = ResearchDb.open(dir, { appendEvents: false })
+    expect(reopened.checkProjectionIntegrity()).toEqual({ ok: true, stale: false })
+    reopened.close()
+  })
+
+  test("integrity reports stale when event log is truncated before projection cursor", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic 1" })
+    db.createTopic({ id: "topic_2", title: "Topic 2" })
+    const status = db.getProjectionStatus()
+    expect(status.applied_count).toBe(2)
+    db.close()
+
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const lines = (await readFile(eventsPath, "utf8")).trim().split(/\r?\n/)
+    await writeFile(eventsPath, `${lines[1]}\n`, "utf8")
+
+    const reopened = ResearchDb.open(dir, { appendEvents: false })
+    expect(reopened.checkProjectionIntegrity()).toMatchObject({
+      ok: false,
+      stale: true,
+      reason: "events missing before projection cursor",
+      last_event_id: status.last_event_id,
+      pending_count: 0,
+    })
+    reopened.close()
+  })
+
+  test("integrity check reports stale missing db corrupt jsonl ignored runtime events and unsupported research events", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.close()
+
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+    await writeFile(
+      join(dir, ".nxl", "events.jsonl"),
+      (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")) +
+        JSON.stringify({ event_id: "runtime_1", timestamp: "2026-05-10T12:00:10.000Z", kind: "RuntimeReady", projectName: "nxl" }) +
+        "\n" +
+        JSON.stringify({
+          event_id: "evt_pending",
+          timestamp: "2026-05-10T12:00:11.000Z",
+          kind: "research_event",
+          event_type: "topic_created",
+          entity_type: "topic",
+          entity_id: "topic_2",
+          payload: { id: "topic_2", title: "Topic 2", status: "open", created_at: "2026-05-10T12:00:11.000Z", updated_at: "2026-05-10T12:00:11.000Z" },
+        }) +
+        "\n",
+      "utf8",
+    )
+    expect(rebuilt.checkProjectionIntegrity()).toMatchObject({ ok: false, stale: true, reason: "events exist after projection cursor", pending_count: 1 })
+    rebuilt.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const missingProjection = ResearchDb.open(dir, { appendEvents: false })
+    expect(missingProjection.checkProjectionIntegrity()).toMatchObject({ ok: false, stale: true, reason: "missing projection metadata" })
+    missingProjection.close()
+
+    const corruptDir = await tempProject()
+    await mkdir(join(corruptDir, ".nxl"), { recursive: true })
+    await writeFile(join(corruptDir, ".nxl", "events.jsonl"), "{bad-json\n", "utf8")
+    const corrupt = ResearchDb.open(corruptDir, { appendEvents: false })
+    expect(corrupt.checkProjectionIntegrity()).toMatchObject({ ok: false, corrupted_line: 1 })
+    expect(() => corrupt.rebuildFromEvents()).toThrow("corrupt JSONL line 1")
+    corrupt.close()
+
+    const unsupportedDir = await tempProject()
+    await mkdir(join(unsupportedDir, ".nxl"), { recursive: true })
+    await writeFile(
+      join(unsupportedDir, ".nxl", "events.jsonl"),
+      JSON.stringify({ event_id: "evt_bad", timestamp: "2026-05-10T12:00:00.000Z", kind: "research_event", event_type: "ResearchThingHappened", entity_type: "candidate", entity_id: "candidate_1", payload: {} }) + "\n",
+      "utf8",
+    )
+    const unsupported = ResearchDb.open(unsupportedDir, { appendEvents: false })
+    expect(unsupported.checkProjectionIntegrity()).toMatchObject({ ok: false, unsupported_event_type: "ResearchThingHappened" })
+    expect(() => unsupported.rebuildFromEvents()).toThrow("unsupported research event")
+    unsupported.close()
+
+    const malformedResearchDir = await tempProject()
+    await mkdir(join(malformedResearchDir, ".nxl"), { recursive: true })
+    await writeFile(
+      join(malformedResearchDir, ".nxl", "events.jsonl"),
+      JSON.stringify({
+        event_id: "evt_malformed_research",
+        timestamp: "2026-05-10T12:00:00.000Z",
+        event_type: "topic_created",
+        entity_id: "topic_1",
+        payload: { id: "topic_1", title: "Topic", status: "open", created_at: "2026-05-10T12:00:00.000Z", updated_at: "2026-05-10T12:00:00.000Z" },
+      }) + "\n",
+      "utf8",
+    )
+    const malformedResearch = ResearchDb.open(malformedResearchDir, { appendEvents: false })
+    expect(malformedResearch.checkProjectionIntegrity()).toMatchObject({
+      ok: false,
+      reason: "malformed research event: invalid or missing entity_type for topic_created",
+      unsupported_event_type: "topic_created",
+    })
+    expect(() => malformedResearch.rebuildFromEvents()).toThrow("malformed research event: invalid or missing entity_type for topic_created at line 1")
+    malformedResearch.close()
+
+    const mismatchedResearchDir = await tempProject()
+    await mkdir(join(mismatchedResearchDir, ".nxl"), { recursive: true })
+    await writeFile(
+      join(mismatchedResearchDir, ".nxl", "events.jsonl"),
+      JSON.stringify({
+        event_id: "evt_mismatched_research",
+        timestamp: "2026-05-10T12:00:00.000Z",
+        event_type: "topic_created",
+        entity_type: "candidate",
+        entity_id: "topic_1",
+        payload: { id: "topic_1", title: "Topic", status: "open", created_at: "2026-05-10T12:00:00.000Z", updated_at: "2026-05-10T12:00:00.000Z" },
+      }) + "\n",
+      "utf8",
+    )
+    const mismatchedResearch = ResearchDb.open(mismatchedResearchDir, { appendEvents: false })
+    expect(mismatchedResearch.checkProjectionIntegrity()).toMatchObject({
+      ok: false,
+      reason: "malformed research event: expected entity_type topic for topic_created but got candidate",
+      unsupported_event_type: "topic_created",
+    })
+    expect(() => mismatchedResearch.rebuildFromEvents()).toThrow("malformed research event: expected entity_type topic for topic_created but got candidate at line 1")
+    mismatchedResearch.close()
   })
 })
