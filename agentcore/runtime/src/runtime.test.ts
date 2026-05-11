@@ -1237,12 +1237,41 @@ describe("ProcessOpenCodeAdapter", () => {
     const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
 
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
-    await adapter.shutdown()
+    const shutdown = adapter.shutdown()
+    process.emitExit(0, null)
+    await shutdown
     await adapter.shutdown()
 
     expect(process.stdinEnded).toBe(true)
     expect(process.killedWith).toBe("SIGTERM")
     await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+  })
+
+  test("shutdown waits for process exit before resolving", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    const pendingShutdown = adapter.shutdown()
+    const shutdownRace = Promise.race([pendingShutdown.then(() => "shutdown" as const), timeout(20)])
+
+    expect(process.stdinEnded).toBe(true)
+    expect(process.killedWith).toBe("SIGTERM")
+    await expect(shutdownRace).resolves.toBe("timeout")
+
+    process.emitExit(0, null)
+    await expect(pendingShutdown).resolves.toBeUndefined()
+    await expect(adapter.shutdown()).resolves.toBeUndefined()
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+  })
+
+  test("shutdown timeout fails clearly and redacts status error", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", shutdownTimeoutMs: 1, spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await expect(adapter.shutdown()).rejects.toThrow("OpenCode process shutdown failed: timed out after 1ms")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", lastError: "OpenCode process shutdown failed: timed out after 1ms" })
   })
 
   test("unexpected process exit surfaces lifecycle event and status error", async () => {
@@ -1317,7 +1346,9 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(result).toBe("started")
     expect(await server.status()).toMatchObject({ runtimeStatus: "started", lockHeld: true })
     expect(server.eventBus.snapshot().map((event) => event.type)).toContain("RuntimeReady")
-    await server.shutdown()
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
   })
 
   test("RuntimeServer process event pump stays open for late process output and exit", async () => {
@@ -1371,6 +1402,12 @@ describe("ProcessOpenCodeAdapter", () => {
 
     processes[0]?.emitExit(0, null)
     expect(await adapter.getStatus()).toMatchObject({ phase: "running", pid: 5001 })
-    await server.shutdown()
+    processes[0]?.emitError(new Error("late superseded error token=old-secret"))
+    expect(await adapter.getStatus()).toMatchObject({ phase: "running", pid: 5001 })
+    expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("old-secret")
+
+    const shutdown = server.shutdown()
+    processes[1]?.emitExit(0, null)
+    await shutdown
   })
 })
