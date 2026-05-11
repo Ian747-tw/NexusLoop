@@ -117,6 +117,39 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
   }
 }
 
+class DelayedShutdownEventAdapter implements OpenCodeRuntimeAdapter {
+  private shutdownStarted: Promise<void>
+  private releaseShutdown!: () => void
+
+  constructor() {
+    this.shutdownStarted = new Promise((resolve) => {
+      this.releaseShutdown = resolve
+    })
+  }
+
+  async startSession(_sessionSpec: SessionSpec): Promise<void> {}
+
+  async sendMissionPacket(_packet: MissionPacket): Promise<void> {}
+
+  async pauseAtSafeBoundary(_reason: string): Promise<void> {}
+
+  async resumeWithMissionUpdate(_update: MissionUpdate): Promise<void> {}
+
+  async *streamExecutorEvents(): AsyncIterable<RuntimeEvent> {
+    await this.shutdownStarted
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    yield { type: "ExecutorLifecycle", phase: "delayed-shutdown-event", message: "shutdown telemetry drained" }
+  }
+
+  async shutdown(): Promise<void> {
+    this.releaseShutdown()
+  }
+
+  async getStatus(): Promise<Record<string, unknown>> {
+    return { adapter: "delayed-shutdown-event", message: "delayed shutdown telemetry adapter" }
+  }
+}
+
 type ProcessEventName = "close" | "exit" | "error" | "spawn"
 type ProcessListener = (...args: unknown[]) => void
 
@@ -505,6 +538,21 @@ describe("RuntimeServer core", () => {
     await expect(server.submitUserMessage("after shutdown")).rejects.toThrow("runtime must be started before accepting user messages")
 
     expect(adapter.packets).toHaveLength(0)
+  })
+
+  test("shutdown waits for executor event pump to drain adapter shutdown telemetry", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new DelayedShutdownEventAdapter() })
+
+    await server.start()
+    await server.shutdown()
+
+    expect(server.eventBus.snapshot()).toContainEqual({
+      type: "ExecutorLifecycle",
+      phase: "delayed-shutdown-event",
+      message: "shutdown telemetry drained",
+    })
   })
 
   test("successful active start appends runtime_started before readiness events", async () => {

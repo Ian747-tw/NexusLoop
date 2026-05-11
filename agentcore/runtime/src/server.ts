@@ -319,6 +319,8 @@ export class RuntimeServer {
       this.eventBus.emit({ type: "RuntimeShutdown", reason })
       try {
         await this.adapter.shutdown()
+        const streamTask = this.executorStreamTask
+        if (streamTask) await streamTask
       } catch (error) {
         firstError ??= error
         this.eventBus.emit({
