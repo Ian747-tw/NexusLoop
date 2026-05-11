@@ -1303,7 +1303,17 @@ describe("ProcessOpenCodeAdapter", () => {
 
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     await expect(adapter.shutdown()).rejects.toThrow("OpenCode process shutdown failed: timed out after 1ms")
-    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", lastError: "OpenCode process shutdown failed: timed out after 1ms" })
+    await expect(adapter.getStatus()).resolves.toMatchObject({
+      phase: "shutdown",
+      pid: 4242,
+      terminatingPids: [4242],
+      lastError: "OpenCode process shutdown failed: timed out after 1ms",
+    })
+
+    const retry = adapter.shutdown()
+    process.emitExit(0, null)
+    await expect(retry).resolves.toBeUndefined()
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", pid: undefined, terminatingPids: [] })
   })
 
   test("unexpected process exit surfaces lifecycle event and status error", async () => {
