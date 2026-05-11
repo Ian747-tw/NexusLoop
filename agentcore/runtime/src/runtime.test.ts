@@ -1273,6 +1273,25 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(adapter.getStatus()).resolves.toMatchObject({ adapter: "process", phase: "failed", pid: undefined })
   })
 
+  test("spawn readiness timeout terminates child and remains shutdown-drainable", async () => {
+    const process = new FakeSpawnedProcess(4242, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawnTimeoutMs: 1,
+      spawn: () => process,
+    })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })).rejects.toThrow("OpenCode process spawn failed: timed out after 1ms")
+    expect(process.stdinEnded).toBe(true)
+    expect(process.killedWith).toBe("SIGTERM")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "failed", pid: undefined, terminatingPids: [4242] })
+
+    const shutdown = adapter.shutdown()
+    process.emitExit(0, null)
+    await expect(shutdown).resolves.toBeUndefined()
+  })
+
   test("shutdown before start is safe", async () => {
     const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => new FakeSpawnedProcess() })
 

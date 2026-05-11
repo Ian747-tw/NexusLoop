@@ -96,11 +96,12 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       this.queue("process-started", `OpenCode process started: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
     } catch (error) {
       this.phase = "failed"
+      if (child && !this.terminalProcesses.has(child)) this.terminateProcess(child, "process-spawn-cleanup-requested", { clearCurrent: false })
       const restoredPrevious = previousProcess && !this.terminalProcesses.has(previousProcess) ? previousProcess : null
       if (this.process === child) this.process = restoredPrevious
       this.lastError = redactText(`OpenCode process spawn failed: ${errorMessage(error)}`)
       this.queue("process-spawn-failed", this.lastError)
-      if (!this.process) this.closeStream()
+      if (!this.process && this.terminatingProcesses.size === 0) this.closeStream()
       throw new Error(this.lastError)
     }
   }
@@ -118,21 +119,25 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   }
 
   async *streamExecutorEvents(): AsyncIterable<RuntimeEvent> {
-    while (true) {
-      while (this.streamCursor < this.events.length) {
-        const event = this.events[this.streamCursor]
-        this.streamCursor += 1
-        this.compactDrainedEvents()
-        yield event
-      }
-      if (this.streamClosed) break
-      await new Promise<void>((resolve) => {
-        const waiter = () => {
-          this.streamWaiters.delete(waiter)
-          resolve()
+    try {
+      while (true) {
+        while (this.streamCursor < this.events.length) {
+          const event = this.events[this.streamCursor]
+          this.streamCursor += 1
+          yield event
         }
-        this.streamWaiters.add(waiter)
-      })
+        this.compactDrainedEvents()
+        if (this.streamClosed) break
+        await new Promise<void>((resolve) => {
+          const waiter = () => {
+            this.streamWaiters.delete(waiter)
+            resolve()
+          }
+          this.streamWaiters.add(waiter)
+        })
+      }
+    } finally {
+      this.compactDrainedEvents()
     }
   }
 
