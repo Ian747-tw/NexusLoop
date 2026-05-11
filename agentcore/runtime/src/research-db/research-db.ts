@@ -1638,6 +1638,7 @@ export class ResearchDb {
     }
     const metricsPath = cleanOptional(input.metrics_path)
     const reproduction = input.reproduction
+    const reproductionJson = reproduction === undefined || reproduction === null ? null : JSON.stringify(redactValue(reproduction))
     if (existing.label === "full_training") {
       const hasReproduction = (reproduction !== undefined && reproduction !== null) || existing.reproduction !== null
       if (!hasReproduction) throw new Error(`full training run requires reproduction before completion: ${id}`)
@@ -1650,7 +1651,7 @@ export class ResearchDb {
         .query(
           "UPDATE training_runs SET status = ?, metrics_path = COALESCE(?, metrics_path), reproduction_json = COALESCE(?, reproduction_json), completed_at = ?, updated_at = ? WHERE training_run_id = ?",
         )
-        .run("completed", metricsPath ? redactString(metricsPath) : null, reproduction === undefined ? null : JSON.stringify(redactValue(reproduction)), completedAt, completedAt, id)
+        .run("completed", metricsPath ? redactString(metricsPath) : null, reproductionJson, completedAt, completedAt, id)
       const run = this.getTrainingRun(id)
       if (!run) throw new Error(`training run not found: ${id}`)
       this.recordEvent("TrainingRunCompleted", "training_run", id, run)

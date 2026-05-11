@@ -2100,8 +2100,12 @@ describe("ResearchDb", () => {
     db.createTopic({ id: "topic_1", title: "Topic" })
     db.planTrainingRun({ training_run_id: "run_probe", label: "probe" })
     db.planTrainingRun({ training_run_id: "run_full", label: "full_training", reproduction: { command: "bun train" } })
+    db.planTrainingRun({ training_run_id: "run_existing_reproduction", label: "full_training", reproduction: { command: "bun train" } })
     db.completeTrainingRun("run_probe")
     db.completeTrainingRun("run_full", { metrics_path: "/tmp/metrics.json" })
+    expect(db.completeTrainingRun("run_existing_reproduction", { metrics_path: "/tmp/metrics.json", reproduction: null }).reproduction).toEqual({
+      command: "bun train",
+    })
     db.planTrainingRun({ training_run_id: "run_missing_reproduction", label: "full_training", metrics_path: "/tmp/metrics.json" })
     db.planTrainingRun({ training_run_id: "run_null_reproduction", label: "full_training", metrics_path: "/tmp/metrics.json" })
     db.planTrainingRun({ training_run_id: "run_missing_metrics", label: "full_training", reproduction: { command: "bun train" } })
