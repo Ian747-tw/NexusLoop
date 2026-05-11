@@ -2968,16 +2968,12 @@ export class ResearchDb {
       return result
     } catch (error) {
       this.pendingJsonlEvents = null
-      let rolledBack = false
       try {
-        if (!committed) {
-          this.db.exec("ROLLBACK")
-          rolledBack = true
-        }
+        if (!committed) this.db.exec("ROLLBACK")
       } catch {
         // SQLite may already have rolled the transaction back; keep the original failure visible.
       }
-      if (appended && hasResult && rolledBack) {
+      if (appended && hasResult) {
         this.rebuildFromEvents(this.eventsPath)
         return result!
       }

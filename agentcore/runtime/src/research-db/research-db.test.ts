@@ -509,6 +509,32 @@ describe("ResearchDb", () => {
     }
   })
 
+  test("commit failure after SQLite auto-rollback still rebuilds from appended JSONL", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = (db as unknown as { db: Database }).db
+    const originalExec = sqlite.exec.bind(sqlite)
+    let failCommit = true
+    sqlite.exec = ((sql: string) => {
+      if (sql === "COMMIT" && failCommit) {
+        failCommit = false
+        originalExec("ROLLBACK")
+        throw new Error("forced commit failure after auto rollback")
+      }
+      return originalExec(sql)
+    }) as typeof sqlite.exec
+
+    try {
+      const topic = db.createTopic({ id: "topic_auto_rollback", title: "Auto rollback" })
+      expect(topic.id).toBe("topic_auto_rollback")
+      expect(db.getTopic("topic_auto_rollback")).toMatchObject({ id: "topic_auto_rollback", title: "Auto rollback" })
+      expect(db.checkProjectionIntegrity()).toMatchObject({ ok: true, stale: false, pending_count: 0 })
+    } finally {
+      sqlite.exec = originalExec as typeof sqlite.exec
+      db.close()
+    }
+  })
+
   test("commit failure without JSONL appends still throws and rolls back", async () => {
     const dir = await tempProject()
     const db = ResearchDb.open(dir, {
