@@ -1576,7 +1576,8 @@ export class ResearchDb {
     const checkpointId = cleanId(input.checkpoint_id ?? this.idFactory())
     const step = cleanOptionalStep(input.step)
     const metricJson = input.metric === undefined ? null : JSON.stringify(redactValue(input.metric))
-    const observedAt = input.observed_at ? cleanRequired(input.observed_at, "observed_at") : this.timestamp()
+    const callerObservedAt = input.observed_at ? cleanRequired(input.observed_at, "observed_at") : null
+    const observedAt = callerObservedAt ?? this.timestamp()
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
       const existing = this.db.query("SELECT * FROM training_checkpoints WHERE checkpoint_id = ?").get(checkpointId) as TrainingCheckpointRow | null
@@ -1587,7 +1588,7 @@ export class ResearchDb {
           checkpoint.artifact_id === artifactId &&
           checkpoint.step === step &&
           JSON.stringify(checkpoint.metric) === JSON.stringify(metricJson === null ? null : parseNullableJson(metricJson)) &&
-          checkpoint.observed_at === observedAt
+          (callerObservedAt === null || checkpoint.observed_at === callerObservedAt)
         ) {
           return checkpoint
         }

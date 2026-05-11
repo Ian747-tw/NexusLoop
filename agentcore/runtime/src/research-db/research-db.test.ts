@@ -2094,6 +2094,31 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("checkpoint retry is idempotent when observed_at is generated", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.planTrainingRun({ training_run_id: "training_1", label: "debug_run" })
+    db.addArtifact({ id: "checkpoint_artifact_1", topic_id: "topic_1", kind: "snapshot", content: "checkpoint" })
+
+    const first = db.recordTrainingCheckpoint({
+      checkpoint_id: "checkpoint_1",
+      training_run_id: "training_1",
+      artifact_id: "checkpoint_artifact_1",
+      step: 1,
+    })
+    const second = db.recordTrainingCheckpoint({
+      checkpoint_id: "checkpoint_1",
+      training_run_id: "training_1",
+      artifact_id: "checkpoint_artifact_1",
+      step: 1,
+    })
+
+    expect(second).toEqual(first)
+    expect(db.listResearchEvents({ event_type: "TrainingCheckpointObserved" })).toHaveLength(1)
+    db.close()
+  })
+
   test("training write barriers enforce full training metrics reproduction and best-model labels", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
