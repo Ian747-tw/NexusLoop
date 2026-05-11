@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, mock, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
@@ -473,6 +473,49 @@ describe("ResearchDb", () => {
       expect(db.getProjectionStatus()).toMatchObject({ last_event_id: null, applied_count: 0 })
     } finally {
       db.close()
+    }
+  })
+
+  test("durable JSONL append retries short writes before commit", async () => {
+    const realFs = await import("node:fs")
+    const realWriteSync = realFs.writeSync.bind(realFs)
+    const writeLengths: number[] = []
+    mock.module("node:fs", () => ({
+      ...realFs,
+      writeSync: ((fd: number, buffer: NodeJS.ArrayBufferView | string, offset?: number | null, length?: number | string, position?: number | null) => {
+        if (Buffer.isBuffer(buffer)) {
+          const start = typeof offset === "number" ? offset : 0
+          const remaining = typeof length === "number" ? length : buffer.length - start
+          const chunkLength = Math.max(1, Math.min(remaining, 7))
+          writeLengths.push(chunkLength)
+          return realWriteSync(fd, buffer, start, chunkLength, position ?? null)
+        }
+        const text = String(buffer)
+        const chunk = text.slice(0, Math.max(1, Math.min(text.length, 7)))
+        writeLengths.push(chunk.length)
+        return realWriteSync(fd, chunk, offset ?? null, typeof length === "string" ? (length as BufferEncoding) : undefined)
+      }) as typeof realFs.writeSync,
+    }))
+
+    const { ResearchDb: ShortWriteResearchDb } = await import(`./research-db.ts?short-write=${Date.now()}`)
+    const dir = await tempProject()
+    const db = ShortWriteResearchDb.open(dir, {
+      now: () => new Date("2026-05-10T12:00:00Z"),
+      idFactory: () => "id_1",
+    })
+    try {
+      db.createTopic({ id: "topic_short_write", title: "Short write topic" })
+      const lines = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).trim().split(/\r?\n/)
+      expect(lines).toHaveLength(1)
+      expect(JSON.parse(lines[0]!) as Record<string, unknown>).toMatchObject({
+        kind: "research_event",
+        event_type: "topic_created",
+        entity_id: "topic_short_write",
+      })
+      expect(writeLengths.length).toBeGreaterThan(1)
+    } finally {
+      db.close()
+      mock.restore()
     }
   })
 

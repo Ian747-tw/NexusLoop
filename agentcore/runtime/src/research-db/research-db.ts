@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer"
 import { createHash, randomUUID } from "node:crypto"
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs"
 import { dirname, join } from "node:path"
@@ -3491,7 +3492,13 @@ function readJsonlEvents(eventsPath: string): ParsedJsonlEvent[] {
 function appendDurableJsonl(path: string, event: unknown): void {
   const fd = openSync(path, "a")
   try {
-    writeSync(fd, JSON.stringify(event) + "\n")
+    const buffer = Buffer.from(JSON.stringify(event) + "\n", "utf8")
+    let offset = 0
+    while (offset < buffer.length) {
+      const written = writeSync(fd, buffer, offset, buffer.length - offset)
+      if (written <= 0) throw new Error(`failed to write JSONL event to ${path}`)
+      offset += written
+    }
     fsyncSync(fd)
   } finally {
     closeSync(fd)
