@@ -1390,8 +1390,10 @@ export class ResearchDb {
   planTrainingRun(input: TrainingRunInput): TrainingRun {
     const trainingRunId = cleanId(input.training_run_id ?? this.idFactory())
     const trialId = input.trial_id ? cleanId(input.trial_id) : null
-    const candidateId = input.candidate_id ? cleanId(input.candidate_id) : null
-    const hypothesisId = input.hypothesis_id ? cleanId(input.hypothesis_id) : null
+    const linkedTrial = trialId ? this.getTrial(trialId) : null
+    if (trialId && !linkedTrial) throw new Error(`trial not found: ${trialId}`)
+    const candidateId = input.candidate_id ? cleanId(input.candidate_id) : linkedTrial?.candidate_id ?? null
+    const hypothesisId = input.hypothesis_id ? cleanId(input.hypothesis_id) : linkedTrial?.hypothesis_id ?? null
     const missionId = input.mission_id ? cleanId(input.mission_id) : null
     assertAllowed(TRAINING_RUN_LABELS, input.label, "training run label")
     this.validateTrainingRunLinks({ trialId, candidateId, hypothesisId })
@@ -1572,7 +1574,11 @@ export class ResearchDb {
     if (!run) throw new Error(`training run not found: ${trainingRunId}`)
     this.assertTrainingRunObservable(run)
     const artifactId = cleanId(input.artifact_id)
-    this.requireArtifact(artifactId)
+    const artifact = this.getArtifact(artifactId)
+    if (!artifact) throw new Error(`artifact not found: ${artifactId}`)
+    if (artifact.produced_by_run_id !== null && artifact.produced_by_run_id !== trainingRunId) {
+      throw new Error(`checkpoint artifact run mismatch: ${artifactId}`)
+    }
     const checkpointId = cleanId(input.checkpoint_id ?? this.idFactory())
     const step = cleanOptionalStep(input.step)
     const metricJson = input.metric === undefined ? null : JSON.stringify(redactValue(input.metric))

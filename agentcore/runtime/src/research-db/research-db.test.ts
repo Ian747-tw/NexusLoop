@@ -2011,6 +2011,22 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("planning training run from trial inherits trial candidate and hypothesis links", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Hypothesis", source: "Source" })
+    db.createCandidate({ candidate_id: "candidate_1", hypothesis_id: "hypothesis_1", claim: "Candidate", source: "Source" })
+    db.planTrial({ trial_id: "trial_1", hypothesis_id: "hypothesis_1", candidate_id: "candidate_1", trial_kind: "probe", config: {} })
+
+    const run = db.planTrainingRun({ training_run_id: "training_1", trial_id: "trial_1", label: "probe" })
+
+    expect(run.candidate_id).toBe("candidate_1")
+    expect(run.hypothesis_id).toBe("hypothesis_1")
+    expect(db.searchTrainingRuns({ candidate_id: "candidate_1" }).map((trainingRun) => trainingRun.training_run_id)).toEqual(["training_1"])
+    expect(db.searchTrainingRuns({ hypothesis_id: "hypothesis_1" }).map((trainingRun) => trainingRun.training_run_id)).toEqual(["training_1"])
+    db.close()
+  })
+
   test("training run lifecycle progress checkpoint reproduction and search APIs write events", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)
@@ -2099,7 +2115,9 @@ describe("ResearchDb", () => {
     const db = openSequencedTestDb(dir)
     db.createTopic({ id: "topic_1", title: "Topic" })
     db.planTrainingRun({ training_run_id: "training_1", label: "debug_run" })
+    db.planTrainingRun({ training_run_id: "training_2", label: "debug_run" })
     db.addArtifact({ id: "checkpoint_artifact_1", topic_id: "topic_1", kind: "snapshot", content: "checkpoint" })
+    db.addArtifact({ id: "wrong_run_artifact", topic_id: "topic_1", kind: "snapshot", content: "checkpoint", produced_by_run_id: "training_2" })
 
     const first = db.recordTrainingCheckpoint({
       checkpoint_id: "checkpoint_1",
@@ -2116,6 +2134,13 @@ describe("ResearchDb", () => {
 
     expect(second).toEqual(first)
     expect(db.listResearchEvents({ event_type: "TrainingCheckpointObserved" })).toHaveLength(1)
+    expect(() =>
+      db.recordTrainingCheckpoint({
+        checkpoint_id: "checkpoint_wrong_run",
+        training_run_id: "training_1",
+        artifact_id: "wrong_run_artifact",
+      }),
+    ).toThrow("checkpoint artifact run mismatch")
     db.close()
   })
 
