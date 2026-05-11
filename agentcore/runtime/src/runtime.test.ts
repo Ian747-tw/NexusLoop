@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
-import type { RuntimeResearchDbReader } from "./server"
+import type { RuntimeResearchDbProjection } from "./server"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
@@ -13,7 +13,17 @@ import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
 import { RunLock } from "./project/run-lock"
-import { ResearchDb, type ListResearchEventsOptions, type Note, type ResearchEvent, type SearchOptions, type Topic, type TopicSnapshot } from "./research-db/research-db"
+import {
+  ResearchDb,
+  type ListResearchEventsOptions,
+  type Note,
+  type ResearchEvent,
+  type ResearchProjectionIntegrity,
+  type ResearchProjectionStatus,
+  type SearchOptions,
+  type Topic,
+  type TopicSnapshot,
+} from "./research-db/research-db"
 
 const cleanup: string[] = []
 
@@ -105,7 +115,7 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
   }
 }
 
-class TrackingResearchDb implements RuntimeResearchDbReader {
+class TrackingResearchDb implements RuntimeResearchDbProjection {
   closeCalls = 0
 
   constructor(private readonly db: ResearchDb) {}
@@ -128,6 +138,18 @@ class TrackingResearchDb implements RuntimeResearchDbReader {
 
   searchNotes(topicId: string, query: string, options?: SearchOptions): Note[] {
     return this.db.searchNotes(topicId, query, options)
+  }
+
+  checkProjectionIntegrity(eventsPath?: string): ResearchProjectionIntegrity {
+    return this.db.checkProjectionIntegrity(eventsPath)
+  }
+
+  rebuildFromEvents(eventsPath?: string): void {
+    this.db.rebuildFromEvents(eventsPath)
+  }
+
+  getProjectionStatus(): ResearchProjectionStatus {
+    return this.db.getProjectionStatus()
   }
 
   close(): void {
@@ -160,6 +182,23 @@ function seedResearchDb(dir: string): void {
   } finally {
     db.close()
   }
+}
+
+async function deleteResearchDb(dir: string): Promise<void> {
+  await rm(join(dir, ".nxl", "research.db"), { force: true })
+  await rm(join(dir, ".nxl", "research.db-shm"), { force: true })
+  await rm(join(dir, ".nxl", "research.db-wal"), { force: true })
+}
+
+async function appendJsonlLine(dir: string, event: unknown): Promise<void> {
+  const path = join(dir, ".nxl", "events.jsonl")
+  let existing = ""
+  try {
+    existing = await readFile(path, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+  }
+  await writeFile(path, existing + JSON.stringify(event) + "\n")
 }
 
 describe("RuntimeServer core", () => {
@@ -572,6 +611,171 @@ describe("RuntimeServer core", () => {
     expect(injected.closeCalls).toBe(0)
     expect(injected.listTopics().map((topic) => topic.id)).toContain("topic_1")
     injected.close()
+  })
+
+  test("injected ResearchDb without Branch 4D projection APIs fails clearly", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const db = {
+      close() {},
+      listTopics: () => [],
+      searchTopics: () => [],
+      getTopicSnapshot: () => null,
+      listResearchEvents: () => [],
+      searchNotes: () => [],
+    } as unknown as RuntimeResearchDbProjection
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records", researchDb: db })
+
+    expect(() => server.listResearchTopics()).toThrow("researchDb must support Branch 4D projection API: missing checkProjectionIntegrity")
+    await server.shutdown()
+  })
+
+  test("status mode checks projection without approved spec and does not start adapter", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter })
+
+    await server.start()
+    const status = await server.status()
+
+    expect(status.researchProjection).toMatchObject({ mode: "auto_rebuild", ok: true, stale: false, pending_count: 0 })
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
+  test("active startup checks projection after approved spec load and before adapter start", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    seedResearchDb(dir)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const order = instrumentStartupOrder(server)
+
+    await server.start()
+
+    expect(order.findIndex((item) => item === "emit:ResearchProjectionChecked")).toBeLessThan(order.findIndex((item) => item === "append:runtime_started"))
+    expect(server.eventBus.snapshot().map((event) => event.type)).toContain("RuntimeReady")
+    await server.shutdown()
+  })
+
+  test("missing research.db with events.jsonl auto rebuilds before read surfaces", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    seedResearchDb(dir)
+    await deleteResearchDb(dir)
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records" })
+
+    expect(server.listResearchTopics().map((topic) => topic.id)).toEqual(["topic_1", "topic_2"])
+    expect(server.getResearchTopicSnapshot("topic_1")?.notes[0]?.content).toBe("Projected research note")
+    expect(server.listResearchEvents({ entity_type: "note" }).map((event) => event.payload)).toMatchObject([{ content: "Projected research note" }])
+    expect(server.searchResearchNotes("topic_1", "Projected")).toHaveLength(1)
+    expect(server.eventBus.snapshot().map((event) => event.type)).toEqual(
+      expect.arrayContaining(["ResearchProjectionStale", "ResearchProjectionRebuildStarted", "ResearchProjectionRebuilt"]),
+    )
+    await server.shutdown()
+  })
+
+  test("stale projection auto rebuilds before serving rows", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    await appendJsonlLine(dir, {
+      kind: "research_event",
+      event_id: "manual_topic_event",
+      timestamp: "2026-05-10T12:00:10.000Z",
+      event_type: "topic_created",
+      entity_type: "topic",
+      entity_id: "topic_manual",
+      payload: { id: "topic_manual", title: "Manual topic", status: "open", created_at: "2026-05-10T12:00:10.000Z", updated_at: "2026-05-10T12:00:10.000Z" },
+    })
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records" })
+
+    expect(server.listResearchTopics().map((topic) => topic.id)).toEqual(["topic_1", "topic_2", "topic_manual"])
+    expect(server.researchProjectionStatus()).toMatchObject({ ok: true, stale: false, pending_count: 0 })
+    await server.shutdown()
+  })
+
+  test("corrupt JSONL causes clear startup read and rebuild failures without leaking run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, ".nxl", "events.jsonl"), "{not json}\n")
+    const adapter = new LongLivedAdapter()
+    const active = new RuntimeServer({ projectDir: dir, adapter })
+
+    await expect(active.start()).rejects.toThrow("research projection corrupt: corrupt JSONL line 1")
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect(adapter.startCalls).toBe(0)
+
+    const reader = new RuntimeServer({ projectDir: dir, mode: "view-records" })
+    expect(() => reader.listResearchTopics()).toThrow("research projection corrupt: corrupt JSONL line 1")
+    await expect(reader.command("research.rebuild_projection", { force: true })).rejects.toThrow("research projection rebuild failed: corrupt JSONL line 1")
+    await reader.shutdown()
+  })
+
+  test("unsupported research event fails clearly while non-research events are ignored", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    await appendJsonlLine(dir, { kind: "runtime_started", mode: "status" })
+    await appendJsonlLine(dir, {
+      kind: "research_event",
+      event_id: "unsupported",
+      timestamp: "2026-05-10T12:00:00.000Z",
+      event_type: "unknown_research_event",
+      entity_type: "topic",
+      entity_id: "topic_1",
+      payload: {},
+    })
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records" })
+
+    expect(() => server.listResearchTopics()).toThrow("research projection corrupt: unsupported research event: unknown_research_event")
+    expect(server.researchProjectionStatus()).toMatchObject({ ok: false, stale: false, reason: "unsupported research event: unknown_research_event" })
+    await server.shutdown()
+  })
+
+  test("runtime status redacts projection health values", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    const injected = new TrackingResearchDb(ResearchDb.open(dir))
+    injected.checkProjectionIntegrity = () => ({ ok: false, stale: false, reason: "token=sk-test-SECRET123456" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records", researchDb: injected })
+
+    const serialized = JSON.stringify(await server.status())
+
+    expect(serialized).not.toContain("sk-test-SECRET123456")
+    expect(serialized).toContain("[REDACTED]")
+    await server.shutdown()
+    injected.close()
+  })
+
+  test("projection commands return structured status rebuild and validate input without starting adapter", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    await deleteResearchDb(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter })
+
+    const before = await server.command("research.projection_status")
+    expect(before).toMatchObject({ ok: false, stale: true })
+    const after = await server.command("research.rebuild_projection", { force: true })
+    expect(after).toMatchObject({ ok: true, stale: false, pending_count: 0 })
+    await expect(server.command("research.rebuild_projection", { force: "yes" })).rejects.toThrow("force must be a boolean")
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
+  test("check-only stale projection refuses reads without rebuilding", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    await deleteResearchDb(dir)
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "check_only" })
+
+    expect(() => server.listResearchTopics()).toThrow("research projection stale: missing projection metadata")
+    expect(server.researchProjectionStatus()).toMatchObject({ mode: "check_only", ok: false, stale: true })
+    await server.shutdown()
   })
 })
 
