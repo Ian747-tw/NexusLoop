@@ -679,6 +679,7 @@ describe("RuntimeServer core", () => {
     await deleteResearchDb(dir)
     const server = new RuntimeServer({ projectDir: dir, mode: "view-records" })
 
+    await server.start()
     expect(server.listResearchTopics().map((topic) => topic.id)).toEqual(["topic_1", "topic_2"])
     expect(server.getResearchTopicSnapshot("topic_1")?.notes[0]?.content).toBe("Projected research note")
     expect(server.listResearchEvents({ entity_type: "note" }).map((event) => event.payload)).toMatchObject([{ content: "Projected research note" }])
@@ -704,6 +705,7 @@ describe("RuntimeServer core", () => {
     })
     const server = new RuntimeServer({ projectDir: dir, mode: "view-records" })
 
+    await server.start()
     expect(server.listResearchTopics().map((topic) => topic.id)).toEqual(["topic_1", "topic_2", "topic_manual"])
     expect(server.researchProjectionStatus()).toMatchObject({ ok: true, stale: false, pending_count: 0 })
     await server.shutdown()
@@ -770,11 +772,38 @@ describe("RuntimeServer core", () => {
     const adapter = new LongLivedAdapter()
     const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter })
 
+    await server.start()
     const before = await server.command("research.projection_status")
-    expect(before).toMatchObject({ ok: false, stale: true })
+    expect(before).toMatchObject({ ok: true, stale: false })
     const after = await server.command("research.rebuild_projection", { force: true })
     expect(after).toMatchObject({ ok: true, stale: false, pending_count: 0 })
     await expect(server.command("research.rebuild_projection", { force: "yes" })).rejects.toThrow("force must be a boolean")
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
+  test("read-triggered auto rebuild requires run lock before mutating projection", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    await deleteResearchDb(dir)
+    const server = new RuntimeServer({ projectDir: dir, mode: "view-records" })
+
+    expect(() => server.listResearchTopics()).toThrow("research projection auto-rebuild during read requires runtime start with run lock held")
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    await server.shutdown()
+  })
+
+  test("projection rebuild command acquires temporary run lock without starting adapter", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    await deleteResearchDb(dir)
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter })
+
+    await expect(server.command("research.rebuild_projection", { force: true })).resolves.toMatchObject({ ok: true, stale: false })
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
     expect(adapter.startCalls).toBe(0)
     await server.shutdown()
   })

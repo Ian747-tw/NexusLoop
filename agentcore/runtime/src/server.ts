@@ -283,7 +283,7 @@ export class RuntimeServer {
     return redactValue(this.researchProjectionHealth)
   }
 
-  rebuildResearchProjection(options: { force: boolean } = { force: false }): RuntimeResearchProjectionHealth {
+  async rebuildResearchProjection(options: { force: boolean } = { force: false }): Promise<RuntimeResearchProjectionHealth> {
     if (this.researchProjectionMode === "disabled") {
       this.researchProjectionHealth = this.disabledProjectionHealth()
       return redactValue(this.researchProjectionHealth)
@@ -293,7 +293,7 @@ export class RuntimeServer {
       if (integrity.ok && !integrity.stale) return redactValue(this.researchProjectionHealth)
       if (!integrity.stale) throw new Error(`research projection corrupt: ${integrity.reason ?? "unknown"}`)
     }
-    this.rebuildProjection("command")
+    await this.withProjectionWriteLock(() => this.rebuildProjection("command"))
     const integrity = this.checkResearchProjectionForStatus({ emit: true })
     if (!integrity.ok || integrity.stale) {
       throw new Error(`research projection rebuild did not produce a usable projection: ${integrity.reason ?? "unknown"}`)
@@ -363,6 +363,7 @@ export class RuntimeServer {
     const integrity = this.checkResearchProjectionForStatus({ emit: true })
     if (integrity.ok && !integrity.stale) return
     if (integrity.stale && this.researchProjectionMode === "auto_rebuild") {
+      this.requireProjectionWriteLock(`research projection auto-rebuild during ${operation}`)
       this.rebuildProjection(operation)
       const rebuilt = this.checkResearchProjectionForStatus({ emit: true })
       if (rebuilt.ok && !rebuilt.stale) return
@@ -420,6 +421,20 @@ export class RuntimeServer {
       }
       this.emitResearchProjectionEvent("ResearchProjectionRebuildFailed")
       throw new Error(`research projection rebuild failed: ${message}`)
+    }
+  }
+
+  private requireProjectionWriteLock(operation: string): void {
+    if (!this.runLock.isHeld()) throw new Error(`${operation} requires runtime start with run lock held`)
+  }
+
+  private async withProjectionWriteLock<T>(operation: () => T): Promise<T> {
+    if (this.runLock.isHeld()) return operation()
+    await this.runLock.acquire()
+    try {
+      return operation()
+    } finally {
+      await this.runLock.release()
     }
   }
 
