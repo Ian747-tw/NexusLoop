@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { Database } from "bun:sqlite"
 import type { SQLQueryBindings } from "bun:sqlite"
@@ -2395,7 +2395,9 @@ export class ResearchDb {
     const updatedAt = requiredString(row, "updated_at")
     const inputHash = optionalString(row, "input_hash") ?? hashPayload({ title, status })
     this.db
-      .query("INSERT OR REPLACE INTO topics (id, title, status, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .query(
+        "INSERT INTO topics (id, title, status, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, status = excluded.status, input_hash = excluded.input_hash, created_at = excluded.created_at, updated_at = excluded.updated_at",
+      )
       .run(id, title, status, inputHash, createdAt, updatedAt)
   }
 
@@ -2415,7 +2417,7 @@ export class ResearchDb {
       optionalString(row, "input_hash") ?? hashPayload({ topic_id: topicId, locator, title, source_type: sourceType, status, credibility })
     this.db
       .query(
-        "INSERT OR REPLACE INTO sources (id, topic_id, locator, title, source_type, status, credibility, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sources (id, topic_id, locator, title, source_type, status, credibility, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET topic_id = excluded.topic_id, locator = excluded.locator, title = excluded.title, source_type = excluded.source_type, status = excluded.status, credibility = excluded.credibility, input_hash = excluded.input_hash, created_at = excluded.created_at",
       )
       .run(id, topicId, locator, title, sourceType, status, credibility, inputHash, createdAt)
   }
@@ -2430,7 +2432,9 @@ export class ResearchDb {
     const createdAt = requiredString(row, "created_at")
     const inputHash = optionalString(row, "input_hash") ?? hashPayload({ topic_id: topicId, source_id: sourceId, content, tags })
     this.db
-      .query("INSERT OR REPLACE INTO notes (id, topic_id, source_id, content, tags_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .query(
+        "INSERT INTO notes (id, topic_id, source_id, content, tags_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET topic_id = excluded.topic_id, source_id = excluded.source_id, content = excluded.content, tags_json = excluded.tags_json, input_hash = excluded.input_hash, created_at = excluded.created_at",
+      )
       .run(id, topicId, sourceId, content, JSON.stringify(tags), inputHash, createdAt)
   }
 
@@ -2455,7 +2459,7 @@ export class ResearchDb {
       hashPayload(artifactInputHashPayload({ topic_id: topicId, kind, path, content, artifact_type: artifactType, sha256, size_bytes: sizeBytes, produced_by_mission_id: producedByMissionId, produced_by_run_id: producedByRunId, description }))
     this.db
       .query(
-        "INSERT OR REPLACE INTO artifacts (id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO artifacts (id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET topic_id = excluded.topic_id, kind = excluded.kind, path = excluded.path, content = excluded.content, artifact_type = excluded.artifact_type, sha256 = excluded.sha256, size_bytes = excluded.size_bytes, produced_by_mission_id = excluded.produced_by_mission_id, produced_by_run_id = excluded.produced_by_run_id, description = excluded.description, input_hash = excluded.input_hash, created_at = excluded.created_at",
       )
       .run(
         id,
@@ -2543,7 +2547,7 @@ export class ResearchDb {
       hashPayload({ source_type: sourceType, source_uri: sourceUri, title, quoted_text_or_summary: quoted, accessed_at: accessedAt, sha256, metadata })
     this.db
       .query(
-        "INSERT OR REPLACE INTO citations (citation_id, source_type, source_uri, title, quoted_text_or_summary, accessed_at, sha256, metadata_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO citations (citation_id, source_type, source_uri, title, quoted_text_or_summary, accessed_at, sha256, metadata_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(citation_id) DO UPDATE SET source_type = excluded.source_type, source_uri = excluded.source_uri, title = excluded.title, quoted_text_or_summary = excluded.quoted_text_or_summary, accessed_at = excluded.accessed_at, sha256 = excluded.sha256, metadata_json = excluded.metadata_json, input_hash = excluded.input_hash, created_at = excluded.created_at",
       )
       .run(citationId, sourceType, sourceUri, title, quoted, accessedAt, sha256, JSON.stringify(metadata), inputHash, createdAt)
   }
@@ -2872,18 +2876,15 @@ export class ResearchDb {
     this.upsertProjectionStatus(eventId, createdAt, this.countProjectedEvents(), null)
     if (this.appendEvents) {
       mkdirSync(dirname(this.eventsPath), { recursive: true })
-      appendFileSync(
-        this.eventsPath,
-        JSON.stringify({
-          event_id: eventId,
-          timestamp: createdAt,
-          kind: "research_event",
-          event_type: eventType,
-          entity_type: entityType,
-          entity_id: entityId,
-          payload: redactedPayload,
-        }) + "\n",
-      )
+      appendDurableJsonl(this.eventsPath, {
+        event_id: eventId,
+        timestamp: createdAt,
+        kind: "research_event",
+        event_type: eventType,
+        entity_type: entityType,
+        entity_id: entityId,
+        payload: redactedPayload,
+      })
     }
     return eventId
   }
@@ -3439,6 +3440,16 @@ function readJsonlEvents(eventsPath: string): ParsedJsonlEvent[] {
     }
   }
   return events
+}
+
+function appendDurableJsonl(path: string, event: unknown): void {
+  const fd = openSync(path, "a")
+  try {
+    writeSync(fd, JSON.stringify(event) + "\n")
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
 }
 
 function normalizeResearchEvent(event: ResearchJsonlEvent): {

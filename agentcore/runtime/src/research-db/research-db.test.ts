@@ -2635,6 +2635,35 @@ describe("ResearchDb", () => {
     rebuilt.close()
   })
 
+  test("duplicate topic event with new event ID does not cascade-delete projected children", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic 1" })
+    db.addSource({ id: "source_1", topic_id: "topic_1", locator: "file://source.md", source_type: "file" })
+    db.close()
+
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const lines = (await readFile(eventsPath, "utf8")).trim().split(/\r?\n/)
+    const duplicateTopic = JSON.parse(lines[0]!) as Record<string, unknown>
+    duplicateTopic.event_id = "evt_duplicate_topic"
+    await writeFile(eventsPath, `${lines.join("\n")}\n${JSON.stringify(duplicateTopic)}\n`, "utf8")
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(rebuilt.listTopics().map((topic) => topic.id)).toEqual(["topic_1"])
+    expect(rebuilt.listSourcesForTopic("topic_1").map((source) => source.id)).toEqual(["source_1"])
+    const projectedEventIds = new Set(rebuilt.listResearchEvents({ limit: 10 }).map((event) => event.event_id))
+    expect(projectedEventIds).toEqual(
+      new Set([
+        (JSON.parse(lines[0]!) as { event_id: string }).event_id,
+        (JSON.parse(lines[1]!) as { event_id: string }).event_id,
+        "evt_duplicate_topic",
+      ]),
+    )
+    rebuilt.close()
+  })
+
   test("integrity reports missing event log stale for non-empty projection without metadata", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)
