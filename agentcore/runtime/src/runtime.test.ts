@@ -150,6 +150,27 @@ class DelayedShutdownEventAdapter implements OpenCodeRuntimeAdapter {
   }
 }
 
+class HangingShutdownStreamAdapter implements OpenCodeRuntimeAdapter {
+  async startSession(_sessionSpec: SessionSpec): Promise<void> {}
+
+  async sendMissionPacket(_packet: MissionPacket): Promise<void> {}
+
+  async pauseAtSafeBoundary(_reason: string): Promise<void> {}
+
+  async resumeWithMissionUpdate(_update: MissionUpdate): Promise<void> {}
+
+  async *streamExecutorEvents(): AsyncIterable<RuntimeEvent> {
+    yield { type: "ExecutorLifecycle", phase: "hanging-stream-started", message: "stream started" }
+    await new Promise<never>(() => {})
+  }
+
+  async shutdown(): Promise<void> {}
+
+  async getStatus(): Promise<Record<string, unknown>> {
+    return { adapter: "hanging-shutdown-stream", message: "hanging shutdown stream adapter" }
+  }
+}
+
 type ProcessEventName = "close" | "exit" | "error" | "spawn"
 type ProcessListener = (...args: unknown[]) => void
 
@@ -553,6 +574,17 @@ describe("RuntimeServer core", () => {
       phase: "delayed-shutdown-event",
       message: "shutdown telemetry drained",
     })
+  })
+
+  test("shutdown does not hang when executor event stream does not finish", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new HangingShutdownStreamAdapter() })
+
+    await server.start()
+    const result = await Promise.race([server.shutdown().then(() => "shutdown" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
+
+    expect(result).toBe("shutdown")
   })
 
   test("successful active start appends runtime_started before readiness events", async () => {

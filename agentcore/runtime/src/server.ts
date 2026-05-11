@@ -22,6 +22,8 @@ import {
   type TopicSnapshot,
 } from "./research-db/research-db"
 
+const EXECUTOR_SHUTDOWN_DRAIN_TIMEOUT_MS = 50
+
 export interface RuntimeServerOptions {
   projectDir?: string
   mode?: RuntimeMode
@@ -152,6 +154,21 @@ export class RuntimeServer {
     })()
 
     this.executorStreamTask = task
+  }
+
+  private async drainExecutorEventPumpAfterShutdown(): Promise<void> {
+    const streamTask = this.executorStreamTask
+    if (!streamTask) return
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    const timedOut = Symbol("executor-shutdown-drain-timeout")
+    const result = await Promise.race([
+      streamTask.then(() => undefined),
+      new Promise<typeof timedOut>((resolve) => {
+        timeoutId = setTimeout(() => resolve(timedOut), EXECUTOR_SHUTDOWN_DRAIN_TIMEOUT_MS)
+      }),
+    ])
+    if (timeoutId) clearTimeout(timeoutId)
+    if (result === timedOut) this.executorStreamAbort = true
   }
 
   private async cleanupFailedStartup(): Promise<void> {
@@ -319,8 +336,7 @@ export class RuntimeServer {
       this.eventBus.emit({ type: "RuntimeShutdown", reason })
       try {
         await this.adapter.shutdown()
-        const streamTask = this.executorStreamTask
-        if (streamTask) await streamTask
+        await this.drainExecutorEventPumpAfterShutdown()
       } catch (error) {
         firstError ??= error
         this.eventBus.emit({
