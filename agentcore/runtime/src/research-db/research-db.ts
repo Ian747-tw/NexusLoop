@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { mkdirSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { Database } from "bun:sqlite"
 import type { SQLQueryBindings } from "bun:sqlite"
@@ -113,8 +113,14 @@ const MAX_READ_LIMIT = 500
 
 export interface ResearchDbOptions {
   dbPath?: string
+  eventsPath?: string
+  appendEvents?: boolean
   now?: () => Date
   idFactory?: () => string
+}
+
+export interface ResearchDbRebuildOptions extends ResearchDbOptions {
+  appendEvents?: false
 }
 
 export interface TopicInput {
@@ -479,6 +485,25 @@ export interface ResearchEvent {
   created_at: string
 }
 
+export interface ResearchProjectionStatus {
+  projection_name: string
+  last_event_id: string | null
+  last_event_timestamp: string | null
+  applied_count: number
+  rebuilt_at: string | null
+  updated_at: string | null
+}
+
+export interface ResearchProjectionIntegrity {
+  ok: boolean
+  stale: boolean
+  reason?: string
+  last_event_id?: string
+  pending_count?: number
+  corrupted_line?: number
+  unsupported_event_type?: string
+}
+
 export interface TopicSnapshotStats {
   source_count: number
   note_count: number
@@ -561,29 +586,117 @@ interface ResearchEventRow {
   created_at: string
 }
 
+interface ResearchProjectionRow {
+  projection_name: string
+  last_event_id: string | null
+  last_event_timestamp: string | null
+  applied_count: number
+  rebuilt_at: string | null
+  updated_at: string | null
+}
+
+export interface ResearchJsonlEvent {
+  event_id?: string
+  timestamp?: string
+  kind?: string
+  type?: string
+  event_type?: string
+  entity_type?: string
+  entity_id?: string
+  payload?: unknown
+  [key: string]: unknown
+}
+
+interface ParsedJsonlEvent {
+  line: number
+  event: ResearchJsonlEvent
+}
+
+const RESEARCH_PROJECTION_NAME = "research_db_v1"
+const SUPPORTED_RESEARCH_EVENT_TYPES = new Set([
+  "topic_created",
+  "source_added",
+  "note_added",
+  "artifact_added",
+  "ResearchResultProposed",
+  "ResearchResultAccepted",
+  "ResearchResultRejected",
+  "CitationRecorded",
+  "ResultCitationLinked",
+  "ResultArtifactLinked",
+  "HypothesisCreated",
+  "HypothesisStatusUpdated",
+  "CandidateCreated",
+  "CandidateEvidenceLinked",
+  "CandidateRanked",
+  "CandidateSelected",
+  "CandidateRejected",
+  "CandidatePromotionProposed",
+  "CandidatePromoted",
+  "CandidateNeedsMoreEvidence",
+  "TrialPlanned",
+  "TrialStarted",
+  "TrialCompleted",
+  "TrialFailed",
+  "TrialCancelled",
+  "TrainingRunPlanned",
+  "TrainingRunStarted",
+  "TrainingProgressObserved",
+  "TrainingCheckpointObserved",
+  "ReproductionRecipeRecorded",
+  "TrainingRunCompleted",
+  "TrainingRunFailed",
+  "TrainingRunCancelled",
+])
+
 export class ResearchDb {
   private readonly db: Database
+  private readonly eventsPath: string
+  private readonly appendEvents: boolean
   private readonly now: () => Date
   private readonly idFactory: () => string
 
-  private constructor(db: Database, options: Required<Pick<ResearchDbOptions, "now" | "idFactory">>) {
+  private constructor(
+    db: Database,
+    options: Required<Pick<ResearchDbOptions, "eventsPath" | "appendEvents" | "now" | "idFactory">>,
+  ) {
     this.db = db
+    this.eventsPath = options.eventsPath
+    this.appendEvents = options.appendEvents
     this.now = options.now
     this.idFactory = options.idFactory
   }
 
   static open(projectDir: string, options: ResearchDbOptions = {}): ResearchDb {
     const dbPath = options.dbPath ?? join(projectDir, ".nxl", "research.db")
+    const eventsPath = options.eventsPath ?? join(projectDir, ".nxl", "events.jsonl")
     mkdirSync(dirname(dbPath), { recursive: true })
     const db = new Database(dbPath, { create: true })
     db.exec("PRAGMA foreign_keys = ON")
     const researchDb = new ResearchDb(db, {
+      eventsPath,
+      appendEvents: options.appendEvents ?? true,
       now: options.now ?? (() => new Date()),
       idFactory: options.idFactory ?? (() => randomUUID()),
     })
     try {
       researchDb.migrate()
       return researchDb
+    } catch (error) {
+      db.close()
+      throw error
+    }
+  }
+
+  static rebuildFromEvents(projectDir: string, eventsPath?: string, options: ResearchDbRebuildOptions = {}): ResearchDb {
+    const db = ResearchDb.open(projectDir, {
+      ...options,
+      eventsPath: eventsPath ?? options.eventsPath,
+      appendEvents: false,
+    })
+    try {
+      db.rebuildFromEvents(eventsPath ?? options.eventsPath ?? join(projectDir, ".nxl", "events.jsonl"))
+      return db
     } catch (error) {
       db.close()
       throw error
@@ -1778,6 +1891,94 @@ export class ResearchDb {
       .all(...params) as ResearchEventRow[]).map(researchEventFromRow)
   }
 
+  rebuildFromEvents(eventsPath = this.eventsPath): void {
+    const parsed = readJsonlEvents(eventsPath)
+    this.inTransaction(() => {
+      this.resetProjectionTables()
+      this.upsertProjectionStatus(null, null, 0, this.timestamp())
+      for (const item of parsed) {
+        this.applyParsedEvent(item)
+      }
+    })
+  }
+
+  applyEvent(event: ResearchJsonlEvent): void {
+    this.inTransaction(() => {
+      this.applyParsedEvent({ line: 0, event })
+    })
+  }
+
+  getProjectionStatus(): ResearchProjectionStatus {
+    const row = this.db
+      .query("SELECT projection_name, last_event_id, last_event_timestamp, applied_count, rebuilt_at, updated_at FROM research_projection WHERE projection_name = ?")
+      .get(RESEARCH_PROJECTION_NAME) as ResearchProjectionRow | null
+    if (!row) {
+      return {
+        projection_name: RESEARCH_PROJECTION_NAME,
+        last_event_id: null,
+        last_event_timestamp: null,
+        applied_count: 0,
+        rebuilt_at: null,
+        updated_at: null,
+      }
+    }
+    return row
+  }
+
+  checkProjectionIntegrity(eventsPath = this.eventsPath): ResearchProjectionIntegrity {
+    if (!existsSync(eventsPath)) {
+      const status = this.getProjectionStatus()
+      return status.applied_count === 0
+        ? { ok: true, stale: false }
+        : { ok: false, stale: true, reason: "event log missing", last_event_id: status.last_event_id ?? undefined }
+    }
+
+    let parsed: ParsedJsonlEvent[]
+    try {
+      parsed = readJsonlEvents(eventsPath)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const match = message.match(/line (\d+)/)
+      return { ok: false, stale: false, reason: message, corrupted_line: match ? Number(match[1]) : undefined }
+    }
+
+    for (const item of parsed) {
+      const normalized = normalizeResearchEvent(item.event)
+      if (!normalized.research) continue
+      if (!normalized.supported) {
+        return {
+          ok: false,
+          stale: false,
+          reason: `unsupported research event: ${normalized.eventType}`,
+          unsupported_event_type: normalized.eventType,
+        }
+      }
+    }
+
+    const researchEvents = parsed.filter((item) => normalizeResearchEvent(item.event).research)
+    const status = this.getProjectionStatus()
+    if (!status.updated_at) return { ok: false, stale: true, reason: "missing projection metadata", pending_count: researchEvents.length }
+    if (!status.last_event_id) {
+      return researchEvents.length === 0
+        ? { ok: true, stale: false }
+        : { ok: false, stale: true, reason: "projection has no cursor", pending_count: researchEvents.length }
+    }
+    const cursorIndex = researchEvents.findIndex((item) => String(item.event.event_id) === status.last_event_id)
+    if (cursorIndex < 0) return { ok: false, stale: true, reason: "last_event_id not found in events log", last_event_id: status.last_event_id }
+    const pendingCount = researchEvents.length - cursorIndex - 1
+    if (pendingCount > 0) {
+      return { ok: false, stale: true, reason: "events exist after projection cursor", last_event_id: status.last_event_id, pending_count: pendingCount }
+    }
+    return { ok: true, stale: false, last_event_id: status.last_event_id, pending_count: 0 }
+  }
+
+  resetProjection(): void {
+    this.inTransaction(() => {
+      this.resetProjectionTables()
+      this.upsertProjectionStatus(null, null, 0, this.timestamp())
+    })
+  }
+
   getTopicSnapshot(topicId: string): TopicSnapshot | null {
     const id = cleanId(topicId)
     const topic = this.getTopic(id)
@@ -2007,6 +2208,15 @@ export class ResearchDb {
         payload_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS research_projection (
+        projection_name TEXT PRIMARY KEY,
+        last_event_id TEXT,
+        last_event_timestamp TEXT,
+        applied_count INTEGER NOT NULL,
+        rebuilt_at TEXT,
+        updated_at TEXT
+      );
     `)
     this.ensureColumn("topics", "input_hash", "TEXT")
     this.ensureColumn("sources", "input_hash", "TEXT")
@@ -2036,6 +2246,452 @@ export class ResearchDb {
     this.backfillLinkEventIds()
     this.backfillInputHashes()
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
+  }
+
+  private resetProjectionTables(): void {
+    this.db.query("DELETE FROM candidate_evidence").run()
+    this.db.query("DELETE FROM training_checkpoints").run()
+    this.db.query("DELETE FROM training_runs").run()
+    this.db.query("DELETE FROM trials").run()
+    this.db.query("DELETE FROM candidates").run()
+    this.db.query("DELETE FROM hypotheses").run()
+    this.db.query("DELETE FROM result_artifacts").run()
+    this.db.query("DELETE FROM result_citations").run()
+    this.db.query("DELETE FROM citations").run()
+    this.db.query("DELETE FROM research_results").run()
+    this.db.query("DELETE FROM artifacts").run()
+    this.db.query("DELETE FROM notes").run()
+    this.db.query("DELETE FROM sources").run()
+    this.db.query("DELETE FROM topics").run()
+    this.db.query("DELETE FROM research_events").run()
+    this.db.query("DELETE FROM research_projection WHERE projection_name = ?").run(RESEARCH_PROJECTION_NAME)
+  }
+
+  private applyParsedEvent(item: ParsedJsonlEvent): void {
+    const normalized = normalizeResearchEvent(item.event)
+    if (!normalized.research) return
+    if (!normalized.supported) throw new Error(`unsupported research event at line ${item.line}: ${normalized.eventType}`)
+    const eventId = cleanRequired(normalized.event_id, "event_id")
+    const eventType = cleanRequired(normalized.eventType, "event_type")
+    const entityType = cleanRequired(normalized.entityType, "entity_type")
+    assertAllowed(RESEARCH_ENTITY_TYPES, entityType, "research event entity_type")
+    const entityId = cleanRequired(normalized.entityId, "entity_id")
+    const timestamp = cleanRequired(normalized.timestamp, "timestamp")
+    const payload = redactValue(normalized.payload ?? null)
+    const exists = this.db.query("SELECT 1 FROM research_events WHERE event_id = ?").get(eventId)
+    if (exists) {
+      this.upsertProjectionStatus(eventId, timestamp, this.countProjectedEvents(), null)
+      return
+    }
+
+    this.applyResearchPayload(eventType, entityType, entityId, payload, timestamp, eventId)
+    this.db
+      .query("INSERT INTO research_events (event_id, event_type, entity_type, entity_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(eventId, eventType, entityType, entityId, JSON.stringify(payload), timestamp)
+    this.upsertProjectionStatus(eventId, timestamp, this.countProjectedEvents(), null)
+  }
+
+  private applyResearchPayload(
+    eventType: string,
+    entityType: ResearchEntityType,
+    entityId: string,
+    payload: unknown,
+    timestamp: string,
+    eventId: string,
+  ): void {
+    switch (eventType) {
+      case "topic_created":
+        this.applyTopic(payload)
+        return
+      case "source_added":
+        this.applySource(payload)
+        return
+      case "note_added":
+        this.applyNote(payload)
+        return
+      case "artifact_added":
+        this.applyArtifact(payload)
+        return
+      case "ResearchResultProposed":
+      case "ResearchResultAccepted":
+        this.applyResearchResult(payload)
+        return
+      case "ResearchResultRejected":
+        this.applyResearchResult(payloadRecord(payload, "result"))
+        return
+      case "CitationRecorded":
+        this.applyCitation(payload)
+        return
+      case "ResultCitationLinked":
+        this.applyResultCitation(payload, eventId)
+        return
+      case "ResultArtifactLinked":
+        this.applyResultArtifact(payload, eventId)
+        return
+      case "HypothesisCreated":
+      case "HypothesisStatusUpdated":
+        this.applyHypothesis(payload)
+        return
+      case "CandidateCreated":
+      case "CandidateRanked":
+        this.applyCandidate(payload)
+        return
+      case "CandidateSelected":
+      case "CandidateRejected":
+      case "CandidatePromotionProposed":
+      case "CandidateNeedsMoreEvidence":
+        this.applyCandidate(payloadRecord(payload, "candidate"))
+        return
+      case "CandidatePromoted": {
+        const candidate = payloadRecord(payload, "candidate")
+        const candidateId = requiredString(candidate, "candidate_id")
+        const hasLinkedEvidence = this.db.query("SELECT 1 FROM candidate_evidence WHERE candidate_id = ? LIMIT 1").get(candidateId) != null
+        if (!hasLinkedEvidence && !payloadContainsEvidenceIds(payload)) throw new Error(`candidate promotion event has no evidence: ${candidateId}`)
+        this.applyCandidate(candidate)
+        return
+      }
+      case "CandidateEvidenceLinked":
+        this.applyCandidateEvidence(payload)
+        return
+      case "TrialPlanned":
+      case "TrialStarted":
+      case "TrialCompleted":
+        this.applyTrial(payload)
+        return
+      case "TrialFailed":
+      case "TrialCancelled":
+        this.applyTrial(payloadRecord(payload, "trial"))
+        return
+      case "TrainingRunPlanned":
+      case "TrainingRunStarted":
+      case "TrainingProgressObserved":
+      case "TrainingRunCompleted":
+        this.applyTrainingRun(payload)
+        return
+      case "TrainingRunFailed":
+      case "TrainingRunCancelled":
+        this.applyTrainingRun(payloadRecord(payload, "training_run"))
+        return
+      case "TrainingCheckpointObserved":
+        this.applyTrainingCheckpoint(payload)
+        return
+      case "ReproductionRecipeRecorded":
+        this.applyReproductionRecipe(payload, entityId, timestamp)
+        return
+      default:
+        throw new Error(`unsupported research event: ${eventType} (${entityType}:${entityId})`)
+    }
+  }
+
+  private applyTopic(payload: unknown): void {
+    const row = requireRecord(payload, "topic payload")
+    const id = requiredString(row, "id")
+    const title = requiredString(row, "title")
+    const status = requiredString(row, "status")
+    assertAllowed(TOPIC_STATUSES, status, "topic status")
+    const createdAt = requiredString(row, "created_at")
+    const updatedAt = requiredString(row, "updated_at")
+    this.db
+      .query("INSERT OR REPLACE INTO topics (id, title, status, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, title, status, hashPayload({ title, status }), createdAt, updatedAt)
+  }
+
+  private applySource(payload: unknown): void {
+    const row = requireRecord(payload, "source payload")
+    const id = requiredString(row, "id")
+    const topicId = requiredString(row, "topic_id")
+    const locator = requiredString(row, "locator")
+    const sourceType = requiredString(row, "source_type")
+    const status = requiredString(row, "status")
+    assertAllowed(SOURCE_TYPES, sourceType, "source type")
+    assertAllowed(SOURCE_STATUSES, status, "source status")
+    const title = optionalString(row, "title")
+    const credibility = optionalString(row, "credibility")
+    const createdAt = requiredString(row, "created_at")
+    this.db
+      .query(
+        "INSERT OR REPLACE INTO sources (id, topic_id, locator, title, source_type, status, credibility, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(id, topicId, locator, title, sourceType, status, credibility, hashPayload({ topic_id: topicId, locator, title, source_type: sourceType, status, credibility }), createdAt)
+  }
+
+  private applyNote(payload: unknown): void {
+    const row = requireRecord(payload, "note payload")
+    const id = requiredString(row, "id")
+    const topicId = requiredString(row, "topic_id")
+    const sourceId = optionalString(row, "source_id")
+    const content = requiredString(row, "content")
+    const tags = Array.isArray(row.tags) && row.tags.every((tag) => typeof tag === "string") ? row.tags : []
+    const createdAt = requiredString(row, "created_at")
+    this.db
+      .query("INSERT OR REPLACE INTO notes (id, topic_id, source_id, content, tags_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(id, topicId, sourceId, content, JSON.stringify(tags), hashPayload({ topic_id: topicId, source_id: sourceId, content, tags }), createdAt)
+  }
+
+  private applyArtifact(payload: unknown): void {
+    const row = requireRecord(payload, "artifact payload")
+    const id = requiredString(row, "id")
+    const topicId = requiredString(row, "topic_id")
+    const kind = requiredString(row, "kind")
+    assertAllowed(ARTIFACT_KINDS, kind, "artifact kind")
+    const path = optionalString(row, "path")
+    const content = optionalString(row, "content")
+    const artifactType = optionalString(row, "artifact_type")
+    if (artifactType !== null) assertAllowed(ARTIFACT_TYPES, artifactType, "artifact type")
+    const sha256 = optionalString(row, "sha256")
+    const sizeBytes = optionalNumber(row, "size_bytes")
+    const producedByMissionId = optionalString(row, "produced_by_mission_id")
+    const producedByRunId = optionalString(row, "produced_by_run_id")
+    const description = optionalString(row, "description")
+    const createdAt = requiredString(row, "created_at")
+    this.db
+      .query(
+        "INSERT OR REPLACE INTO artifacts (id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        id,
+        topicId,
+        kind,
+        path,
+        content,
+        artifactType,
+        sha256,
+        sizeBytes,
+        producedByMissionId,
+        producedByRunId,
+        description,
+        hashPayload(artifactInputHashPayload({ topic_id: topicId, kind, path, content, artifact_type: artifactType, sha256, size_bytes: sizeBytes, produced_by_mission_id: producedByMissionId, produced_by_run_id: producedByRunId, description })),
+        createdAt,
+      )
+  }
+
+  private applyResearchResult(payload: unknown): void {
+    const row = requireRecord(payload, "research result payload")
+    const resultId = requiredString(row, "result_id")
+    const resultType = requiredString(row, "result_type")
+    const status = requiredString(row, "status")
+    const confidence = requiredString(row, "confidence")
+    const createdBy = requiredString(row, "created_by")
+    assertAllowed(RESEARCH_RESULT_TYPES, resultType, "research result type")
+    assertAllowed(RESEARCH_RESULT_STATUSES, status, "research result status")
+    assertAllowed(RESEARCH_RESULT_CONFIDENCES, confidence, "research result confidence")
+    assertAllowed(RESEARCH_RESULT_CREATED_BY, createdBy, "research result created_by")
+    const label = optionalString(row, "label")
+    const title = requiredString(row, "title")
+    const summary = requiredString(row, "summary")
+    const missionId = optionalString(row, "mission_id")
+    const candidateId = optionalString(row, "candidate_id")
+    const hypothesisId = optionalString(row, "hypothesis_id")
+    const trialId = optionalString(row, "trial_id")
+    const trainingRunId = optionalString(row, "training_run_id")
+    const metrics = row.metrics ?? null
+    const reproduction = row.reproduction ?? null
+    const createdAt = requiredString(row, "created_at")
+    const updatedAt = requiredString(row, "updated_at")
+    this.db
+      .query(
+        "INSERT INTO research_results (result_id, result_type, label, title, summary, status, confidence, mission_id, candidate_id, hypothesis_id, trial_id, training_run_id, metrics_json, reproduction_json, created_by, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(result_id) DO UPDATE SET result_type = excluded.result_type, label = excluded.label, title = excluded.title, summary = excluded.summary, status = excluded.status, confidence = excluded.confidence, mission_id = excluded.mission_id, candidate_id = excluded.candidate_id, hypothesis_id = excluded.hypothesis_id, trial_id = excluded.trial_id, training_run_id = excluded.training_run_id, metrics_json = excluded.metrics_json, reproduction_json = excluded.reproduction_json, created_by = excluded.created_by, input_hash = excluded.input_hash, created_at = excluded.created_at, updated_at = excluded.updated_at",
+      )
+      .run(
+        resultId,
+        resultType,
+        label,
+        title,
+        summary,
+        status,
+        confidence,
+        missionId,
+        candidateId,
+        hypothesisId,
+        trialId,
+        trainingRunId,
+        JSON.stringify(metrics),
+        JSON.stringify(reproduction),
+        createdBy,
+        hashPayload({ result_type: resultType, label, title, summary, status, confidence, mission_id: missionId, candidate_id: candidateId, hypothesis_id: hypothesisId, trial_id: trialId, training_run_id: trainingRunId, metrics, reproduction, created_by: createdBy }),
+        createdAt,
+        updatedAt,
+      )
+  }
+
+  private applyCitation(payload: unknown): void {
+    const row = requireRecord(payload, "citation payload")
+    const citationId = requiredString(row, "citation_id")
+    const sourceType = requiredString(row, "source_type")
+    assertAllowed(CITATION_SOURCE_TYPES, sourceType, "citation source type")
+    const sourceUri = requiredString(row, "source_uri")
+    const title = optionalString(row, "title")
+    const quoted = requiredString(row, "quoted_text_or_summary")
+    const accessedAt = requiredString(row, "accessed_at")
+    const sha256 = optionalString(row, "sha256")
+    const metadata = row.metadata ?? null
+    const createdAt = requiredString(row, "created_at")
+    this.db
+      .query(
+        "INSERT OR REPLACE INTO citations (citation_id, source_type, source_uri, title, quoted_text_or_summary, accessed_at, sha256, metadata_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(citationId, sourceType, sourceUri, title, quoted, accessedAt, sha256, JSON.stringify(metadata), hashPayload({ source_type: sourceType, source_uri: sourceUri, title, quoted_text_or_summary: quoted, accessed_at: accessedAt, sha256, metadata }), createdAt)
+  }
+
+  private applyResultCitation(payload: unknown, eventId: string): void {
+    const row = requireRecord(payload, "result citation payload")
+    const resultId = requiredString(row, "result_id")
+    const citationId = requiredString(row, "citation_id")
+    const createdAt = requiredString(row, "created_at")
+    this.db
+      .query("INSERT OR REPLACE INTO result_citations (result_id, citation_id, created_at, link_event_id) VALUES (?, ?, ?, ?)")
+      .run(resultId, citationId, createdAt, eventId)
+  }
+
+  private applyResultArtifact(payload: unknown, eventId: string): void {
+    const row = requireRecord(payload, "result artifact payload")
+    const resultId = requiredString(row, "result_id")
+    const artifactId = requiredString(row, "artifact_id")
+    const createdAt = requiredString(row, "created_at")
+    this.db
+      .query("INSERT OR REPLACE INTO result_artifacts (result_id, artifact_id, created_at, link_event_id) VALUES (?, ?, ?, ?)")
+      .run(resultId, artifactId, createdAt, eventId)
+  }
+
+  private applyHypothesis(payload: unknown): void {
+    const row = requireRecord(payload, "hypothesis payload")
+    const hypothesisId = requiredString(row, "hypothesis_id")
+    const claim = requiredString(row, "claim")
+    const source = requiredString(row, "source")
+    const status = requiredString(row, "status")
+    assertAllowed(HYPOTHESIS_STATUSES, status, "hypothesis status")
+    const createdAt = requiredString(row, "created_at")
+    const updatedAt = requiredString(row, "updated_at")
+    this.db
+      .query(
+        "INSERT INTO hypotheses (hypothesis_id, claim, source, status, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(hypothesis_id) DO UPDATE SET claim = excluded.claim, source = excluded.source, status = excluded.status, input_hash = excluded.input_hash, created_at = excluded.created_at, updated_at = excluded.updated_at",
+      )
+      .run(hypothesisId, claim, source, status, hashPayload({ claim, source, status }), createdAt, updatedAt)
+  }
+
+  private applyCandidate(payload: unknown): void {
+    const row = requireRecord(payload, "candidate payload")
+    const candidateId = requiredString(row, "candidate_id")
+    const hypothesisId = optionalString(row, "hypothesis_id")
+    const claim = requiredString(row, "claim")
+    const source = requiredString(row, "source")
+    const status = requiredString(row, "status")
+    assertAllowed(CANDIDATE_STATUSES, status, "candidate status")
+    const commanderScore = optionalNumber(row, "commander_score")
+    const rankReason = optionalString(row, "rank_reason")
+    const createdAt = requiredString(row, "created_at")
+    const updatedAt = requiredString(row, "updated_at")
+    this.db
+      .query(
+        "INSERT INTO candidates (candidate_id, hypothesis_id, claim, source, status, commander_score, rank_reason, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(candidate_id) DO UPDATE SET hypothesis_id = excluded.hypothesis_id, claim = excluded.claim, source = excluded.source, status = excluded.status, commander_score = excluded.commander_score, rank_reason = excluded.rank_reason, input_hash = excluded.input_hash, created_at = excluded.created_at, updated_at = excluded.updated_at",
+      )
+      .run(candidateId, hypothesisId, claim, source, status, commanderScore, rankReason, hashPayload({ hypothesis_id: hypothesisId, claim, source, status }), createdAt, updatedAt)
+  }
+
+  private applyCandidateEvidence(payload: unknown): void {
+    const row = requireRecord(payload, "candidate evidence payload")
+    const candidateId = requiredString(row, "candidate_id")
+    const evidenceType = requiredString(row, "evidence_type")
+    assertAllowed(CANDIDATE_EVIDENCE_TYPES, evidenceType, "candidate evidence type")
+    const evidenceId = requiredString(row, "evidence_id")
+    const createdAt = requiredString(row, "created_at")
+    this.db
+      .query("INSERT OR REPLACE INTO candidate_evidence (candidate_id, evidence_type, evidence_id, created_at) VALUES (?, ?, ?, ?)")
+      .run(candidateId, evidenceType, evidenceId, createdAt)
+  }
+
+  private applyTrial(payload: unknown): void {
+    const row = requireRecord(payload, "trial payload")
+    const trialId = requiredString(row, "trial_id")
+    const hypothesisId = optionalString(row, "hypothesis_id")
+    const candidateId = optionalString(row, "candidate_id")
+    const trialKind = requiredString(row, "trial_kind")
+    const status = requiredString(row, "status")
+    assertAllowed(TRIAL_STATUSES, status, "trial status")
+    const config = row.config ?? null
+    const startedAt = optionalString(row, "started_at")
+    const completedAt = optionalString(row, "completed_at")
+    const createdAt = requiredString(row, "created_at")
+    const updatedAt = requiredString(row, "updated_at")
+    this.db
+      .query(
+        "INSERT INTO trials (trial_id, hypothesis_id, candidate_id, trial_kind, status, config_json, input_hash, started_at, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(trial_id) DO UPDATE SET hypothesis_id = excluded.hypothesis_id, candidate_id = excluded.candidate_id, trial_kind = excluded.trial_kind, status = excluded.status, config_json = excluded.config_json, input_hash = excluded.input_hash, started_at = excluded.started_at, completed_at = excluded.completed_at, created_at = excluded.created_at, updated_at = excluded.updated_at",
+      )
+      .run(trialId, hypothesisId, candidateId, trialKind, status, JSON.stringify(config), hashPayload({ hypothesis_id: hypothesisId, candidate_id: candidateId, trial_kind: trialKind, status, config }), startedAt, completedAt, createdAt, updatedAt)
+  }
+
+  private applyTrainingRun(payload: unknown): void {
+    const row = requireRecord(payload, "training run payload")
+    const trainingRunId = requiredString(row, "training_run_id")
+    const label = requiredString(row, "label")
+    const status = requiredString(row, "status")
+    assertAllowed(TRAINING_RUN_LABELS, label, "training run label")
+    assertAllowed(TRAINING_RUN_STATUSES, status, "training run status")
+    const trialId = optionalString(row, "trial_id")
+    const candidateId = optionalString(row, "candidate_id")
+    const hypothesisId = optionalString(row, "hypothesis_id")
+    const missionId = optionalString(row, "mission_id")
+    const pid = optionalNumber(row, "pid")
+    const processGroupId = optionalNumber(row, "process_group_id")
+    const logPath = optionalString(row, "log_path")
+    const metricsPath = optionalString(row, "metrics_path")
+    const checkpointDir = optionalString(row, "checkpoint_dir")
+    const latestCheckpointId = optionalString(row, "latest_checkpoint_id")
+    const lastStep = optionalNumber(row, "last_step")
+    const lastMetric = row.last_metric ?? null
+    const reproduction = row.reproduction ?? null
+    const startedAt = optionalString(row, "started_at")
+    const lastObservedAt = optionalString(row, "last_observed_at")
+    const completedAt = optionalString(row, "completed_at")
+    const createdAt = requiredString(row, "created_at")
+    const updatedAt = requiredString(row, "updated_at")
+    this.db
+      .query(
+        "INSERT INTO training_runs (training_run_id, trial_id, candidate_id, hypothesis_id, mission_id, label, status, pid, process_group_id, log_path, metrics_path, checkpoint_dir, latest_checkpoint_id, last_step, last_metric_json, reproduction_json, started_at, last_observed_at, completed_at, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(training_run_id) DO UPDATE SET trial_id = excluded.trial_id, candidate_id = excluded.candidate_id, hypothesis_id = excluded.hypothesis_id, mission_id = excluded.mission_id, label = excluded.label, status = excluded.status, pid = excluded.pid, process_group_id = excluded.process_group_id, log_path = excluded.log_path, metrics_path = excluded.metrics_path, checkpoint_dir = excluded.checkpoint_dir, latest_checkpoint_id = excluded.latest_checkpoint_id, last_step = excluded.last_step, last_metric_json = excluded.last_metric_json, reproduction_json = excluded.reproduction_json, started_at = excluded.started_at, last_observed_at = excluded.last_observed_at, completed_at = excluded.completed_at, input_hash = excluded.input_hash, created_at = excluded.created_at, updated_at = excluded.updated_at",
+      )
+      .run(trainingRunId, trialId, candidateId, hypothesisId, missionId, label, status, pid, processGroupId, logPath, metricsPath, checkpointDir, latestCheckpointId, lastStep, JSON.stringify(lastMetric), JSON.stringify(reproduction), startedAt, lastObservedAt, completedAt, hashPayload({ trial_id: trialId, candidate_id: candidateId, hypothesis_id: hypothesisId, mission_id: missionId, label, status, pid, process_group_id: processGroupId, log_path: logPath, metrics_path: metricsPath, checkpoint_dir: checkpointDir, reproduction }), createdAt, updatedAt)
+  }
+
+  private applyTrainingCheckpoint(payload: unknown): void {
+    const row = requireRecord(payload, "training checkpoint payload")
+    const checkpointId = requiredString(row, "checkpoint_id")
+    const trainingRunId = requiredString(row, "training_run_id")
+    const artifactId = requiredString(row, "artifact_id")
+    const step = optionalNumber(row, "step")
+    const metric = row.metric ?? null
+    const observedAt = requiredString(row, "observed_at")
+    const createdAt = requiredString(row, "created_at")
+    this.db
+      .query("INSERT OR REPLACE INTO training_checkpoints (checkpoint_id, training_run_id, artifact_id, step, metric_json, observed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(checkpointId, trainingRunId, artifactId, step, JSON.stringify(metric), observedAt, createdAt)
+    this.db
+      .query(
+        "UPDATE training_runs SET latest_checkpoint_id = ?, last_step = COALESCE(?, last_step), last_metric_json = COALESCE(?, last_metric_json), last_observed_at = ?, updated_at = ? WHERE training_run_id = ?",
+      )
+      .run(checkpointId, step, JSON.stringify(metric), observedAt, createdAt, trainingRunId)
+  }
+
+  private applyReproductionRecipe(payload: unknown, entityId: string, timestamp: string): void {
+    const row = requireRecord(payload, "reproduction payload")
+    const trainingRunId = optionalString(row, "training_run_id") ?? entityId
+    const reproduction = row.reproduction ?? null
+    this.db
+      .query("UPDATE training_runs SET reproduction_json = ?, updated_at = ? WHERE training_run_id = ?")
+      .run(JSON.stringify(reproduction), timestamp, trainingRunId)
+  }
+
+  private upsertProjectionStatus(lastEventId: string | null, lastEventTimestamp: string | null, appliedCount: number, rebuiltAt: string | null): void {
+    const updatedAt = this.timestamp()
+    this.db
+      .query(
+        "INSERT INTO research_projection (projection_name, last_event_id, last_event_timestamp, applied_count, rebuilt_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(projection_name) DO UPDATE SET last_event_id = excluded.last_event_id, last_event_timestamp = excluded.last_event_timestamp, applied_count = excluded.applied_count, rebuilt_at = COALESCE(excluded.rebuilt_at, research_projection.rebuilt_at), updated_at = excluded.updated_at",
+      )
+      .run(RESEARCH_PROJECTION_NAME, lastEventId, lastEventTimestamp, appliedCount, rebuiltAt, updatedAt)
+  }
+
+  private countProjectedEvents(): number {
+    const row = this.db.query("SELECT COUNT(*) AS count FROM research_events").get() as { count: number }
+    return row.count
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -2161,11 +2817,29 @@ export class ResearchDb {
 
   private recordEvent(eventType: string, entityType: string, entityId: string, payload: unknown): string {
     const eventId = randomUUID()
+    const createdAt = this.timestamp()
+    const redactedPayload = redactValue(payload)
     this.db
       .query(
         "INSERT INTO research_events (event_id, event_type, entity_type, entity_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(eventId, eventType, entityType, entityId, JSON.stringify(redactValue(payload)), this.timestamp())
+      .run(eventId, eventType, entityType, entityId, JSON.stringify(redactedPayload), createdAt)
+    this.upsertProjectionStatus(eventId, createdAt, this.countProjectedEvents(), null)
+    if (this.appendEvents) {
+      mkdirSync(dirname(this.eventsPath), { recursive: true })
+      appendFileSync(
+        this.eventsPath,
+        JSON.stringify({
+          event_id: eventId,
+          timestamp: createdAt,
+          kind: "research_event",
+          event_type: eventType,
+          entity_type: entityType,
+          entity_id: entityId,
+          payload: redactedPayload,
+        }) + "\n",
+      )
+    }
     return eventId
   }
 
@@ -2656,6 +3330,89 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   } catch {
     return null
   }
+}
+
+function readJsonlEvents(eventsPath: string): ParsedJsonlEvent[] {
+  if (!existsSync(eventsPath)) return []
+  const text = readFileSync(eventsPath, "utf8")
+  const events: ParsedJsonlEvent[] = []
+  const lines = text.split(/\r?\n/)
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]
+    if (!line) continue
+    try {
+      const parsed = JSON.parse(line) as unknown
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("event must be a JSON object")
+      events.push({ line: index + 1, event: parsed as ResearchJsonlEvent })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`corrupt JSONL line ${index + 1}: ${message}`)
+    }
+  }
+  return events
+}
+
+function normalizeResearchEvent(event: ResearchJsonlEvent): {
+  research: boolean
+  supported: boolean
+  event_id: string
+  timestamp: string
+  eventType: string
+  entityType: string
+  entityId: string
+  payload: unknown
+} {
+  const eventType = typeof event.event_type === "string" ? event.event_type : typeof event.type === "string" ? event.type : ""
+  const entityType = typeof event.entity_type === "string" ? event.entity_type : ""
+  const entityId = typeof event.entity_id === "string" ? event.entity_id : ""
+  const isResearchKind = event.kind === "research_event" || event.kind === "research_db_event" || entityType === "research_event"
+  const isResearchDomain = eventType !== "" && (SUPPORTED_RESEARCH_EVENT_TYPES.has(eventType) || entityType !== "")
+  const research = isResearchKind || (isResearchDomain && RESEARCH_ENTITY_TYPES.has(entityType as ResearchEntityType))
+  return {
+    research,
+    supported: eventType !== "" && SUPPORTED_RESEARCH_EVENT_TYPES.has(eventType) && RESEARCH_ENTITY_TYPES.has(entityType as ResearchEntityType),
+    event_id: typeof event.event_id === "string" ? event.event_id : "",
+    timestamp: typeof event.timestamp === "string" ? event.timestamp : "",
+    eventType,
+    entityType,
+    entityId,
+    payload: event.payload,
+  }
+}
+
+function requireRecord(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${field} must be an object`)
+  return value as Record<string, unknown>
+}
+
+function payloadRecord(payload: unknown, key: string): Record<string, unknown> {
+  const row = requireRecord(payload, `${key} payload`)
+  return requireRecord(row[key], `${key} payload`)
+}
+
+function payloadContainsEvidenceIds(payload: unknown): boolean {
+  const row = requireRecord(payload, "candidate promotion payload")
+  return Array.isArray(row.evidence_ids) && row.evidence_ids.some((id) => typeof id === "string" && id.trim() !== "")
+}
+
+function requiredString(row: Record<string, unknown>, key: string): string {
+  const value = row[key]
+  if (typeof value !== "string" || value.trim() === "") throw new Error(`${key} is required`)
+  return value
+}
+
+function optionalString(row: Record<string, unknown>, key: string): string | null {
+  const value = row[key]
+  if (value === undefined || value === null) return null
+  if (typeof value !== "string") throw new Error(`${key} must be a string`)
+  return value
+}
+
+function optionalNumber(row: Record<string, unknown>, key: string): number | null {
+  const value = row[key]
+  if (value === undefined || value === null) return null
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${key} must be a number`)
+  return value
 }
 
 function likeContains(value: string): string {
