@@ -1546,19 +1546,19 @@ export class ResearchDb {
     const logPath = cleanOptional(input.log_path)
     const timestamp = this.timestamp()
     return this.inTransaction(() => {
-      this.db
-        .query(
-          "UPDATE training_runs SET last_step = COALESCE(?, last_step), last_metric_json = COALESCE(?, last_metric_json), metrics_path = COALESCE(?, metrics_path), log_path = COALESCE(?, log_path), last_observed_at = ?, updated_at = ? WHERE training_run_id = ?",
-        )
-        .run(
-          step,
-          metricJson,
-          metricsPath ? redactString(metricsPath) : null,
-          logPath ? redactString(logPath) : null,
-          timestamp,
-          timestamp,
-          id,
-        )
+      if (metricJson === null) {
+        this.db
+          .query(
+            "UPDATE training_runs SET last_step = COALESCE(?, last_step), metrics_path = COALESCE(?, metrics_path), log_path = COALESCE(?, log_path), last_observed_at = ?, updated_at = ? WHERE training_run_id = ?",
+          )
+          .run(step, metricsPath ? redactString(metricsPath) : null, logPath ? redactString(logPath) : null, timestamp, timestamp, id)
+      } else {
+        this.db
+          .query(
+            "UPDATE training_runs SET last_step = COALESCE(?, last_step), last_metric_json = ?, metrics_path = COALESCE(?, metrics_path), log_path = COALESCE(?, log_path), last_observed_at = ?, updated_at = ? WHERE training_run_id = ?",
+          )
+          .run(step, metricJson, metricsPath ? redactString(metricsPath) : null, logPath ? redactString(logPath) : null, timestamp, timestamp, id)
+      }
       const run = this.getTrainingRun(id)
       if (!run) throw new Error(`training run not found: ${id}`)
       this.recordEvent("TrainingProgressObserved", "training_run", id, run)
