@@ -476,6 +476,37 @@ describe("ResearchDb", () => {
     }
   })
 
+  test("begin transaction failure clears pending JSONL transaction state", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = (db as unknown as { db: Database }).db
+    const originalExec = sqlite.exec.bind(sqlite)
+    let failBegin = true
+    sqlite.exec = ((sql: string) => {
+      if (sql === "BEGIN IMMEDIATE" && failBegin) {
+        failBegin = false
+        throw new Error("forced begin failure")
+      }
+      return originalExec(sql)
+    }) as typeof sqlite.exec
+
+    try {
+      expect(() => db.createTopic({ id: "topic_begin_failure", title: "Begin failure" })).toThrow("forced begin failure")
+
+      db.createTopic({ id: "topic_after_begin_failure", title: "After begin failure" })
+
+      expect(db.getTopic("topic_begin_failure")).toBeNull()
+      expect(db.getTopic("topic_after_begin_failure")).toMatchObject({
+        id: "topic_after_begin_failure",
+        title: "After begin failure",
+      })
+      expect(db.listResearchEvents({ limit: 10 }).map((event) => event.entity_id)).toEqual(["topic_after_begin_failure"])
+    } finally {
+      sqlite.exec = originalExec as typeof sqlite.exec
+      db.close()
+    }
+  })
+
   test("durable JSONL append retries short writes before commit", async () => {
     const realFs = await import("node:fs")
     const realWriteSync = realFs.writeSync.bind(realFs)

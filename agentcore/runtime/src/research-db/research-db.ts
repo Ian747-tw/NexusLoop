@@ -2997,16 +2997,16 @@ export class ResearchDb {
 
   private inTransaction<T>(work: () => T): T {
     if (this.pendingJsonlEvents !== null) throw new Error("nested ResearchDb transaction is not supported")
-    this.pendingJsonlEvents = []
     let committed = false
     let appended = false
     let hasResult = false
     let result: T
-    this.db.exec("BEGIN IMMEDIATE")
     try {
+      this.db.exec("BEGIN IMMEDIATE")
+      this.pendingJsonlEvents = []
       result = work()
       hasResult = true
-      const jsonlEvents = this.pendingJsonlEvents
+      const jsonlEvents = this.pendingJsonlEvents ?? []
       for (const event of jsonlEvents) this.appendJsonlEvent(event)
       appended = jsonlEvents.length > 0
       this.db.exec("COMMIT")
