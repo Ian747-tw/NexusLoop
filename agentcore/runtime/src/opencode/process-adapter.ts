@@ -18,6 +18,7 @@ export interface OpenCodeSpawnedProcess {
   stderr?: OpenCodeProcessEventSource | null
   on(event: "spawn", listener: () => void): unknown
   on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown
+  on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown
   on(event: "error", listener: (error: Error) => void): unknown
   kill?(signal?: NodeJS.Signals): unknown
   terminate?(signal?: NodeJS.Signals): unknown
@@ -210,21 +211,26 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
     child.on("exit", (code, signal) => {
       const message = exitMessage("OpenCode process exited", code, signal)
       this.terminalProcesses.set(child, message)
-      this.terminatingProcesses.delete(child)
       if (this.process === child) this.process = null
-      const exitWaiters = this.exitWaiters.get(child)
-      this.exitWaiters.delete(child)
-      for (const waiter of exitWaiters ?? []) waiter()
       if (this.shutdownRequested || this.expectedExitProcesses.has(child)) {
         if (this.shutdownRequested) this.phase = "shutdown"
         this.queue("process-exited", message)
-        if (this.shutdownRequested && this.terminatingProcesses.size === 0 && !this.process) this.closeStream()
         return
       }
       this.phase = "exited"
       this.lastError = exitMessage("OpenCode process exited unexpectedly", code, signal)
       this.queue("process-exited", this.lastError)
-      this.closeStream()
+    })
+    child.on("close", () => {
+      this.terminatingProcesses.delete(child)
+      const exitWaiters = this.exitWaiters.get(child)
+      this.exitWaiters.delete(child)
+      for (const waiter of exitWaiters ?? []) waiter()
+      if (this.shutdownRequested) {
+        if (this.terminatingProcesses.size === 0 && !this.process) this.closeStream()
+        return
+      }
+      if (!this.process && this.terminatingProcesses.size === 0) this.closeStream()
     })
   }
 
@@ -283,6 +289,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       child.on("spawn", () => finish(resolve))
       child.on("error", (error) => finish(() => reject(error)))
       child.on("exit", (code, signal) => finish(() => reject(new Error(exitMessage("OpenCode process exited before spawn", code, signal)))))
+      child.on("close", (code, signal) => finish(() => reject(new Error(exitMessage("OpenCode process closed before spawn", code, signal)))))
     })
   }
 }

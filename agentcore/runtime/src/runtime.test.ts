@@ -117,7 +117,7 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
   }
 }
 
-type ProcessEventName = "exit" | "error" | "spawn"
+type ProcessEventName = "close" | "exit" | "error" | "spawn"
 type ProcessListener = (...args: unknown[]) => void
 
 class FakeProcessEventSource implements OpenCodeProcessEventSource {
@@ -141,12 +141,15 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   stdinEnded = false
   killedWith: NodeJS.Signals | undefined
   private spawned = false
+  private readonly autoClose: boolean
   private readonly spawnListeners: Array<() => void> = []
+  private readonly closeListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
   private readonly exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
   private readonly errorListeners: Array<(error: Error) => void> = []
 
-  constructor(readonly pid = 4242, options: { spawned?: boolean } = {}) {
+  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean } = {}) {
     this.spawned = options.spawned ?? true
+    this.autoClose = options.autoClose ?? true
   }
 
   stdin = {
@@ -161,12 +164,14 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
 
   on(event: "spawn", listener: () => void): void
   on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void
+  on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void
   on(event: "error", listener: (error: Error) => void): void
   on(event: ProcessEventName, listener: (() => void) | ((code: number | null, signal: NodeJS.Signals | null) => void) | ((error: Error) => void)): void {
     if (event === "spawn") {
       if (this.spawned) queueMicrotask(listener as () => void)
       else this.spawnListeners.push(listener as () => void)
-    } else if (event === "exit") this.exitListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
+    } else if (event === "close") this.closeListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
+    else if (event === "exit") this.exitListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
     else this.errorListeners.push(listener as (error: Error) => void)
   }
 
@@ -181,6 +186,11 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
 
   emitExit(code: number | null, signal: NodeJS.Signals | null): void {
     for (const listener of this.exitListeners) listener(code, signal)
+    if (this.autoClose) this.emitClose(code, signal)
+  }
+
+  emitClose(code: number | null, signal: NodeJS.Signals | null): void {
+    for (const listener of this.closeListeners) listener(code, signal)
   }
 
   emitError(error: Error): void {
@@ -1484,6 +1494,28 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(stdout.type === "ExecutorLifecycle" ? stdout.message : "").toContain("[REDACTED]")
     expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("late-secret")
     expect(exit).toMatchObject({ type: "ExecutorLifecycle", phase: "process-exited" })
+    await server.shutdown()
+  })
+
+  test("RuntimeServer process event pump keeps stdio open between exit and close", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess(4242, { autoClose: false })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.emitExit(7, null)
+    process.stderr.emitData("trailing stderr token=stdio-secret")
+    process.emitClose(7, null)
+
+    const stderr = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-stderr" && event.message.includes("trailing stderr"),
+    )
+
+    expect(stderr.type === "ExecutorLifecycle" ? stderr.message : "").toContain("[REDACTED]")
+    expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("stdio-secret")
     await server.shutdown()
   })
 
