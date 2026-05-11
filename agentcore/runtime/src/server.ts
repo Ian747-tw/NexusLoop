@@ -315,7 +315,6 @@ export class RuntimeServer {
 
   async shutdown(reason = "shutdown"): Promise<void> {
     let firstError: unknown = null
-    this.executorStreamAbort = true
     if (this.started || this.runLock.isHeld()) {
       this.eventBus.emit({ type: "RuntimeShutdown", reason })
       try {
@@ -328,6 +327,7 @@ export class RuntimeServer {
           message: error instanceof Error ? error.message : String(error),
         })
       }
+      this.executorStreamAbort = true
       try {
         await this.eventStore.append({ kind: "runtime_shutdown", reason })
       } catch (error) {
@@ -344,6 +344,8 @@ export class RuntimeServer {
           this.started = false
         }
       }
+    } else {
+      this.executorStreamAbort = true
     }
     this.closeOwnedResearchDb(firstError)
     if (firstError) throw firstError

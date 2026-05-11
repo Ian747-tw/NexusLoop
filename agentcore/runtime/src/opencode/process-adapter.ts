@@ -213,7 +213,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       if (this.shutdownRequested || this.expectedExitProcesses.has(child)) {
         if (this.shutdownRequested) this.phase = "shutdown"
         this.queue("process-exited", message)
-        if (this.shutdownRequested) this.closeStream()
+        if (this.shutdownRequested && this.terminatingProcesses.size === 0 && !this.process) this.closeStream()
         return
       }
       this.phase = "exited"

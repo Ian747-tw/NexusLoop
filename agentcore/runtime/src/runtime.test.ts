@@ -1537,6 +1537,38 @@ describe("ProcessOpenCodeAdapter", () => {
     await server.shutdown()
   })
 
+  test("RuntimeServer keeps process event pump open until all shutdown children exit", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const processes: FakeSpawnedProcess[] = []
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: dir,
+      spawn: () => {
+        const process = new FakeSpawnedProcess(6300 + processes.length)
+        processes.push(process)
+        return process
+      },
+    })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    await server.startNewSession()
+    const shutdown = server.shutdown()
+    processes[1]?.emitExit(0, null)
+    processes[0]?.stdout.emitData("terminating child output token=old-child-secret")
+
+    const stdout = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-stdout" && event.message.includes("terminating child output"),
+    )
+
+    processes[0]?.emitExit(0, null)
+    await expect(shutdown).resolves.toBeUndefined()
+    expect(stdout.type === "ExecutorLifecycle" ? stdout.message : "").toContain("[REDACTED]")
+    expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("old-child-secret")
+  })
+
   test("failed replacement spawn preserves prior child handle for shutdown", async () => {
     const firstProcess = new FakeSpawnedProcess(6100)
     const failedReplacement = new FakeSpawnedProcess(6101, { spawned: false })
