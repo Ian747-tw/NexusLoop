@@ -77,14 +77,16 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   }
 
   async startSession(sessionSpec: SessionSpec): Promise<void> {
-    if (this.process) this.terminateProcess(this.process, "process-restart-requested", { clearCurrent: true })
+    const previousProcess = this.process
+    let child: OpenCodeSpawnedProcess | null = null
+    if (previousProcess) this.terminateProcess(previousProcess, "process-restart-requested", { clearCurrent: false })
     this.shutdownRequested = false
     this.lastError = null
     this.streamClosed = false
     const cwd = this.cwd ?? sessionSpec.projectDir
 
     try {
-      const child = this.spawn(this.command, this.args, { cwd, env: this.env })
+      child = this.spawn(this.command, this.args, { cwd, env: this.env })
       this.process = child
       this.attachProcessListeners(child)
       await this.waitForProcessSpawn(child, this.spawnTimeoutMs)
@@ -94,7 +96,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       this.queue("process-started", `OpenCode process started: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
     } catch (error) {
       this.phase = "failed"
-      this.process = null
+      if (this.process === child) this.process = previousProcess && !this.terminalProcesses.has(previousProcess) ? previousProcess : null
       this.lastError = redactText(`OpenCode process spawn failed: ${errorMessage(error)}`)
       this.queue("process-spawn-failed", this.lastError)
       this.closeStream()
@@ -136,15 +138,16 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   async shutdown(): Promise<void> {
     this.shutdownRequested = true
     this.phase = "shutdown"
-    const child = this.process
-    if (!child) {
+    const children = new Set(this.terminatingProcesses)
+    if (this.process) children.add(this.process)
+    if (children.size === 0) {
       this.closeStream()
       return
     }
-    const exited = this.waitForProcessExit(child, this.shutdownTimeoutMs)
-    this.terminateProcess(child, "process-shutdown-requested", { clearCurrent: false })
+    const exits = [...children].map((child) => this.waitForProcessExit(child, this.shutdownTimeoutMs))
+    for (const child of children) this.terminateProcess(child, "process-shutdown-requested", { clearCurrent: false })
     try {
-      await exited
+      await Promise.all(exits)
     } catch (error) {
       this.lastError = redactText(`OpenCode process shutdown failed: ${errorMessage(error)}`)
       this.queue("process-shutdown-failed", this.lastError)

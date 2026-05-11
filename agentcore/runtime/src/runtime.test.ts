@@ -1501,4 +1501,26 @@ describe("ProcessOpenCodeAdapter", () => {
     processes[1]?.emitExit(0, null)
     await shutdown
   })
+
+  test("failed replacement spawn preserves prior child handle for shutdown", async () => {
+    const firstProcess = new FakeSpawnedProcess(6100)
+    const failedReplacement = new FakeSpawnedProcess(6101, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => (firstProcess.stdinEnded ? failedReplacement : firstProcess),
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "first" })
+    const replacement = adapter.startSession({ projectDir: "/tmp/demo", objective: "second" })
+    failedReplacement.emitError(new Error("ENOENT token=replacement-secret"))
+
+    await expect(replacement).rejects.toThrow("OpenCode process spawn failed: ENOENT [REDACTED]")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "failed", pid: 6100, terminatingPids: [6100] })
+
+    const shutdown = adapter.shutdown()
+    firstProcess.emitExit(0, null)
+    await expect(shutdown).resolves.toBeUndefined()
+    expect(JSON.stringify(await adapter.getStatus())).not.toContain("replacement-secret")
+  })
 })
