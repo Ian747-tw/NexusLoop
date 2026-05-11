@@ -1896,8 +1896,9 @@ export class ResearchDb {
     this.inTransaction(() => {
       this.resetProjectionTables()
       this.upsertProjectionStatus(null, null, 0, this.timestamp())
+      let appliedCount = 0
       for (const item of parsed) {
-        this.applyParsedEvent(item)
+        if (this.applyParsedEvent(item, appliedCount + 1)) appliedCount += 1
       }
     })
   }
@@ -1956,7 +1957,7 @@ export class ResearchDb {
       }
     }
 
-    const researchEvents = parsed.filter((item) => normalizeResearchEvent(item.event).research)
+    const researchEvents = uniqueResearchEvents(parsed)
     const status = this.getProjectionStatus()
     if (!status.updated_at) return { ok: false, stale: true, reason: "missing projection metadata", pending_count: researchEvents.length }
     if (!status.last_event_id) {
@@ -2268,9 +2269,9 @@ export class ResearchDb {
     this.db.query("DELETE FROM research_projection WHERE projection_name = ?").run(RESEARCH_PROJECTION_NAME)
   }
 
-  private applyParsedEvent(item: ParsedJsonlEvent): void {
+  private applyParsedEvent(item: ParsedJsonlEvent, appliedCount?: number): boolean {
     const normalized = normalizeResearchEvent(item.event)
-    if (!normalized.research) return
+    if (!normalized.research) return false
     if (!normalized.supported) throw new Error(`unsupported research event at line ${item.line}: ${normalized.eventType}`)
     const eventId = cleanRequired(normalized.event_id, "event_id")
     const eventType = cleanRequired(normalized.eventType, "event_type")
@@ -2281,15 +2282,15 @@ export class ResearchDb {
     const payload = redactValue(normalized.payload ?? null)
     const exists = this.db.query("SELECT 1 FROM research_events WHERE event_id = ?").get(eventId)
     if (exists) {
-      this.upsertProjectionStatus(eventId, timestamp, this.countProjectedEvents(), null)
-      return
+      return false
     }
 
     this.applyResearchPayload(eventType, entityType, entityId, payload, timestamp, eventId)
     this.db
       .query("INSERT INTO research_events (event_id, event_type, entity_type, entity_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
       .run(eventId, eventType, entityType, entityId, JSON.stringify(payload), timestamp)
-    this.upsertProjectionStatus(eventId, timestamp, this.countProjectedEvents(), null)
+    this.upsertProjectionStatus(eventId, timestamp, appliedCount ?? this.countProjectedEvents(), null)
+    return true
   }
 
   private applyResearchPayload(
@@ -3466,6 +3467,19 @@ function normalizeResearchEvent(event: ResearchJsonlEvent): {
     entityId,
     payload: event.payload,
   }
+}
+
+function uniqueResearchEvents(parsed: ParsedJsonlEvent[]): ParsedJsonlEvent[] {
+  const seen = new Set<string>()
+  const unique: ParsedJsonlEvent[] = []
+  for (const item of parsed) {
+    const normalized = normalizeResearchEvent(item.event)
+    if (!normalized.research) continue
+    if (normalized.event_id && seen.has(normalized.event_id)) continue
+    if (normalized.event_id) seen.add(normalized.event_id)
+    unique.push(item)
+  }
+  return unique
 }
 
 function requireRecord(value: unknown, field: string): Record<string, unknown> {

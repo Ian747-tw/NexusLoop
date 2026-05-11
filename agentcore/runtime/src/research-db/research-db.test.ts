@@ -2607,6 +2607,34 @@ describe("ResearchDb", () => {
     rebuilt.close()
   })
 
+  test("duplicate replayed event IDs do not move projection cursor or report false stale", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic 1" })
+    db.createTopic({ id: "topic_2", title: "Topic 2" })
+    db.close()
+
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const lines = (await readFile(eventsPath, "utf8")).trim().split(/\r?\n/)
+    await writeFile(eventsPath, `${lines.join("\n")}\n${lines[0]}\n`, "utf8")
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+    const status = rebuilt.getProjectionStatus()
+
+    expect(rebuilt.listTopics().map((topic) => topic.id)).toEqual(["topic_1", "topic_2"])
+    expect(rebuilt.listResearchEvents({ limit: 10 }).length).toBe(2)
+    expect(status.applied_count).toBe(2)
+    expect(status.last_event_id).toBe((JSON.parse(lines[1]!) as { event_id: string }).event_id)
+    expect(rebuilt.checkProjectionIntegrity()).toEqual({
+      ok: true,
+      stale: false,
+      last_event_id: status.last_event_id ?? undefined,
+      pending_count: 0,
+    })
+    rebuilt.close()
+  })
+
   test("integrity reports missing event log stale for non-empty projection without metadata", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)
