@@ -1893,6 +1893,7 @@ export class ResearchDb {
   }
 
   rebuildFromEvents(eventsPath = this.eventsPath): void {
+    if (!existsSync(eventsPath)) throw new Error(`event log missing: ${eventsPath}`)
     const parsed = readJsonlEvents(eventsPath)
     this.inTransaction(() => {
       this.resetProjectionTables()

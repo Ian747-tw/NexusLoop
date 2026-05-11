@@ -2398,6 +2398,26 @@ describe("ResearchDb", () => {
     rebuilt.close()
   })
 
+  test("rebuild fails clearly when event log is missing and preserves existing projection", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.close()
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    await rm(eventsPath, { force: true })
+
+    expect(() => ResearchDb.rebuildFromEvents(dir, eventsPath)).toThrow(`event log missing: ${eventsPath}`)
+
+    const reopened = ResearchDb.open(dir, { appendEvents: false })
+    expect(reopened.listTopics().map((topic) => topic.id)).toEqual(["topic_1"])
+    expect(reopened.checkProjectionIntegrity(eventsPath)).toMatchObject({
+      ok: false,
+      stale: true,
+      reason: "event log missing",
+    })
+    reopened.close()
+  })
+
   test("delete research db and rebuild topic source note artifact projection from events jsonl", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)
