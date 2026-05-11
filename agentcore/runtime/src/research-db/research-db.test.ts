@@ -509,6 +509,34 @@ describe("ResearchDb", () => {
     }
   })
 
+  test("commit failure without JSONL appends still throws and rolls back", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, {
+      appendEvents: false,
+      now: () => new Date("2026-05-10T12:00:00Z"),
+      idFactory: () => "id_1",
+    })
+    const sqlite = (db as unknown as { db: Database }).db
+    const originalExec = sqlite.exec.bind(sqlite)
+    let failCommit = true
+    sqlite.exec = ((sql: string) => {
+      if (sql === "COMMIT" && failCommit) {
+        failCommit = false
+        throw new Error("forced commit failure")
+      }
+      return originalExec(sql)
+    }) as typeof sqlite.exec
+
+    try {
+      expect(() => db.createTopic({ id: "topic_no_jsonl", title: "No JSONL" })).toThrow("forced commit failure")
+      expect(db.getTopic("topic_no_jsonl")).toBeNull()
+      expect(existsSync(join(dir, ".nxl", "events.jsonl"))).toBe(false)
+    } finally {
+      sqlite.exec = originalExec as typeof sqlite.exec
+      db.close()
+    }
+  })
+
   test("transaction wrapper preserves the original sqlite failure when rollback already happened", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)

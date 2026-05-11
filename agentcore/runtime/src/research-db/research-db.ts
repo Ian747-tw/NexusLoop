@@ -2961,7 +2961,7 @@ export class ResearchDb {
       hasResult = true
       const jsonlEvents = this.pendingJsonlEvents
       for (const event of jsonlEvents) this.appendJsonlEvent(event)
-      appended = true
+      appended = jsonlEvents.length > 0
       this.db.exec("COMMIT")
       committed = true
       this.pendingJsonlEvents = null
