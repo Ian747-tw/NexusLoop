@@ -2547,6 +2547,53 @@ describe("ResearchDb", () => {
     rebuilt.close()
   })
 
+  test("static rebuild helper keeps JSONL mirroring enabled for future writes", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir, undefined, {
+      now: () => new Date("2026-05-10T13:00:00Z"),
+      idFactory: () => "topic_2",
+    })
+    const before = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).trim().split(/\r?\n/).length
+    rebuilt.createTopic({ title: "New topic" })
+    const after = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).trim().split(/\r?\n/)
+
+    expect(after.length).toBe(before + 1)
+    expect(JSON.parse(after.at(-1)!) as Record<string, unknown>).toMatchObject({
+      kind: "research_event",
+      event_type: "topic_created",
+      entity_id: "topic_2",
+    })
+    rebuilt.close()
+  })
+
+  test("integrity reports missing event log stale for non-empty projection without metadata", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.close()
+    await rm(join(dir, ".nxl", "events.jsonl"), { force: true })
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.query("DELETE FROM research_projection").run()
+    } finally {
+      sqlite.close()
+    }
+
+    const reopened = ResearchDb.open(dir, { appendEvents: false })
+    expect(reopened.checkProjectionIntegrity()).toMatchObject({
+      ok: false,
+      stale: true,
+      reason: "event log missing",
+      pending_count: 2,
+    })
+    reopened.close()
+  })
+
   test("integrity check reports stale missing db corrupt jsonl ignored runtime events and unsupported research events", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)

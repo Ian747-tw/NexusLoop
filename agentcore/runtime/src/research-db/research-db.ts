@@ -692,7 +692,7 @@ export class ResearchDb {
     const db = ResearchDb.open(projectDir, {
       ...options,
       eventsPath: eventsPath ?? options.eventsPath,
-      appendEvents: false,
+      appendEvents: true,
     })
     try {
       db.rebuildFromEvents(eventsPath ?? options.eventsPath ?? join(projectDir, ".nxl", "events.jsonl"))
@@ -1928,9 +1928,10 @@ export class ResearchDb {
   checkProjectionIntegrity(eventsPath = this.eventsPath): ResearchProjectionIntegrity {
     if (!existsSync(eventsPath)) {
       const status = this.getProjectionStatus()
-      return status.applied_count === 0
+      const projectedRows = this.countProjectedRows()
+      return status.applied_count === 0 && projectedRows === 0
         ? { ok: true, stale: false }
-        : { ok: false, stale: true, reason: "event log missing", last_event_id: status.last_event_id ?? undefined }
+        : { ok: false, stale: true, reason: "event log missing", last_event_id: status.last_event_id ?? undefined, pending_count: projectedRows }
     }
 
     let parsed: ParsedJsonlEvent[]
@@ -2711,6 +2712,30 @@ export class ResearchDb {
   private countProjectedEvents(): number {
     const row = this.db.query("SELECT COUNT(*) AS count FROM research_events").get() as { count: number }
     return row.count
+  }
+
+  private countProjectedRows(): number {
+    const tables = [
+      "topics",
+      "sources",
+      "notes",
+      "artifacts",
+      "research_results",
+      "citations",
+      "result_citations",
+      "result_artifacts",
+      "hypotheses",
+      "candidates",
+      "candidate_evidence",
+      "trials",
+      "training_runs",
+      "training_checkpoints",
+      "research_events",
+    ]
+    return tables.reduce((total, table) => {
+      const row = this.db.query(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }
+      return total + row.count
+    }, 0)
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
