@@ -2894,6 +2894,19 @@ export class ResearchDb {
       if (!value || typeof value !== "object" || Array.isArray(value)) return value
       return { ...(value as Record<string, unknown>), input_hash: inputHash }
     }
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      const object = payload as Record<string, unknown>
+      if (typeof object.result === "object" && object.result !== null && !Array.isArray(object.result)) {
+        return { ...object, result: appendHash(object.result) }
+      }
+      if (typeof object.candidate === "object" && object.candidate !== null && !Array.isArray(object.candidate)) {
+        return { ...object, candidate: appendHash(object.candidate) }
+      }
+      if (typeof object.trial === "object" && object.trial !== null && !Array.isArray(object.trial)) return { ...object, trial: appendHash(object.trial) }
+      if (typeof object.training_run === "object" && object.training_run !== null && !Array.isArray(object.training_run)) {
+        return { ...object, training_run: appendHash(object.training_run) }
+      }
+    }
     if (
       entityType === "topic" ||
       entityType === "source" ||
@@ -2907,16 +2920,6 @@ export class ResearchDb {
       entityType === "training_run"
     ) {
       return appendHash(payload)
-    }
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload
-    const object = payload as Record<string, unknown>
-    if (typeof object.result === "object" && object.result !== null && !Array.isArray(object.result)) return { ...object, result: appendHash(object.result) }
-    if (typeof object.candidate === "object" && object.candidate !== null && !Array.isArray(object.candidate)) {
-      return { ...object, candidate: appendHash(object.candidate) }
-    }
-    if (typeof object.trial === "object" && object.trial !== null && !Array.isArray(object.trial)) return { ...object, trial: appendHash(object.trial) }
-    if (typeof object.training_run === "object" && object.training_run !== null && !Array.isArray(object.training_run)) {
-      return { ...object, training_run: appendHash(object.training_run) }
     }
     return payload
   }

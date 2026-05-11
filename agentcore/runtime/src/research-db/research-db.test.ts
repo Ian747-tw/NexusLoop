@@ -2547,6 +2547,42 @@ describe("ResearchDb", () => {
     rebuilt.close()
   })
 
+  test("rejected explicit result retry remains idempotent after rebuild", async () => {
+    const dir = await tempProject()
+    const input = {
+      result_id: "result_rejected_retry",
+      result_type: "probe_result" as const,
+      title: "Rejected retry result",
+      summary: "Original summary",
+      confidence: "medium" as const,
+      created_by: "executor" as const,
+    }
+    const db = openSequencedTestDb(dir)
+    const proposed = db.proposeResearchResult(input)
+    const rejected = db.rejectResearchResult(input.result_id, "not enough signal")
+    const publicRejectedEvent = db.listResearchEvents({ event_type: "ResearchResultRejected" })[0]
+    expect(JSON.stringify(publicRejectedEvent?.payload)).not.toContain("input_hash")
+    db.close()
+
+    const rawEvents = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8"))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { event_type?: string; payload?: { input_hash?: string; result?: { input_hash?: string } } })
+    const rejectedEvent = rawEvents.find((event) => event.event_type === "ResearchResultRejected")
+    expect(rejectedEvent?.payload?.input_hash).toBeUndefined()
+    expect(typeof rejectedEvent?.payload?.result?.input_hash).toBe("string")
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+    const retry = rebuilt.proposeResearchResult(input)
+
+    expect(retry).toEqual(rejected)
+    expect(retry.result_id).toBe(proposed.result_id)
+    expect(rebuilt.searchResearchResults({ limit: 10 }).map((row) => row.result_id)).toEqual([input.result_id])
+    expect(() => rebuilt.proposeResearchResult({ ...input, title: "Different title" })).toThrow("research result id collision")
+    rebuilt.close()
+  })
+
   test("static rebuild helper keeps JSONL mirroring enabled for future writes", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)
