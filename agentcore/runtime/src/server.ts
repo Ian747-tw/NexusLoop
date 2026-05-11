@@ -1,7 +1,7 @@
 import { join } from "node:path"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
-import type { RuntimeMode, RuntimeStatus } from "./events/event-types"
+import type { RuntimeEvent, RuntimeMode, RuntimeResearchProjectionHealth, RuntimeResearchProjectionMode, RuntimeStatus } from "./events/event-types"
 import { modeRequiresApprovedSpec } from "./project/project-status"
 import { locateProjectRoot, projectName } from "./project/project-root"
 import { RunLock } from "./project/run-lock"
@@ -14,6 +14,8 @@ import {
   ResearchDb,
   type ListResearchEventsOptions,
   type Note,
+  type ResearchProjectionIntegrity,
+  type ResearchProjectionStatus,
   type ResearchEvent,
   type SearchOptions,
   type Topic,
@@ -24,8 +26,9 @@ export interface RuntimeServerOptions {
   projectDir?: string
   mode?: RuntimeMode
   adapter?: OpenCodeRuntimeAdapter
-  researchDb?: RuntimeResearchDbReader
-  researchDbFactory?: (projectDir: string) => RuntimeResearchDbReader
+  researchProjectionMode?: RuntimeResearchProjectionMode
+  researchDb?: RuntimeResearchDbProjection
+  researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
 }
 
 export interface RuntimeResearchDbReader {
@@ -37,6 +40,12 @@ export interface RuntimeResearchDbReader {
   searchNotes(topicId: string, query: string, options?: SearchOptions): Note[]
 }
 
+export interface RuntimeResearchDbProjection extends RuntimeResearchDbReader {
+  checkProjectionIntegrity(eventsPath?: string): ResearchProjectionIntegrity
+  rebuildFromEvents(eventsPath?: string): void
+  getProjectionStatus(): ResearchProjectionStatus
+}
+
 export class RuntimeServer {
   readonly projectDir: string
   readonly mode: RuntimeMode
@@ -46,9 +55,11 @@ export class RuntimeServer {
   readonly policyService: PolicyService
   readonly adapter: OpenCodeRuntimeAdapter
   private readonly runLock: RunLock
-  private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbReader
+  private readonly researchProjectionMode: RuntimeResearchProjectionMode
+  private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly ownsResearchDb: boolean
-  private researchDb: RuntimeResearchDbReader | null = null
+  private researchDb: RuntimeResearchDbProjection | null = null
+  private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
   private executorStreamTask: Promise<void> | null = null
@@ -63,9 +74,17 @@ export class RuntimeServer {
     this.policyService = new PolicyService(this.projectDir)
     this.runLock = new RunLock(join(this.projectDir, ".nxl", "run.lock"))
     this.adapter = options.adapter ?? new FakeOpenCodeAdapter()
+    this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
     this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir))
+    this.researchProjectionHealth = {
+      mode: this.researchProjectionMode,
+      ok: this.researchProjectionMode === "disabled",
+      stale: false,
+      reason: this.researchProjectionMode === "disabled" ? "disabled" : "not checked",
+      pending_count: 0,
+    }
   }
 
   async start(): Promise<void> {
@@ -77,6 +96,7 @@ export class RuntimeServer {
     }
     await this.runLock.acquire()
     try {
+      this.ensureResearchProjectionUsable("startup")
       this.started = true
       if (this.mode === "active") {
         await this.adapter.startSession({
@@ -155,6 +175,15 @@ export class RuntimeServer {
         message: error instanceof Error ? error.message : String(error),
       })
     }
+    try {
+      this.closeOwnedResearchDb(null)
+    } catch (error) {
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-research-db-cleanup-error",
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   async command(name: string, payload: Record<string, unknown> = {}): Promise<unknown> {
@@ -175,6 +204,10 @@ export class RuntimeServer {
         return this.listResearchEvents(readResearchEventsOptions(payload.options))
       case "research.search_notes":
         return this.searchResearchNotes(requiredString(payload.topicId, "topicId"), requiredString(payload.query, "query"), readSearchOptions(payload.options))
+      case "research.projection_status":
+        return this.researchProjectionStatus()
+      case "research.rebuild_projection":
+        return this.rebuildResearchProjection(readRebuildProjectionOptions(payload))
       case "runtime.submit_user_message":
         return this.submitUserMessage(String(payload.message ?? ""))
       case "runtime.shutdown":
@@ -185,6 +218,7 @@ export class RuntimeServer {
   }
 
   async status(): Promise<RuntimeStatus> {
+    this.checkResearchProjectionForStatus()
     const policy = await this.policyService.metadata()
     return redactValue({
       projectDir: this.projectDir,
@@ -195,6 +229,7 @@ export class RuntimeServer {
       lockHeld: this.runLock.isHeld(),
       fakeOpenCode: String((await this.adapter.getStatus()).message ?? ""),
       executorStreamError: this.executorStreamError ?? undefined,
+      researchProjection: this.researchProjectionHealth,
       policy,
     })
   }
@@ -222,21 +257,48 @@ export class RuntimeServer {
   }
 
   listResearchTopics(query?: string, options?: SearchOptions): Topic[] {
+    this.ensureResearchProjectionUsable("read")
     const db = this.getResearchDb()
     const topics = query === undefined ? db.listTopics() : db.searchTopics(query, options)
     return redactValue(topics)
   }
 
   getResearchTopicSnapshot(topicId: string): TopicSnapshot | null {
+    this.ensureResearchProjectionUsable("read")
     return redactValue(this.getResearchDb().getTopicSnapshot(topicId))
   }
 
   listResearchEvents(options?: ListResearchEventsOptions): ResearchEvent[] {
+    this.ensureResearchProjectionUsable("read")
     return redactValue(this.getResearchDb().listResearchEvents(options))
   }
 
   searchResearchNotes(topicId: string, query: string, options?: SearchOptions): Note[] {
+    this.ensureResearchProjectionUsable("read")
     return redactValue(this.getResearchDb().searchNotes(topicId, query, options))
+  }
+
+  researchProjectionStatus(): RuntimeResearchProjectionHealth {
+    this.checkResearchProjectionForStatus()
+    return redactValue(this.researchProjectionHealth)
+  }
+
+  async rebuildResearchProjection(options: { force: boolean } = { force: false }): Promise<RuntimeResearchProjectionHealth> {
+    if (this.researchProjectionMode === "disabled") {
+      this.researchProjectionHealth = this.disabledProjectionHealth()
+      return redactValue(this.researchProjectionHealth)
+    }
+    if (!options.force) {
+      const integrity = this.checkResearchProjectionForStatus()
+      if (integrity.ok && !integrity.stale) return redactValue(this.researchProjectionHealth)
+      if (!integrity.stale) throw new Error(`research projection corrupt: ${integrity.reason ?? "unknown"}`)
+    }
+    await this.withProjectionWriteLock(() => this.rebuildProjection("command"))
+    const integrity = this.checkResearchProjectionForStatus({ emit: true })
+    if (!integrity.ok || integrity.stale) {
+      throw new Error(`research projection rebuild did not produce a usable projection: ${integrity.reason ?? "unknown"}`)
+    }
+    return redactValue(this.researchProjectionHealth)
   }
 
   async submitUserMessage(message: string): Promise<{ accepted: true }> {
@@ -287,9 +349,130 @@ export class RuntimeServer {
     if (firstError) throw firstError
   }
 
-  private getResearchDb(): RuntimeResearchDbReader {
-    if (!this.researchDb) this.researchDb = this.researchDbFactory(this.projectDir)
-    return this.researchDb
+  private getResearchDb(): RuntimeResearchDbProjection {
+    if (!this.researchDb) this.researchDb = assertProjectionDb(this.researchDbFactory(this.projectDir))
+    return assertProjectionDb(this.researchDb)
+  }
+
+  private ensureResearchProjectionUsable(operation: "startup" | "read"): void {
+    if (this.researchProjectionMode === "disabled") {
+      this.researchProjectionHealth = this.disabledProjectionHealth()
+      return
+    }
+
+    const integrity = this.checkResearchProjectionForStatus({ emit: true })
+    if (integrity.ok && !integrity.stale) return
+    if (integrity.stale && this.researchProjectionMode === "auto_rebuild") {
+      this.requireProjectionWriteLock(`research projection auto-rebuild during ${operation}`)
+      this.rebuildProjection(operation)
+      const rebuilt = this.checkResearchProjectionForStatus({ emit: true })
+      if (rebuilt.ok && !rebuilt.stale) return
+      throw new Error(`research projection rebuild did not produce a usable projection: ${rebuilt.reason ?? "unknown"}`)
+    }
+
+    const reason = integrity.reason ?? (integrity.stale ? "stale" : "unknown")
+    if (integrity.stale) throw new Error(`research projection stale: ${reason}`)
+    throw new Error(`research projection corrupt: ${reason}`)
+  }
+
+  private checkResearchProjectionForStatus(options: { emit?: boolean } = {}): ResearchProjectionIntegrity {
+    if (this.researchProjectionMode === "disabled") {
+      this.researchProjectionHealth = this.disabledProjectionHealth()
+      return { ok: true, stale: false }
+    }
+
+    let integrity: ResearchProjectionIntegrity
+    try {
+      integrity = this.getResearchDb().checkProjectionIntegrity(this.eventStore.eventsPath)
+    } catch (error) {
+      integrity = { ok: false, stale: false, reason: error instanceof Error ? error.message : String(error) }
+    }
+    this.updateResearchProjectionHealth(integrity)
+    if (options.emit) {
+      this.emitResearchProjectionEvent(integrity.ok ? "ResearchProjectionChecked" : integrity.stale ? "ResearchProjectionStale" : "ResearchProjectionCorrupt")
+    }
+    return integrity
+  }
+
+  private rebuildProjection(operation: "startup" | "read" | "command"): void {
+    this.emitResearchProjectionEvent("ResearchProjectionRebuildStarted", `research projection rebuild started during ${operation}`)
+    try {
+      this.getResearchDb().rebuildFromEvents(this.eventStore.eventsPath)
+      const status = this.getResearchDb().getProjectionStatus()
+      this.researchProjectionHealth = {
+        ...this.researchProjectionHealth,
+        ok: true,
+        stale: false,
+        reason: undefined,
+        last_event_id: status.last_event_id ?? undefined,
+        pending_count: 0,
+        rebuilt_at: status.rebuilt_at ?? undefined,
+        checked_at: new Date().toISOString(),
+      }
+      this.emitResearchProjectionEvent("ResearchProjectionRebuilt")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.researchProjectionHealth = {
+        ...this.researchProjectionHealth,
+        ok: false,
+        stale: false,
+        reason: message,
+        checked_at: new Date().toISOString(),
+      }
+      this.emitResearchProjectionEvent("ResearchProjectionRebuildFailed")
+      throw new Error(`research projection rebuild failed: ${message}`)
+    }
+  }
+
+  private requireProjectionWriteLock(operation: string): void {
+    if (!this.runLock.isHeld()) throw new Error(`${operation} requires runtime start with run lock held`)
+  }
+
+  private async withProjectionWriteLock<T>(operation: () => T): Promise<T> {
+    if (this.runLock.isHeld()) return operation()
+    await this.runLock.acquire()
+    try {
+      return operation()
+    } finally {
+      await this.runLock.release()
+    }
+  }
+
+  private updateResearchProjectionHealth(integrity: ResearchProjectionIntegrity): void {
+    let status: ResearchProjectionStatus | null = null
+    try {
+      status = this.getResearchDb().getProjectionStatus()
+    } catch {
+      status = null
+    }
+    this.researchProjectionHealth = {
+      mode: this.researchProjectionMode,
+      ok: integrity.ok,
+      stale: integrity.stale,
+      reason: integrity.reason,
+      last_event_id: integrity.last_event_id ?? status?.last_event_id ?? undefined,
+      pending_count: integrity.pending_count ?? 0,
+      rebuilt_at: status?.rebuilt_at ?? undefined,
+      checked_at: new Date().toISOString(),
+    }
+  }
+
+  private emitResearchProjectionEvent(type: ResearchProjectionRuntimeEventType, reason?: string): void {
+    this.eventBus.emit({
+      type,
+      mode: this.researchProjectionHealth.mode,
+      ok: this.researchProjectionHealth.ok,
+      stale: this.researchProjectionHealth.stale,
+      reason: reason ?? this.researchProjectionHealth.reason,
+      last_event_id: this.researchProjectionHealth.last_event_id,
+      pending_count: this.researchProjectionHealth.pending_count,
+      rebuilt_at: this.researchProjectionHealth.rebuilt_at,
+      checked_at: this.researchProjectionHealth.checked_at ?? new Date().toISOString(),
+    })
+  }
+
+  private disabledProjectionHealth(): RuntimeResearchProjectionHealth {
+    return { mode: "disabled", ok: true, stale: false, reason: "disabled", pending_count: 0, checked_at: new Date().toISOString() }
   }
 
   private closeOwnedResearchDb(firstError: unknown): void {
@@ -306,6 +489,16 @@ export class RuntimeServer {
       })
     }
   }
+}
+
+type ResearchProjectionRuntimeEventType = Extract<RuntimeEvent, { type: `ResearchProjection${string}` }>["type"]
+
+function assertProjectionDb(db: RuntimeResearchDbProjection): RuntimeResearchDbProjection {
+  const candidate = db as Partial<RuntimeResearchDbProjection>
+  for (const method of ["checkProjectionIntegrity", "rebuildFromEvents", "getProjectionStatus"] as const) {
+    if (typeof candidate[method] !== "function") throw new Error(`researchDb must support Branch 4D projection API: missing ${method}`)
+  }
+  return db
 }
 
 function requiredString(value: unknown, field: string): string {
@@ -329,6 +522,13 @@ function readSearchOptions(value: unknown): SearchOptions | undefined {
   if (value === undefined) return undefined
   if (!isRecord(value)) throw new Error("options must be an object")
   return value as SearchOptions
+}
+
+function readRebuildProjectionOptions(value: unknown): { force: boolean } {
+  if (value === undefined) return { force: false }
+  if (!isRecord(value)) throw new Error("options must be an object")
+  if (value.force !== undefined && typeof value.force !== "boolean") throw new Error("force must be a boolean")
+  return { force: value.force ?? false }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

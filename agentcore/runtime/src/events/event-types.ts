@@ -20,7 +20,39 @@ export type RuntimeEvent =
       recordsCount?: number
     }
   | { type: "ExecutorLifecycle"; event_id?: string; timestamp?: string; phase: string; message: string }
+  | {
+      type:
+        | "ResearchProjectionChecked"
+        | "ResearchProjectionStale"
+        | "ResearchProjectionRebuildStarted"
+        | "ResearchProjectionRebuilt"
+        | "ResearchProjectionRebuildFailed"
+        | "ResearchProjectionCorrupt"
+      event_id?: string
+      timestamp?: string
+      mode: RuntimeResearchProjectionMode
+      ok: boolean
+      stale: boolean
+      reason?: string
+      last_event_id?: string
+      pending_count?: number
+      rebuilt_at?: string
+      checked_at: string
+    }
   | { type: "RuntimeShutdown"; event_id?: string; timestamp?: string; reason: string }
+
+export type RuntimeResearchProjectionMode = "auto_rebuild" | "check_only" | "disabled"
+
+export interface RuntimeResearchProjectionHealth {
+  mode: RuntimeResearchProjectionMode
+  ok: boolean
+  stale: boolean
+  reason?: string
+  last_event_id?: string
+  pending_count: number
+  rebuilt_at?: string
+  checked_at?: string
+}
 
 export interface JsonlEvent {
   event_id?: string
@@ -39,5 +71,6 @@ export interface RuntimeStatus {
   lockHeld: boolean
   fakeOpenCode: string
   executorStreamError?: string
+  researchProjection: RuntimeResearchProjectionHealth
   policy: Record<string, unknown>
 }
