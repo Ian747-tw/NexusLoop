@@ -645,6 +645,19 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("runtime.status projection check is read-only for event bus history", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    seedResearchDb(dir)
+    const server = new RuntimeServer({ projectDir: dir, mode: "status" })
+
+    await server.status()
+    await server.status()
+
+    expect(server.eventBus.snapshot().filter((event) => event.type.startsWith("ResearchProjection"))).toHaveLength(0)
+    await server.shutdown()
+  })
+
   test("active startup checks projection after approved spec load and before adapter start", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -671,7 +684,7 @@ describe("RuntimeServer core", () => {
     expect(server.listResearchEvents({ entity_type: "note" }).map((event) => event.payload)).toMatchObject([{ content: "Projected research note" }])
     expect(server.searchResearchNotes("topic_1", "Projected")).toHaveLength(1)
     expect(server.eventBus.snapshot().map((event) => event.type)).toEqual(
-      expect.arrayContaining(["ResearchProjectionStale", "ResearchProjectionRebuildStarted", "ResearchProjectionRebuilt"]),
+      expect.arrayContaining(["ResearchProjectionRebuildStarted", "ResearchProjectionRebuilt"]),
     )
     await server.shutdown()
   })
@@ -775,6 +788,7 @@ describe("RuntimeServer core", () => {
 
     expect(() => server.listResearchTopics()).toThrow("research projection stale: missing projection metadata")
     expect(server.researchProjectionStatus()).toMatchObject({ mode: "check_only", ok: false, stale: true })
+    expect(server.eventBus.snapshot().map((event) => event.type)).toContain("ResearchProjectionStale")
     await server.shutdown()
   })
 })

@@ -294,7 +294,7 @@ export class RuntimeServer {
       if (!integrity.stale) throw new Error(`research projection corrupt: ${integrity.reason ?? "unknown"}`)
     }
     this.rebuildProjection("command")
-    const integrity = this.checkResearchProjectionForStatus()
+    const integrity = this.checkResearchProjectionForStatus({ emit: true })
     if (!integrity.ok || integrity.stale) {
       throw new Error(`research projection rebuild did not produce a usable projection: ${integrity.reason ?? "unknown"}`)
     }
@@ -360,11 +360,11 @@ export class RuntimeServer {
       return
     }
 
-    const integrity = this.checkResearchProjectionForStatus()
+    const integrity = this.checkResearchProjectionForStatus({ emit: true })
     if (integrity.ok && !integrity.stale) return
     if (integrity.stale && this.researchProjectionMode === "auto_rebuild") {
       this.rebuildProjection(operation)
-      const rebuilt = this.checkResearchProjectionForStatus()
+      const rebuilt = this.checkResearchProjectionForStatus({ emit: true })
       if (rebuilt.ok && !rebuilt.stale) return
       throw new Error(`research projection rebuild did not produce a usable projection: ${rebuilt.reason ?? "unknown"}`)
     }
@@ -374,7 +374,7 @@ export class RuntimeServer {
     throw new Error(`research projection corrupt: ${reason}`)
   }
 
-  private checkResearchProjectionForStatus(): ResearchProjectionIntegrity {
+  private checkResearchProjectionForStatus(options: { emit?: boolean } = {}): ResearchProjectionIntegrity {
     if (this.researchProjectionMode === "disabled") {
       this.researchProjectionHealth = this.disabledProjectionHealth()
       return { ok: true, stale: false }
@@ -387,7 +387,9 @@ export class RuntimeServer {
       integrity = { ok: false, stale: false, reason: error instanceof Error ? error.message : String(error) }
     }
     this.updateResearchProjectionHealth(integrity)
-    this.emitResearchProjectionEvent(integrity.ok ? "ResearchProjectionChecked" : integrity.stale ? "ResearchProjectionStale" : "ResearchProjectionCorrupt")
+    if (options.emit) {
+      this.emitResearchProjectionEvent(integrity.ok ? "ResearchProjectionChecked" : integrity.stale ? "ResearchProjectionStale" : "ResearchProjectionCorrupt")
+    }
     return integrity
   }
 
