@@ -1541,7 +1541,7 @@ export class ResearchDb {
     if (!existing) throw new Error(`training run not found: ${id}`)
     this.assertTrainingRunObservable(existing)
     const step = cleanOptionalStep(input.step)
-    const metric = input.metric ?? null
+    const metricJson = input.metric === undefined ? null : JSON.stringify(redactValue(input.metric))
     const metricsPath = cleanOptional(input.metrics_path)
     const logPath = cleanOptional(input.log_path)
     const timestamp = this.timestamp()
@@ -1552,7 +1552,7 @@ export class ResearchDb {
         )
         .run(
           step,
-          JSON.stringify(redactValue(metric)),
+          metricJson,
           metricsPath ? redactString(metricsPath) : null,
           logPath ? redactString(logPath) : null,
           timestamp,
@@ -1575,7 +1575,7 @@ export class ResearchDb {
     this.requireArtifact(artifactId)
     const checkpointId = cleanId(input.checkpoint_id ?? this.idFactory())
     const step = cleanOptionalStep(input.step)
-    const metric = input.metric ?? null
+    const metricJson = input.metric === undefined ? null : JSON.stringify(redactValue(input.metric))
     const observedAt = input.observed_at ? cleanRequired(input.observed_at, "observed_at") : this.timestamp()
     const createdAt = this.timestamp()
     return this.inTransaction(() => {
@@ -1586,7 +1586,7 @@ export class ResearchDb {
           checkpoint.training_run_id === trainingRunId &&
           checkpoint.artifact_id === artifactId &&
           checkpoint.step === step &&
-          JSON.stringify(checkpoint.metric) === JSON.stringify(redactValue(metric)) &&
+          JSON.stringify(checkpoint.metric) === JSON.stringify(metricJson === null ? null : parseNullableJson(metricJson)) &&
           checkpoint.observed_at === observedAt
         ) {
           return checkpoint
@@ -1597,12 +1597,12 @@ export class ResearchDb {
         .query(
           "INSERT INTO training_checkpoints (checkpoint_id, training_run_id, artifact_id, step, metric_json, observed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
-        .run(checkpointId, trainingRunId, artifactId, step, JSON.stringify(redactValue(metric)), observedAt, createdAt)
+        .run(checkpointId, trainingRunId, artifactId, step, metricJson, observedAt, createdAt)
       this.db
         .query(
           "UPDATE training_runs SET latest_checkpoint_id = ?, last_step = COALESCE(?, last_step), last_metric_json = COALESCE(?, last_metric_json), last_observed_at = ?, updated_at = ? WHERE training_run_id = ?",
         )
-        .run(checkpointId, step, JSON.stringify(redactValue(metric)), observedAt, createdAt, trainingRunId)
+        .run(checkpointId, step, metricJson, observedAt, createdAt, trainingRunId)
       const checkpoint = this.getTrainingCheckpoint(checkpointId)
       if (!checkpoint) throw new Error(`failed to record training checkpoint: ${checkpointId}`)
       this.recordEvent("TrainingCheckpointObserved", "training_checkpoint", checkpointId, checkpoint)
@@ -1639,7 +1639,7 @@ export class ResearchDb {
     const metricsPath = cleanOptional(input.metrics_path)
     const reproduction = input.reproduction
     if (existing.label === "full_training") {
-      const hasReproduction = reproduction !== undefined || existing.reproduction !== null
+      const hasReproduction = (reproduction !== undefined && reproduction !== null) || existing.reproduction !== null
       if (!hasReproduction) throw new Error(`full training run requires reproduction before completion: ${id}`)
       const hasMetricsEvidence = metricsPath !== null || existing.metrics_path !== null
       if (!hasMetricsEvidence) throw new Error(`full training run requires metrics evidence before completion: ${id}`)
@@ -1692,11 +1692,17 @@ export class ResearchDb {
     const result = this.getResearchResult(id)
     if (!result) throw new Error(`research result not found: ${id}`)
     if (result.result_type !== "checkpoint_selection") return
-    const checkpointArtifact = this.db
-      .query(
-        "SELECT 1 FROM result_artifacts ra INNER JOIN training_checkpoints tc ON tc.artifact_id = ra.artifact_id WHERE ra.result_id = ? LIMIT 1",
-      )
-      .get(id)
+    const checkpointArtifact = result.training_run_id
+      ? this.db
+          .query(
+            "SELECT 1 FROM result_artifacts ra INNER JOIN training_checkpoints tc ON tc.artifact_id = ra.artifact_id WHERE ra.result_id = ? AND tc.training_run_id = ? LIMIT 1",
+          )
+          .get(id, result.training_run_id)
+      : this.db
+          .query(
+            "SELECT 1 FROM result_artifacts ra INNER JOIN training_checkpoints tc ON tc.artifact_id = ra.artifact_id WHERE ra.result_id = ? LIMIT 1",
+          )
+          .get(id)
     if (!checkpointArtifact) throw new Error(`checkpoint selection requires linked checkpoint artifact: ${id}`)
   }
 

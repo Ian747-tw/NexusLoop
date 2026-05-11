@@ -2029,6 +2029,7 @@ describe("ResearchDb", () => {
 
     const started = db.startTrainingRun("training_1", { pid: 123, process_group_id: 456, log_path: "/tmp/train.log" })
     const progressed = db.observeTrainingProgress({ training_run_id: "training_1", step: 10, metric: { loss: 0.4, token: "metricSecret123" } })
+    const stepOnlyProgress = db.observeTrainingProgress({ training_run_id: "training_1", step: 11 })
     const artifact = db.addArtifact({ id: "checkpoint_artifact_1", topic_id: "topic_1", kind: "snapshot", content: "checkpoint", produced_by_run_id: "training_1" })
     const checkpoint = db.recordTrainingCheckpoint({
       checkpoint_id: "checkpoint_1",
@@ -2045,6 +2046,8 @@ describe("ResearchDb", () => {
     expect(progressed.last_step).toBe(10)
     expect(progressed.last_metric).toEqual({ loss: 0.4, token: "[REDACTED]" })
     expect(progressed.last_observed_at).not.toBeNull()
+    expect(stepOnlyProgress.last_step).toBe(11)
+    expect(stepOnlyProgress.last_metric).toEqual({ loss: 0.4, token: "[REDACTED]" })
     expect(checkpoint.artifact_id).toBe("checkpoint_artifact_1")
     expect(db.getTrainingRun("training_1")?.latest_checkpoint_id).toBe("checkpoint_1")
     expect(reproduced.reproduction).toEqual({ command: "[REDACTED] bun train" })
@@ -2057,6 +2060,7 @@ describe("ResearchDb", () => {
     expect(db.listResearchEvents({ entity_type: "training_run" }).map((event) => event.event_type)).toEqual([
       "TrainingRunPlanned",
       "TrainingRunStarted",
+      "TrainingProgressObserved",
       "TrainingProgressObserved",
       "TrainingRunCompleted",
     ])
@@ -2099,9 +2103,11 @@ describe("ResearchDb", () => {
     db.completeTrainingRun("run_probe")
     db.completeTrainingRun("run_full", { metrics_path: "/tmp/metrics.json" })
     db.planTrainingRun({ training_run_id: "run_missing_reproduction", label: "full_training", metrics_path: "/tmp/metrics.json" })
+    db.planTrainingRun({ training_run_id: "run_null_reproduction", label: "full_training", metrics_path: "/tmp/metrics.json" })
     db.planTrainingRun({ training_run_id: "run_missing_metrics", label: "full_training", reproduction: { command: "bun train" } })
 
     expect(() => db.completeTrainingRun("run_missing_reproduction")).toThrow("full training run requires reproduction before completion")
+    expect(() => db.completeTrainingRun("run_null_reproduction", { reproduction: null })).toThrow("full training run requires reproduction before completion")
     expect(() => db.completeTrainingRun("run_missing_metrics")).toThrow("full training run requires metrics evidence before completion")
 
     expect(() => db.assertTrainingRunCanSupportBestModelUpdate("run_probe")).toThrow("training run label cannot update best model")
@@ -2154,6 +2160,7 @@ describe("ResearchDb", () => {
     const db = openTestDb(dir)
     db.createTopic({ id: "topic_1", title: "Topic" })
     db.planTrainingRun({ training_run_id: "training_1", label: "full_training" })
+    db.planTrainingRun({ training_run_id: "training_2", label: "full_training" })
     db.proposeResearchResult({
       result_id: "checkpoint_selection_1",
       result_type: "checkpoint_selection",
@@ -2168,8 +2175,13 @@ describe("ResearchDb", () => {
     expect(() => db.acceptResearchResult("checkpoint_selection_1")).toThrow("checkpoint selection requires linked checkpoint artifact")
 
     const checkpointArtifact = db.addArtifact({ id: "checkpoint_artifact", topic_id: "topic_1", kind: "snapshot", content: "checkpoint" })
-    db.recordTrainingCheckpoint({ checkpoint_id: "checkpoint_1", training_run_id: "training_1", artifact_id: checkpointArtifact.id })
+    db.recordTrainingCheckpoint({ checkpoint_id: "checkpoint_wrong_run", training_run_id: "training_2", artifact_id: checkpointArtifact.id })
     db.linkResultArtifact("checkpoint_selection_1", checkpointArtifact.id)
+    expect(() => db.acceptResearchResult("checkpoint_selection_1")).toThrow("checkpoint selection requires linked checkpoint artifact")
+
+    const matchingCheckpointArtifact = db.addArtifact({ id: "matching_checkpoint_artifact", topic_id: "topic_1", kind: "snapshot", content: "checkpoint" })
+    db.recordTrainingCheckpoint({ checkpoint_id: "checkpoint_1", training_run_id: "training_1", artifact_id: matchingCheckpointArtifact.id })
+    db.linkResultArtifact("checkpoint_selection_1", matchingCheckpointArtifact.id)
     expect(db.acceptResearchResult("checkpoint_selection_1").status).toBe("accepted")
     db.close()
   })
