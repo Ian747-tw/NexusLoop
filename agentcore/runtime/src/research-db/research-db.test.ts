@@ -2481,6 +2481,72 @@ describe("ResearchDb", () => {
     rebuilt.close()
   })
 
+  test("citation explicit ID retry remains idempotent after rebuild with generated accessed_at", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const citation = db.recordCitation({
+      citation_id: "citation_retry",
+      source_type: "url",
+      source_uri: "https://example.test/paper",
+      title: "Paper",
+      quoted_text_or_summary: "Useful summary",
+    })
+    const eventsBefore = db.listResearchEvents({ limit: 10 })
+    db.close()
+    const jsonlBefore = await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")
+    expect(jsonlBefore).toContain('"input_hash"')
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir, undefined, {
+      now: () => new Date("2026-05-10T13:00:00Z"),
+      idFactory: () => "unused",
+    })
+    const retry = rebuilt.recordCitation({
+      citation_id: "citation_retry",
+      source_type: "url",
+      source_uri: "https://example.test/paper",
+      title: "Paper",
+      quoted_text_or_summary: "Useful summary",
+    })
+
+    expect(retry).toEqual(citation)
+    expect(rebuilt.searchCitations({ limit: 10 }).map((row) => row.citation_id)).toEqual(["citation_retry"])
+    expect(rebuilt.listResearchEvents({ limit: 10 }).length).toBe(eventsBefore.length)
+    expect(await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).toBe(jsonlBefore)
+    rebuilt.close()
+  })
+
+  test("secret-redacted explicit ID retry remains idempotent after rebuild", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const topic = db.createTopic({ id: "topic_secret", title: "sk-test-SECRET123 topic" })
+    expect(topic.title).toContain("[REDACTED")
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+    const retry = rebuilt.createTopic({ id: "topic_secret", title: "sk-test-SECRET123 topic" })
+
+    expect(retry).toEqual(topic)
+    expect(rebuilt.listTopics().length).toBe(1)
+    expect(await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).not.toContain("sk-test-SECRET123")
+    rebuilt.close()
+  })
+
+  test("conflicting duplicate explicit ID after rebuild still throws", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_conflict", title: "Original topic" })
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(() => rebuilt.createTopic({ id: "topic_conflict", title: "Different topic" })).toThrow("topic id collision")
+    expect(rebuilt.listTopics().map((row) => row.id)).toEqual(["topic_conflict"])
+    rebuilt.close()
+  })
+
   test("integrity check reports stale missing db corrupt jsonl ignored runtime events and unsupported research events", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)

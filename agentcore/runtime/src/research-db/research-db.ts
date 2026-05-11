@@ -2391,9 +2391,10 @@ export class ResearchDb {
     assertAllowed(TOPIC_STATUSES, status, "topic status")
     const createdAt = requiredString(row, "created_at")
     const updatedAt = requiredString(row, "updated_at")
+    const inputHash = optionalString(row, "input_hash") ?? hashPayload({ title, status })
     this.db
       .query("INSERT OR REPLACE INTO topics (id, title, status, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(id, title, status, hashPayload({ title, status }), createdAt, updatedAt)
+      .run(id, title, status, inputHash, createdAt, updatedAt)
   }
 
   private applySource(payload: unknown): void {
@@ -2408,11 +2409,13 @@ export class ResearchDb {
     const title = optionalString(row, "title")
     const credibility = optionalString(row, "credibility")
     const createdAt = requiredString(row, "created_at")
+    const inputHash =
+      optionalString(row, "input_hash") ?? hashPayload({ topic_id: topicId, locator, title, source_type: sourceType, status, credibility })
     this.db
       .query(
         "INSERT OR REPLACE INTO sources (id, topic_id, locator, title, source_type, status, credibility, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(id, topicId, locator, title, sourceType, status, credibility, hashPayload({ topic_id: topicId, locator, title, source_type: sourceType, status, credibility }), createdAt)
+      .run(id, topicId, locator, title, sourceType, status, credibility, inputHash, createdAt)
   }
 
   private applyNote(payload: unknown): void {
@@ -2423,9 +2426,10 @@ export class ResearchDb {
     const content = requiredString(row, "content")
     const tags = Array.isArray(row.tags) && row.tags.every((tag) => typeof tag === "string") ? row.tags : []
     const createdAt = requiredString(row, "created_at")
+    const inputHash = optionalString(row, "input_hash") ?? hashPayload({ topic_id: topicId, source_id: sourceId, content, tags })
     this.db
       .query("INSERT OR REPLACE INTO notes (id, topic_id, source_id, content, tags_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(id, topicId, sourceId, content, JSON.stringify(tags), hashPayload({ topic_id: topicId, source_id: sourceId, content, tags }), createdAt)
+      .run(id, topicId, sourceId, content, JSON.stringify(tags), inputHash, createdAt)
   }
 
   private applyArtifact(payload: unknown): void {
@@ -2444,6 +2448,9 @@ export class ResearchDb {
     const producedByRunId = optionalString(row, "produced_by_run_id")
     const description = optionalString(row, "description")
     const createdAt = requiredString(row, "created_at")
+    const inputHash =
+      optionalString(row, "input_hash") ??
+      hashPayload(artifactInputHashPayload({ topic_id: topicId, kind, path, content, artifact_type: artifactType, sha256, size_bytes: sizeBytes, produced_by_mission_id: producedByMissionId, produced_by_run_id: producedByRunId, description }))
     this.db
       .query(
         "INSERT OR REPLACE INTO artifacts (id, topic_id, kind, path, content, artifact_type, sha256, size_bytes, produced_by_mission_id, produced_by_run_id, description, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2460,7 +2467,7 @@ export class ResearchDb {
         producedByMissionId,
         producedByRunId,
         description,
-        hashPayload(artifactInputHashPayload({ topic_id: topicId, kind, path, content, artifact_type: artifactType, sha256, size_bytes: sizeBytes, produced_by_mission_id: producedByMissionId, produced_by_run_id: producedByRunId, description })),
+        inputHash,
         createdAt,
       )
   }
@@ -2488,6 +2495,9 @@ export class ResearchDb {
     const reproduction = row.reproduction ?? null
     const createdAt = requiredString(row, "created_at")
     const updatedAt = requiredString(row, "updated_at")
+    const inputHash =
+      optionalString(row, "input_hash") ??
+      hashPayload({ result_type: resultType, label, title, summary, status, confidence, mission_id: missionId, candidate_id: candidateId, hypothesis_id: hypothesisId, trial_id: trialId, training_run_id: trainingRunId, metrics, reproduction, created_by: createdBy })
     this.db
       .query(
         "INSERT INTO research_results (result_id, result_type, label, title, summary, status, confidence, mission_id, candidate_id, hypothesis_id, trial_id, training_run_id, metrics_json, reproduction_json, created_by, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(result_id) DO UPDATE SET result_type = excluded.result_type, label = excluded.label, title = excluded.title, summary = excluded.summary, status = excluded.status, confidence = excluded.confidence, mission_id = excluded.mission_id, candidate_id = excluded.candidate_id, hypothesis_id = excluded.hypothesis_id, trial_id = excluded.trial_id, training_run_id = excluded.training_run_id, metrics_json = excluded.metrics_json, reproduction_json = excluded.reproduction_json, created_by = excluded.created_by, input_hash = excluded.input_hash, created_at = excluded.created_at, updated_at = excluded.updated_at",
@@ -2508,7 +2518,7 @@ export class ResearchDb {
         JSON.stringify(metrics),
         JSON.stringify(reproduction),
         createdBy,
-        hashPayload({ result_type: resultType, label, title, summary, status, confidence, mission_id: missionId, candidate_id: candidateId, hypothesis_id: hypothesisId, trial_id: trialId, training_run_id: trainingRunId, metrics, reproduction, created_by: createdBy }),
+        inputHash,
         createdAt,
         updatedAt,
       )
@@ -2526,11 +2536,14 @@ export class ResearchDb {
     const sha256 = optionalString(row, "sha256")
     const metadata = row.metadata ?? null
     const createdAt = requiredString(row, "created_at")
+    const inputHash =
+      optionalString(row, "input_hash") ??
+      hashPayload({ source_type: sourceType, source_uri: sourceUri, title, quoted_text_or_summary: quoted, accessed_at: accessedAt, sha256, metadata })
     this.db
       .query(
         "INSERT OR REPLACE INTO citations (citation_id, source_type, source_uri, title, quoted_text_or_summary, accessed_at, sha256, metadata_json, input_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(citationId, sourceType, sourceUri, title, quoted, accessedAt, sha256, JSON.stringify(metadata), hashPayload({ source_type: sourceType, source_uri: sourceUri, title, quoted_text_or_summary: quoted, accessed_at: accessedAt, sha256, metadata }), createdAt)
+      .run(citationId, sourceType, sourceUri, title, quoted, accessedAt, sha256, JSON.stringify(metadata), inputHash, createdAt)
   }
 
   private applyResultCitation(payload: unknown, eventId: string): void {
@@ -2562,11 +2575,12 @@ export class ResearchDb {
     assertAllowed(HYPOTHESIS_STATUSES, status, "hypothesis status")
     const createdAt = requiredString(row, "created_at")
     const updatedAt = requiredString(row, "updated_at")
+    const inputHash = optionalString(row, "input_hash") ?? hashPayload({ claim, source, status })
     this.db
       .query(
         "INSERT INTO hypotheses (hypothesis_id, claim, source, status, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(hypothesis_id) DO UPDATE SET claim = excluded.claim, source = excluded.source, status = excluded.status, input_hash = excluded.input_hash, created_at = excluded.created_at, updated_at = excluded.updated_at",
       )
-      .run(hypothesisId, claim, source, status, hashPayload({ claim, source, status }), createdAt, updatedAt)
+      .run(hypothesisId, claim, source, status, inputHash, createdAt, updatedAt)
   }
 
   private applyCandidate(payload: unknown): void {
@@ -2581,11 +2595,12 @@ export class ResearchDb {
     const rankReason = optionalString(row, "rank_reason")
     const createdAt = requiredString(row, "created_at")
     const updatedAt = requiredString(row, "updated_at")
+    const inputHash = optionalString(row, "input_hash") ?? hashPayload({ hypothesis_id: hypothesisId, claim, source, status })
     this.db
       .query(
         "INSERT INTO candidates (candidate_id, hypothesis_id, claim, source, status, commander_score, rank_reason, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(candidate_id) DO UPDATE SET hypothesis_id = excluded.hypothesis_id, claim = excluded.claim, source = excluded.source, status = excluded.status, commander_score = excluded.commander_score, rank_reason = excluded.rank_reason, input_hash = excluded.input_hash, created_at = excluded.created_at, updated_at = excluded.updated_at",
       )
-      .run(candidateId, hypothesisId, claim, source, status, commanderScore, rankReason, hashPayload({ hypothesis_id: hypothesisId, claim, source, status }), createdAt, updatedAt)
+      .run(candidateId, hypothesisId, claim, source, status, commanderScore, rankReason, inputHash, createdAt, updatedAt)
   }
 
   private applyCandidateEvidence(payload: unknown): void {
@@ -2613,11 +2628,12 @@ export class ResearchDb {
     const completedAt = optionalString(row, "completed_at")
     const createdAt = requiredString(row, "created_at")
     const updatedAt = requiredString(row, "updated_at")
+    const inputHash = optionalString(row, "input_hash") ?? hashPayload({ hypothesis_id: hypothesisId, candidate_id: candidateId, trial_kind: trialKind, status, config })
     this.db
       .query(
         "INSERT INTO trials (trial_id, hypothesis_id, candidate_id, trial_kind, status, config_json, input_hash, started_at, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(trial_id) DO UPDATE SET hypothesis_id = excluded.hypothesis_id, candidate_id = excluded.candidate_id, trial_kind = excluded.trial_kind, status = excluded.status, config_json = excluded.config_json, input_hash = excluded.input_hash, started_at = excluded.started_at, completed_at = excluded.completed_at, created_at = excluded.created_at, updated_at = excluded.updated_at",
       )
-      .run(trialId, hypothesisId, candidateId, trialKind, status, JSON.stringify(config), hashPayload({ hypothesis_id: hypothesisId, candidate_id: candidateId, trial_kind: trialKind, status, config }), startedAt, completedAt, createdAt, updatedAt)
+      .run(trialId, hypothesisId, candidateId, trialKind, status, JSON.stringify(config), inputHash, startedAt, completedAt, createdAt, updatedAt)
   }
 
   private applyTrainingRun(payload: unknown): void {
@@ -2645,11 +2661,14 @@ export class ResearchDb {
     const completedAt = optionalString(row, "completed_at")
     const createdAt = requiredString(row, "created_at")
     const updatedAt = requiredString(row, "updated_at")
+    const inputHash =
+      optionalString(row, "input_hash") ??
+      hashPayload({ trial_id: trialId, candidate_id: candidateId, hypothesis_id: hypothesisId, mission_id: missionId, label, status, pid, process_group_id: processGroupId, log_path: logPath, metrics_path: metricsPath, checkpoint_dir: checkpointDir, reproduction })
     this.db
       .query(
         "INSERT INTO training_runs (training_run_id, trial_id, candidate_id, hypothesis_id, mission_id, label, status, pid, process_group_id, log_path, metrics_path, checkpoint_dir, latest_checkpoint_id, last_step, last_metric_json, reproduction_json, started_at, last_observed_at, completed_at, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(training_run_id) DO UPDATE SET trial_id = excluded.trial_id, candidate_id = excluded.candidate_id, hypothesis_id = excluded.hypothesis_id, mission_id = excluded.mission_id, label = excluded.label, status = excluded.status, pid = excluded.pid, process_group_id = excluded.process_group_id, log_path = excluded.log_path, metrics_path = excluded.metrics_path, checkpoint_dir = excluded.checkpoint_dir, latest_checkpoint_id = excluded.latest_checkpoint_id, last_step = excluded.last_step, last_metric_json = excluded.last_metric_json, reproduction_json = excluded.reproduction_json, started_at = excluded.started_at, last_observed_at = excluded.last_observed_at, completed_at = excluded.completed_at, input_hash = excluded.input_hash, created_at = excluded.created_at, updated_at = excluded.updated_at",
       )
-      .run(trainingRunId, trialId, candidateId, hypothesisId, missionId, label, status, pid, processGroupId, logPath, metricsPath, checkpointDir, latestCheckpointId, lastStep, JSON.stringify(lastMetric), JSON.stringify(reproduction), startedAt, lastObservedAt, completedAt, hashPayload({ trial_id: trialId, candidate_id: candidateId, hypothesis_id: hypothesisId, mission_id: missionId, label, status, pid, process_group_id: processGroupId, log_path: logPath, metrics_path: metricsPath, checkpoint_dir: checkpointDir, reproduction }), createdAt, updatedAt)
+      .run(trainingRunId, trialId, candidateId, hypothesisId, missionId, label, status, pid, processGroupId, logPath, metricsPath, checkpointDir, latestCheckpointId, lastStep, JSON.stringify(lastMetric), JSON.stringify(reproduction), startedAt, lastObservedAt, completedAt, inputHash, createdAt, updatedAt)
   }
 
   private applyTrainingCheckpoint(payload: unknown): void {
@@ -2818,7 +2837,7 @@ export class ResearchDb {
   private recordEvent(eventType: string, entityType: string, entityId: string, payload: unknown): string {
     const eventId = randomUUID()
     const createdAt = this.timestamp()
-    const redactedPayload = redactValue(payload)
+    const redactedPayload = redactValue(this.withInputHashForEventPayload(entityType, entityId, payload))
     this.db
       .query(
         "INSERT INTO research_events (event_id, event_type, entity_type, entity_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -2841,6 +2860,47 @@ export class ResearchDb {
       )
     }
     return eventId
+  }
+
+  private withInputHashForEventPayload(entityType: string, entityId: string, payload: unknown): unknown {
+    const inputHash = this.lookupInputHash(entityType, entityId)
+    if (!inputHash) return payload
+    const appendHash = (value: unknown): unknown => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value
+      return { ...(value as Record<string, unknown>), input_hash: inputHash }
+    }
+    if (
+      entityType === "topic" ||
+      entityType === "source" ||
+      entityType === "note" ||
+      entityType === "artifact" ||
+      entityType === "research_result" ||
+      entityType === "citation" ||
+      entityType === "hypothesis" ||
+      entityType === "candidate" ||
+      entityType === "trial" ||
+      entityType === "training_run"
+    ) {
+      return appendHash(payload)
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload
+    const object = payload as Record<string, unknown>
+    if (typeof object.result === "object" && object.result !== null && !Array.isArray(object.result)) return { ...object, result: appendHash(object.result) }
+    if (typeof object.candidate === "object" && object.candidate !== null && !Array.isArray(object.candidate)) {
+      return { ...object, candidate: appendHash(object.candidate) }
+    }
+    if (typeof object.trial === "object" && object.trial !== null && !Array.isArray(object.trial)) return { ...object, trial: appendHash(object.trial) }
+    if (typeof object.training_run === "object" && object.training_run !== null && !Array.isArray(object.training_run)) {
+      return { ...object, training_run: appendHash(object.training_run) }
+    }
+    return payload
+  }
+
+  private lookupInputHash(entityType: string, entityId: string): string | null {
+    const table = inputHashTableForEntity(entityType)
+    if (!table) return null
+    const row = this.db.query(`SELECT input_hash FROM ${table.table} WHERE ${table.idColumn} = ?`).get(entityId) as { input_hash: string | null } | null
+    return row?.input_hash ?? null
   }
 
   private inTransaction<T>(work: () => T): T {
@@ -3415,6 +3475,33 @@ function optionalNumber(row: Record<string, unknown>, key: string): number | nul
   return value
 }
 
+function inputHashTableForEntity(entityType: string): { table: string; idColumn: string } | null {
+  switch (entityType) {
+    case "topic":
+      return { table: "topics", idColumn: "id" }
+    case "source":
+      return { table: "sources", idColumn: "id" }
+    case "note":
+      return { table: "notes", idColumn: "id" }
+    case "artifact":
+      return { table: "artifacts", idColumn: "id" }
+    case "research_result":
+      return { table: "research_results", idColumn: "result_id" }
+    case "citation":
+      return { table: "citations", idColumn: "citation_id" }
+    case "hypothesis":
+      return { table: "hypotheses", idColumn: "hypothesis_id" }
+    case "candidate":
+      return { table: "candidates", idColumn: "candidate_id" }
+    case "trial":
+      return { table: "trials", idColumn: "trial_id" }
+    case "training_run":
+      return { table: "training_runs", idColumn: "training_run_id" }
+    default:
+      return null
+  }
+}
+
 function likeContains(value: string): string {
   return `%${value.replace(/[\\%_]/g, (character) => `\\${character}`)}%`
 }
@@ -3426,7 +3513,22 @@ function researchEventFromRow(row: ResearchEventRow): ResearchEvent {
     event_type: row.event_type,
     entity_type: row.entity_type,
     entity_id: row.entity_id,
-    payload: JSON.parse(row.payload_json) as unknown,
+    payload: publicResearchEventPayload(JSON.parse(row.payload_json) as unknown),
     created_at: row.created_at,
   }
+}
+
+function publicResearchEventPayload(payload: unknown): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload
+  const object = { ...(payload as Record<string, unknown>) }
+  delete object.input_hash
+  for (const key of ["result", "candidate", "trial", "training_run"]) {
+    const nested = object[key]
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const nestedObject = { ...(nested as Record<string, unknown>) }
+      delete nestedObject.input_hash
+      object[key] = nestedObject
+    }
+  }
+  return object
 }
