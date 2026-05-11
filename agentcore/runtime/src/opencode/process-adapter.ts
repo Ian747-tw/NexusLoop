@@ -50,6 +50,9 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   private streamCursor = 0
   private phase: ProcessAdapterPhase = "new"
   private process: OpenCodeSpawnedProcess | null = null
+  private readonly expectedExitProcesses = new WeakSet<object>()
+  private readonly streamWaiters = new Set<() => void>()
+  private streamClosed = true
   private shutdownRequested = false
   private lastError: string | null = null
 
@@ -64,9 +67,10 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   }
 
   async startSession(sessionSpec: SessionSpec): Promise<void> {
-    if (this.process) throw new Error("OpenCode process session already started")
+    if (this.process) this.terminateProcess(this.process, "process-restart-requested", { closeStream: false })
     this.shutdownRequested = false
     this.lastError = null
+    this.streamClosed = false
     const cwd = this.cwd ?? sessionSpec.projectDir
 
     try {
@@ -97,9 +101,20 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   }
 
   async *streamExecutorEvents(): AsyncIterable<RuntimeEvent> {
-    while (this.streamCursor < this.events.length) {
-      yield this.events[this.streamCursor]
-      this.streamCursor += 1
+    while (true) {
+      while (this.streamCursor < this.events.length) {
+        const event = this.events[this.streamCursor]
+        this.streamCursor += 1
+        yield event
+      }
+      if (this.streamClosed) break
+      await new Promise<void>((resolve) => {
+        const waiter = () => {
+          this.streamWaiters.delete(waiter)
+          resolve()
+        }
+        this.streamWaiters.add(waiter)
+      })
     }
   }
 
@@ -107,8 +122,16 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
     this.shutdownRequested = true
     this.phase = "shutdown"
     const child = this.process
-    if (!child) return
-    this.process = null
+    if (!child) {
+      this.closeStream()
+      return
+    }
+    this.terminateProcess(child, "process-shutdown-requested", { closeStream: true })
+  }
+
+  private terminateProcess(child: OpenCodeSpawnedProcess, phase: string, options: { closeStream: boolean }): void {
+    if (this.process === child) this.process = null
+    this.expectedExitProcesses.add(child)
     try {
       child.stdin?.end?.()
     } catch (error) {
@@ -122,6 +145,8 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       this.lastError = redactText(`OpenCode process termination failed: ${errorMessage(error)}`)
       this.queue("process-termination-failed", this.lastError)
     }
+    this.queue(phase, `OpenCode process termination requested: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
+    if (options.closeStream) this.closeStream()
   }
 
   async getStatus(): Promise<Record<string, unknown>> {
@@ -145,19 +170,31 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
     })
     child.on("exit", (code, signal) => {
       if (this.process === child) this.process = null
-      if (this.shutdownRequested) {
-        this.phase = "shutdown"
+      if (this.shutdownRequested || this.expectedExitProcesses.has(child)) {
+        if (this.shutdownRequested) this.phase = "shutdown"
         this.queue("process-exited", exitMessage("OpenCode process exited", code, signal))
+        if (this.shutdownRequested) this.closeStream()
         return
       }
       this.phase = "exited"
       this.lastError = exitMessage("OpenCode process exited unexpectedly", code, signal)
       this.queue("process-exited", this.lastError)
+      this.closeStream()
     })
   }
 
   private queue(phase: string, message: string): void {
     this.events.push({ type: "ExecutorLifecycle", phase, message: redactText(message) })
+    this.notifyStream()
+  }
+
+  private closeStream(): void {
+    this.streamClosed = true
+    this.notifyStream()
+  }
+
+  private notifyStream(): void {
+    for (const waiter of [...this.streamWaiters]) waiter()
   }
 }
 
