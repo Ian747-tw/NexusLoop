@@ -1950,6 +1950,14 @@ export class ResearchDb {
     for (const item of parsed) {
       const normalized = normalizeResearchEvent(item.event)
       if (!normalized.research) continue
+      if (normalized.malformedReason) {
+        return {
+          ok: false,
+          stale: false,
+          reason: normalized.malformedReason,
+          unsupported_event_type: normalized.eventType,
+        }
+      }
       if (!normalized.supported) {
         return {
           ok: false,
@@ -2290,6 +2298,7 @@ export class ResearchDb {
   private applyParsedEvent(item: ParsedJsonlEvent, appliedCount?: number): boolean {
     const normalized = normalizeResearchEvent(item.event)
     if (!normalized.research) return false
+    if (normalized.malformedReason) throw new Error(`${normalized.malformedReason} at line ${item.line}`)
     if (!normalized.supported) throw new Error(`unsupported research event at line ${item.line}: ${normalized.eventType}`)
     const eventId = cleanRequired(normalized.event_id, "event_id")
     const eventType = cleanRequired(normalized.eventType, "event_type")
@@ -3508,6 +3517,7 @@ function appendDurableJsonl(path: string, event: unknown): void {
 function normalizeResearchEvent(event: ResearchJsonlEvent): {
   research: boolean
   supported: boolean
+  malformedReason: string | null
   event_id: string
   timestamp: string
   eventType: string
@@ -3519,11 +3529,15 @@ function normalizeResearchEvent(event: ResearchJsonlEvent): {
   const entityType = typeof event.entity_type === "string" ? event.entity_type : ""
   const entityId = typeof event.entity_id === "string" ? event.entity_id : ""
   const isResearchKind = event.kind === "research_event" || event.kind === "research_db_event" || entityType === "research_event"
-  const isResearchDomain = eventType !== "" && (SUPPORTED_RESEARCH_EVENT_TYPES.has(eventType) || entityType !== "")
-  const research = isResearchKind || (isResearchDomain && RESEARCH_ENTITY_TYPES.has(entityType as ResearchEntityType))
+  const hasSupportedEventType = eventType !== "" && SUPPORTED_RESEARCH_EVENT_TYPES.has(eventType)
+  const hasResearchEntityType = RESEARCH_ENTITY_TYPES.has(entityType as ResearchEntityType)
+  const isResearchDomain = eventType !== "" && (hasSupportedEventType || entityType !== "")
+  const research = isResearchKind || hasSupportedEventType || (isResearchDomain && hasResearchEntityType)
+  const malformedReason = hasSupportedEventType && !hasResearchEntityType ? `malformed research event: invalid or missing entity_type for ${eventType}` : null
   return {
     research,
-    supported: eventType !== "" && SUPPORTED_RESEARCH_EVENT_TYPES.has(eventType) && RESEARCH_ENTITY_TYPES.has(entityType as ResearchEntityType),
+    supported: hasSupportedEventType && hasResearchEntityType,
+    malformedReason,
     event_id: typeof event.event_id === "string" ? event.event_id : "",
     timestamp: typeof event.timestamp === "string" ? event.timestamp : "",
     eventType,

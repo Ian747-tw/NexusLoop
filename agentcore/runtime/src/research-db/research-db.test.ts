@@ -2947,5 +2947,27 @@ describe("ResearchDb", () => {
     expect(unsupported.checkProjectionIntegrity()).toMatchObject({ ok: false, unsupported_event_type: "ResearchThingHappened" })
     expect(() => unsupported.rebuildFromEvents()).toThrow("unsupported research event")
     unsupported.close()
+
+    const malformedResearchDir = await tempProject()
+    await mkdir(join(malformedResearchDir, ".nxl"), { recursive: true })
+    await writeFile(
+      join(malformedResearchDir, ".nxl", "events.jsonl"),
+      JSON.stringify({
+        event_id: "evt_malformed_research",
+        timestamp: "2026-05-10T12:00:00.000Z",
+        event_type: "topic_created",
+        entity_id: "topic_1",
+        payload: { id: "topic_1", title: "Topic", status: "open", created_at: "2026-05-10T12:00:00.000Z", updated_at: "2026-05-10T12:00:00.000Z" },
+      }) + "\n",
+      "utf8",
+    )
+    const malformedResearch = ResearchDb.open(malformedResearchDir, { appendEvents: false })
+    expect(malformedResearch.checkProjectionIntegrity()).toMatchObject({
+      ok: false,
+      reason: "malformed research event: invalid or missing entity_type for topic_created",
+      unsupported_event_type: "topic_created",
+    })
+    expect(() => malformedResearch.rebuildFromEvents()).toThrow("malformed research event: invalid or missing entity_type for topic_created at line 1")
+    malformedResearch.close()
   })
 })
