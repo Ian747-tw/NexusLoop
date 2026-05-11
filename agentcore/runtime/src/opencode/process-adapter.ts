@@ -16,6 +16,7 @@ export interface OpenCodeSpawnedProcess {
   }
   stdout?: OpenCodeProcessEventSource | null
   stderr?: OpenCodeProcessEventSource | null
+  on(event: "spawn", listener: () => void): unknown
   on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown
   on(event: "error", listener: (error: Error) => void): unknown
   kill?(signal?: NodeJS.Signals): unknown
@@ -35,6 +36,7 @@ export interface ProcessOpenCodeAdapterOptions {
   cwd?: string
   env?: Record<string, string>
   spawn?: OpenCodeSpawn
+  spawnTimeoutMs?: number
   shutdownTimeoutMs?: number
 }
 
@@ -46,6 +48,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   private readonly cwd?: string
   private readonly env?: Record<string, string>
   private readonly spawn: OpenCodeSpawn
+  private readonly spawnTimeoutMs: number
   private readonly shutdownTimeoutMs: number
   private readonly events: RuntimeEvent[] = []
   private readonly commandLabel: string
@@ -66,6 +69,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
     this.cwd = options.cwd
     this.env = options.env
     this.spawn = options.spawn ?? defaultOpenCodeSpawn
+    this.spawnTimeoutMs = options.spawnTimeoutMs ?? 1000
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5000
     this.commandLabel = basename(options.command) || options.command
   }
@@ -80,6 +84,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
     try {
       const child = this.spawn(this.command, this.args, { cwd, env: this.env })
       this.process = child
+      await this.waitForProcessSpawn(child, this.spawnTimeoutMs)
       this.phase = "running"
       this.attachProcessListeners(child)
       this.queue("process-started", `OpenCode process started: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
@@ -88,6 +93,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       this.process = null
       this.lastError = redactText(`OpenCode process spawn failed: ${errorMessage(error)}`)
       this.queue("process-spawn-failed", this.lastError)
+      this.closeStream()
       throw new Error(this.lastError)
     }
   }
@@ -226,6 +232,21 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
         this.exitWaiters.delete(child)
         resolve()
       })
+    })
+  }
+
+  private async waitForProcessSpawn(child: OpenCodeSpawnedProcess, timeoutMs: number): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (callback: () => void) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        callback()
+      }
+      const timeout = setTimeout(() => finish(() => reject(new Error(`timed out after ${timeoutMs}ms`))), timeoutMs)
+      child.on("spawn", () => finish(resolve))
+      child.on("error", (error) => finish(() => reject(error)))
     })
   }
 }

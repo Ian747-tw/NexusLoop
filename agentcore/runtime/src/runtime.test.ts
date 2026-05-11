@@ -117,7 +117,7 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
   }
 }
 
-type ProcessEventName = "exit" | "error"
+type ProcessEventName = "exit" | "error" | "spawn"
 type ProcessListener = (...args: unknown[]) => void
 
 class FakeProcessEventSource implements OpenCodeProcessEventSource {
@@ -140,10 +140,14 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   readonly stdinWrites: string[] = []
   stdinEnded = false
   killedWith: NodeJS.Signals | undefined
+  private spawned = false
+  private readonly spawnListeners: Array<() => void> = []
   private readonly exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
   private readonly errorListeners: Array<(error: Error) => void> = []
 
-  constructor(readonly pid = 4242) {}
+  constructor(readonly pid = 4242, options: { spawned?: boolean } = {}) {
+    this.spawned = options.spawned ?? true
+  }
 
   stdin = {
     write: (data: string) => {
@@ -155,15 +159,24 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
     },
   }
 
+  on(event: "spawn", listener: () => void): void
   on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void
   on(event: "error", listener: (error: Error) => void): void
-  on(event: ProcessEventName, listener: ((code: number | null, signal: NodeJS.Signals | null) => void) | ((error: Error) => void)): void {
-    if (event === "exit") this.exitListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
+  on(event: ProcessEventName, listener: (() => void) | ((code: number | null, signal: NodeJS.Signals | null) => void) | ((error: Error) => void)): void {
+    if (event === "spawn") {
+      if (this.spawned) queueMicrotask(listener as () => void)
+      else this.spawnListeners.push(listener as () => void)
+    } else if (event === "exit") this.exitListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
     else this.errorListeners.push(listener as (error: Error) => void)
   }
 
   kill(signal?: NodeJS.Signals): void {
     this.killedWith = signal
+  }
+
+  emitSpawn(): void {
+    this.spawned = true
+    for (const listener of this.spawnListeners) listener()
   }
 
   emitExit(code: number | null, signal: NodeJS.Signals | null): void {
@@ -1223,6 +1236,25 @@ describe("ProcessOpenCodeAdapter", () => {
 
     expect(status).toMatchObject({ adapter: "process", phase: "failed", command: "opencode", lastError: "OpenCode process spawn failed: spawn failed [REDACTED]" })
     expect(JSON.stringify(status)).not.toContain("super-secret-token")
+  })
+
+  test("async spawn error rejects RuntimeServer start before readiness", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess(4242, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "missing-opencode",
+      cwd: dir,
+      spawn: () => {
+        queueMicrotask(() => process.emitError(new Error("ENOENT token=spawn-secret")))
+        return process
+      },
+    })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await expect(server.start()).rejects.toThrow("OpenCode process spawn failed: ENOENT [REDACTED]")
+    expect(server.eventBus.snapshot().map((event) => event.type)).not.toContain("RuntimeReady")
+    expect(JSON.stringify(await adapter.getStatus())).not.toContain("spawn-secret")
   })
 
   test("shutdown before start is safe", async () => {
