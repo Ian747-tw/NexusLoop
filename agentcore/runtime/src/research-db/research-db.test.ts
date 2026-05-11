@@ -1237,4 +1237,657 @@ describe("ResearchDb", () => {
       db.close()
     }
   })
+
+  test("creates hypotheses candidates trials and candidate evidence tables on empty DB", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.close()
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      const tables = sqlite
+        .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+        .all()
+        .map((row) => String((row as { name: string }).name))
+      expect(tables).toContain("hypotheses")
+      expect(tables).toContain("candidates")
+      expect(tables).toContain("trials")
+      expect(tables).toContain("candidate_evidence")
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  test("Branch 4A DB opens after candidate projection migration", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TABLE topics (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE research_results (
+          result_id TEXT PRIMARY KEY,
+          result_type TEXT NOT NULL,
+          label TEXT,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          status TEXT NOT NULL,
+          confidence TEXT NOT NULL,
+          mission_id TEXT,
+          candidate_id TEXT,
+          hypothesis_id TEXT,
+          trial_id TEXT,
+          training_run_id TEXT,
+          metrics_json TEXT,
+          reproduction_json TEXT,
+          created_by TEXT NOT NULL,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE citations (
+          citation_id TEXT PRIMARY KEY,
+          source_type TEXT NOT NULL,
+          source_uri TEXT NOT NULL,
+          title TEXT,
+          quoted_text_or_summary TEXT NOT NULL,
+          accessed_at TEXT NOT NULL,
+          sha256 TEXT,
+          metadata_json TEXT,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE research_events (
+          event_id TEXT PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `)
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openTestDb(dir)
+    expect(db.searchHypotheses()).toEqual([])
+    expect(db.searchCandidates()).toEqual([])
+    expect(db.searchTrials()).toEqual([])
+    db.close()
+  })
+
+  test("creates hypotheses with event and explicit ID idempotency", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const input = { hypothesis_id: "hypothesis_1", claim: "token=alpha123", source: "Commander note" }
+
+    const first = db.createHypothesis(input)
+    const second = db.createHypothesis(input)
+
+    expect(second).toEqual(first)
+    expect(db.getHypothesis(" hypothesis_1 ")).toEqual(first)
+    expect(db.listResearchEvents({ entity_type: "hypothesis" }).map((event) => event.event_type)).toEqual(["HypothesisCreated"])
+    expect(() => db.createHypothesis({ ...input, claim: "token=beta456" })).toThrow("hypothesis id collision")
+    expect(JSON.stringify(first)).not.toContain("alpha123")
+    db.close()
+  })
+
+  test("updates hypothesis status with validation and event", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Claim", source: "Source" })
+
+    const updated = db.updateHypothesisStatus("hypothesis_1", "paused")
+
+    expect(updated.status).toBe("paused")
+    expect(() => db.updateHypothesisStatus("hypothesis_1", "bad" as never)).toThrow("invalid hypothesis status")
+    expect(db.listResearchEvents({ event_type: "HypothesisStatusUpdated" })).toHaveLength(1)
+    db.close()
+  })
+
+  test("creates candidates with optional hypothesis link and explicit ID collision protection", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Hypothesis", source: "Source" })
+    const input = { candidate_id: "candidate_1", hypothesis_id: "hypothesis_1", claim: "Candidate", source: "Commander" }
+
+    const first = db.createCandidate(input)
+    const second = db.createCandidate(input)
+    const standalone = db.createCandidate({ candidate_id: "candidate_2", claim: "Standalone", source: "Commander" })
+
+    expect(second).toEqual(first)
+    expect(first.hypothesis_id).toBe("hypothesis_1")
+    expect(standalone.hypothesis_id).toBeNull()
+    expect(db.listResearchEvents({ entity_type: "candidate" }).map((event) => event.event_type)).toEqual(["CandidateCreated", "CandidateCreated"])
+    expect(() => db.createCandidate({ ...input, claim: "Different" })).toThrow("candidate id collision")
+    expect(() => db.createCandidate({ candidate_id: "candidate_promoted", claim: "Promoted", source: "Commander", status: "promoted" })).toThrow(
+      "candidate cannot be created as promoted",
+    )
+    expect(() => db.createCandidate({ candidate_id: "candidate_missing", hypothesis_id: "missing", claim: "Candidate", source: "Source" })).toThrow(
+      "hypothesis not found",
+    )
+    db.close()
+  })
+
+  test("candidate ranking selection rejection and needs-more-evidence write events", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+
+    expect(() => db.rankCandidate({ candidate_id: "candidate_1", commander_score: Number.NaN, rank_reason: "reason" })).toThrow(
+      "commander_score must be a finite number",
+    )
+    expect(() => db.rankCandidate({ candidate_id: "candidate_1", commander_score: 0.5, rank_reason: " " })).toThrow("rank_reason is required")
+
+    const ranked = db.rankCandidate({ candidate_id: "candidate_1", commander_score: 0.8, rank_reason: "Promising evidence" })
+    const selected = db.selectCandidate("candidate_1")
+    const needsEvidence = db.markCandidateNeedsMoreEvidence("candidate_1", "Needs citation")
+    const rejected = db.rejectCandidate("candidate_1", "Weak result")
+
+    expect(ranked.commander_score).toBe(0.8)
+    expect(ranked.rank_reason).toBe("Promising evidence")
+    expect(selected.status).toBe("active")
+    expect(needsEvidence.status).toBe("needs_more_evidence")
+    expect(rejected.status).toBe("rejected")
+    expect(() => db.selectCandidate("candidate_1")).toThrow("candidate already rejected: candidate_1")
+    expect(() => db.markCandidateNeedsMoreEvidence("candidate_1")).toThrow("candidate already rejected: candidate_1")
+    expect(db.getCandidate("candidate_1")!.status).toBe("rejected")
+    expect(db.listResearchEvents({ entity_type: "candidate" }).map((event) => event.event_type)).toEqual([
+      "CandidateCreated",
+      "CandidateRanked",
+      "CandidateSelected",
+      "CandidateNeedsMoreEvidence",
+      "CandidateRejected",
+    ])
+    db.close()
+  })
+
+  test("links candidate evidence for research results citations artifacts and events idempotently", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "citation_1", source_type: "file", source_uri: "file://evidence.md", quoted_text_or_summary: "Evidence" })
+    db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    const eventId = db.listResearchEvents({ entity_type: "research_result" })[0]!.event_id
+
+    const resultLink = db.linkCandidateEvidence(" candidate_1 ", "research_result", " result_1 ")
+    const citationLink = db.linkCandidateEvidence("candidate_1", "citation", "citation_1")
+    const artifactLink = db.linkCandidateEvidence("candidate_1", "artifact", "artifact_1")
+    const eventLink = db.linkCandidateEvidence("candidate_1", "event", eventId)
+
+    expect(db.linkCandidateEvidence("candidate_1", "research_result", "result_1")).toEqual(resultLink)
+    expect(db.listCandidateEvidence("candidate_1")).toEqual([resultLink, citationLink, artifactLink, eventLink])
+    expect(db.listResearchEvents({ entity_type: "candidate_evidence" })).toHaveLength(4)
+    db.close()
+  })
+
+  test("event evidence link validation preserves IDs containing colons", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    db.proposeResearchResult({
+      result_id: "result:1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "citation:1", source_type: "file", source_uri: "file://evidence.md", quoted_text_or_summary: "Evidence" })
+    db.addArtifact({ id: "artifact:1", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    db.linkResultCitation("result:1", "citation:1")
+    db.linkResultArtifact("result:1", "artifact:1")
+    const citationEvent = db.listResearchEvents({ event_type: "ResultCitationLinked" })[0]!.event_id
+    const artifactEvent = db.listResearchEvents({ event_type: "ResultArtifactLinked" })[0]!.event_id
+
+    expect(db.linkCandidateEvidence("candidate_1", "event", citationEvent).evidence_id).toBe(citationEvent)
+    expect(db.linkCandidateEvidence("candidate_1", "event", artifactEvent).evidence_id).toBe(artifactEvent)
+    db.close()
+  })
+
+  test("event evidence validation uses keyed link payloads instead of ambiguous entity ids", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    db.proposeResearchResult({
+      result_id: "result:valid",
+      result_type: "probe_result",
+      title: "Valid probe",
+      summary: "Valid probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.proposeResearchResult({
+      result_id: "result",
+      result_type: "probe_result",
+      title: "Rejected probe",
+      summary: "Rejected probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "citation", source_type: "file", source_uri: "file://citation.md", quoted_text_or_summary: "Evidence" })
+    db.recordCitation({ citation_id: "valid:citation", source_type: "file", source_uri: "file://stale.md", quoted_text_or_summary: "Stale evidence" })
+    db.addArtifact({ id: "artifact", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    db.addArtifact({ id: "valid:artifact", topic_id: "topic_1", kind: "log", content: "Stale evidence" })
+
+    db.linkResultCitation("result:valid", "citation")
+    db.linkResultCitation("result", "valid:citation")
+    db.linkResultArtifact("result:valid", "artifact")
+    db.linkResultArtifact("result", "valid:artifact")
+    db.rejectResearchResult("result")
+
+    const citationEvents = db.listResearchEvents({ event_type: "ResultCitationLinked" })
+    const artifactEvents = db.listResearchEvents({ event_type: "ResultArtifactLinked" })
+    const validCitationEvent = citationEvents.find((event) => (event.payload as { result_id?: unknown }).result_id === "result:valid")!.event_id
+    const rejectedCitationEvent = citationEvents.find((event) => (event.payload as { result_id?: unknown }).result_id === "result")!.event_id
+    const validArtifactEvent = artifactEvents.find((event) => (event.payload as { result_id?: unknown }).result_id === "result:valid")!.event_id
+    const rejectedArtifactEvent = artifactEvents.find((event) => (event.payload as { result_id?: unknown }).result_id === "result")!.event_id
+
+    expect(() => db.linkCandidateEvidence("candidate_1", "event", rejectedCitationEvent)).toThrow("research event evidence not found")
+    expect(() => db.linkCandidateEvidence("candidate_1", "event", rejectedArtifactEvent)).toThrow("research event evidence not found")
+    expect(db.linkCandidateEvidence("candidate_1", "event", validCitationEvent).evidence_id).toBe(validCitationEvent)
+    expect(db.linkCandidateEvidence("candidate_1", "event", validArtifactEvent).evidence_id).toBe(validArtifactEvent)
+    db.close()
+  })
+
+  test("event evidence validation survives redacted link event payload ids", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    db.proposeResearchResult({
+      result_id: "token=resultSecret123",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "sk-citationSecret123", source_type: "file", source_uri: "file://evidence.md", quoted_text_or_summary: "Evidence" })
+    db.addArtifact({ id: "sk-artifactSecret123", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    db.linkResultCitation("token=resultSecret123", "sk-citationSecret123")
+    db.linkResultArtifact("token=resultSecret123", "sk-artifactSecret123")
+    const citationEvent = db.listResearchEvents({ event_type: "ResultCitationLinked" })[0]!
+    const artifactEvent = db.listResearchEvents({ event_type: "ResultArtifactLinked" })[0]!
+
+    expect(JSON.stringify(citationEvent.payload)).toContain("[REDACTED]")
+    expect(JSON.stringify(artifactEvent.payload)).toContain("[REDACTED]")
+    expect(db.linkCandidateEvidence("candidate_1", "event", citationEvent.event_id).evidence_id).toBe(citationEvent.event_id)
+    expect(db.linkCandidateEvidence("candidate_1", "event", artifactEvent.event_id).evidence_id).toBe(artifactEvent.event_id)
+    db.close()
+  })
+
+  test("migration backfills legacy link event ids when payload ids were redacted", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "token=resultSecret123",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "sk-citationSecret123", source_type: "file", source_uri: "file://evidence.md", quoted_text_or_summary: "Evidence" })
+    db.addArtifact({ id: "sk-artifactSecret123", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    db.linkResultCitation("token=resultSecret123", "sk-citationSecret123")
+    db.linkResultArtifact("token=resultSecret123", "sk-artifactSecret123")
+    const citationEvent = db.listResearchEvents({ event_type: "ResultCitationLinked" })[0]!
+    const artifactEvent = db.listResearchEvents({ event_type: "ResultArtifactLinked" })[0]!
+    expect(JSON.stringify(citationEvent.payload)).toContain("[REDACTED]")
+    expect(JSON.stringify(artifactEvent.payload)).toContain("[REDACTED]")
+    db.close()
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.query("UPDATE result_citations SET link_event_id = NULL").run()
+      sqlite.query("UPDATE result_artifacts SET link_event_id = NULL").run()
+      expect(sqlite.query("SELECT link_event_id FROM result_citations").get()).toEqual({ link_event_id: null })
+      expect(sqlite.query("SELECT link_event_id FROM result_artifacts").get()).toEqual({ link_event_id: null })
+    } finally {
+      sqlite.close()
+    }
+
+    let next = 100
+    const reopened = ResearchDb.open(dir, {
+      now: () => new Date("2026-05-10T12:00:01Z"),
+      idFactory: () => `after_${next++}`,
+    })
+    reopened.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    expect(reopened.linkCandidateEvidence("candidate_1", "event", citationEvent.event_id).evidence_id).toBe(citationEvent.event_id)
+    expect(reopened.linkCandidateEvidence("candidate_1", "event", artifactEvent.event_id).evidence_id).toBe(artifactEvent.event_id)
+    reopened.close()
+  })
+
+  test("migration backfills ambiguous legacy link event ids by insertion order", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.proposeResearchResult({
+      result_id: "token=result:aSecret123",
+      result_type: "probe_result",
+      title: "Valid probe",
+      summary: "Valid probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.proposeResearchResult({
+      result_id: "token=result",
+      result_type: "probe_result",
+      title: "Rejected probe",
+      summary: "Rejected probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.recordCitation({ citation_id: "citation", source_type: "file", source_uri: "file://valid.md", quoted_text_or_summary: "Evidence" })
+    db.recordCitation({ citation_id: "aSecret123:citation", source_type: "file", source_uri: "file://rejected.md", quoted_text_or_summary: "Rejected evidence" })
+    db.addArtifact({ id: "artifact", topic_id: "topic_1", kind: "log", content: "Evidence" })
+    db.addArtifact({ id: "aSecret123:artifact", topic_id: "topic_1", kind: "log", content: "Rejected evidence" })
+    db.linkResultCitation("token=result:aSecret123", "citation")
+    db.linkResultCitation("token=result", "aSecret123:citation")
+    db.linkResultArtifact("token=result:aSecret123", "artifact")
+    db.linkResultArtifact("token=result", "aSecret123:artifact")
+    db.rejectResearchResult("token=result")
+    const citationEvents = db.listResearchEvents({ event_type: "ResultCitationLinked" })
+    const artifactEvents = db.listResearchEvents({ event_type: "ResultArtifactLinked" })
+    expect(citationEvents.map((event) => event.entity_id)).toEqual(["token=result:aSecret123:citation", "token=result:aSecret123:citation"])
+    expect(artifactEvents.map((event) => event.entity_id)).toEqual(["token=result:aSecret123:artifact", "token=result:aSecret123:artifact"])
+    expect(JSON.stringify(citationEvents[0]!.payload)).toContain("[REDACTED]")
+    expect(JSON.stringify(artifactEvents[0]!.payload)).toContain("[REDACTED]")
+    db.close()
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.query("UPDATE result_citations SET link_event_id = NULL").run()
+      sqlite.query("UPDATE result_artifacts SET link_event_id = NULL").run()
+    } finally {
+      sqlite.close()
+    }
+
+    let next = 200
+    const reopened = ResearchDb.open(dir, {
+      now: () => new Date("2026-05-10T12:00:02Z"),
+      idFactory: () => `after_${next++}`,
+    })
+    reopened.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    expect(reopened.linkCandidateEvidence("candidate_1", "event", citationEvents[0]!.event_id).evidence_id).toBe(citationEvents[0]!.event_id)
+    expect(reopened.linkCandidateEvidence("candidate_1", "event", artifactEvents[0]!.event_id).evidence_id).toBe(artifactEvents[0]!.event_id)
+    expect(() => reopened.linkCandidateEvidence("candidate_1", "event", citationEvents[1]!.event_id)).toThrow("research event evidence not found")
+    expect(() => reopened.linkCandidateEvidence("candidate_1", "event", artifactEvents[1]!.event_id)).toThrow("research event evidence not found")
+    reopened.close()
+  })
+
+  test("candidate evidence linking fails clearly for missing candidate or evidence", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+
+    expect(() => db.linkCandidateEvidence("missing", "citation", "citation_1")).toThrow("candidate not found: missing")
+    expect(() => db.linkCandidateEvidence("candidate_1", "citation", "missing")).toThrow("citation not found: missing")
+    expect(() => db.linkCandidateEvidence("candidate_1", "artifact", "missing")).toThrow("artifact not found: missing")
+    expect(() => db.linkCandidateEvidence("candidate_1", "research_result", "missing")).toThrow("research result evidence not found: missing")
+    expect(() => db.linkCandidateEvidence("candidate_1", "event", "missing")).toThrow("research event evidence not found: missing")
+    db.close()
+  })
+
+  test("candidate lifecycle events do not satisfy promotion evidence", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    const candidateCreatedEvent = db.listResearchEvents({ entity_type: "candidate" })[0]!.event_id
+
+    expect(() => db.linkCandidateEvidence("candidate_1", "event", candidateCreatedEvent)).toThrow("research event evidence not found")
+    expect(db.canPromoteCandidate("candidate_1")).toEqual({ ok: false, reason: "candidate has no promotion evidence: candidate_1" })
+    db.close()
+  })
+
+  test("rejected research result events do not satisfy promotion evidence", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+    db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.rejectResearchResult("result_1")
+    const rejectedEvent = db.listResearchEvents({ event_type: "ResearchResultRejected" })[0]!.event_id
+
+    expect(() => db.linkCandidateEvidence("candidate_1", "event", rejectedEvent)).toThrow("research event evidence not found")
+    expect(db.canPromoteCandidate("candidate_1")).toEqual({ ok: false, reason: "candidate has no promotion evidence: candidate_1" })
+    db.close()
+  })
+
+  test("candidate promotion requires evidence and rejects already rejected candidates", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createCandidate({ candidate_id: "candidate_1", claim: "Candidate", source: "Commander" })
+
+    expect(db.canPromoteCandidate("candidate_1")).toEqual({ ok: false, reason: "candidate has no promotion evidence: candidate_1" })
+    expect(() => db.promoteCandidate("candidate_1")).toThrow("candidate has no promotion evidence")
+
+    db.proposeResearchResult({
+      result_id: "result_1",
+      result_type: "probe_result",
+      title: "Probe",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.linkCandidateEvidence("candidate_1", "research_result", "result_1")
+    expect(db.proposeCandidatePromotion("candidate_1", ["result_1"])).toEqual(expect.objectContaining({ candidate_id: "candidate_1" }))
+    expect(db.promoteCandidate("candidate_1").status).toBe("promoted")
+    const promotedCandidate = db.getCandidate("candidate_1")!
+    const promotedEvents = () => db.listResearchEvents({ entity_type: "candidate" }).filter((event) => event.event_type === "CandidatePromoted")
+    expect(promotedEvents()).toHaveLength(1)
+    expect(db.promoteCandidate("candidate_1")).toEqual(promotedCandidate)
+    expect(promotedEvents()).toHaveLength(1)
+    expect(() => db.selectCandidate("candidate_1")).toThrow("candidate already promoted: candidate_1")
+    expect(() => db.rejectCandidate("candidate_1")).toThrow("candidate already promoted: candidate_1")
+    expect(db.getCandidate("candidate_1")).toEqual(promotedCandidate)
+    expect(promotedEvents()).toHaveLength(1)
+
+    db.createCandidate({ candidate_id: "candidate_stale", claim: "Stale", source: "Commander" })
+    const staleLink = db.linkCandidateEvidence("candidate_stale", "research_result", "result_1")
+    db.rejectResearchResult("result_1")
+    expect(db.linkCandidateEvidence("candidate_stale", "research_result", "result_1")).toEqual(staleLink)
+    expect(db.canPromoteCandidate("candidate_stale")).toEqual({ ok: false, reason: "candidate has no promotion evidence: candidate_stale" })
+
+    db.createCandidate({ candidate_id: "candidate_2", claim: "Rejected", source: "Commander" })
+    db.proposeResearchResult({
+      result_id: "result_2",
+      result_type: "probe_result",
+      title: "Probe 2",
+      summary: "Probe",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.linkCandidateEvidence("candidate_2", "research_result", "result_2")
+    db.rejectCandidate("candidate_2")
+    expect(() => db.selectCandidate("candidate_2")).toThrow("candidate already rejected: candidate_2")
+    expect(() => db.promoteCandidate("candidate_2")).toThrow("candidate already rejected")
+    db.close()
+  })
+
+  test("plans starts completes fails and cancels trials with search filters", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Hypothesis", source: "Source" })
+    db.createCandidate({ candidate_id: "candidate_1", hypothesis_id: "hypothesis_1", claim: "Candidate", source: "Source" })
+
+    const planned = db.planTrial({
+      trial_id: "trial_1",
+      hypothesis_id: "hypothesis_1",
+      candidate_id: "candidate_1",
+      trial_kind: "probe",
+      config: { token: "trialSecret123" },
+    })
+    const running = db.startTrial("trial_1")
+    const completed = db.completeTrial("trial_1")
+    const failed = db.failTrial(db.planTrial({ trial_id: "trial_2", candidate_id: "candidate_1", trial_kind: "probe", config: {} }).trial_id, "bad metric")
+    const cancelled = db.cancelTrial(db.planTrial({ trial_id: "trial_3", hypothesis_id: "hypothesis_1", trial_kind: "probe", config: {} }).trial_id, "stopped")
+
+    expect(planned.status).toBe("planned")
+    expect(running.status).toBe("running")
+    expect(running.started_at).not.toBeNull()
+    expect(completed.status).toBe("completed")
+    expect(completed.completed_at).not.toBeNull()
+    expect(failed.status).toBe("failed")
+    expect(cancelled.status).toBe("cancelled")
+    expect(db.searchTrials({ status: "completed" }).map((trial) => trial.trial_id)).toEqual(["trial_1"])
+    expect(db.searchTrials({ candidate_id: "candidate_1" }).map((trial) => trial.trial_id)).toEqual(["trial_1", "trial_2"])
+    expect(db.searchTrials({ hypothesis_id: "hypothesis_1" }).map((trial) => trial.trial_id)).toEqual(["trial_1", "trial_3"])
+    expect(JSON.stringify(db.listResearchEvents({ entity_type: "trial" }))).not.toContain("trialSecret123")
+    expect(db.listResearchEvents({ entity_type: "trial" }).map((event) => event.event_type)).toEqual([
+      "TrialPlanned",
+      "TrialStarted",
+      "TrialCompleted",
+      "TrialPlanned",
+      "TrialFailed",
+      "TrialPlanned",
+      "TrialCancelled",
+    ])
+    db.close()
+  })
+
+  test("planning a trial enforces candidate hypothesis consistency", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Hypothesis 1", source: "Source" })
+    db.createHypothesis({ hypothesis_id: "hypothesis_2", claim: "Hypothesis 2", source: "Source" })
+    db.createCandidate({ candidate_id: "candidate_1", hypothesis_id: "hypothesis_1", claim: "Candidate", source: "Source" })
+    db.createCandidate({ candidate_id: "candidate_standalone", claim: "Candidate", source: "Source" })
+
+    expect(() =>
+      db.planTrial({ trial_id: "trial_mismatch", hypothesis_id: "hypothesis_2", candidate_id: "candidate_1", trial_kind: "probe", config: {} }),
+    ).toThrow("candidate hypothesis mismatch: candidate_1")
+    expect(() =>
+      db.planTrial({
+        trial_id: "trial_standalone_mismatch",
+        hypothesis_id: "hypothesis_1",
+        candidate_id: "candidate_standalone",
+        trial_kind: "probe",
+        config: {},
+      }),
+    ).toThrow("candidate hypothesis mismatch: candidate_standalone")
+    expect(db.getTrial("trial_mismatch")).toBeNull()
+    db.close()
+  })
+
+  test("trial completion requires planned or running status", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.planTrial({ trial_id: "trial_1", trial_kind: "probe", config: {} })
+    db.cancelTrial("trial_1")
+
+    expect(() => db.completeTrial("trial_1")).toThrow("trial cannot be completed from status: cancelled")
+    db.close()
+  })
+
+  test("trial start fail and cancel reject terminal state rewrites", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.planTrial({ trial_id: "trial_completed", trial_kind: "probe", config: {} })
+    db.startTrial("trial_completed")
+    const running = db.startTrial("trial_completed")
+    db.completeTrial("trial_completed")
+    db.planTrial({ trial_id: "trial_failed", trial_kind: "probe", config: {} })
+    db.failTrial("trial_failed")
+    db.planTrial({ trial_id: "trial_cancelled", trial_kind: "probe", config: {} })
+    db.cancelTrial("trial_cancelled")
+
+    expect(running.status).toBe("running")
+    expect(db.listResearchEvents({ event_type: "TrialStarted" })).toHaveLength(1)
+    expect(() => db.startTrial("trial_completed")).toThrow("trial cannot be started from status: completed")
+    expect(() => db.startTrial("trial_failed")).toThrow("trial cannot be started from status: failed")
+    expect(() => db.startTrial("trial_cancelled")).toThrow("trial cannot be started from status: cancelled")
+    expect(() => db.failTrial("trial_completed")).toThrow("trial cannot be failed from status: completed")
+    expect(() => db.cancelTrial("trial_completed")).toThrow("trial cannot be cancelled from status: completed")
+    expect(() => db.cancelTrial("trial_failed")).toThrow("trial cannot be cancelled from status: failed")
+    expect(() => db.failTrial("trial_cancelled")).toThrow("trial cannot be failed from status: cancelled")
+    expect(db.getTrial("trial_completed")?.status).toBe("completed")
+    expect(db.getTrial("trial_failed")?.status).toBe("failed")
+    expect(db.getTrial("trial_cancelled")?.status).toBe("cancelled")
+    db.close()
+  })
+
+  test("searches candidates by status and hypothesis", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Hypothesis", source: "Source" })
+    const active = db.createCandidate({ candidate_id: "candidate_1", hypothesis_id: "hypothesis_1", claim: "Active", source: "Source" })
+    const rejected = db.createCandidate({ candidate_id: "candidate_2", claim: "Rejected", source: "Source" })
+    db.rejectCandidate(rejected.candidate_id)
+
+    expect(db.searchCandidates({ status: "active" })).toEqual([active])
+    expect(db.searchCandidates({ hypothesis_id: "hypothesis_1" })).toEqual([active])
+    expect(() => db.searchCandidates({ status: "bad" as never })).toThrow("invalid candidate status")
+    db.close()
+  })
+
+  test("redaction holds for hypothesis candidate trial config and events", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const hypothesis = db.createHypothesis({ hypothesis_id: "hypothesis_secret", claim: "token=hypothesisSecret123", source: "password=sourceSecret123" })
+    const candidate = db.createCandidate({ candidate_id: "candidate_secret", claim: "api_key=candidateSecret123", source: "Bearer sourceSecret123" })
+    const trial = db.planTrial({ trial_id: "trial_secret", trial_kind: "secret=kindSecret123", config: { token: "configSecret123" } })
+
+    const serialized = JSON.stringify({ hypothesis, candidate, trial, events: db.listResearchEvents() })
+    expect(serialized).not.toContain("hypothesisSecret123")
+    expect(serialized).not.toContain("sourceSecret123")
+    expect(serialized).not.toContain("candidateSecret123")
+    expect(serialized).not.toContain("kindSecret123")
+    expect(serialized).not.toContain("configSecret123")
+    expect(serialized).toContain("[REDACTED]")
+    db.close()
+  })
+
+  test("candidate hypothesis and trial writes roll back when event append fails", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER fail_branch4b_event_insert
+        BEFORE INSERT ON research_events
+        WHEN NEW.event_type IN ('HypothesisCreated', 'CandidateCreated', 'TrialPlanned')
+        BEGIN
+          SELECT RAISE(ABORT, 'forced branch4b event failure');
+        END;
+      `)
+
+      expect(() => db.createHypothesis({ hypothesis_id: "hypothesis_rollback", claim: "Claim", source: "Source" })).toThrow("forced branch4b event failure")
+      expect(db.getHypothesis("hypothesis_rollback")).toBeNull()
+      expect(() => db.createCandidate({ candidate_id: "candidate_rollback", claim: "Claim", source: "Source" })).toThrow("forced branch4b event failure")
+      expect(db.getCandidate("candidate_rollback")).toBeNull()
+      expect(() => db.planTrial({ trial_id: "trial_rollback", trial_kind: "probe", config: {} })).toThrow("forced branch4b event failure")
+      expect(db.getTrial("trial_rollback")).toBeNull()
+    } finally {
+      sqlite.close()
+      db.close()
+    }
+  })
 })
