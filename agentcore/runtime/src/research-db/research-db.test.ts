@@ -884,9 +884,11 @@ describe("ResearchDb", () => {
       created_by: "verifier",
     })
 
-    expect(() => db.acceptResearchResult("checkpoint_1")).toThrow("requires linked citation or artifact evidence")
+    expect(() => db.acceptResearchResult("checkpoint_1")).toThrow("checkpoint selection requires linked checkpoint artifact")
 
+    db.planTrainingRun({ training_run_id: "training_1", label: "full_training" })
     db.addArtifact({ id: "artifact_1", topic_id: "topic_1", kind: "snapshot", content: "checkpoint metadata" })
+    db.recordTrainingCheckpoint({ checkpoint_id: "checkpoint_artifact_link", training_run_id: "training_1", artifact_id: "artifact_1" })
     db.linkResultArtifact("checkpoint_1", "artifact_1")
 
     expect(db.acceptResearchResult("checkpoint_1").status).toBe("accepted")
@@ -930,6 +932,7 @@ describe("ResearchDb", () => {
       summary: "Training completed.",
       confidence: "medium",
       metrics: { loss: 0.25 },
+      reproduction: { command: "bun train" },
       created_by: "executor",
     })
 
@@ -1885,6 +1888,308 @@ describe("ResearchDb", () => {
       expect(db.getCandidate("candidate_rollback")).toBeNull()
       expect(() => db.planTrial({ trial_id: "trial_rollback", trial_kind: "probe", config: {} })).toThrow("forced branch4b event failure")
       expect(db.getTrial("trial_rollback")).toBeNull()
+    } finally {
+      sqlite.close()
+      db.close()
+    }
+  })
+
+  test("creates training run and checkpoint tables on empty DB", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.close()
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      const tables = sqlite
+        .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+        .all()
+        .map((row) => String((row as { name: string }).name))
+      expect(tables).toContain("training_runs")
+      expect(tables).toContain("training_checkpoints")
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  test("Branch 4B DB opens after training projection migration", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TABLE topics (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE hypotheses (
+          hypothesis_id TEXT PRIMARY KEY,
+          claim TEXT NOT NULL,
+          source TEXT NOT NULL,
+          status TEXT NOT NULL,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE candidates (
+          candidate_id TEXT PRIMARY KEY,
+          hypothesis_id TEXT,
+          claim TEXT NOT NULL,
+          source TEXT NOT NULL,
+          status TEXT NOT NULL,
+          commander_score REAL,
+          rank_reason TEXT,
+          input_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE trials (
+          trial_id TEXT PRIMARY KEY,
+          hypothesis_id TEXT,
+          candidate_id TEXT,
+          trial_kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          config_json TEXT NOT NULL,
+          input_hash TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE research_events (
+          event_id TEXT PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `)
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openTestDb(dir)
+    expect(db.searchTrainingRuns()).toEqual([])
+    db.close()
+  })
+
+  test("plans training run with event and explicit ID idempotency", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Hypothesis", source: "Source" })
+    db.createCandidate({ candidate_id: "candidate_1", hypothesis_id: "hypothesis_1", claim: "Candidate", source: "Source" })
+    db.planTrial({ trial_id: "trial_1", hypothesis_id: "hypothesis_1", candidate_id: "candidate_1", trial_kind: "full", config: {} })
+
+    const input = {
+      training_run_id: "training_1",
+      trial_id: "trial_1",
+      candidate_id: "candidate_1",
+      hypothesis_id: "hypothesis_1",
+      mission_id: "mission_1",
+      label: "full_training" as const,
+      log_path: "/tmp/token=logSecret123.log",
+      metrics_path: "/tmp/metrics.json",
+      checkpoint_dir: "/tmp/checkpoints",
+      reproduction: { command: "API_KEY=reproSecret123 bun train" },
+    }
+    const first = db.planTrainingRun(input)
+    const second = db.planTrainingRun(input)
+
+    expect(second).toEqual(first)
+    expect(first.status).toBe("planned")
+    expect(first.label).toBe("full_training")
+    expect(db.getTrainingRun(" training_1 ")).toEqual(first)
+    expect(db.listResearchEvents({ entity_type: "training_run" }).map((event) => event.event_type)).toEqual(["TrainingRunPlanned"])
+    expect(JSON.stringify({ first, events: db.listResearchEvents({ entity_type: "training_run" }) })).not.toContain("logSecret123")
+    expect(JSON.stringify(first)).not.toContain("reproSecret123")
+    expect(() => db.planTrainingRun({ ...input, label: "probe" })).toThrow("training run id collision")
+    db.close()
+  })
+
+  test("training run lifecycle progress checkpoint reproduction and search APIs write events", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.createHypothesis({ hypothesis_id: "hypothesis_1", claim: "Hypothesis", source: "Source" })
+    db.createCandidate({ candidate_id: "candidate_1", hypothesis_id: "hypothesis_1", claim: "Candidate", source: "Source" })
+    db.planTrial({ trial_id: "trial_1", hypothesis_id: "hypothesis_1", candidate_id: "candidate_1", trial_kind: "full", config: {} })
+    db.planTrainingRun({
+      training_run_id: "training_1",
+      trial_id: "trial_1",
+      candidate_id: "candidate_1",
+      hypothesis_id: "hypothesis_1",
+      mission_id: "mission_1",
+      label: "full_training",
+    })
+
+    const started = db.startTrainingRun("training_1", { pid: 123, process_group_id: 456, log_path: "/tmp/train.log" })
+    const progressed = db.observeTrainingProgress({ training_run_id: "training_1", step: 10, metric: { loss: 0.4, token: "metricSecret123" } })
+    const artifact = db.addArtifact({ id: "checkpoint_artifact_1", topic_id: "topic_1", kind: "snapshot", content: "checkpoint", produced_by_run_id: "training_1" })
+    const checkpoint = db.recordTrainingCheckpoint({
+      checkpoint_id: "checkpoint_1",
+      training_run_id: "training_1",
+      artifact_id: artifact.id,
+      step: 20,
+      metric: { loss: 0.2 },
+    })
+    const reproduced = db.recordReproductionRecipe("training_1", { command: "TOKEN=reproSecret123 bun train" })
+    const completed = db.completeTrainingRun("training_1", { metrics_path: "/tmp/metrics.json" })
+
+    expect(started.status).toBe("running")
+    expect(started.started_at).not.toBeNull()
+    expect(progressed.last_step).toBe(10)
+    expect(progressed.last_metric).toEqual({ loss: 0.4, token: "[REDACTED]" })
+    expect(progressed.last_observed_at).not.toBeNull()
+    expect(checkpoint.artifact_id).toBe("checkpoint_artifact_1")
+    expect(db.getTrainingRun("training_1")?.latest_checkpoint_id).toBe("checkpoint_1")
+    expect(reproduced.reproduction).toEqual({ command: "[REDACTED] bun train" })
+    expect(completed.status).toBe("completed")
+    expect(db.searchTrainingRuns({ label: "full_training" }).map((run) => run.training_run_id)).toEqual(["training_1"])
+    expect(db.searchTrainingRuns({ status: "completed" }).map((run) => run.training_run_id)).toEqual(["training_1"])
+    expect(db.searchTrainingRuns({ candidate_id: "candidate_1" }).map((run) => run.training_run_id)).toEqual(["training_1"])
+    expect(db.searchTrainingRuns({ hypothesis_id: "hypothesis_1" }).map((run) => run.training_run_id)).toEqual(["training_1"])
+    expect(db.searchTrainingRuns({ trial_id: "trial_1" }).map((run) => run.training_run_id)).toEqual(["training_1"])
+    expect(db.listResearchEvents({ entity_type: "training_run" }).map((event) => event.event_type)).toEqual([
+      "TrainingRunPlanned",
+      "TrainingRunStarted",
+      "TrainingProgressObserved",
+      "TrainingRunCompleted",
+    ])
+    expect(db.listResearchEvents({ entity_type: "training_checkpoint" }).map((event) => event.event_type)).toEqual(["TrainingCheckpointObserved"])
+    expect(db.listResearchEvents({ entity_type: "reproduction_record" }).map((event) => event.event_type)).toEqual(["ReproductionRecipeRecorded"])
+    expect(JSON.stringify(db.listResearchEvents())).not.toContain("metricSecret123")
+    expect(JSON.stringify(db.listResearchEvents())).not.toContain("reproSecret123")
+    db.close()
+  })
+
+  test("training run failure cancellation and terminal rewrites are rejected", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.planTrainingRun({ training_run_id: "training_failed", label: "probe" })
+    db.planTrainingRun({ training_run_id: "training_cancelled", label: "debug_run" })
+    db.planTrainingRun({ training_run_id: "training_completed", label: "evaluation" })
+
+    const failed = db.failTrainingRun("training_failed", "token=failedSecret123")
+    const cancelled = db.cancelTrainingRun("training_cancelled", "stopped")
+    const completed = db.completeTrainingRun("training_completed")
+
+    expect(failed.status).toBe("failed")
+    expect(cancelled.status).toBe("cancelled")
+    expect(completed.status).toBe("completed")
+    expect(() => db.startTrainingRun("training_failed")).toThrow("training run cannot be started from status: failed")
+    expect(() => db.startTrainingRun("training_cancelled")).toThrow("training run cannot be started from status: cancelled")
+    expect(() => db.startTrainingRun("training_completed")).toThrow("training run cannot be started from status: completed")
+    expect(() => db.completeTrainingRun("training_failed")).toThrow("training run cannot be completed from status: failed")
+    expect(() => db.completeTrainingRun("training_cancelled")).toThrow("training run cannot be completed from status: cancelled")
+    expect(JSON.stringify(db.listResearchEvents())).not.toContain("failedSecret123")
+    db.close()
+  })
+
+  test("training write barriers enforce full training metrics reproduction and best-model labels", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.planTrainingRun({ training_run_id: "run_probe", label: "probe" })
+    db.planTrainingRun({ training_run_id: "run_full", label: "full_training", reproduction: { command: "bun train" } })
+    db.completeTrainingRun("run_probe")
+    db.completeTrainingRun("run_full", { metrics_path: "/tmp/metrics.json" })
+    db.planTrainingRun({ training_run_id: "run_missing_reproduction", label: "full_training", metrics_path: "/tmp/metrics.json" })
+    db.planTrainingRun({ training_run_id: "run_missing_metrics", label: "full_training", reproduction: { command: "bun train" } })
+
+    expect(() => db.completeTrainingRun("run_missing_reproduction")).toThrow("full training run requires reproduction before completion")
+    expect(() => db.completeTrainingRun("run_missing_metrics")).toThrow("full training run requires metrics evidence before completion")
+
+    expect(() => db.assertTrainingRunCanSupportBestModelUpdate("run_probe")).toThrow("training run label cannot update best model")
+    expect(() => db.assertTrainingRunCanSupportBestModelUpdate(db.planTrainingRun({ training_run_id: "run_unfinished", label: "evaluation" }).training_run_id)).toThrow(
+      "training run must be completed",
+    )
+    expect(() => db.assertTrainingRunCanSupportBestModelUpdate("run_full")).not.toThrow()
+
+    db.proposeResearchResult({
+      result_id: "missing_repro",
+      result_type: "full_training_result",
+      title: "Training",
+      summary: "Training",
+      confidence: "medium",
+      metrics: { loss: 0.2 },
+      created_by: "executor",
+    })
+    db.addArtifact({ id: "metrics_artifact_1", topic_id: "topic_1", kind: "log", content: "metrics" })
+    db.linkResultArtifact("missing_repro", "metrics_artifact_1")
+    expect(() => db.acceptResearchResult("missing_repro")).toThrow("full training result requires reproduction")
+
+    db.proposeResearchResult({
+      result_id: "missing_metrics",
+      result_type: "full_training_result",
+      title: "Training",
+      summary: "Training",
+      confidence: "medium",
+      reproduction: { command: "bun train" },
+      created_by: "executor",
+    })
+    expect(() => db.acceptResearchResult("missing_metrics")).toThrow("full training result requires metrics evidence")
+
+    db.proposeResearchResult({
+      result_id: "with_run_evidence",
+      result_type: "full_training_result",
+      title: "Training",
+      summary: "Training",
+      confidence: "medium",
+      training_run_id: "run_full",
+      created_by: "executor",
+    })
+    db.addArtifact({ id: "training_log_1", topic_id: "topic_1", kind: "log", content: "log" })
+    db.linkResultArtifact("with_run_evidence", "training_log_1")
+    expect(db.acceptResearchResult("with_run_evidence").status).toBe("accepted")
+    db.close()
+  })
+
+  test("checkpoint selection requires a linked checkpoint artifact", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.planTrainingRun({ training_run_id: "training_1", label: "full_training" })
+    db.proposeResearchResult({
+      result_id: "checkpoint_selection_1",
+      result_type: "checkpoint_selection",
+      title: "Checkpoint",
+      summary: "Select checkpoint",
+      confidence: "high",
+      training_run_id: "training_1",
+      created_by: "verifier",
+    })
+    db.addArtifact({ id: "plain_artifact", topic_id: "topic_1", kind: "snapshot", content: "not linked as checkpoint" })
+    db.linkResultArtifact("checkpoint_selection_1", "plain_artifact")
+    expect(() => db.acceptResearchResult("checkpoint_selection_1")).toThrow("checkpoint selection requires linked checkpoint artifact")
+
+    const checkpointArtifact = db.addArtifact({ id: "checkpoint_artifact", topic_id: "topic_1", kind: "snapshot", content: "checkpoint" })
+    db.recordTrainingCheckpoint({ checkpoint_id: "checkpoint_1", training_run_id: "training_1", artifact_id: checkpointArtifact.id })
+    db.linkResultArtifact("checkpoint_selection_1", checkpointArtifact.id)
+    expect(db.acceptResearchResult("checkpoint_selection_1").status).toBe("accepted")
+    db.close()
+  })
+
+  test("training writes roll back when event append fails", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER fail_training_event_insert
+        BEFORE INSERT ON research_events
+        WHEN NEW.event_type = 'TrainingRunPlanned'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced training event failure');
+        END;
+      `)
+
+      expect(() => db.planTrainingRun({ training_run_id: "training_rollback", label: "probe" })).toThrow("forced training event failure")
+      expect(db.getTrainingRun("training_rollback")).toBeNull()
     } finally {
       sqlite.close()
       db.close()

@@ -32,6 +32,8 @@ export type HypothesisStatus = "active" | "paused" | "rejected" | "promoted" | "
 export type CandidateStatus = "active" | "paused" | "rejected" | "promoted" | "needs_more_evidence"
 export type TrialStatus = "planned" | "running" | "completed" | "failed" | "cancelled"
 export type CandidateEvidenceType = "research_result" | "citation" | "artifact" | "event"
+export type TrainingRunLabel = "probe" | "smoke_test" | "full_training" | "evaluation" | "ablation" | "debug_run"
+export type TrainingRunStatus = "planned" | "starting" | "running" | "paused" | "completed" | "failed" | "cancelled"
 export type ResearchEntityType =
   | "topic"
   | "source"
@@ -45,6 +47,9 @@ export type ResearchEntityType =
   | "candidate"
   | "trial"
   | "candidate_evidence"
+  | "training_run"
+  | "training_checkpoint"
+  | "reproduction_record"
 
 const TOPIC_STATUSES = new Set<TopicStatus>(["open", "active", "paused", "closed"])
 const SOURCE_STATUSES = new Set<SourceStatus>(["new", "reviewed", "rejected"])
@@ -74,6 +79,9 @@ const HYPOTHESIS_STATUSES = new Set<HypothesisStatus>(["active", "paused", "reje
 const CANDIDATE_STATUSES = new Set<CandidateStatus>(["active", "paused", "rejected", "promoted", "needs_more_evidence"])
 const TRIAL_STATUSES = new Set<TrialStatus>(["planned", "running", "completed", "failed", "cancelled"])
 const CANDIDATE_EVIDENCE_TYPES = new Set<CandidateEvidenceType>(["research_result", "citation", "artifact", "event"])
+const TRAINING_RUN_LABELS = new Set<TrainingRunLabel>(["probe", "smoke_test", "full_training", "evaluation", "ablation", "debug_run"])
+const TRAINING_RUN_STATUSES = new Set<TrainingRunStatus>(["planned", "starting", "running", "paused", "completed", "failed", "cancelled"])
+const BEST_MODEL_TRAINING_LABELS = new Set<TrainingRunLabel>(["full_training", "evaluation", "ablation"])
 const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>([
   "topic",
   "source",
@@ -87,6 +95,9 @@ const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>([
   "candidate",
   "trial",
   "candidate_evidence",
+  "training_run",
+  "training_checkpoint",
+  "reproduction_record",
 ])
 const EVIDENCE_REQUIRED_RESULT_TYPES = new Set<ResearchResultType>([
   "finding",
@@ -332,6 +343,86 @@ export interface Trial {
   updated_at: string
 }
 
+export interface TrainingRunInput {
+  training_run_id?: string
+  trial_id?: string
+  candidate_id?: string
+  hypothesis_id?: string
+  mission_id?: string
+  label: TrainingRunLabel
+  pid?: number
+  process_group_id?: number
+  log_path?: string
+  metrics_path?: string
+  checkpoint_dir?: string
+  reproduction?: unknown
+}
+
+export interface StartTrainingRunInput {
+  pid?: number
+  process_group_id?: number
+  log_path?: string
+  metrics_path?: string
+  checkpoint_dir?: string
+}
+
+export interface TrainingProgressInput {
+  training_run_id: string
+  step?: number
+  metric?: unknown
+  metrics_path?: string
+  log_path?: string
+}
+
+export interface TrainingCheckpointInput {
+  checkpoint_id?: string
+  training_run_id: string
+  artifact_id: string
+  step?: number
+  metric?: unknown
+  observed_at?: string
+}
+
+export interface CompleteTrainingRunInput {
+  metrics_path?: string
+  reproduction?: unknown
+}
+
+export interface TrainingRun {
+  training_run_id: string
+  trial_id: string | null
+  candidate_id: string | null
+  hypothesis_id: string | null
+  mission_id: string | null
+  label: TrainingRunLabel
+  status: TrainingRunStatus
+  pid: number | null
+  process_group_id: number | null
+  log_path: string | null
+  metrics_path: string | null
+  checkpoint_dir: string | null
+  latest_checkpoint_id: string | null
+  last_step: number | null
+  last_metric: unknown | null
+  reproduction: unknown | null
+  started_at: string | null
+  last_observed_at: string | null
+  completed_at: string | null
+  input_hash: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TrainingCheckpoint {
+  checkpoint_id: string
+  training_run_id: string
+  artifact_id: string
+  step: number | null
+  metric: unknown | null
+  observed_at: string
+  created_at: string
+}
+
 export interface SearchResearchResultsOptions extends SearchOptions {
   result_type?: ResearchResultType
   status?: ResearchResultStatus
@@ -355,6 +446,15 @@ export interface SearchTrialsOptions extends SearchOptions {
   status?: TrialStatus
   candidate_id?: string
   hypothesis_id?: string
+}
+
+export interface SearchTrainingRunsOptions extends SearchOptions {
+  label?: TrainingRunLabel
+  status?: TrainingRunStatus
+  candidate_id?: string
+  hypothesis_id?: string
+  trial_id?: string
+  mission_id?: string
 }
 
 export interface WriteBarrierResult {
@@ -440,6 +540,15 @@ interface CandidateRow extends Candidate {
 interface TrialRow extends Omit<Trial, "config"> {
   config_json: string
   input_hash: string
+}
+
+interface TrainingRunRow extends Omit<TrainingRun, "last_metric" | "reproduction"> {
+  last_metric_json: string | null
+  reproduction_json: string | null
+}
+
+interface TrainingCheckpointRow extends Omit<TrainingCheckpoint, "metric"> {
+  metric_json: string | null
 }
 
 interface ResearchEventRow {
@@ -1278,6 +1387,319 @@ export class ResearchDb {
     return this.finishTrial(trialId, "cancelled", "TrialCancelled", reason)
   }
 
+  planTrainingRun(input: TrainingRunInput): TrainingRun {
+    const trainingRunId = cleanId(input.training_run_id ?? this.idFactory())
+    const trialId = input.trial_id ? cleanId(input.trial_id) : null
+    const candidateId = input.candidate_id ? cleanId(input.candidate_id) : null
+    const hypothesisId = input.hypothesis_id ? cleanId(input.hypothesis_id) : null
+    const missionId = input.mission_id ? cleanId(input.mission_id) : null
+    assertAllowed(TRAINING_RUN_LABELS, input.label, "training run label")
+    this.validateTrainingRunLinks({ trialId, candidateId, hypothesisId })
+    const pid = cleanOptionalProcessId(input.pid, "pid")
+    const processGroupId = cleanOptionalProcessId(input.process_group_id, "process_group_id")
+    const logPath = cleanOptional(input.log_path)
+    const metricsPath = cleanOptional(input.metrics_path)
+    const checkpointDir = cleanOptional(input.checkpoint_dir)
+    const reproduction = input.reproduction ?? null
+    const inputHash = hashPayload({
+      trial_id: trialId,
+      candidate_id: candidateId,
+      hypothesis_id: hypothesisId,
+      mission_id: missionId,
+      label: input.label,
+      status: "planned",
+      pid,
+      process_group_id: processGroupId,
+      log_path: logPath,
+      metrics_path: metricsPath,
+      checkpoint_dir: checkpointDir,
+      reproduction,
+    })
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM training_runs WHERE training_run_id = ?").get(trainingRunId) as TrainingRunRow | null
+      if (existing) {
+        if (existing.input_hash === inputHash) return this.trainingRunFromRow(existing)
+        throw new Error(`training run id collision: ${trainingRunId}`)
+      }
+      this.db
+        .query(
+          "INSERT INTO training_runs (training_run_id, trial_id, candidate_id, hypothesis_id, mission_id, label, status, pid, process_group_id, log_path, metrics_path, checkpoint_dir, latest_checkpoint_id, last_step, last_metric_json, reproduction_json, started_at, last_observed_at, completed_at, input_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          trainingRunId,
+          trialId,
+          candidateId,
+          hypothesisId,
+          missionId,
+          input.label,
+          "planned",
+          pid,
+          processGroupId,
+          logPath ? redactString(logPath) : null,
+          metricsPath ? redactString(metricsPath) : null,
+          checkpointDir ? redactString(checkpointDir) : null,
+          null,
+          null,
+          null,
+          JSON.stringify(redactValue(reproduction)),
+          null,
+          null,
+          null,
+          inputHash,
+          createdAt,
+          createdAt,
+        )
+      const run = this.getTrainingRun(trainingRunId)
+      if (!run) throw new Error(`failed to plan training run: ${trainingRunId}`)
+      this.recordEvent("TrainingRunPlanned", "training_run", trainingRunId, run)
+      return run
+    })
+  }
+
+  getTrainingRun(trainingRunId: string): TrainingRun | null {
+    const row = this.db.query("SELECT * FROM training_runs WHERE training_run_id = ?").get(cleanId(trainingRunId)) as TrainingRunRow | null
+    return this.trainingRunFromRow(row)
+  }
+
+  searchTrainingRuns(options: SearchTrainingRunsOptions = {}): TrainingRun[] {
+    const filters: string[] = []
+    const params: SQLQueryBindings[] = []
+    if (options.label !== undefined) {
+      assertAllowed(TRAINING_RUN_LABELS, options.label, "training run label")
+      filters.push("label = ?")
+      params.push(options.label)
+    }
+    if (options.status !== undefined) {
+      assertAllowed(TRAINING_RUN_STATUSES, options.status, "training run status")
+      filters.push("status = ?")
+      params.push(options.status)
+    }
+    if (options.candidate_id !== undefined) {
+      filters.push("candidate_id = ?")
+      params.push(cleanId(options.candidate_id))
+    }
+    if (options.hypothesis_id !== undefined) {
+      filters.push("hypothesis_id = ?")
+      params.push(cleanId(options.hypothesis_id))
+    }
+    if (options.trial_id !== undefined) {
+      filters.push("trial_id = ?")
+      params.push(cleanId(options.trial_id))
+    }
+    if (options.mission_id !== undefined) {
+      filters.push("mission_id = ?")
+      params.push(cleanId(options.mission_id))
+    }
+    params.push(cleanLimit(options.limit))
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
+    return (this.db.query(`SELECT * FROM training_runs ${where} ORDER BY created_at, training_run_id LIMIT ?`).all(...params) as TrainingRunRow[]).map((row) =>
+      this.trainingRunFromRow(row),
+    )
+  }
+
+  startTrainingRun(trainingRunId: string, input: StartTrainingRunInput = {}): TrainingRun {
+    const id = cleanId(trainingRunId)
+    const existing = this.getTrainingRun(id)
+    if (!existing) throw new Error(`training run not found: ${id}`)
+    if (existing.status === "running") return existing
+    if (existing.status !== "planned" && existing.status !== "starting" && existing.status !== "paused") {
+      throw new Error(`training run cannot be started from status: ${existing.status}`)
+    }
+    const pid = cleanOptionalProcessId(input.pid, "pid")
+    const processGroupId = cleanOptionalProcessId(input.process_group_id, "process_group_id")
+    const logPath = cleanOptional(input.log_path)
+    const metricsPath = cleanOptional(input.metrics_path)
+    const checkpointDir = cleanOptional(input.checkpoint_dir)
+    const timestamp = this.timestamp()
+    return this.inTransaction(() => {
+      this.db
+        .query(
+          "UPDATE training_runs SET status = ?, pid = COALESCE(?, pid), process_group_id = COALESCE(?, process_group_id), log_path = COALESCE(?, log_path), metrics_path = COALESCE(?, metrics_path), checkpoint_dir = COALESCE(?, checkpoint_dir), started_at = COALESCE(started_at, ?), updated_at = ? WHERE training_run_id = ?",
+        )
+        .run(
+          "running",
+          pid,
+          processGroupId,
+          logPath ? redactString(logPath) : null,
+          metricsPath ? redactString(metricsPath) : null,
+          checkpointDir ? redactString(checkpointDir) : null,
+          timestamp,
+          timestamp,
+          id,
+        )
+      const run = this.getTrainingRun(id)
+      if (!run) throw new Error(`training run not found: ${id}`)
+      this.recordEvent("TrainingRunStarted", "training_run", id, run)
+      return run
+    })
+  }
+
+  observeTrainingProgress(input: TrainingProgressInput): TrainingRun {
+    const id = cleanId(input.training_run_id)
+    const existing = this.getTrainingRun(id)
+    if (!existing) throw new Error(`training run not found: ${id}`)
+    this.assertTrainingRunObservable(existing)
+    const step = cleanOptionalStep(input.step)
+    const metric = input.metric ?? null
+    const metricsPath = cleanOptional(input.metrics_path)
+    const logPath = cleanOptional(input.log_path)
+    const timestamp = this.timestamp()
+    return this.inTransaction(() => {
+      this.db
+        .query(
+          "UPDATE training_runs SET last_step = COALESCE(?, last_step), last_metric_json = COALESCE(?, last_metric_json), metrics_path = COALESCE(?, metrics_path), log_path = COALESCE(?, log_path), last_observed_at = ?, updated_at = ? WHERE training_run_id = ?",
+        )
+        .run(
+          step,
+          JSON.stringify(redactValue(metric)),
+          metricsPath ? redactString(metricsPath) : null,
+          logPath ? redactString(logPath) : null,
+          timestamp,
+          timestamp,
+          id,
+        )
+      const run = this.getTrainingRun(id)
+      if (!run) throw new Error(`training run not found: ${id}`)
+      this.recordEvent("TrainingProgressObserved", "training_run", id, run)
+      return run
+    })
+  }
+
+  recordTrainingCheckpoint(input: TrainingCheckpointInput): TrainingCheckpoint {
+    const trainingRunId = cleanId(input.training_run_id)
+    const run = this.getTrainingRun(trainingRunId)
+    if (!run) throw new Error(`training run not found: ${trainingRunId}`)
+    this.assertTrainingRunObservable(run)
+    const artifactId = cleanId(input.artifact_id)
+    this.requireArtifact(artifactId)
+    const checkpointId = cleanId(input.checkpoint_id ?? this.idFactory())
+    const step = cleanOptionalStep(input.step)
+    const metric = input.metric ?? null
+    const observedAt = input.observed_at ? cleanRequired(input.observed_at, "observed_at") : this.timestamp()
+    const createdAt = this.timestamp()
+    return this.inTransaction(() => {
+      const existing = this.db.query("SELECT * FROM training_checkpoints WHERE checkpoint_id = ?").get(checkpointId) as TrainingCheckpointRow | null
+      if (existing) {
+        const checkpoint = this.trainingCheckpointFromRow(existing)
+        if (
+          checkpoint.training_run_id === trainingRunId &&
+          checkpoint.artifact_id === artifactId &&
+          checkpoint.step === step &&
+          JSON.stringify(checkpoint.metric) === JSON.stringify(redactValue(metric)) &&
+          checkpoint.observed_at === observedAt
+        ) {
+          return checkpoint
+        }
+        throw new Error(`training checkpoint id collision: ${checkpointId}`)
+      }
+      this.db
+        .query(
+          "INSERT INTO training_checkpoints (checkpoint_id, training_run_id, artifact_id, step, metric_json, observed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(checkpointId, trainingRunId, artifactId, step, JSON.stringify(redactValue(metric)), observedAt, createdAt)
+      this.db
+        .query(
+          "UPDATE training_runs SET latest_checkpoint_id = ?, last_step = COALESCE(?, last_step), last_metric_json = COALESCE(?, last_metric_json), last_observed_at = ?, updated_at = ? WHERE training_run_id = ?",
+        )
+        .run(checkpointId, step, JSON.stringify(redactValue(metric)), observedAt, createdAt, trainingRunId)
+      const checkpoint = this.getTrainingCheckpoint(checkpointId)
+      if (!checkpoint) throw new Error(`failed to record training checkpoint: ${checkpointId}`)
+      this.recordEvent("TrainingCheckpointObserved", "training_checkpoint", checkpointId, checkpoint)
+      return checkpoint
+    })
+  }
+
+  getTrainingCheckpoint(checkpointId: string): TrainingCheckpoint | null {
+    const row = this.db.query("SELECT * FROM training_checkpoints WHERE checkpoint_id = ?").get(cleanId(checkpointId)) as TrainingCheckpointRow | null
+    return this.trainingCheckpointFromRow(row)
+  }
+
+  recordReproductionRecipe(trainingRunId: string, reproduction: unknown): TrainingRun {
+    const id = cleanId(trainingRunId)
+    const existing = this.getTrainingRun(id)
+    if (!existing) throw new Error(`training run not found: ${id}`)
+    const updatedAt = this.timestamp()
+    return this.inTransaction(() => {
+      this.db.query("UPDATE training_runs SET reproduction_json = ?, updated_at = ? WHERE training_run_id = ?").run(JSON.stringify(redactValue(reproduction)), updatedAt, id)
+      const run = this.getTrainingRun(id)
+      if (!run) throw new Error(`training run not found: ${id}`)
+      this.recordEvent("ReproductionRecipeRecorded", "reproduction_record", id, { training_run_id: id, reproduction: run.reproduction })
+      return run
+    })
+  }
+
+  completeTrainingRun(trainingRunId: string, input: CompleteTrainingRunInput = {}): TrainingRun {
+    const id = cleanId(trainingRunId)
+    const existing = this.getTrainingRun(id)
+    if (!existing) throw new Error(`training run not found: ${id}`)
+    if (existing.status === "failed" || existing.status === "cancelled" || existing.status === "completed") {
+      throw new Error(`training run cannot be completed from status: ${existing.status}`)
+    }
+    const metricsPath = cleanOptional(input.metrics_path)
+    const reproduction = input.reproduction
+    if (existing.label === "full_training") {
+      const hasReproduction = reproduction !== undefined || existing.reproduction !== null
+      if (!hasReproduction) throw new Error(`full training run requires reproduction before completion: ${id}`)
+      const hasMetricsEvidence = metricsPath !== null || existing.metrics_path !== null
+      if (!hasMetricsEvidence) throw new Error(`full training run requires metrics evidence before completion: ${id}`)
+    }
+    const completedAt = this.timestamp()
+    return this.inTransaction(() => {
+      this.db
+        .query(
+          "UPDATE training_runs SET status = ?, metrics_path = COALESCE(?, metrics_path), reproduction_json = COALESCE(?, reproduction_json), completed_at = ?, updated_at = ? WHERE training_run_id = ?",
+        )
+        .run("completed", metricsPath ? redactString(metricsPath) : null, reproduction === undefined ? null : JSON.stringify(redactValue(reproduction)), completedAt, completedAt, id)
+      const run = this.getTrainingRun(id)
+      if (!run) throw new Error(`training run not found: ${id}`)
+      this.recordEvent("TrainingRunCompleted", "training_run", id, run)
+      return run
+    })
+  }
+
+  failTrainingRun(trainingRunId: string, reason?: string): TrainingRun {
+    return this.finishTrainingRun(trainingRunId, "failed", "TrainingRunFailed", reason)
+  }
+
+  cancelTrainingRun(trainingRunId: string, reason?: string): TrainingRun {
+    return this.finishTrainingRun(trainingRunId, "cancelled", "TrainingRunCancelled", reason)
+  }
+
+  assertTrainingRunCanSupportBestModelUpdate(trainingRunId: string): void {
+    const id = cleanId(trainingRunId)
+    const run = this.getTrainingRun(id)
+    if (!run) throw new Error(`training run not found: ${id}`)
+    if (!BEST_MODEL_TRAINING_LABELS.has(run.label)) throw new Error(`training run label cannot update best model: ${run.label}`)
+    if (run.status !== "completed") throw new Error(`training run must be completed to update best model: ${id}`)
+  }
+
+  assertFullTrainingResultHasMetricsAndReproduction(resultId: string): void {
+    const id = cleanId(resultId)
+    const result = this.getResearchResult(id)
+    if (!result) throw new Error(`research result not found: ${id}`)
+    if (result.result_type !== "full_training_result") return
+    const run = result.training_run_id ? this.getTrainingRun(result.training_run_id) : null
+    const hasReproduction = result.reproduction !== null || (run !== null && run.reproduction !== null)
+    if (!hasReproduction) throw new Error(`full training result requires reproduction: ${id}`)
+    const linkedArtifact = this.db.query("SELECT 1 FROM result_artifacts WHERE result_id = ? LIMIT 1").get(id)
+    const hasMetricsEvidence = result.metrics !== null || (run !== null && run.metrics_path !== null) || linkedArtifact !== null
+    if (!hasMetricsEvidence) throw new Error(`full training result requires metrics evidence: ${id}`)
+  }
+
+  assertCheckpointSelectionHasCheckpointArtifact(resultId: string): void {
+    const id = cleanId(resultId)
+    const result = this.getResearchResult(id)
+    if (!result) throw new Error(`research result not found: ${id}`)
+    if (result.result_type !== "checkpoint_selection") return
+    const checkpointArtifact = this.db
+      .query(
+        "SELECT 1 FROM result_artifacts ra INNER JOIN training_checkpoints tc ON tc.artifact_id = ra.artifact_id WHERE ra.result_id = ? LIMIT 1",
+      )
+      .get(id)
+    if (!checkpointArtifact) throw new Error(`checkpoint selection requires linked checkpoint artifact: ${id}`)
+  }
+
   canCompleteMission(missionId: string): WriteBarrierResult {
     const id = cleanId(missionId)
     const result = this.db
@@ -1299,6 +1721,8 @@ export class ResearchDb {
     const result = this.getResearchResult(id)
     if (!result) throw new Error(`research result not found: ${id}`)
     if (!EVIDENCE_REQUIRED_RESULT_TYPES.has(result.result_type)) return
+    this.assertFullTrainingResultHasMetricsAndReproduction(id)
+    this.assertCheckpointSelectionHasCheckpointArtifact(id)
     const citation = this.db.query("SELECT 1 FROM result_citations WHERE result_id = ? LIMIT 1").get(id)
     const artifact = this.db.query("SELECT 1 FROM result_artifacts WHERE result_id = ? LIMIT 1").get(id)
     if (!citation && !artifact) throw new Error(`research result requires linked citation or artifact evidence: ${id}`)
@@ -1518,6 +1942,41 @@ export class ResearchDb {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS training_runs (
+        training_run_id TEXT PRIMARY KEY,
+        trial_id TEXT,
+        candidate_id TEXT,
+        hypothesis_id TEXT,
+        mission_id TEXT,
+        label TEXT NOT NULL CHECK (label IN ('probe', 'smoke_test', 'full_training', 'evaluation', 'ablation', 'debug_run')),
+        status TEXT NOT NULL CHECK (status IN ('planned', 'starting', 'running', 'paused', 'completed', 'failed', 'cancelled')),
+        pid INTEGER,
+        process_group_id INTEGER,
+        log_path TEXT,
+        metrics_path TEXT,
+        checkpoint_dir TEXT,
+        latest_checkpoint_id TEXT,
+        last_step INTEGER,
+        last_metric_json TEXT,
+        reproduction_json TEXT,
+        started_at TEXT,
+        last_observed_at TEXT,
+        completed_at TEXT,
+        input_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS training_checkpoints (
+        checkpoint_id TEXT PRIMARY KEY,
+        training_run_id TEXT NOT NULL REFERENCES training_runs(training_run_id) ON DELETE CASCADE,
+        artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        step INTEGER,
+        metric_json TEXT,
+        observed_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS candidate_evidence (
         candidate_id TEXT NOT NULL REFERENCES candidates(candidate_id) ON DELETE CASCADE,
         evidence_type TEXT NOT NULL CHECK (evidence_type IN ('research_result', 'citation', 'artifact', 'event')),
@@ -1547,6 +2006,19 @@ export class ResearchDb {
     this.ensureColumn("artifacts", "description", "TEXT")
     this.ensureColumn("result_citations", "link_event_id", "TEXT")
     this.ensureColumn("result_artifacts", "link_event_id", "TEXT")
+    this.ensureColumn("training_runs", "pid", "INTEGER")
+    this.ensureColumn("training_runs", "process_group_id", "INTEGER")
+    this.ensureColumn("training_runs", "log_path", "TEXT")
+    this.ensureColumn("training_runs", "metrics_path", "TEXT")
+    this.ensureColumn("training_runs", "checkpoint_dir", "TEXT")
+    this.ensureColumn("training_runs", "latest_checkpoint_id", "TEXT")
+    this.ensureColumn("training_runs", "last_step", "INTEGER")
+    this.ensureColumn("training_runs", "last_metric_json", "TEXT")
+    this.ensureColumn("training_runs", "reproduction_json", "TEXT")
+    this.ensureColumn("training_runs", "started_at", "TEXT")
+    this.ensureColumn("training_runs", "last_observed_at", "TEXT")
+    this.ensureColumn("training_runs", "completed_at", "TEXT")
+    this.ensureColumn("training_runs", "input_hash", "TEXT")
     this.backfillLinkEventIds()
     this.backfillInputHashes()
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
@@ -1732,6 +2204,24 @@ export class ResearchDb {
     if (!this.getTrial(trialId)) throw new Error(`trial not found: ${trialId}`)
   }
 
+  private validateTrainingRunLinks(input: { trialId: string | null; candidateId: string | null; hypothesisId: string | null }): void {
+    const trial = input.trialId ? this.getTrial(input.trialId) : null
+    if (input.trialId && !trial) throw new Error(`trial not found: ${input.trialId}`)
+    const candidate = input.candidateId ? this.getCandidate(input.candidateId) : null
+    if (input.candidateId && !candidate) throw new Error(`candidate not found: ${input.candidateId}`)
+    if (input.hypothesisId) this.requireHypothesis(input.hypothesisId)
+    if (trial?.candidate_id && input.candidateId && trial.candidate_id !== input.candidateId) throw new Error(`trial candidate mismatch: ${input.trialId}`)
+    if (trial?.hypothesis_id && input.hypothesisId && trial.hypothesis_id !== input.hypothesisId) throw new Error(`trial hypothesis mismatch: ${input.trialId}`)
+    if (candidate?.hypothesis_id && input.hypothesisId && candidate.hypothesis_id !== input.hypothesisId) throw new Error(`candidate hypothesis mismatch: ${input.candidateId}`)
+    if (input.candidateId && input.hypothesisId && candidate?.hypothesis_id !== input.hypothesisId) throw new Error(`candidate hypothesis mismatch: ${input.candidateId}`)
+  }
+
+  private assertTrainingRunObservable(run: TrainingRun): void {
+    if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+      throw new Error(`training run cannot be observed from status: ${run.status}`)
+    }
+  }
+
   private requireCandidateEvidence(evidenceType: CandidateEvidenceType, evidenceId: string): void {
     if (evidenceType === "research_result") {
       const result = this.getResearchResult(evidenceId)
@@ -1843,6 +2333,24 @@ export class ResearchDb {
     })
   }
 
+  private finishTrainingRun(trainingRunId: string, status: "failed" | "cancelled", eventType: string, reason?: string): TrainingRun {
+    const id = cleanId(trainingRunId)
+    const existing = this.getTrainingRun(id)
+    if (!existing) throw new Error(`training run not found: ${id}`)
+    if (existing.status === "completed" || existing.status === "failed" || existing.status === "cancelled") {
+      throw new Error(`training run cannot be ${status} from status: ${existing.status}`)
+    }
+    const cleanReason = cleanOptional(reason)
+    const timestamp = this.timestamp()
+    return this.inTransaction(() => {
+      this.db.query("UPDATE training_runs SET status = ?, completed_at = ?, updated_at = ? WHERE training_run_id = ?").run(status, timestamp, timestamp, id)
+      const run = this.getTrainingRun(id)
+      if (!run) throw new Error(`training run not found: ${id}`)
+      this.recordEvent(eventType, "training_run", id, { training_run: run, reason: cleanReason ? redactString(cleanReason) : null })
+      return run
+    })
+  }
+
   private latestEventForTopic(topicId: string): ResearchEvent | null {
     const row = this.db
       .query(
@@ -1951,6 +2459,53 @@ export class ResearchDb {
     }
   }
 
+  private trainingRunFromRow(row: TrainingRunRow): TrainingRun
+  private trainingRunFromRow(row: TrainingRunRow | null): TrainingRun | null
+  private trainingRunFromRow(row: TrainingRunRow | null): TrainingRun | null {
+    if (!row) return null
+    assertAllowed(TRAINING_RUN_LABELS, row.label, "training run label")
+    assertAllowed(TRAINING_RUN_STATUSES, row.status, "training run status")
+    return {
+      training_run_id: row.training_run_id,
+      trial_id: row.trial_id,
+      candidate_id: row.candidate_id,
+      hypothesis_id: row.hypothesis_id,
+      mission_id: row.mission_id,
+      label: row.label,
+      status: row.status,
+      pid: row.pid,
+      process_group_id: row.process_group_id,
+      log_path: row.log_path,
+      metrics_path: row.metrics_path,
+      checkpoint_dir: row.checkpoint_dir,
+      latest_checkpoint_id: row.latest_checkpoint_id,
+      last_step: row.last_step,
+      last_metric: parseNullableJson(row.last_metric_json),
+      reproduction: parseNullableJson(row.reproduction_json),
+      started_at: row.started_at,
+      last_observed_at: row.last_observed_at,
+      completed_at: row.completed_at,
+      input_hash: row.input_hash,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }
+  }
+
+  private trainingCheckpointFromRow(row: TrainingCheckpointRow): TrainingCheckpoint
+  private trainingCheckpointFromRow(row: TrainingCheckpointRow | null): TrainingCheckpoint | null
+  private trainingCheckpointFromRow(row: TrainingCheckpointRow | null): TrainingCheckpoint | null {
+    if (!row) return null
+    return {
+      checkpoint_id: row.checkpoint_id,
+      training_run_id: row.training_run_id,
+      artifact_id: row.artifact_id,
+      step: row.step,
+      metric: parseNullableJson(row.metric_json),
+      observed_at: row.observed_at,
+      created_at: row.created_at,
+    }
+  }
+
   private timestamp(): string {
     return this.now().toISOString()
   }
@@ -1984,6 +2539,18 @@ function cleanOptionalEnum<T extends string>(value: string | undefined, allowed:
 function cleanOptionalSize(value: number | undefined): number | null {
   if (value === undefined) return null
   if (!Number.isInteger(value) || value < 0) throw new Error("size_bytes must be a non-negative integer")
+  return value
+}
+
+function cleanOptionalProcessId(value: number | undefined, field: string): number | null {
+  if (value === undefined) return null
+  if (!Number.isInteger(value) || value <= 0) throw new Error(`${field} must be a positive integer`)
+  return value
+}
+
+function cleanOptionalStep(value: number | undefined): number | null {
+  if (value === undefined) return null
+  if (!Number.isInteger(value) || value < 0) throw new Error("step must be a non-negative integer")
   return value
 }
 
