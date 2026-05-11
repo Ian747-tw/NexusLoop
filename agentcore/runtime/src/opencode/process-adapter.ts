@@ -56,7 +56,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   private phase: ProcessAdapterPhase = "new"
   private process: OpenCodeSpawnedProcess | null = null
   private readonly expectedExitProcesses = new WeakSet<object>()
-  private readonly exitWaiters = new WeakMap<object, () => void>()
+  private readonly exitWaiters = new WeakMap<object, Set<() => void>>()
   private readonly terminatingProcesses = new Set<OpenCodeSpawnedProcess>()
   private readonly streamWaiters = new Set<() => void>()
   private streamClosed = true
@@ -196,7 +196,9 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
     child.on("exit", (code, signal) => {
       this.terminatingProcesses.delete(child)
       if (this.process === child) this.process = null
-      this.exitWaiters.get(child)?.()
+      const exitWaiters = this.exitWaiters.get(child)
+      this.exitWaiters.delete(child)
+      for (const waiter of exitWaiters ?? []) waiter()
       if (this.shutdownRequested || this.expectedExitProcesses.has(child)) {
         if (this.shutdownRequested) this.phase = "shutdown"
         this.queue("process-exited", exitMessage("OpenCode process exited", code, signal))
@@ -226,15 +228,23 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
 
   private async waitForProcessExit(child: OpenCodeSpawnedProcess, timeoutMs: number): Promise<void> {
     await new Promise<void>((resolve, reject) => {
+      let settled = false
       const timeout = setTimeout(() => {
-        this.exitWaiters.delete(child)
+        settled = true
+        const waiters = this.exitWaiters.get(child)
+        waiters?.delete(waiter)
+        if (waiters?.size === 0) this.exitWaiters.delete(child)
         reject(new Error(`timed out after ${timeoutMs}ms`))
       }, timeoutMs)
-      this.exitWaiters.set(child, () => {
+      const waiter = () => {
+        if (settled) return
+        settled = true
         clearTimeout(timeout)
-        this.exitWaiters.delete(child)
         resolve()
-      })
+      }
+      const waiters = this.exitWaiters.get(child) ?? new Set<() => void>()
+      waiters.add(waiter)
+      this.exitWaiters.set(child, waiters)
     })
   }
 

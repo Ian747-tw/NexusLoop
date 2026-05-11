@@ -1297,6 +1297,21 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
   })
 
+  test("concurrent shutdown calls share the same process exit", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", shutdownTimeoutMs: 50, spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    const firstShutdown = adapter.shutdown()
+    const secondShutdown = adapter.shutdown()
+
+    process.emitExit(0, null)
+
+    await expect(firstShutdown).resolves.toBeUndefined()
+    await expect(secondShutdown).resolves.toBeUndefined()
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", pid: undefined, terminatingPids: [] })
+  })
+
   test("shutdown timeout fails clearly and redacts status error", async () => {
     const process = new FakeSpawnedProcess()
     const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", shutdownTimeoutMs: 1, spawn: () => process })
