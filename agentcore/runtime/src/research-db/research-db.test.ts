@@ -2630,6 +2630,30 @@ describe("ResearchDb", () => {
     rebuilt.close()
   })
 
+  test("rebuild preserves training last metric when checkpoint has no metric", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_1", title: "Topic" })
+    db.planTrainingRun({ training_run_id: "training_1", label: "probe" })
+    db.startTrainingRun("training_1")
+    db.observeTrainingProgress({ training_run_id: "training_1", step: 10, metric: { loss: 0.2 } })
+    db.addArtifact({ id: "checkpoint_artifact", topic_id: "topic_1", kind: "snapshot", content: "ckpt", produced_by_run_id: "training_1" })
+    db.recordTrainingCheckpoint({ checkpoint_id: "checkpoint_1", training_run_id: "training_1", artifact_id: "checkpoint_artifact", step: 11 })
+
+    const before = db.getTrainingRun("training_1")
+    expect(before?.last_step).toBe(11)
+    expect(before?.last_metric).toEqual({ loss: 0.2 })
+    db.close()
+
+    await rm(join(dir, ".nxl", "research.db"), { force: true })
+    const rebuilt = ResearchDb.rebuildFromEvents(dir)
+
+    expect(rebuilt.getTrainingRun("training_1")?.last_step).toBe(11)
+    expect(rebuilt.getTrainingRun("training_1")?.last_metric).toEqual({ loss: 0.2 })
+    expect(rebuilt.getTrainingCheckpoint("checkpoint_1")?.metric).toBeNull()
+    rebuilt.close()
+  })
+
   test("rebuild is idempotent and projection metadata records last applied event", async () => {
     const dir = await tempProject()
     const db = openSequencedTestDb(dir)

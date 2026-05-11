@@ -2746,16 +2746,17 @@ export class ResearchDb {
     const artifactId = requiredString(row, "artifact_id")
     const step = optionalNumber(row, "step")
     const metric = row.metric ?? null
+    const metricJson = metric === null ? null : JSON.stringify(metric)
     const observedAt = requiredString(row, "observed_at")
     const createdAt = requiredString(row, "created_at")
     this.db
       .query("INSERT OR REPLACE INTO training_checkpoints (checkpoint_id, training_run_id, artifact_id, step, metric_json, observed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(checkpointId, trainingRunId, artifactId, step, JSON.stringify(metric), observedAt, createdAt)
+      .run(checkpointId, trainingRunId, artifactId, step, metricJson, observedAt, createdAt)
     this.db
       .query(
         "UPDATE training_runs SET latest_checkpoint_id = ?, last_step = COALESCE(?, last_step), last_metric_json = COALESCE(?, last_metric_json), last_observed_at = ?, updated_at = ? WHERE training_run_id = ?",
       )
-      .run(checkpointId, step, JSON.stringify(metric), observedAt, createdAt, trainingRunId)
+      .run(checkpointId, step, metricJson, observedAt, createdAt, trainingRunId)
   }
 
   private applyReproductionRecipe(payload: unknown, entityId: string, timestamp: string): void {
