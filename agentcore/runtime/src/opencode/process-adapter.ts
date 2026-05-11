@@ -96,10 +96,11 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       this.queue("process-started", `OpenCode process started: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
     } catch (error) {
       this.phase = "failed"
-      if (this.process === child) this.process = previousProcess && !this.terminalProcesses.has(previousProcess) ? previousProcess : null
+      const restoredPrevious = previousProcess && !this.terminalProcesses.has(previousProcess) ? previousProcess : null
+      if (this.process === child) this.process = restoredPrevious
       this.lastError = redactText(`OpenCode process spawn failed: ${errorMessage(error)}`)
       this.queue("process-spawn-failed", this.lastError)
-      this.closeStream()
+      if (!this.process) this.closeStream()
       throw new Error(this.lastError)
     }
   }

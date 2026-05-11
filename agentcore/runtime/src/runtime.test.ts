@@ -1502,6 +1502,41 @@ describe("ProcessOpenCodeAdapter", () => {
     await shutdown
   })
 
+  test("RuntimeServer keeps process event pump open after failed replacement spawn", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const firstProcess = new FakeSpawnedProcess(6200)
+    const failedReplacement = new FakeSpawnedProcess(6201, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: dir,
+      spawn: () => (firstProcess.stdinEnded ? failedReplacement : firstProcess),
+    })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    const replacement = server.startNewSession()
+    failedReplacement.emitError(new Error("ENOENT token=replacement-secret"))
+    await expect(replacement).rejects.toThrow("OpenCode process spawn failed: ENOENT [REDACTED]")
+
+    firstProcess.stdout.emitData("preserved child output token=preserved-secret")
+    firstProcess.emitExit(0, null)
+
+    const stdout = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-stdout" && event.message.includes("preserved child output"),
+    )
+    const exit = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-exited" && event.message.includes("with code 0"),
+    )
+
+    expect(stdout.type === "ExecutorLifecycle" ? stdout.message : "").toContain("[REDACTED]")
+    expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("preserved-secret")
+    expect(exit).toMatchObject({ type: "ExecutorLifecycle", phase: "process-exited" })
+    await server.shutdown()
+  })
+
   test("failed replacement spawn preserves prior child handle for shutdown", async () => {
     const firstProcess = new FakeSpawnedProcess(6100)
     const failedReplacement = new FakeSpawnedProcess(6101, { spawned: false })
