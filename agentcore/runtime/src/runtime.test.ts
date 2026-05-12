@@ -1547,6 +1547,27 @@ describe("MissionRegistry", () => {
     expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("result-secret")
   })
 
+  test("completed mission retry without result id preserves the original completion result", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const created = await registry.createUserMessageMission("multi-result")
+    await registry.markMissionSent(created.mission.mission_id)
+    const claim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+    const first = await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: claim.claim_id, summary: "first" })
+    const second = await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: claim.claim_id, summary: "second" })
+
+    await expect(registry.completeMission(created.mission.mission_id, { result_id: second.result_id })).resolves.toMatchObject({ status: "completed", completion_result_id: second.result_id })
+    await expect(registry.completeMission(created.mission.mission_id)).resolves.toMatchObject({ status: "completed", completion_result_id: second.result_id })
+    await expect(registry.completeMission(created.mission.mission_id, { result_id: first.result_id })).rejects.toThrow("terminal mission completion conflicts")
+  })
+
   test("released claims are no longer active and allow a later claim", async () => {
     const dir = await tempProject()
     const store = new EventStore(join(dir, ".nxl", "events.jsonl"))

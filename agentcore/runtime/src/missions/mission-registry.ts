@@ -202,7 +202,7 @@ export class MissionRegistry {
     const mission = this.requireMission(id)
     const resultId = input.result_id === undefined ? undefined : cleanRequiredString(input.result_id, "result_id")
     const summary = input.summary === undefined ? undefined : redactText(cleanRequiredString(input.summary, "summary"))
-    if (mission.status === "completed") return redactValue(this.idempotentCompleted(mission, resultId ?? this.firstSubmittedResult(id)?.result_id, summary))
+    if (mission.status === "completed") return redactValue(this.idempotentCompleted(mission, resultId ?? mission.completion_result_id, summary))
     this.assertNotTerminal(mission, "complete")
     const result = resultId ? this.requireResult(resultId) : this.firstSubmittedResult(id)
     if (!result || result.mission_id !== id || result.status !== "submitted") throw new Error(`mission completion requires a submitted result: ${id}`)
