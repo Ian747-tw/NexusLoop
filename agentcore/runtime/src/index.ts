@@ -6,7 +6,9 @@ export type { RuntimeEvent, RuntimeMode, RuntimeResearchProjectionHealth, Runtim
 export { SpecService } from "./spec/spec-service"
 export { PolicyService } from "./spec/policy-service"
 export { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
+export { ProcessOpenCodeAdapter } from "./opencode/process-adapter"
 export type { OpenCodeRuntimeAdapter } from "./opencode/adapter"
+export type { OpenCodeProcessEventSource, OpenCodeSpawn, OpenCodeSpawnedProcess } from "./opencode/process-adapter"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"
 export type {

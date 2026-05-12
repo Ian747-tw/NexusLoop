@@ -10,6 +10,7 @@ import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
+import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
 import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
 import { RunLock } from "./project/run-lock"
@@ -26,6 +27,7 @@ import {
 } from "./research-db/research-db"
 
 const cleanup: string[] = []
+const NON_BLOCKING_START_TIMEOUT_MS = 1000
 
 async function tempProject(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "nxl-runtime-"))
@@ -112,6 +114,141 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
 
   async getStatus(): Promise<Record<string, unknown>> {
     return { adapter: "long-lived", message: "long stream adapter" }
+  }
+}
+
+class DelayedShutdownEventAdapter implements OpenCodeRuntimeAdapter {
+  private shutdownStarted: Promise<void>
+  private releaseShutdown!: () => void
+
+  constructor() {
+    this.shutdownStarted = new Promise((resolve) => {
+      this.releaseShutdown = resolve
+    })
+  }
+
+  async startSession(_sessionSpec: SessionSpec): Promise<void> {}
+
+  async sendMissionPacket(_packet: MissionPacket): Promise<void> {}
+
+  async pauseAtSafeBoundary(_reason: string): Promise<void> {}
+
+  async resumeWithMissionUpdate(_update: MissionUpdate): Promise<void> {}
+
+  async *streamExecutorEvents(): AsyncIterable<RuntimeEvent> {
+    await this.shutdownStarted
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    yield { type: "ExecutorLifecycle", phase: "delayed-shutdown-event", message: "shutdown telemetry drained" }
+  }
+
+  async shutdown(): Promise<void> {
+    this.releaseShutdown()
+  }
+
+  async getStatus(): Promise<Record<string, unknown>> {
+    return { adapter: "delayed-shutdown-event", message: "delayed shutdown telemetry adapter" }
+  }
+}
+
+class HangingShutdownStreamAdapter implements OpenCodeRuntimeAdapter {
+  async startSession(_sessionSpec: SessionSpec): Promise<void> {}
+
+  async sendMissionPacket(_packet: MissionPacket): Promise<void> {}
+
+  async pauseAtSafeBoundary(_reason: string): Promise<void> {}
+
+  async resumeWithMissionUpdate(_update: MissionUpdate): Promise<void> {}
+
+  async *streamExecutorEvents(): AsyncIterable<RuntimeEvent> {
+    yield { type: "ExecutorLifecycle", phase: "hanging-stream-started", message: "stream started" }
+    await new Promise<never>(() => {})
+  }
+
+  async shutdown(): Promise<void> {}
+
+  async getStatus(): Promise<Record<string, unknown>> {
+    return { adapter: "hanging-shutdown-stream", message: "hanging shutdown stream adapter" }
+  }
+}
+
+type ProcessEventName = "close" | "exit" | "error" | "spawn"
+type ProcessListener = (...args: unknown[]) => void
+
+class FakeProcessEventSource implements OpenCodeProcessEventSource {
+  private readonly listeners = new Map<string, ProcessListener[]>()
+
+  on(event: "data", listener: (data: unknown) => void): void {
+    const listeners = this.listeners.get(event) ?? []
+    listeners.push(listener as ProcessListener)
+    this.listeners.set(event, listeners)
+  }
+
+  emitData(data: unknown): void {
+    for (const listener of this.listeners.get("data") ?? []) listener(data)
+  }
+}
+
+class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
+  readonly stdout = new FakeProcessEventSource()
+  readonly stderr = new FakeProcessEventSource()
+  readonly stdinWrites: string[] = []
+  stdinEnded = false
+  killedWith: NodeJS.Signals | undefined
+  private spawned = false
+  private readonly autoClose: boolean
+  private readonly spawnListeners: Array<() => void> = []
+  private readonly closeListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
+  private readonly exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
+  private readonly errorListeners: Array<(error: Error) => void> = []
+
+  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean } = {}) {
+    this.spawned = options.spawned ?? true
+    this.autoClose = options.autoClose ?? true
+  }
+
+  stdin = {
+    write: (data: string) => {
+      this.stdinWrites.push(data)
+      return true
+    },
+    end: () => {
+      this.stdinEnded = true
+    },
+  }
+
+  on(event: "spawn", listener: () => void): void
+  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void
+  on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void
+  on(event: "error", listener: (error: Error) => void): void
+  on(event: ProcessEventName, listener: (() => void) | ((code: number | null, signal: NodeJS.Signals | null) => void) | ((error: Error) => void)): void {
+    if (event === "spawn") {
+      if (this.spawned) queueMicrotask(listener as () => void)
+      else this.spawnListeners.push(listener as () => void)
+    } else if (event === "close") this.closeListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
+    else if (event === "exit") this.exitListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
+    else this.errorListeners.push(listener as (error: Error) => void)
+  }
+
+  kill(signal?: NodeJS.Signals): void {
+    this.killedWith = signal
+  }
+
+  emitSpawn(): void {
+    this.spawned = true
+    for (const listener of this.spawnListeners) listener()
+  }
+
+  emitExit(code: number | null, signal: NodeJS.Signals | null): void {
+    for (const listener of this.exitListeners) listener(code, signal)
+    if (this.autoClose) this.emitClose(code, signal)
+  }
+
+  emitClose(code: number | null, signal: NodeJS.Signals | null): void {
+    for (const listener of this.closeListeners) listener(code, signal)
+  }
+
+  emitError(error: Error): void {
+    for (const listener of this.errorListeners) listener(error)
   }
 }
 
@@ -301,7 +438,7 @@ describe("RuntimeServer core", () => {
     const adapter = new LongLivedAdapter()
     const server = new RuntimeServer({ projectDir: dir, adapter })
 
-    const result = await Promise.race([server.start().then(() => "started" as const), timeout(100)])
+    const result = await Promise.race([server.start().then(() => "started" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
 
     expect(result).toBe("started")
     expect(adapter.startCalls).toBe(1)
@@ -315,7 +452,7 @@ describe("RuntimeServer core", () => {
     const server = new RuntimeServer({ projectDir: dir, adapter })
 
     await server.start()
-    const result = await Promise.race([server.startNewSession().then(() => "started" as const), timeout(100)])
+    const result = await Promise.race([server.startNewSession().then(() => "started" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
 
     expect(result).toBe("started")
     expect(adapter.startCalls).toBe(2)
@@ -422,6 +559,32 @@ describe("RuntimeServer core", () => {
     await expect(server.submitUserMessage("after shutdown")).rejects.toThrow("runtime must be started before accepting user messages")
 
     expect(adapter.packets).toHaveLength(0)
+  })
+
+  test("shutdown waits for executor event pump to drain adapter shutdown telemetry", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new DelayedShutdownEventAdapter() })
+
+    await server.start()
+    await server.shutdown()
+
+    expect(server.eventBus.snapshot()).toContainEqual({
+      type: "ExecutorLifecycle",
+      phase: "delayed-shutdown-event",
+      message: "shutdown telemetry drained",
+    })
+  })
+
+  test("shutdown does not hang when executor event stream does not finish", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new HangingShutdownStreamAdapter() })
+
+    await server.start()
+    const result = await Promise.race([server.shutdown().then(() => "shutdown" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
+
+    expect(result).toBe("shutdown")
   })
 
   test("successful active start appends runtime_started before readiness events", async () => {
@@ -1097,5 +1260,465 @@ describe("FakeOpenCodeAdapter", () => {
     if (second[0]?.type === "ExecutorLifecycle") {
       expect(second[0].phase).toBe("fake-mission-packet")
     }
+  })
+})
+
+async function readProcessEvents(adapter: ProcessOpenCodeAdapter, count: number): Promise<RuntimeEvent[]> {
+  const iterator = adapter.streamExecutorEvents()[Symbol.asyncIterator]()
+  const events: RuntimeEvent[] = []
+  try {
+    for (let index = 0; index < count; index += 1) {
+      const result = await Promise.race([
+        iterator.next(),
+        timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
+          throw new Error(`timed out waiting for process event ${index + 1}`)
+        }),
+      ])
+      if (result.done) break
+      events.push(result.value)
+    }
+  } finally {
+    await iterator.return?.()
+  }
+  return events
+}
+
+async function waitForRuntimeEvent(server: RuntimeServer, predicate: (event: RuntimeEvent) => boolean): Promise<RuntimeEvent> {
+  const deadline = Date.now() + NON_BLOCKING_START_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    const event = server.eventBus.snapshot().find(predicate)
+    if (event) return event
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error("timed out waiting for runtime event")
+}
+
+describe("ProcessOpenCodeAdapter", () => {
+  test("starts with fake spawn and emits lifecycle start event", async () => {
+    const process = new FakeSpawnedProcess(1234)
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test objective" })
+
+    const events = await readProcessEvents(adapter, 1)
+
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: "ExecutorLifecycle", phase: "process-started" })
+    expect(events[0]?.type === "ExecutorLifecycle" ? events[0].message : "").toContain("pid 1234")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ adapter: "process", phase: "running", pid: 1234, command: "opencode" })
+  })
+
+  test("spawn failure rejects startSession and records redacted error in status", async () => {
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "/usr/bin/opencode",
+      cwd: "/tmp/demo",
+      spawn: () => {
+        throw new Error("spawn failed token=super-secret-token")
+      },
+    })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })).rejects.toThrow("OpenCode process spawn failed: spawn failed [REDACTED]")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ adapter: "process", phase: "failed", command: "opencode", lastError: "OpenCode process spawn failed: spawn failed [REDACTED]" })
+    expect(JSON.stringify(status)).not.toContain("super-secret-token")
+  })
+
+  test("async spawn error rejects RuntimeServer start before readiness", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess(4242, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "missing-opencode",
+      cwd: dir,
+      spawn: () => {
+        queueMicrotask(() => process.emitError(new Error("ENOENT token=spawn-secret")))
+        return process
+      },
+    })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await expect(server.start()).rejects.toThrow("OpenCode process spawn failed: ENOENT [REDACTED]")
+    expect(server.eventBus.snapshot().map((event) => event.type)).not.toContain("RuntimeReady")
+    expect(JSON.stringify(await adapter.getStatus())).not.toContain("spawn-secret")
+  })
+
+  test("immediate post-spawn exit rejects startSession before readiness", async () => {
+    const process = new FakeSpawnedProcess(4242, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+    })
+
+    const started = adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.emitSpawn()
+    process.emitExit(2, null)
+
+    await expect(started).rejects.toThrow("OpenCode process spawn failed: OpenCode process exited with code 2")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ adapter: "process", phase: "failed", pid: undefined })
+  })
+
+  test("spawn readiness timeout terminates child and remains shutdown-drainable", async () => {
+    const process = new FakeSpawnedProcess(4242, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawnTimeoutMs: 1,
+      spawn: () => process,
+    })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })).rejects.toThrow("OpenCode process spawn failed: timed out after 1ms")
+    expect(process.stdinEnded).toBe(true)
+    expect(process.killedWith).toBe("SIGTERM")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "failed", pid: undefined, terminatingPids: [4242] })
+
+    const shutdown = adapter.shutdown()
+    process.emitExit(0, null)
+    await expect(shutdown).resolves.toBeUndefined()
+  })
+
+  test("shutdown before start is safe", async () => {
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => new FakeSpawnedProcess() })
+
+    await expect(adapter.shutdown()).resolves.toBeUndefined()
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+  })
+
+  test("shutdown twice is safe", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    const shutdown = adapter.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+    await adapter.shutdown()
+
+    expect(process.stdinEnded).toBe(true)
+    expect(process.killedWith).toBe("SIGTERM")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+  })
+
+  test("shutdown waits for process exit before resolving", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    const pendingShutdown = adapter.shutdown()
+    const shutdownRace = Promise.race([pendingShutdown.then(() => "shutdown" as const), timeout(20)])
+
+    expect(process.stdinEnded).toBe(true)
+    expect(process.killedWith).toBe("SIGTERM")
+    await expect(shutdownRace).resolves.toBe("timeout")
+
+    process.emitExit(0, null)
+    await expect(pendingShutdown).resolves.toBeUndefined()
+    await expect(adapter.shutdown()).resolves.toBeUndefined()
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+  })
+
+  test("concurrent shutdown calls share the same process exit", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", shutdownTimeoutMs: 50, spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    const firstShutdown = adapter.shutdown()
+    const secondShutdown = adapter.shutdown()
+
+    process.emitExit(0, null)
+
+    await expect(firstShutdown).resolves.toBeUndefined()
+    await expect(secondShutdown).resolves.toBeUndefined()
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", pid: undefined, terminatingPids: [] })
+  })
+
+  test("shutdown timeout fails clearly and redacts status error", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", shutdownTimeoutMs: 1, spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await expect(adapter.shutdown()).rejects.toThrow("OpenCode process shutdown failed: timed out after 1ms")
+    await expect(adapter.getStatus()).resolves.toMatchObject({
+      phase: "shutdown",
+      pid: 4242,
+      terminatingPids: [4242],
+      lastError: "OpenCode process shutdown failed: timed out after 1ms",
+    })
+
+    const retry = adapter.shutdown()
+    process.emitExit(0, null)
+    await expect(retry).resolves.toBeUndefined()
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", pid: undefined, terminatingPids: [] })
+  })
+
+  test("unexpected process exit surfaces lifecycle event and status error", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.emitExit(7, null)
+
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-exited", message: "OpenCode process exited unexpectedly with code 7" }])
+    expect(status).toMatchObject({ phase: "exited", lastError: "OpenCode process exited unexpectedly with code 7" })
+  })
+
+  test("streamExecutorEvents drains only new events", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    const first = await readProcessEvents(adapter, 1)
+
+    process.stdout.emitData("hello")
+    const second = await readProcessEvents(adapter, 1)
+
+    expect(first).toHaveLength(1)
+    expect(second).toHaveLength(1)
+    expect(second[0]).toMatchObject({ type: "ExecutorLifecycle", phase: "process-stdout", message: "hello" })
+  })
+
+  test("streamExecutorEvents compacts drained process events", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdout.emitData("one")
+    process.stderr.emitData("two")
+    await readProcessEvents(adapter, 3)
+
+    expect((adapter as unknown as { events: RuntimeEvent[] }).events).toHaveLength(0)
+
+    process.stdout.emitData("three")
+    const next = await readProcessEvents(adapter, 1)
+
+    expect(next).toEqual([{ type: "ExecutorLifecycle", phase: "process-stdout", message: "three" }])
+    expect((adapter as unknown as { events: RuntimeEvent[] }).events).toHaveLength(0)
+  })
+
+  test("stdout stderr and status text are redacted", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "/opt/opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=objective-secret" })
+    process.stdout.emitData("stdout token=stdout-secret")
+    process.stderr.emitData("stderr Bearer abc.def.ghi12345")
+    process.emitError(new Error("process error api_key=error-secret"))
+
+    const events = await readProcessEvents(adapter, 4)
+    const serialized = JSON.stringify({ events, status: await adapter.getStatus() })
+
+    expect(serialized).toContain("[REDACTED]")
+    expect(serialized).not.toContain("objective-secret")
+    expect(serialized).not.toContain("stdout-secret")
+    expect(serialized).not.toContain("abc.def.ghi12345")
+    expect(serialized).not.toContain("error-secret")
+    expect(serialized).not.toContain("/opt/opencode")
+  })
+
+  test("sendMissionPacket fails clearly when real transport is not implemented", async () => {
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => new FakeSpawnedProcess() })
+
+    await expect(adapter.sendMissionPacket({ missionId: "m1", message: "hello" })).rejects.toThrow("real mission packet transport not implemented")
+  })
+
+  test("RuntimeServer can use injected process adapter with fake spawn without blocking start", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    const result = await Promise.race([server.start().then(() => "started" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
+
+    expect(result).toBe("started")
+    expect(await server.status()).toMatchObject({ runtimeStatus: "started", lockHeld: true })
+    expect(server.eventBus.snapshot().map((event) => event.type)).toContain("RuntimeReady")
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("RuntimeServer process event pump stays open for late process output and exit", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.stdout.emitData("late stdout token=late-secret")
+    process.emitExit(9, null)
+
+    const stdout = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-stdout" && event.message.includes("late stdout"),
+    )
+    const exit = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-exited" && event.message.includes("unexpectedly with code 9"),
+    )
+
+    expect(stdout.type === "ExecutorLifecycle" ? stdout.message : "").toContain("[REDACTED]")
+    expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("late-secret")
+    expect(exit).toMatchObject({ type: "ExecutorLifecycle", phase: "process-exited" })
+    await server.shutdown()
+  })
+
+  test("RuntimeServer process event pump keeps stdio open between exit and close", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess(4242, { autoClose: false })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.emitExit(7, null)
+    process.stderr.emitData("trailing stderr token=stdio-secret")
+    process.emitClose(7, null)
+
+    const stderr = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-stderr" && event.message.includes("trailing stderr"),
+    )
+
+    expect(stderr.type === "ExecutorLifecycle" ? stderr.message : "").toContain("[REDACTED]")
+    expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("stdio-secret")
+    await server.shutdown()
+  })
+
+  test("RuntimeServer startNewSession restarts process adapter boundary", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const processes: FakeSpawnedProcess[] = []
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: dir,
+      spawn: () => {
+        const process = new FakeSpawnedProcess(5000 + processes.length)
+        processes.push(process)
+        return process
+      },
+    })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    const result = await server.startNewSession()
+
+    expect(processes).toHaveLength(2)
+    expect(processes[0]?.stdinEnded).toBe(true)
+    expect(processes[0]?.killedWith).toBe("SIGTERM")
+    expect(result.adapter).toMatchObject({ adapter: "process", phase: "running", pid: 5001 })
+
+    processes[0]?.emitExit(0, null)
+    expect(await adapter.getStatus()).toMatchObject({ phase: "running", pid: 5001 })
+    processes[0]?.emitError(new Error("late superseded error token=old-secret"))
+    expect(await adapter.getStatus()).toMatchObject({ phase: "running", pid: 5001 })
+    expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("old-secret")
+
+    const shutdown = server.shutdown()
+    processes[1]?.emitExit(0, null)
+    await shutdown
+  })
+
+  test("RuntimeServer keeps process event pump open after failed replacement spawn", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const firstProcess = new FakeSpawnedProcess(6200)
+    const failedReplacement = new FakeSpawnedProcess(6201, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: dir,
+      spawn: () => (firstProcess.stdinEnded ? failedReplacement : firstProcess),
+    })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    const replacement = server.startNewSession()
+    failedReplacement.emitError(new Error("ENOENT token=replacement-secret"))
+    await expect(replacement).rejects.toThrow("OpenCode process spawn failed: ENOENT [REDACTED]")
+
+    firstProcess.stdout.emitData("preserved child output token=preserved-secret")
+    firstProcess.emitExit(0, null)
+
+    const stdout = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-stdout" && event.message.includes("preserved child output"),
+    )
+    const exit = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-exited" && event.message.includes("with code 0"),
+    )
+
+    expect(stdout.type === "ExecutorLifecycle" ? stdout.message : "").toContain("[REDACTED]")
+    expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("preserved-secret")
+    expect(exit).toMatchObject({ type: "ExecutorLifecycle", phase: "process-exited" })
+    await server.shutdown()
+  })
+
+  test("RuntimeServer keeps process event pump open until all shutdown children exit", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const processes: FakeSpawnedProcess[] = []
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: dir,
+      spawn: () => {
+        const process = new FakeSpawnedProcess(6300 + processes.length)
+        processes.push(process)
+        return process
+      },
+    })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    await server.startNewSession()
+    const shutdown = server.shutdown()
+    processes[1]?.emitExit(0, null)
+    processes[0]?.stdout.emitData("terminating child output token=old-child-secret")
+
+    const stdout = await waitForRuntimeEvent(
+      server,
+      (event) => event.type === "ExecutorLifecycle" && event.phase === "process-stdout" && event.message.includes("terminating child output"),
+    )
+
+    processes[0]?.emitExit(0, null)
+    await expect(shutdown).resolves.toBeUndefined()
+    expect(stdout.type === "ExecutorLifecycle" ? stdout.message : "").toContain("[REDACTED]")
+    expect(JSON.stringify(server.eventBus.snapshot())).not.toContain("old-child-secret")
+  })
+
+  test("failed replacement spawn preserves prior child handle for shutdown", async () => {
+    const firstProcess = new FakeSpawnedProcess(6100)
+    const failedReplacement = new FakeSpawnedProcess(6101, { spawned: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => (firstProcess.stdinEnded ? failedReplacement : firstProcess),
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "first" })
+    const replacement = adapter.startSession({ projectDir: "/tmp/demo", objective: "second" })
+    failedReplacement.emitError(new Error("ENOENT token=replacement-secret"))
+
+    await expect(replacement).rejects.toThrow("OpenCode process spawn failed: ENOENT [REDACTED]")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "failed", pid: 6100, terminatingPids: [6100] })
+
+    const shutdown = adapter.shutdown()
+    firstProcess.emitExit(0, null)
+    await expect(shutdown).resolves.toBeUndefined()
+    expect(JSON.stringify(await adapter.getStatus())).not.toContain("replacement-secret")
   })
 })

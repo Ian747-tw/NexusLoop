@@ -22,6 +22,8 @@ import {
   type TopicSnapshot,
 } from "./research-db/research-db"
 
+const EXECUTOR_SHUTDOWN_DRAIN_TIMEOUT_MS = 50
+
 export interface RuntimeServerOptions {
   projectDir?: string
   mode?: RuntimeMode
@@ -152,6 +154,21 @@ export class RuntimeServer {
     })()
 
     this.executorStreamTask = task
+  }
+
+  private async drainExecutorEventPumpAfterShutdown(): Promise<void> {
+    const streamTask = this.executorStreamTask
+    if (!streamTask) return
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    const timedOut = Symbol("executor-shutdown-drain-timeout")
+    const result = await Promise.race([
+      streamTask.then(() => undefined),
+      new Promise<typeof timedOut>((resolve) => {
+        timeoutId = setTimeout(() => resolve(timedOut), EXECUTOR_SHUTDOWN_DRAIN_TIMEOUT_MS)
+      }),
+    ])
+    if (timeoutId) clearTimeout(timeoutId)
+    if (result === timedOut) this.executorStreamAbort = true
   }
 
   private async cleanupFailedStartup(): Promise<void> {
@@ -315,11 +332,11 @@ export class RuntimeServer {
 
   async shutdown(reason = "shutdown"): Promise<void> {
     let firstError: unknown = null
-    this.executorStreamAbort = true
     if (this.started || this.runLock.isHeld()) {
       this.eventBus.emit({ type: "RuntimeShutdown", reason })
       try {
         await this.adapter.shutdown()
+        await this.drainExecutorEventPumpAfterShutdown()
       } catch (error) {
         firstError ??= error
         this.eventBus.emit({
@@ -328,6 +345,7 @@ export class RuntimeServer {
           message: error instanceof Error ? error.message : String(error),
         })
       }
+      this.executorStreamAbort = true
       try {
         await this.eventStore.append({ kind: "runtime_shutdown", reason })
       } catch (error) {
@@ -344,6 +362,8 @@ export class RuntimeServer {
           this.started = false
         }
       }
+    } else {
+      this.executorStreamAbort = true
     }
     this.closeOwnedResearchDb(firstError)
     if (firstError) throw firstError
