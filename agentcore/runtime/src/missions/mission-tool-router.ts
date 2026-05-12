@@ -35,13 +35,17 @@ export class MissionToolRouter {
   }
 
   async handle(call: ExecutorToolCall): Promise<ExecutorToolResult> {
-    const envelope = validateEnvelope(call)
+    let callId = fallbackString(call, "call_id", "invalid_call")
+    let tool = fallbackString(call, "tool", "invalid_tool")
     try {
-      if (!MISSION_TOOL_NAME_SET.has(envelope.tool)) throw new Error(`unknown executor tool: ${envelope.tool}`)
-      const result = await this.dispatch(envelope.callId, envelope.tool as MissionToolName, envelope.payload)
+      const envelope = validateEnvelope(call)
+      callId = envelope.callId
+      tool = envelope.tool
+      if (!MISSION_TOOL_NAME_SET.has(tool)) throw new Error(`unknown executor tool: ${tool}`)
+      const result = await this.dispatch(tool as MissionToolName, envelope.payload)
       return {
-        call_id: envelope.callId,
-        tool: redactText(envelope.tool),
+        call_id: redactText(callId),
+        tool: redactText(tool),
         ok: true,
         result: redactValue(result),
         created_at: this.now().toISOString(),
@@ -49,8 +53,8 @@ export class MissionToolRouter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return {
-        call_id: envelope.callId,
-        tool: redactText(envelope.tool),
+        call_id: redactText(callId),
+        tool: redactText(tool),
         ok: false,
         error: redactText(message),
         created_at: this.now().toISOString(),
@@ -58,7 +62,7 @@ export class MissionToolRouter {
     }
   }
 
-  private dispatch(_callId: string, tool: MissionToolName, payload: Record<string, unknown>): Promise<unknown> {
+  private dispatch(tool: MissionToolName, payload: Record<string, unknown>): Promise<unknown> {
     switch (tool) {
       case "mission.get":
         return this.handlers.getMission(requiredString(payload.mission_id ?? payload.missionId, "mission_id"))
@@ -110,6 +114,12 @@ function validateEnvelope(call: ExecutorToolCall): { callId: string; tool: strin
   const tool = requiredString(call.tool, "tool")
   if (!isRecord(call.payload)) throw new Error("payload must be an object")
   return { callId, tool, payload: call.payload }
+}
+
+function fallbackString(value: unknown, field: string, fallback: string): string {
+  if (!isRecord(value)) return fallback
+  const candidate = value[field]
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : fallback
 }
 
 function requiredString(value: unknown, field: string): string {

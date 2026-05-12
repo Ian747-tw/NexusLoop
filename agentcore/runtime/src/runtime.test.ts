@@ -935,6 +935,18 @@ describe("RuntimeServer core", () => {
       ok: false,
       error: "limit must be a positive integer",
     })
+    await expect(server.executeMissionTool({ call_id: "call_null_payload", tool: "mission.get", payload: null as unknown as Record<string, unknown> })).resolves.toMatchObject({
+      call_id: "call_null_payload",
+      tool: "mission.get",
+      ok: false,
+      error: "payload must be an object",
+    })
+    await expect(server.executeMissionTool({ tool: "mission.get", payload: {} } as unknown as Parameters<RuntimeServer["executeMissionTool"]>[0])).resolves.toMatchObject({
+      call_id: "invalid_call",
+      tool: "mission.get",
+      ok: false,
+      error: "call_id is required",
+    })
     await server.shutdown()
   })
 
