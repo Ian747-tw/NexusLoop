@@ -74,6 +74,9 @@ export interface RuntimeStatus {
   missions?: {
     pending_count: number
     failed_count: number
+    active_claim_count: number
+    completed_count: number
+    cancelled_count: number
     last_mission_id?: string
   }
   researchProjection: RuntimeResearchProjectionHealth

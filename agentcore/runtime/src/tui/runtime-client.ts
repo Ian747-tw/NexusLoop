@@ -1,5 +1,5 @@
 import type { RuntimeEvent, RuntimeResearchProjectionHealth, RuntimeStatus } from "../events/event-types"
-import type { MissionRecord } from "../missions/mission-types"
+import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult } from "../missions/mission-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -13,6 +13,12 @@ export interface RuntimeClient {
   command(name: "runtime.resume" | "runtime.start_new_session" | "runtime.view_records" | "runtime.shutdown"): Promise<unknown>
   command(name: "runtime.get_mission", payload: { missionId: string }): Promise<MissionRecord | null>
   command(name: "runtime.list_recent_missions", payload?: { limit?: number }): Promise<MissionRecord[]>
+  command(name: "runtime.claim_mission", payload: { missionId: string; executorId: string }): Promise<ExecutorClaim>
+  command(name: "runtime.record_mission_progress", payload: { missionId: string; claimId: string; message: string }): Promise<MissionProgress>
+  command(name: "runtime.submit_mission_result", payload: { missionId: string; claimId: string; summary: string; artifacts?: string[]; researchResultIds?: string[] }): Promise<MissionResult>
+  command(name: "runtime.complete_mission", payload: { missionId: string; resultId?: string; summary?: string }): Promise<MissionRecord>
+  command(name: "runtime.fail_mission", payload: { missionId: string; reason: string }): Promise<MissionRecord>
+  command(name: "runtime.cancel_mission", payload: { missionId: string; reason?: string }): Promise<MissionRecord>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -31,6 +37,12 @@ export interface RuntimeCommandEnvelope {
     | "runtime.view_records"
     | "runtime.get_mission"
     | "runtime.list_recent_missions"
+    | "runtime.claim_mission"
+    | "runtime.record_mission_progress"
+    | "runtime.submit_mission_result"
+    | "runtime.complete_mission"
+    | "runtime.fail_mission"
+    | "runtime.cancel_mission"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

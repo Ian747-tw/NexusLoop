@@ -706,6 +706,42 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("mission execution runtime commands validate payloads and return typed redacted records", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("command mission")
+    await expect(server.command("runtime.claim_mission", { missionId: "  ", executorId: "executor_1" })).rejects.toThrow("missionId is required")
+    await expect(server.command("runtime.list_recent_missions", { limit: 101 })).rejects.toThrow("limit must be no greater than 100")
+
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "token=executor-secret" })
+    const claimId = String((claim as { claim_id: string }).claim_id)
+    expect(claim).toMatchObject({ claim_id: expect.any(String), mission_id: submitted.missionId, executor_id: "[REDACTED]", status: "active" })
+
+    await expect(server.command("runtime.record_mission_progress", { missionId: submitted.missionId, claimId, message: "" })).rejects.toThrow("message is required")
+    const progress = await server.command("runtime.record_mission_progress", { missionId: submitted.missionId, claimId, message: "working api_key=progress-secret" })
+    expect(progress).toMatchObject({ progress_id: expect.any(String), message: "working [REDACTED]" })
+
+    const result = await server.command("runtime.submit_mission_result", {
+      missionId: submitted.missionId,
+      claimId,
+      summary: "summary secret=result-secret",
+      artifacts: ["artifact_1"],
+      researchResultIds: ["research_1"],
+    })
+    expect(result).toMatchObject({ result_id: expect.any(String), summary: "summary [REDACTED]", artifacts: ["artifact_1"], research_result_ids: ["research_1"] })
+
+    await expect(server.command("runtime.complete_mission", { missionId: submitted.missionId })).resolves.toMatchObject({ status: "completed" })
+    const serialized = JSON.stringify({ status: await server.status(), events: await readJsonlEvents(dir) })
+    expect(serialized).not.toContain("executor-secret")
+    expect(serialized).not.toContain("progress-secret")
+    expect(serialized).not.toContain("result-secret")
+    expect(await server.status()).toMatchObject({ missions: { active_claim_count: 0, completed_count: 1, cancelled_count: 0 } })
+    await server.shutdown()
+  })
+
   test("shutdown then submitUserMessage rejects without sending packet", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -1444,6 +1480,153 @@ describe("MissionRegistry", () => {
     await expect(recent).resolves.toMatchObject([{ status: "sent" }])
     await expect(summary).resolves.toMatchObject({ pending_count: 0, failed_count: 0, last_mission_id: created.mission.mission_id })
     expect(readCalls).toBe(1)
+  })
+
+  test("claims sent missions and rejects unsent duplicate or terminal claims", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+
+    const unsent = await registry.createUserMessageMission("unsent")
+    await expect(registry.claimMission({ mission_id: unsent.mission.mission_id, executor_id: "executor_1" })).rejects.toThrow("mission must be sent before claim")
+
+    const sent = await registry.createUserMessageMission("sent")
+    await registry.markMissionSent(sent.mission.mission_id)
+    const claim = await registry.claimMission({ mission_id: sent.mission.mission_id, executor_id: "executor_1" })
+
+    expect(claim).toMatchObject({ claim_id: "claim_5", mission_id: sent.mission.mission_id, status: "active" })
+    await expect(registry.getMission(sent.mission.mission_id)).resolves.toMatchObject({ status: "claimed" })
+    await expect(registry.claimMission({ mission_id: sent.mission.mission_id, executor_id: "executor_2" })).rejects.toThrow("mission already has an active claim")
+
+    await registry.cancelMission(sent.mission.mission_id, "done")
+    await expect(registry.claimMission({ mission_id: sent.mission.mission_id, executor_id: "executor_3" })).rejects.toThrow("terminal mission cannot claim")
+  })
+
+  test("progress result and completion require active claim and submitted result", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    let nextMs = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date(Date.UTC(2026, 4, 10, 12, 0, 0, nextMs++)),
+    })
+    const created = await registry.createUserMessageMission("run")
+    await registry.markMissionSent(created.mission.mission_id)
+
+    await expect(registry.recordMissionProgress({ mission_id: created.mission.mission_id, claim_id: "missing", message: "working" })).rejects.toThrow("mission claim not found")
+    await expect(registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: "missing", summary: "done" })).rejects.toThrow("mission claim not found")
+    await expect(registry.completeMission(created.mission.mission_id)).rejects.toThrow("mission completion requires a submitted result")
+
+    const claim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+    const progress = await registry.recordMissionProgress({ mission_id: created.mission.mission_id, claim_id: claim.claim_id, message: "halfway token=progress-secret" })
+    const result = await registry.submitMissionResult({
+      mission_id: created.mission.mission_id,
+      claim_id: claim.claim_id,
+      summary: "finished secret=result-secret",
+      artifacts: ["log.txt"],
+      research_result_ids: ["research_1"],
+    })
+    const completed = await registry.completeMission(created.mission.mission_id, { result_id: result.result_id })
+
+    expect(progress).toMatchObject({ message: "halfway [REDACTED]" })
+    expect(result).toMatchObject({ summary: "finished [REDACTED]", status: "submitted", artifacts: ["log.txt"], research_result_ids: ["research_1"] })
+    expect(completed).toMatchObject({ status: "completed", completion_result_id: result.result_id })
+    await expect(registry.getMissionClaim(claim.claim_id)).resolves.toMatchObject({ status: "completed" })
+    await expect(registry.completeMission(created.mission.mission_id, { result_id: result.result_id })).resolves.toMatchObject({ status: "completed" })
+    await expect(registry.completeMission(created.mission.mission_id, { result_id: result.result_id, summary: "different" })).rejects.toThrow("terminal mission completion conflicts")
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("progress-secret")
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("result-secret")
+  })
+
+  test("released claims are no longer active and allow a later claim", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const created = await registry.createUserMessageMission("release")
+    await registry.markMissionSent(created.mission.mission_id)
+    const first = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+
+    await expect(registry.releaseMissionClaim(first.claim_id, "secret=release-secret")).resolves.toMatchObject({ status: "released", release_reason: "[REDACTED]" })
+    await expect(registry.recordMissionProgress({ mission_id: created.mission.mission_id, claim_id: first.claim_id, message: "late" })).rejects.toThrow("mission claim is not active")
+    const second = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_2" })
+
+    expect(second).toMatchObject({ claim_id: "claim_4", status: "active" })
+    await expect(registry.statusSummary()).resolves.toMatchObject({ active_claim_count: 1 })
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("release-secret")
+  })
+
+  test("failure and cancellation mark active claims and terminal rewrites are idempotent only for matching payloads", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+
+    const failing = await registry.createUserMessageMission("fail")
+    await registry.markMissionSent(failing.mission.mission_id)
+    const failedClaim = await registry.claimMission({ mission_id: failing.mission.mission_id, executor_id: "executor_1" })
+    await expect(registry.failMission(failing.mission.mission_id, "token=fail-secret")).resolves.toMatchObject({ status: "failed", failure_reason: "[REDACTED]" })
+    await expect(registry.getMissionClaim(failedClaim.claim_id)).resolves.toMatchObject({ status: "failed", failure_reason: "[REDACTED]" })
+    await expect(registry.failMission(failing.mission.mission_id, "token=fail-secret")).resolves.toMatchObject({ status: "failed" })
+    await expect(registry.failMission(failing.mission.mission_id, "different")).rejects.toThrow("terminal mission failure conflicts")
+    await expect(registry.cancelMission(failing.mission.mission_id, "late")).rejects.toThrow("terminal mission cannot cancel")
+
+    const cancelling = await registry.createUserMessageMission("cancel")
+    await registry.markMissionSent(cancelling.mission.mission_id)
+    const cancelledClaim = await registry.claimMission({ mission_id: cancelling.mission.mission_id, executor_id: "executor_2" })
+    await expect(registry.cancelMission(cancelling.mission.mission_id, "secret=cancel-secret")).resolves.toMatchObject({ status: "cancelled", cancellation_reason: "[REDACTED]" })
+    await expect(registry.getMissionClaim(cancelledClaim.claim_id)).resolves.toMatchObject({ status: "cancelled", cancellation_reason: "[REDACTED]" })
+    await expect(registry.cancelMission(cancelling.mission.mission_id, "secret=cancel-secret")).resolves.toMatchObject({ status: "cancelled" })
+    await expect(registry.cancelMission(cancelling.mission.mission_id, "different")).rejects.toThrow("terminal mission cancellation conflicts")
+
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("fail-secret")
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("cancel-secret")
+  })
+
+  test("event-log hydration rebuilds claim progress result and mission status projections", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    let nextMs = 0
+    const writer = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date(Date.UTC(2026, 4, 10, 12, 0, 0, nextMs++)),
+    })
+    const created = await writer.createUserMessageMission("hydrate")
+    await writer.markMissionSent(created.mission.mission_id)
+    const claim = await writer.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+    const progress = await writer.recordMissionProgress({ mission_id: created.mission.mission_id, claim_id: claim.claim_id, message: "working" })
+    const result = await writer.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: claim.claim_id, summary: "done" })
+    await writer.completeMission(created.mission.mission_id)
+
+    const rebuilt = new MissionRegistry({ eventStore: store, projectDir: dir })
+
+    await expect(rebuilt.getMission(created.mission.mission_id)).resolves.toMatchObject({ status: "completed", completion_result_id: result.result_id })
+    await expect(rebuilt.listMissionClaims(created.mission.mission_id)).resolves.toMatchObject([{ claim_id: claim.claim_id, status: "completed" }])
+    await expect(rebuilt.listMissionProgress(created.mission.mission_id)).resolves.toMatchObject([{ progress_id: progress.progress_id, message: "working" }])
+    await expect(rebuilt.listMissionResults(created.mission.mission_id)).resolves.toMatchObject([{ result_id: result.result_id, status: "submitted" }])
+    await expect(rebuilt.statusSummary()).resolves.toMatchObject({ active_claim_count: 0, completed_count: 1, cancelled_count: 0, failed_count: 0 })
   })
 })
 

@@ -8,7 +8,7 @@ import { RunLock } from "./project/run-lock"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import type { OpenCodeRuntimeAdapter } from "./opencode/adapter"
 import { MissionRegistry } from "./missions/mission-registry"
-import type { MissionRecord, MissionStatusSummary } from "./missions/mission-types"
+import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult, MissionStatusSummary } from "./missions/mission-types"
 import { PolicyService } from "./spec/policy-service"
 import { SpecService, type SpecSummary } from "./spec/spec-service"
 import { redactValue } from "./security/redaction"
@@ -235,7 +235,35 @@ export class RuntimeServer {
       case "runtime.get_mission":
         return this.getMission(requiredString(payload.missionId, "missionId"))
       case "runtime.list_recent_missions":
-        return this.listRecentMissions(optionalPositiveInteger(payload.limit, "limit"))
+        return this.listRecentMissions(optionalPositiveInteger(payload.limit, "limit", 100))
+      case "runtime.claim_mission":
+        return this.claimMission({
+          mission_id: requiredString(payload.missionId ?? payload.mission_id, "missionId"),
+          executor_id: requiredString(payload.executorId ?? payload.executor_id, "executorId"),
+        })
+      case "runtime.record_mission_progress":
+        return this.recordMissionProgress({
+          mission_id: requiredString(payload.missionId ?? payload.mission_id, "missionId"),
+          claim_id: requiredString(payload.claimId ?? payload.claim_id, "claimId"),
+          message: requiredString(payload.message, "message"),
+        })
+      case "runtime.submit_mission_result":
+        return this.submitMissionResult({
+          mission_id: requiredString(payload.missionId ?? payload.mission_id, "missionId"),
+          claim_id: requiredString(payload.claimId ?? payload.claim_id, "claimId"),
+          summary: requiredString(payload.summary, "summary"),
+          artifacts: optionalStringArray(payload.artifacts, "artifacts"),
+          research_result_ids: optionalStringArray(payload.researchResultIds ?? payload.research_result_ids, "researchResultIds"),
+        })
+      case "runtime.complete_mission":
+        return this.completeMission(requiredString(payload.missionId ?? payload.mission_id, "missionId"), {
+          result_id: optionalString(payload.resultId ?? payload.result_id, "resultId"),
+          summary: optionalString(payload.summary, "summary"),
+        })
+      case "runtime.fail_mission":
+        return this.failMission(requiredString(payload.missionId ?? payload.mission_id, "missionId"), requiredString(payload.reason, "reason"))
+      case "runtime.cancel_mission":
+        return this.cancelMission(requiredString(payload.missionId ?? payload.mission_id, "missionId"), optionalString(payload.reason, "reason"))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -364,6 +392,30 @@ export class RuntimeServer {
 
   async missionStatusSummary(): Promise<MissionStatusSummary> {
     return this.missionRegistry.statusSummary()
+  }
+
+  async claimMission(input: { mission_id: string; executor_id: string }): Promise<ExecutorClaim> {
+    return this.missionRegistry.claimMission(input)
+  }
+
+  async recordMissionProgress(input: { mission_id: string; claim_id: string; message: string }): Promise<MissionProgress> {
+    return this.missionRegistry.recordMissionProgress(input)
+  }
+
+  async submitMissionResult(input: { mission_id: string; claim_id: string; summary: string; artifacts?: string[]; research_result_ids?: string[] }): Promise<MissionResult> {
+    return this.missionRegistry.submitMissionResult(input)
+  }
+
+  async completeMission(missionId: string, input: { result_id?: string; summary?: string } = {}): Promise<MissionRecord> {
+    return this.missionRegistry.completeMission(missionId, input)
+  }
+
+  async failMission(missionId: string, reason: string): Promise<MissionRecord> {
+    return this.missionRegistry.failMission(missionId, reason)
+  }
+
+  async cancelMission(missionId: string, reason?: string): Promise<MissionRecord> {
+    return this.missionRegistry.cancelMission(missionId, reason)
   }
 
   async shutdown(reason = "shutdown"): Promise<void> {
@@ -559,19 +611,27 @@ function assertProjectionDb(db: RuntimeResearchDbProjection): RuntimeResearchDbP
 
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${field} is required`)
-  return value
+  return value.trim()
 }
 
 function optionalString(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined
   if (typeof value !== "string") throw new Error(`${field} must be a string`)
-  return value
+  if (!value.trim()) throw new Error(`${field} must be nonblank`)
+  return value.trim()
 }
 
-function optionalPositiveInteger(value: unknown, field: string): number | undefined {
+function optionalPositiveInteger(value: unknown, field: string, max = 1000): number | undefined {
   if (value === undefined) return undefined
   if (!Number.isInteger(value) || Number(value) < 1) throw new Error(`${field} must be a positive integer`)
+  if (Number(value) > max) throw new Error(`${field} must be no greater than ${max}`)
   return Number(value)
+}
+
+function optionalStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array`)
+  return value.map((item, index) => requiredString(item, `${field}[${index}]`))
 }
 
 function readResearchEventsOptions(value: unknown): ListResearchEventsOptions | undefined {
