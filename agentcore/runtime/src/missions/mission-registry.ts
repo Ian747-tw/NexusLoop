@@ -142,23 +142,25 @@ export class MissionRegistry {
   }
 
   async recordMissionProgress(input: MissionProgressInput): Promise<MissionProgress> {
-    await this.hydrate()
-    const missionId = cleanRequiredString(input.mission_id, "mission_id")
-    const claimId = cleanRequiredString(input.claim_id, "claim_id")
-    const message = cleanRequiredString(input.message, "message")
-    const mission = this.requireMission(missionId)
-    this.assertNotTerminal(mission, "record progress")
-    this.requireActiveClaim(missionId, claimId)
-    const createdAt = this.isoNow()
-    const progress: MissionProgress = {
-      progress_id: this.idFactory("progress"),
-      mission_id: missionId,
-      claim_id: claimId,
-      message: redactText(message),
-      created_at: createdAt,
-    }
-    await this.appendAndApply({ kind: "mission_progress_recorded", progress })
-    return redactValue(this.requireProgress(progress.progress_id))
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const missionId = cleanRequiredString(input.mission_id, "mission_id")
+      const claimId = cleanRequiredString(input.claim_id, "claim_id")
+      const message = cleanRequiredString(input.message, "message")
+      const mission = this.requireMission(missionId)
+      this.assertNotTerminal(mission, "record progress")
+      this.requireActiveClaim(missionId, claimId)
+      const createdAt = this.isoNow()
+      const progress: MissionProgress = {
+        progress_id: this.idFactory("progress"),
+        mission_id: missionId,
+        claim_id: claimId,
+        message: redactText(message),
+        created_at: createdAt,
+      }
+      await this.appendAndApply({ kind: "mission_progress_recorded", progress })
+      return redactValue(this.requireProgress(progress.progress_id))
+    })
   }
 
   async listMissionProgress(missionId: string): Promise<MissionProgress[]> {
@@ -167,26 +169,28 @@ export class MissionRegistry {
   }
 
   async submitMissionResult(input: MissionResultInput): Promise<MissionResult> {
-    await this.hydrate()
-    const missionId = cleanRequiredString(input.mission_id, "mission_id")
-    const claimId = cleanRequiredString(input.claim_id, "claim_id")
-    const summary = cleanRequiredString(input.summary, "summary")
-    const mission = this.requireMission(missionId)
-    this.assertNotTerminal(mission, "submit result")
-    this.requireActiveClaim(missionId, claimId)
-    const createdAt = this.isoNow()
-    const result: MissionResult = {
-      result_id: this.idFactory("result"),
-      mission_id: missionId,
-      claim_id: claimId,
-      summary: redactText(summary),
-      artifacts: cleanOptionalStringArray(input.artifacts, "artifacts"),
-      research_result_ids: cleanOptionalStringArray(input.research_result_ids, "research_result_ids"),
-      created_at: createdAt,
-      status: "submitted",
-    }
-    await this.appendAndApply({ kind: "mission_result_submitted", result })
-    return redactValue(this.requireResult(result.result_id))
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const missionId = cleanRequiredString(input.mission_id, "mission_id")
+      const claimId = cleanRequiredString(input.claim_id, "claim_id")
+      const summary = cleanRequiredString(input.summary, "summary")
+      const mission = this.requireMission(missionId)
+      this.assertNotTerminal(mission, "submit result")
+      this.requireActiveClaim(missionId, claimId)
+      const createdAt = this.isoNow()
+      const result: MissionResult = {
+        result_id: this.idFactory("result"),
+        mission_id: missionId,
+        claim_id: claimId,
+        summary: redactText(summary),
+        artifacts: cleanOptionalStringArray(input.artifacts, "artifacts"),
+        research_result_ids: cleanOptionalStringArray(input.research_result_ids, "research_result_ids"),
+        created_at: createdAt,
+        status: "submitted",
+      }
+      await this.appendAndApply({ kind: "mission_result_submitted", result })
+      return redactValue(this.requireResult(result.result_id))
+    })
   }
 
   async getMissionResult(resultId: string): Promise<MissionResult | null> {
@@ -226,72 +230,80 @@ export class MissionRegistry {
   }
 
   async failMission(missionId: string, reason: string): Promise<MissionRecord> {
-    await this.hydrate()
-    const id = cleanRequiredString(missionId, "mission_id")
-    const failureReason = redactText(cleanRequiredString(reason, "reason"))
-    const mission = this.requireMission(id)
-    if (mission.status === "failed") return redactValue(this.idempotentFailed(mission, failureReason))
-    this.assertNotTerminal(mission, "fail")
-    if (!["sent", "claimed", "running"].includes(mission.status)) throw new Error(`mission can only fail from sent, claimed, or running: ${id}`)
-    await this.appendAndApply({
-      kind: "mission_failed",
-      mission_id: mission.mission_id,
-      intent_id: mission.intent_id,
-      failed_at: this.isoNow(),
-      failure_reason: failureReason,
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const id = cleanRequiredString(missionId, "mission_id")
+      const failureReason = redactText(cleanRequiredString(reason, "reason"))
+      const mission = this.requireMission(id)
+      if (mission.status === "failed") return redactValue(this.idempotentFailed(mission, failureReason))
+      this.assertNotTerminal(mission, "fail")
+      if (!["sent", "claimed", "running"].includes(mission.status)) throw new Error(`mission can only fail from sent, claimed, or running: ${id}`)
+      await this.appendAndApply({
+        kind: "mission_failed",
+        mission_id: mission.mission_id,
+        intent_id: mission.intent_id,
+        failed_at: this.isoNow(),
+        failure_reason: failureReason,
+      })
+      return redactValue(this.requireMission(id))
     })
-    return redactValue(this.requireMission(id))
   }
 
   async markMissionFailed(missionId: string, reason: string): Promise<MissionRecord> {
-    await this.hydrate()
-    const id = cleanRequiredString(missionId, "mission_id")
-    const failureReason = redactText(cleanRequiredString(reason, "reason"))
-    const mission = this.requireMission(id)
-    if (mission.status === "failed") return redactValue(this.idempotentFailed(mission, failureReason))
-    this.assertNotTerminal(mission, "fail")
-    await this.appendAndApply({
-      kind: "mission_failed",
-      mission_id: mission.mission_id,
-      intent_id: mission.intent_id,
-      failed_at: this.isoNow(),
-      failure_reason: failureReason,
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const id = cleanRequiredString(missionId, "mission_id")
+      const failureReason = redactText(cleanRequiredString(reason, "reason"))
+      const mission = this.requireMission(id)
+      if (mission.status === "failed") return redactValue(this.idempotentFailed(mission, failureReason))
+      this.assertNotTerminal(mission, "fail")
+      await this.appendAndApply({
+        kind: "mission_failed",
+        mission_id: mission.mission_id,
+        intent_id: mission.intent_id,
+        failed_at: this.isoNow(),
+        failure_reason: failureReason,
+      })
+      return redactValue(this.requireMission(id))
     })
-    return redactValue(this.requireMission(id))
   }
 
   async cancelMission(missionId: string, reason?: string): Promise<MissionRecord> {
-    await this.hydrate()
-    const id = cleanRequiredString(missionId, "mission_id")
-    const cancellationReason = reason === undefined ? undefined : redactText(cleanRequiredString(reason, "reason"))
-    const mission = this.requireMission(id)
-    if (mission.status === "cancelled") return redactValue(this.idempotentCancelled(mission, cancellationReason))
-    this.assertNotTerminal(mission, "cancel")
-    await this.appendAndApply({
-      kind: "mission_cancelled",
-      mission_id: mission.mission_id,
-      intent_id: mission.intent_id,
-      cancelled_at: this.isoNow(),
-      cancellation_reason: cancellationReason,
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const id = cleanRequiredString(missionId, "mission_id")
+      const cancellationReason = reason === undefined ? undefined : redactText(cleanRequiredString(reason, "reason"))
+      const mission = this.requireMission(id)
+      if (mission.status === "cancelled") return redactValue(this.idempotentCancelled(mission, cancellationReason))
+      this.assertNotTerminal(mission, "cancel")
+      await this.appendAndApply({
+        kind: "mission_cancelled",
+        mission_id: mission.mission_id,
+        intent_id: mission.intent_id,
+        cancelled_at: this.isoNow(),
+        cancellation_reason: cancellationReason,
+      })
+      return redactValue(this.requireMission(id))
     })
-    return redactValue(this.requireMission(id))
   }
 
   async releaseMissionClaim(claimId: string, reason?: string): Promise<ExecutorClaim> {
-    await this.hydrate()
-    const id = cleanRequiredString(claimId, "claim_id")
-    const releaseReason = reason === undefined ? undefined : redactText(cleanRequiredString(reason, "reason"))
-    const claim = this.requireClaim(id)
-    if (claim.status !== "active") throw new Error(`mission claim is not active: ${id}`)
-    this.assertNotTerminal(this.requireMission(claim.mission_id), "release claim")
-    await this.appendAndApply({
-      kind: "mission_claim_released",
-      claim_id: claim.claim_id,
-      mission_id: claim.mission_id,
-      released_at: this.isoNow(),
-      release_reason: releaseReason,
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const id = cleanRequiredString(claimId, "claim_id")
+      const releaseReason = reason === undefined ? undefined : redactText(cleanRequiredString(reason, "reason"))
+      const claim = this.requireClaim(id)
+      if (claim.status !== "active") throw new Error(`mission claim is not active: ${id}`)
+      this.assertNotTerminal(this.requireMission(claim.mission_id), "release claim")
+      await this.appendAndApply({
+        kind: "mission_claim_released",
+        claim_id: claim.claim_id,
+        mission_id: claim.mission_id,
+        released_at: this.isoNow(),
+        release_reason: releaseReason,
+      })
+      return redactValue(this.requireClaim(id))
     })
-    return redactValue(this.requireClaim(id))
   }
 
   async getMission(missionId: string): Promise<MissionRecord | null> {

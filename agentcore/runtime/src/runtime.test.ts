@@ -1687,6 +1687,47 @@ describe("MissionRegistry", () => {
     expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("release-secret")
   })
 
+  test("concurrent claim release blocks progress and result writes after release wins", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const progressMission = await registry.createUserMessageMission("progress-release-race")
+    await registry.markMissionSent(progressMission.mission.mission_id)
+    const progressClaim = await registry.claimMission({ mission_id: progressMission.mission.mission_id, executor_id: "executor_1" })
+
+    const progressResults = await Promise.allSettled([
+      registry.releaseMissionClaim(progressClaim.claim_id),
+      registry.recordMissionProgress({ mission_id: progressMission.mission.mission_id, claim_id: progressClaim.claim_id, message: "late progress" }),
+    ])
+
+    expect(progressResults.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+    const rejectedProgress = progressResults.filter((result) => result.status === "rejected")
+    expect(rejectedProgress).toHaveLength(1)
+    expect(String((rejectedProgress[0] as PromiseRejectedResult).reason)).toContain("mission claim is not active")
+    await expect(registry.listMissionProgress(progressMission.mission.mission_id)).resolves.toEqual([])
+
+    const resultMission = await registry.createUserMessageMission("result-release-race")
+    await registry.markMissionSent(resultMission.mission.mission_id)
+    const resultClaim = await registry.claimMission({ mission_id: resultMission.mission.mission_id, executor_id: "executor_2" })
+
+    const resultResults = await Promise.allSettled([
+      registry.releaseMissionClaim(resultClaim.claim_id),
+      registry.submitMissionResult({ mission_id: resultMission.mission.mission_id, claim_id: resultClaim.claim_id, summary: "late result" }),
+    ])
+
+    expect(resultResults.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+    const rejectedResult = resultResults.filter((result) => result.status === "rejected")
+    expect(rejectedResult).toHaveLength(1)
+    expect(String((rejectedResult[0] as PromiseRejectedResult).reason)).toContain("mission claim is not active")
+    await expect(registry.listMissionResults(resultMission.mission.mission_id)).resolves.toEqual([])
+  })
+
   test("completion result must belong to the active claim", async () => {
     const dir = await tempProject()
     const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
@@ -1767,6 +1808,37 @@ describe("MissionRegistry", () => {
 
     expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("fail-secret")
     expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("cancel-secret")
+  })
+
+  test("concurrent failure and cancellation preserve a single terminal event", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const created = await registry.createUserMessageMission("terminal-race")
+    await registry.markMissionSent(created.mission.mission_id)
+    const claim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+
+    const results = await Promise.allSettled([registry.failMission(created.mission.mission_id, "failed"), registry.cancelMission(created.mission.mission_id, "cancelled")])
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+    const rejected = results.filter((result) => result.status === "rejected")
+    expect(rejected).toHaveLength(1)
+    expect(String((rejected[0] as PromiseRejectedResult).reason)).toContain("terminal mission cannot")
+    const mission = await registry.getMission(created.mission.mission_id)
+    expect(mission).not.toBeNull()
+    const terminalStatus = mission!.status
+    expect(["failed", "cancelled"]).toContain(terminalStatus)
+    if (mission?.status === "failed") expect(mission.cancelled_at).toBeUndefined()
+    if (mission?.status === "cancelled") expect(mission.failure_reason).toBeUndefined()
+    await expect(registry.getMissionClaim(claim.claim_id)).resolves.toMatchObject({ status: terminalStatus })
+    const events = await readJsonlEvents(dir)
+    expect(events.filter((event) => event.kind === "mission_failed" || event.kind === "mission_cancelled")).toHaveLength(1)
   })
 
   test("event-log hydration rebuilds claim progress result and mission status projections", async () => {
