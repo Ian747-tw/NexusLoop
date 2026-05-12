@@ -630,6 +630,33 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("sent-state persistence failure is not marked as adapter delivery failure", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    const append = server.eventStore.append.bind(server.eventStore)
+    server.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if (event.kind === "mission_sent") throw new Error("mission_sent append failed token=sent-secret")
+      return append(event)
+    }
+
+    await expect(server.submitUserMessage("deliver token=payload-secret")).rejects.toThrow("adapter delivery succeeded but sent-state persistence failed")
+    const events = await readJsonlEvents(dir)
+    const missions = await server.listRecentMissions()
+
+    expect(adapter.packets).toHaveLength(1)
+    expect(events.map((event) => event.kind)).toEqual(expect.arrayContaining(["work_intent_created", "mission_created"]))
+    expect(events.map((event) => event.kind)).not.toContain("mission_failed")
+    expect(events.map((event) => event.kind)).not.toContain("mission_sent")
+    expect(missions[0]).toMatchObject({ status: "created", objective: "deliver [REDACTED]" })
+    expect(JSON.stringify({ events, missions })).not.toContain("sent-secret")
+    expect(JSON.stringify({ events, missions })).not.toContain("payload-secret")
+    await server.shutdown()
+  })
+
   test("inactive modes reject before mission creation", async () => {
     for (const mode of ["status", "view-records"] as const) {
       const dir = await tempProject()

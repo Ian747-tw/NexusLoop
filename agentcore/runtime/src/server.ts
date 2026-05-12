@@ -339,11 +339,16 @@ export class RuntimeServer {
     const packet = this.missionRegistry.createPacket(mission, message)
     try {
       await this.adapter.sendMissionPacket(packet)
-      await this.missionRegistry.markMissionSent(mission.mission_id)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       await this.missionRegistry.markMissionFailed(mission.mission_id, message)
       throw new Error(`mission ${mission.mission_id} adapter delivery failed: ${redactValue(message)}`)
+    }
+    try {
+      await this.missionRegistry.markMissionSent(mission.mission_id)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`mission ${mission.mission_id} adapter delivery succeeded but sent-state persistence failed: ${redactValue(message)}`)
     }
     this.eventBus.emit({ type: "ExecutorLifecycle", phase: "mission-packet-sent", message: `Mission ${mission.mission_id} sent to adapter` })
     return { accepted: true, missionId: mission.mission_id, intentId: intent.intent_id }
