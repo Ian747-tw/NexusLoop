@@ -204,10 +204,10 @@ export class MissionRegistry {
     const summary = input.summary === undefined ? undefined : redactText(cleanRequiredString(input.summary, "summary"))
     if (mission.status === "completed") return redactValue(this.idempotentCompleted(mission, resultId ?? mission.completion_result_id, summary))
     this.assertNotTerminal(mission, "complete")
-    const result = resultId ? this.requireResult(resultId) : this.firstSubmittedResult(id)
-    if (!result || result.mission_id !== id || result.status !== "submitted") throw new Error(`mission completion requires a submitted result: ${id}`)
     const activeClaim = this.activeClaimForMission(id)
     if (!activeClaim) throw new Error(`mission completion requires an active claim: ${id}`)
+    const result = resultId ? this.requireResult(resultId) : this.firstSubmittedResultForClaim(id, activeClaim.claim_id)
+    if (!result || result.mission_id !== id || result.status !== "submitted") throw new Error(`mission completion requires a submitted result: ${id}`)
     if (result.claim_id !== activeClaim.claim_id) throw new Error(`mission completion result must belong to active claim: ${id}`)
     await this.appendAndApply({
       kind: "mission_completed",
@@ -493,6 +493,14 @@ export class MissionRegistry {
     for (const resultId of this.resultsByMission.get(missionId) ?? []) {
       const result = this.results.get(resultId)
       if (result?.status === "submitted") return result
+    }
+    return undefined
+  }
+
+  private firstSubmittedResultForClaim(missionId: string, claimId: string): MissionResult | undefined {
+    for (const resultId of this.resultsByMission.get(missionId) ?? []) {
+      const result = this.results.get(resultId)
+      if (result?.status === "submitted" && result.claim_id === claimId) return result
     }
     return undefined
   }

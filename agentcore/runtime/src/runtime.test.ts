@@ -1541,9 +1541,10 @@ describe("MissionRegistry", () => {
 
     await expect(registry.recordMissionProgress({ mission_id: created.mission.mission_id, claim_id: "missing", message: "working" })).rejects.toThrow("mission claim not found")
     await expect(registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: "missing", summary: "done" })).rejects.toThrow("mission claim not found")
-    await expect(registry.completeMission(created.mission.mission_id)).rejects.toThrow("mission completion requires a submitted result")
+    await expect(registry.completeMission(created.mission.mission_id)).rejects.toThrow("mission completion requires an active claim")
 
     const claim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+    await expect(registry.completeMission(created.mission.mission_id)).rejects.toThrow("mission completion requires a submitted result")
     const progress = await registry.recordMissionProgress({ mission_id: created.mission.mission_id, claim_id: claim.claim_id, message: "halfway token=progress-secret" })
     const result = await registry.submitMissionResult({
       mission_id: created.mission.mission_id,
@@ -1632,6 +1633,30 @@ describe("MissionRegistry", () => {
       completion_result_id: activeResult.result_id,
     })
     await expect(registry.getMissionClaim(activeClaim.claim_id)).resolves.toMatchObject({ status: "completed" })
+  })
+
+  test("completion without result id selects a submitted result from the active claim", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const created = await registry.createUserMessageMission("active-default-result")
+    await registry.markMissionSent(created.mission.mission_id)
+    const firstClaim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+    await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: firstClaim.claim_id, summary: "stale" })
+    await registry.releaseMissionClaim(firstClaim.claim_id)
+    const activeClaim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_2" })
+    const activeResult = await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: activeClaim.claim_id, summary: "active" })
+
+    await expect(registry.completeMission(created.mission.mission_id)).resolves.toMatchObject({
+      status: "completed",
+      completion_result_id: activeResult.result_id,
+    })
   })
 
   test("failure and cancellation mark active claims and terminal rewrites are idempotent only for matching payloads", async () => {
