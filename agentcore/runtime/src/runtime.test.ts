@@ -742,6 +742,23 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("mission execution runtime commands require active started runtime", async () => {
+    const notStartedDir = await tempProject()
+    await makeProject(notStartedDir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: notStartedDir, adapter: new LongLivedAdapter() })
+
+    await expect(notStarted.command("runtime.claim_mission", { missionId: "mission_1", executorId: "executor_1" })).rejects.toThrow("runtime must be started before mission execution writes")
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir)
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", adapter: new LongLivedAdapter() })
+    await statusServer.start()
+
+    await expect(statusServer.command("runtime.claim_mission", { missionId: "mission_1", executorId: "executor_1" })).rejects.toThrow("runtime.claim_mission requires active mode")
+    await expect(statusServer.command("runtime.cancel_mission", { missionId: "mission_1" })).rejects.toThrow("runtime.cancel_mission requires active mode")
+    await statusServer.shutdown()
+  })
+
   test("shutdown then submitUserMessage rejects without sending packet", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -1589,6 +1606,32 @@ describe("MissionRegistry", () => {
     expect(second).toMatchObject({ claim_id: "claim_4", status: "active" })
     await expect(registry.statusSummary()).resolves.toMatchObject({ active_claim_count: 1 })
     expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("release-secret")
+  })
+
+  test("completion result must belong to the active claim", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const created = await registry.createUserMessageMission("claim-attribution")
+    await registry.markMissionSent(created.mission.mission_id)
+    const firstClaim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+    const staleResult = await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: firstClaim.claim_id, summary: "stale" })
+    await registry.releaseMissionClaim(firstClaim.claim_id)
+    const activeClaim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_2" })
+
+    await expect(registry.completeMission(created.mission.mission_id, { result_id: staleResult.result_id })).rejects.toThrow("mission completion result must belong to active claim")
+    const activeResult = await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: activeClaim.claim_id, summary: "active" })
+    await expect(registry.completeMission(created.mission.mission_id, { result_id: activeResult.result_id })).resolves.toMatchObject({
+      status: "completed",
+      completion_result_id: activeResult.result_id,
+    })
+    await expect(registry.getMissionClaim(activeClaim.claim_id)).resolves.toMatchObject({ status: "completed" })
   })
 
   test("failure and cancellation mark active claims and terminal rewrites are idempotent only for matching payloads", async () => {

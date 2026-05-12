@@ -395,26 +395,32 @@ export class RuntimeServer {
   }
 
   async claimMission(input: { mission_id: string; executor_id: string }): Promise<ExecutorClaim> {
+    this.requireMissionWriteRuntime("runtime.claim_mission")
     return this.missionRegistry.claimMission(input)
   }
 
   async recordMissionProgress(input: { mission_id: string; claim_id: string; message: string }): Promise<MissionProgress> {
+    this.requireMissionWriteRuntime("runtime.record_mission_progress")
     return this.missionRegistry.recordMissionProgress(input)
   }
 
   async submitMissionResult(input: { mission_id: string; claim_id: string; summary: string; artifacts?: string[]; research_result_ids?: string[] }): Promise<MissionResult> {
+    this.requireMissionWriteRuntime("runtime.submit_mission_result")
     return this.missionRegistry.submitMissionResult(input)
   }
 
   async completeMission(missionId: string, input: { result_id?: string; summary?: string } = {}): Promise<MissionRecord> {
+    this.requireMissionWriteRuntime("runtime.complete_mission")
     return this.missionRegistry.completeMission(missionId, input)
   }
 
   async failMission(missionId: string, reason: string): Promise<MissionRecord> {
+    this.requireMissionWriteRuntime("runtime.fail_mission")
     return this.missionRegistry.failMission(missionId, reason)
   }
 
   async cancelMission(missionId: string, reason?: string): Promise<MissionRecord> {
+    this.requireMissionWriteRuntime("runtime.cancel_mission")
     return this.missionRegistry.cancelMission(missionId, reason)
   }
 
@@ -596,6 +602,11 @@ export class RuntimeServer {
         message: error instanceof Error ? error.message : String(error),
       })
     }
+  }
+
+  private requireMissionWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before mission execution writes")
   }
 }
 

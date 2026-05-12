@@ -206,6 +206,9 @@ export class MissionRegistry {
     this.assertNotTerminal(mission, "complete")
     const result = resultId ? this.requireResult(resultId) : this.firstSubmittedResult(id)
     if (!result || result.mission_id !== id || result.status !== "submitted") throw new Error(`mission completion requires a submitted result: ${id}`)
+    const activeClaim = this.activeClaimForMission(id)
+    if (!activeClaim) throw new Error(`mission completion requires an active claim: ${id}`)
+    if (result.claim_id !== activeClaim.claim_id) throw new Error(`mission completion result must belong to active claim: ${id}`)
     await this.appendAndApply({
       kind: "mission_completed",
       mission_id: mission.mission_id,
