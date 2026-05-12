@@ -1405,6 +1405,46 @@ describe("MissionRegistry", () => {
     await expect(registry.createUserMessageMission("hello")).rejects.toThrow("mission append failed")
     await expect(registry.listRecentMissions()).resolves.toHaveLength(0)
   })
+
+  test("serializes first-time hydration across concurrent readers", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const writer = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_1`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const created = await writer.createUserMessageMission("hello")
+    await writer.markMissionSent(created.mission.mission_id)
+
+    const readAll = store.readAll.bind(store)
+    let readCalls = 0
+    let releaseRead!: () => void
+    const readStarted = new Promise<void>((resolve) => {
+      store.readAll = async () => {
+        readCalls += 1
+        resolve()
+        await new Promise<void>((release) => {
+          releaseRead = release
+        })
+        return readAll()
+      }
+    })
+    const reader = new MissionRegistry({ eventStore: store, projectDir: dir })
+
+    const mission = reader.getMission(created.mission.mission_id)
+    const recent = reader.listRecentMissions()
+    const summary = reader.statusSummary()
+    await readStarted
+    expect(readCalls).toBe(1)
+    releaseRead()
+
+    await expect(mission).resolves.toMatchObject({ status: "sent" })
+    await expect(recent).resolves.toMatchObject([{ status: "sent" }])
+    await expect(summary).resolves.toMatchObject({ pending_count: 0, failed_count: 0, last_mission_id: created.mission.mission_id })
+    expect(readCalls).toBe(1)
+  })
 })
 
 describe("SpecService", () => {

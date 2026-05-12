@@ -26,6 +26,7 @@ export class MissionRegistry {
   private readonly intents = new Map<string, WorkIntent>()
   private readonly missions = new Map<string, MissionRecord>()
   private readonly missionOrder: string[] = []
+  private hydrateTask: Promise<void> | null = null
 
   constructor(options: MissionRegistryOptions) {
     this.eventStore = options.eventStore
@@ -121,8 +122,16 @@ export class MissionRegistry {
 
   private async hydrate(): Promise<void> {
     if (this.hydrated) return
-    for (const event of await this.eventStore.readAll()) this.applyEvent(event)
-    this.hydrated = true
+    if (this.hydrateTask) return this.hydrateTask
+    this.hydrateTask = (async () => {
+      for (const event of await this.eventStore.readAll()) this.applyEvent(event)
+      this.hydrated = true
+    })()
+    try {
+      await this.hydrateTask
+    } finally {
+      this.hydrateTask = null
+    }
   }
 
   private async appendAndApply(event: MissionEvent): Promise<void> {
