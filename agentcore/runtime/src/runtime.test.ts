@@ -8,10 +8,12 @@ import type { RuntimeResearchDbProjection } from "./server"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
+import { MissionRegistry } from "./missions/mission-registry"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
-import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
+import type { MissionPacket } from "./missions/mission-types"
+import type { MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
 import { RunLock } from "./project/run-lock"
 import {
@@ -55,6 +57,18 @@ async function readEventKinds(dir: string): Promise<string[]> {
   }
 }
 
+async function readJsonlEvents(dir: string): Promise<Record<string, unknown>[]> {
+  try {
+    return (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8"))
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    throw error
+  }
+}
+
 function instrumentStartupOrder(server: RuntimeServer): string[] {
   const order: string[] = []
   const append = server.eventStore.append.bind(server.eventStore)
@@ -68,6 +82,18 @@ function instrumentStartupOrder(server: RuntimeServer): string[] {
     return emit(event)
   }
   return order
+}
+
+function testMissionPacket(overrides: Partial<MissionPacket> = {}): MissionPacket {
+  return {
+    missionId: "mission_test",
+    intentId: "intent_test",
+    message: "hello",
+    objective: "hello",
+    createdAt: "2026-05-10T12:00:00.000Z",
+    protocolVersion: 1,
+    ...overrides,
+  }
 }
 
 class ThrowingStartAdapter extends FakeOpenCodeAdapter {
@@ -114,6 +140,12 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
 
   async getStatus(): Promise<Record<string, unknown>> {
     return { adapter: "long-lived", message: "long stream adapter" }
+  }
+}
+
+class ThrowingMissionAdapter extends LongLivedAdapter {
+  override async sendMissionPacket(_packet: MissionPacket): Promise<void> {
+    throw new Error("adapter send failed token=adapter-secret")
   }
 }
 
@@ -507,6 +539,7 @@ describe("RuntimeServer core", () => {
 
     expect(adapter.packets).toHaveLength(0)
     expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).not.toContain("work_intent_created")
   })
 
   test("submitUserMessage in status mode after start rejects", async () => {
@@ -542,9 +575,134 @@ describe("RuntimeServer core", () => {
     const server = new RuntimeServer({ projectDir: dir, adapter })
 
     await server.start()
-    await expect(server.submitUserMessage("hello")).resolves.toEqual({ accepted: true })
+    const result = await server.submitUserMessage("hello")
 
-    expect(adapter.packets).toEqual([{ missionId: "runtime-message", message: "hello" }])
+    expect(result).toMatchObject({ accepted: true })
+    expect(result.missionId).toMatch(/^mission_/)
+    expect(result.intentId).toMatch(/^intent_/)
+    expect(adapter.packets).toEqual([
+      {
+        missionId: result.missionId,
+        intentId: result.intentId,
+        message: "hello",
+        objective: "hello",
+        createdAt: expect.any(String),
+        protocolVersion: 1,
+      },
+    ])
+    await server.shutdown()
+  })
+
+  test("submitUserMessage creates durable redacted intent and mission before adapter delivery", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    const result = await server.submitUserMessage("use token=mission-secret")
+    const events = await readJsonlEvents(dir)
+    const mission = await server.getMission(result.missionId)
+
+    expect(events.map((event) => event.kind)).toEqual(
+      expect.arrayContaining(["work_intent_created", "mission_created", "mission_sent"]),
+    )
+    expect(mission).toMatchObject({ mission_id: result.missionId, intent_id: result.intentId, objective: "use [REDACTED]", status: "sent" })
+    expect(JSON.stringify(events)).not.toContain("mission-secret")
+    expect(adapter.packets[0]).toMatchObject({ message: "use token=mission-secret", objective: "use token=mission-secret" })
+    await server.shutdown()
+  })
+
+  test("adapter send failure marks mission failed with redacted reason", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new ThrowingMissionAdapter() })
+
+    await server.start()
+    await expect(server.submitUserMessage("secret=payload-secret")).rejects.toThrow("mission ")
+    const missions = await server.listRecentMissions()
+    const events = await readJsonlEvents(dir)
+
+    expect(missions).toHaveLength(1)
+    expect(missions[0]).toMatchObject({ status: "failed", failure_reason: "adapter send failed [REDACTED]" })
+    expect(JSON.stringify({ events, missions })).not.toContain("adapter-secret")
+    expect(JSON.stringify({ events, missions })).not.toContain("payload-secret")
+    await server.shutdown()
+  })
+
+  test("sent-state persistence failure is not marked as adapter delivery failure", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    const append = server.eventStore.append.bind(server.eventStore)
+    server.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if (event.kind === "mission_sent") throw new Error("mission_sent append failed token=sent-secret")
+      return append(event)
+    }
+
+    await expect(server.submitUserMessage("deliver token=payload-secret")).rejects.toThrow("adapter delivery succeeded but sent-state persistence failed")
+    const events = await readJsonlEvents(dir)
+    const missions = await server.listRecentMissions()
+
+    expect(adapter.packets).toHaveLength(1)
+    expect(events.map((event) => event.kind)).toEqual(expect.arrayContaining(["work_intent_created", "mission_created"]))
+    expect(events.map((event) => event.kind)).not.toContain("mission_failed")
+    expect(events.map((event) => event.kind)).not.toContain("mission_sent")
+    expect(missions[0]).toMatchObject({ status: "created", objective: "deliver [REDACTED]" })
+    expect(JSON.stringify({ events, missions })).not.toContain("sent-secret")
+    expect(JSON.stringify({ events, missions })).not.toContain("payload-secret")
+    await server.shutdown()
+  })
+
+  test("inactive modes reject before mission creation", async () => {
+    for (const mode of ["status", "view-records"] as const) {
+      const dir = await tempProject()
+      await makeProject(dir)
+      const adapter = new LongLivedAdapter()
+      const server = new RuntimeServer({ projectDir: dir, mode, adapter })
+
+      await server.start()
+      await expect(server.submitUserMessage("hello token=mode-secret")).rejects.toThrow("runtime.submit_user_message requires active mode")
+
+      expect(adapter.packets).toHaveLength(0)
+      expect((await readJsonlEvents(dir)).map((event) => event.kind)).not.toContain("work_intent_created")
+      await server.shutdown()
+    }
+  })
+
+  test("mission commands list and get recent missions with redacted text", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    const first = await server.submitUserMessage("first api_key=first-secret")
+    const second = await server.submitUserMessage("second")
+
+    await expect(server.command("runtime.get_mission", { missionId: first.missionId })).resolves.toMatchObject({
+      mission_id: first.missionId,
+      objective: "first [REDACTED]",
+      status: "sent",
+    })
+    await expect(server.command("runtime.list_recent_missions", { limit: 1 })).resolves.toMatchObject([{ mission_id: second.missionId }])
+    expect(JSON.stringify(await server.listRecentMissions())).not.toContain("first-secret")
+    await server.shutdown()
+  })
+
+  test("runtime status includes accurate redacted mission summary", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new ThrowingMissionAdapter() })
+
+    await server.start()
+    await expect(server.submitUserMessage("token=status-secret")).rejects.toThrow("mission ")
+    const status = await server.status()
+
+    expect(status.missions).toMatchObject({ pending_count: 0, failed_count: 1, last_mission_id: expect.any(String) })
+    expect(JSON.stringify(status)).not.toContain("status-secret")
     await server.shutdown()
   })
 
@@ -559,6 +717,7 @@ describe("RuntimeServer core", () => {
     await expect(server.submitUserMessage("after shutdown")).rejects.toThrow("runtime must be started before accepting user messages")
 
     expect(adapter.packets).toHaveLength(0)
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).not.toContain("work_intent_created")
   })
 
   test("shutdown waits for executor event pump to drain adapter shutdown telemetry", async () => {
@@ -1206,6 +1365,88 @@ describe("EventStore and EventBus", () => {
   })
 })
 
+describe("MissionRegistry", () => {
+  test("uses deterministic id and time hooks and rebuilds projection from events", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    let nextMs = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date(Date.UTC(2026, 4, 10, 12, 0, 0, nextMs++)),
+    })
+
+    const created = await registry.createUserMessageMission("run password=secret-password")
+    await registry.markMissionSent(created.mission.mission_id)
+    const rebuilt = new MissionRegistry({ eventStore: store, projectDir: dir })
+
+    expect(created.intent.intent_id).toBe("intent_1")
+    expect(created.mission).toMatchObject({
+      mission_id: "mission_2",
+      intent_id: "intent_1",
+      objective: "run [REDACTED]",
+      created_at: "2026-05-10T12:00:00.000Z",
+    })
+    await expect(rebuilt.getMission("mission_2")).resolves.toMatchObject({ status: "sent", sent_at: "2026-05-10T12:00:00.001Z" })
+    await expect(rebuilt.statusSummary()).resolves.toMatchObject({ pending_count: 0, failed_count: 0, last_mission_id: "mission_2" })
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("secret-password")
+  })
+
+  test("fails loudly when mission event persistence fails", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    store.append = async () => {
+      throw new Error("mission append failed")
+    }
+    const registry = new MissionRegistry({ eventStore: store, projectDir: dir })
+
+    await expect(registry.createUserMessageMission("hello")).rejects.toThrow("mission append failed")
+    await expect(registry.listRecentMissions()).resolves.toHaveLength(0)
+  })
+
+  test("serializes first-time hydration across concurrent readers", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const writer = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_1`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const created = await writer.createUserMessageMission("hello")
+    await writer.markMissionSent(created.mission.mission_id)
+
+    const readAll = store.readAll.bind(store)
+    let readCalls = 0
+    let releaseRead!: () => void
+    const readStarted = new Promise<void>((resolve) => {
+      store.readAll = async () => {
+        readCalls += 1
+        resolve()
+        await new Promise<void>((release) => {
+          releaseRead = release
+        })
+        return readAll()
+      }
+    })
+    const reader = new MissionRegistry({ eventStore: store, projectDir: dir })
+
+    const mission = reader.getMission(created.mission.mission_id)
+    const recent = reader.listRecentMissions()
+    const summary = reader.statusSummary()
+    await readStarted
+    expect(readCalls).toBe(1)
+    releaseRead()
+
+    await expect(mission).resolves.toMatchObject({ status: "sent" })
+    await expect(recent).resolves.toMatchObject([{ status: "sent" }])
+    await expect(summary).resolves.toMatchObject({ pending_count: 0, failed_count: 0, last_mission_id: created.mission.mission_id })
+    expect(readCalls).toBe(1)
+  })
+})
+
 describe("SpecService", () => {
   test("loads approved R2 spec", async () => {
     const dir = await tempProject()
@@ -1232,7 +1473,7 @@ describe("FakeOpenCodeAdapter", () => {
   test("emits deterministic fake events", async () => {
     const adapter = new FakeOpenCodeAdapter()
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
-    await adapter.sendMissionPacket({ missionId: "m1", message: "hello" })
+    await adapter.sendMissionPacket(testMissionPacket({ missionId: "m1" }))
 
     const events = []
     for await (const event of adapter.streamExecutorEvents()) events.push(event)
@@ -1250,7 +1491,7 @@ describe("FakeOpenCodeAdapter", () => {
     const first = []
     for await (const event of adapter.streamExecutorEvents()) first.push(event)
 
-    await adapter.sendMissionPacket({ missionId: "m2", message: "next" })
+    await adapter.sendMissionPacket(testMissionPacket({ missionId: "m2", message: "next", objective: "next" }))
     const second = []
     for await (const event of adapter.streamExecutorEvents()) second.push(event)
 
@@ -1531,7 +1772,7 @@ describe("ProcessOpenCodeAdapter", () => {
   test("sendMissionPacket fails clearly when real transport is not implemented", async () => {
     const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => new FakeSpawnedProcess() })
 
-    await expect(adapter.sendMissionPacket({ missionId: "m1", message: "hello" })).rejects.toThrow("real mission packet transport not implemented")
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m1" }))).rejects.toThrow("real mission packet transport not implemented")
   })
 
   test("RuntimeServer can use injected process adapter with fake spawn without blocking start", async () => {

@@ -7,6 +7,8 @@ import { locateProjectRoot, projectName } from "./project/project-root"
 import { RunLock } from "./project/run-lock"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import type { OpenCodeRuntimeAdapter } from "./opencode/adapter"
+import { MissionRegistry } from "./missions/mission-registry"
+import type { MissionRecord, MissionStatusSummary } from "./missions/mission-types"
 import { PolicyService } from "./spec/policy-service"
 import { SpecService, type SpecSummary } from "./spec/spec-service"
 import { redactValue } from "./security/redaction"
@@ -28,6 +30,7 @@ export interface RuntimeServerOptions {
   projectDir?: string
   mode?: RuntimeMode
   adapter?: OpenCodeRuntimeAdapter
+  missionRegistry?: MissionRegistry
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -56,6 +59,7 @@ export class RuntimeServer {
   readonly specService: SpecService
   readonly policyService: PolicyService
   readonly adapter: OpenCodeRuntimeAdapter
+  readonly missionRegistry: MissionRegistry
   private readonly runLock: RunLock
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
@@ -76,6 +80,7 @@ export class RuntimeServer {
     this.policyService = new PolicyService(this.projectDir)
     this.runLock = new RunLock(join(this.projectDir, ".nxl", "run.lock"))
     this.adapter = options.adapter ?? new FakeOpenCodeAdapter()
+    this.missionRegistry = options.missionRegistry ?? new MissionRegistry({ eventStore: this.eventStore, projectDir: this.projectDir })
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -227,6 +232,10 @@ export class RuntimeServer {
         return this.rebuildResearchProjection(readRebuildProjectionOptions(payload))
       case "runtime.submit_user_message":
         return this.submitUserMessage(String(payload.message ?? ""))
+      case "runtime.get_mission":
+        return this.getMission(requiredString(payload.missionId, "missionId"))
+      case "runtime.list_recent_missions":
+        return this.listRecentMissions(optionalPositiveInteger(payload.limit, "limit"))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -246,6 +255,7 @@ export class RuntimeServer {
       lockHeld: this.runLock.isHeld(),
       fakeOpenCode: String((await this.adapter.getStatus()).message ?? ""),
       executorStreamError: this.executorStreamError ?? undefined,
+      missions: await this.missionRegistry.statusSummary(),
       researchProjection: this.researchProjectionHealth,
       policy,
     })
@@ -318,16 +328,42 @@ export class RuntimeServer {
     return redactValue(this.researchProjectionHealth)
   }
 
-  async submitUserMessage(message: string): Promise<{ accepted: true }> {
+  async submitUserMessage(message: string): Promise<{ accepted: true; missionId: string; intentId: string }> {
     if (this.mode !== "active") {
       throw new Error("runtime.submit_user_message requires active mode")
     }
     if (!this.started || !this.runLock.isHeld()) {
       throw new Error("runtime must be started before accepting user messages")
     }
-    await this.adapter.sendMissionPacket({ missionId: "runtime-message", message })
-    this.eventBus.emit({ type: "ExecutorLifecycle", phase: "fake-user-message", message })
-    return { accepted: true }
+    const { intent, mission } = await this.missionRegistry.createUserMessageMission(message)
+    const packet = this.missionRegistry.createPacket(mission, message)
+    try {
+      await this.adapter.sendMissionPacket(packet)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await this.missionRegistry.markMissionFailed(mission.mission_id, message)
+      throw new Error(`mission ${mission.mission_id} adapter delivery failed: ${redactValue(message)}`)
+    }
+    try {
+      await this.missionRegistry.markMissionSent(mission.mission_id)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`mission ${mission.mission_id} adapter delivery succeeded but sent-state persistence failed: ${redactValue(message)}`)
+    }
+    this.eventBus.emit({ type: "ExecutorLifecycle", phase: "mission-packet-sent", message: `Mission ${mission.mission_id} sent to adapter` })
+    return { accepted: true, missionId: mission.mission_id, intentId: intent.intent_id }
+  }
+
+  async getMission(missionId: string): Promise<MissionRecord | null> {
+    return this.missionRegistry.getMission(missionId)
+  }
+
+  async listRecentMissions(limit?: number): Promise<MissionRecord[]> {
+    return this.missionRegistry.listRecentMissions(limit)
+  }
+
+  async missionStatusSummary(): Promise<MissionStatusSummary> {
+    return this.missionRegistry.statusSummary()
   }
 
   async shutdown(reason = "shutdown"): Promise<void> {
@@ -530,6 +566,12 @@ function optionalString(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined
   if (typeof value !== "string") throw new Error(`${field} must be a string`)
   return value
+}
+
+function optionalPositiveInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined) return undefined
+  if (!Number.isInteger(value) || Number(value) < 1) throw new Error(`${field} must be a positive integer`)
+  return Number(value)
 }
 
 function readResearchEventsOptions(value: unknown): ListResearchEventsOptions | undefined {
