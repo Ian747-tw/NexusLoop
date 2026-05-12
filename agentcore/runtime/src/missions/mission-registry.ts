@@ -200,27 +200,29 @@ export class MissionRegistry {
   }
 
   async completeMission(missionId: string, input: CompleteMissionInput = {}): Promise<MissionRecord> {
-    await this.hydrate()
-    const id = cleanRequiredString(missionId, "mission_id")
-    const mission = this.requireMission(id)
-    const resultId = input.result_id === undefined ? undefined : cleanRequiredString(input.result_id, "result_id")
-    const summary = input.summary === undefined ? undefined : redactText(cleanRequiredString(input.summary, "summary"))
-    if (mission.status === "completed") return redactValue(this.idempotentCompleted(mission, resultId ?? mission.completion_result_id, summary))
-    this.assertNotTerminal(mission, "complete")
-    const activeClaim = this.activeClaimForMission(id)
-    if (!activeClaim) throw new Error(`mission completion requires an active claim: ${id}`)
-    const result = resultId ? this.requireResult(resultId) : this.firstSubmittedResultForClaim(id, activeClaim.claim_id)
-    if (!result || result.mission_id !== id || result.status !== "submitted") throw new Error(`mission completion requires a submitted result: ${id}`)
-    if (result.claim_id !== activeClaim.claim_id) throw new Error(`mission completion result must belong to active claim: ${id}`)
-    await this.appendAndApply({
-      kind: "mission_completed",
-      mission_id: mission.mission_id,
-      intent_id: mission.intent_id,
-      completed_at: this.isoNow(),
-      result_id: result.result_id,
-      summary,
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const id = cleanRequiredString(missionId, "mission_id")
+      const mission = this.requireMission(id)
+      const resultId = input.result_id === undefined ? undefined : cleanRequiredString(input.result_id, "result_id")
+      const summary = input.summary === undefined ? undefined : redactText(cleanRequiredString(input.summary, "summary"))
+      if (mission.status === "completed") return redactValue(this.idempotentCompleted(mission, resultId ?? mission.completion_result_id, summary))
+      this.assertNotTerminal(mission, "complete")
+      const activeClaim = this.activeClaimForMission(id)
+      if (!activeClaim) throw new Error(`mission completion requires an active claim: ${id}`)
+      const result = resultId ? this.requireResult(resultId) : this.firstSubmittedResultForClaim(id, activeClaim.claim_id)
+      if (!result || result.mission_id !== id || result.status !== "submitted") throw new Error(`mission completion requires a submitted result: ${id}`)
+      if (result.claim_id !== activeClaim.claim_id) throw new Error(`mission completion result must belong to active claim: ${id}`)
+      await this.appendAndApply({
+        kind: "mission_completed",
+        mission_id: mission.mission_id,
+        intent_id: mission.intent_id,
+        completed_at: this.isoNow(),
+        result_id: result.result_id,
+        summary,
+      })
+      return redactValue(this.requireMission(id))
     })
-    return redactValue(this.requireMission(id))
   }
 
   async failMission(missionId: string, reason: string): Promise<MissionRecord> {
