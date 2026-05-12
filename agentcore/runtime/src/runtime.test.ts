@@ -9,6 +9,7 @@ import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
 import { MissionRegistry } from "./missions/mission-registry"
+import { MissionToolRouter } from "./missions/mission-tool-router"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
@@ -759,6 +760,310 @@ describe("RuntimeServer core", () => {
     await statusServer.shutdown()
   })
 
+  test("executor mission tool router dispatches read tools", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    const first = await server.submitUserMessage("router first token=router-read-secret")
+    const second = await server.submitUserMessage("router second")
+
+    await expect(server.executeMissionTool({ call_id: "call_get", tool: "mission.get", payload: { mission_id: first.missionId } })).resolves.toMatchObject({
+      call_id: "call_get",
+      tool: "mission.get",
+      ok: true,
+      result: { mission_id: first.missionId, objective: "router first [REDACTED]" },
+    })
+    await expect(server.executeMissionTool({ call_id: "call_list", tool: "mission.list_recent", payload: { limit: 1 } })).resolves.toMatchObject({
+      call_id: "call_list",
+      tool: "mission.list_recent",
+      ok: true,
+      result: [{ mission_id: second.missionId }],
+    })
+    expect(JSON.stringify(await server.executeMissionTool({ call_id: "call_secret", tool: "mission.get", payload: { mission_id: first.missionId } }))).not.toContain("router-read-secret")
+    await server.shutdown()
+  })
+
+  test("executor mission tool router dispatches lifecycle writes and collection reads", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("router lifecycle")
+    const claim = await server.executeMissionTool({
+      call_id: "call_claim",
+      tool: "mission.claim",
+      payload: { mission_id: submitted.missionId, executor_id: "executor_1" },
+    })
+    expect(claim).toMatchObject({ ok: true, result: { mission_id: submitted.missionId, status: "active" } })
+    const claimId = String(((claim.result as Record<string, unknown>).claim_id))
+
+    const progress = await server.executeMissionTool({
+      call_id: "call_progress",
+      tool: "mission.record_progress",
+      payload: { mission_id: submitted.missionId, claim_id: claimId, message: "halfway" },
+    })
+    expect(progress).toMatchObject({ ok: true, result: { mission_id: submitted.missionId, claim_id: claimId, message: "halfway" } })
+
+    const result = await server.executeMissionTool({
+      call_id: "call_result",
+      tool: "mission.submit_result",
+      payload: { mission_id: submitted.missionId, claim_id: claimId, summary: "done", artifacts: ["artifact_1"], research_result_ids: ["research_1"] },
+    })
+    expect(result).toMatchObject({
+      ok: true,
+      result: { mission_id: submitted.missionId, claim_id: claimId, summary: "done", artifacts: ["artifact_1"], research_result_ids: ["research_1"] },
+    })
+
+    await expect(server.executeMissionTool({ call_id: "call_claims", tool: "mission.list_claims", payload: { mission_id: submitted.missionId } })).resolves.toMatchObject({
+      ok: true,
+      result: [{ claim_id: claimId }],
+    })
+    await expect(server.executeMissionTool({ call_id: "call_progress_list", tool: "mission.list_progress", payload: { mission_id: submitted.missionId } })).resolves.toMatchObject({
+      ok: true,
+      result: [{ claim_id: claimId }],
+    })
+    await expect(server.executeMissionTool({ call_id: "call_results", tool: "mission.list_results", payload: { mission_id: submitted.missionId } })).resolves.toMatchObject({
+      ok: true,
+      result: [{ claim_id: claimId }],
+    })
+    await expect(server.executeMissionTool({ call_id: "call_complete", tool: "mission.complete", payload: { mission_id: submitted.missionId } })).resolves.toMatchObject({
+      ok: true,
+      result: { status: "completed", completion_result_id: (result.result as Record<string, unknown>).result_id },
+    })
+    await server.shutdown()
+  })
+
+  test("executor mission tool router dispatches release fail and cancel writes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    const releasable = await server.submitUserMessage("router release")
+    const releaseClaim = await server.executeMissionTool({
+      call_id: "call_release_claim",
+      tool: "mission.claim",
+      payload: { mission_id: releasable.missionId, executor_id: "executor_release" },
+    })
+    const releaseClaimId = String((releaseClaim.result as Record<string, unknown>).claim_id)
+    await expect(server.executeMissionTool({
+      call_id: "call_release",
+      tool: "mission.release_claim",
+      payload: { claim_id: releaseClaimId, reason: "requeue" },
+    })).resolves.toMatchObject({ ok: true, result: { claim_id: releaseClaimId, status: "released" } })
+
+    const failing = await server.submitUserMessage("router fail")
+    const failClaim = await server.executeMissionTool({
+      call_id: "call_fail_claim",
+      tool: "mission.claim",
+      payload: { mission_id: failing.missionId, executor_id: "executor_fail" },
+    })
+    await expect(server.executeMissionTool({
+      call_id: "call_fail",
+      tool: "mission.fail",
+      payload: { mission_id: failing.missionId, reason: "failed" },
+    })).resolves.toMatchObject({ ok: true, result: { mission_id: failing.missionId, status: "failed" } })
+    await expect(server.executeMissionTool({ call_id: "call_fail_claims", tool: "mission.list_claims", payload: { mission_id: failing.missionId } })).resolves.toMatchObject({
+      ok: true,
+      result: [{ claim_id: (failClaim.result as Record<string, unknown>).claim_id, status: "failed" }],
+    })
+
+    const cancelling = await server.submitUserMessage("router cancel")
+    const cancelClaim = await server.executeMissionTool({
+      call_id: "call_cancel_claim",
+      tool: "mission.claim",
+      payload: { mission_id: cancelling.missionId, executor_id: "executor_cancel" },
+    })
+    await expect(server.executeMissionTool({
+      call_id: "call_cancel",
+      tool: "mission.cancel",
+      payload: { mission_id: cancelling.missionId, reason: "cancelled" },
+    })).resolves.toMatchObject({ ok: true, result: { mission_id: cancelling.missionId, status: "cancelled" } })
+    await expect(server.executeMissionTool({ call_id: "call_cancel_claims", tool: "mission.list_claims", payload: { mission_id: cancelling.missionId } })).resolves.toMatchObject({
+      ok: true,
+      result: [{ claim_id: (cancelClaim.result as Record<string, unknown>).claim_id, status: "cancelled" }],
+    })
+    await server.shutdown()
+  })
+
+  test("executor mission tool router enforces mission transition rules", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    const unsent = await server.missionRegistry.createUserMessageMission("unsent")
+    await expect(server.executeMissionTool({
+      call_id: "call_unsent",
+      tool: "mission.claim",
+      payload: { mission_id: unsent.mission.mission_id, executor_id: "executor_1" },
+    })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("mission must be sent before claim") })
+
+    const submitted = await server.submitUserMessage("invalid transition")
+    const claim = await server.executeMissionTool({ call_id: "call_claim", tool: "mission.claim", payload: { mission_id: submitted.missionId, executor_id: "executor_1" } })
+    expect(claim.ok).toBe(true)
+    await expect(server.executeMissionTool({
+      call_id: "call_duplicate",
+      tool: "mission.claim",
+      payload: { mission_id: submitted.missionId, executor_id: "executor_2" },
+    })).resolves.toMatchObject({ ok: false, error: expect.stringContaining("mission already has an active claim") })
+    await expect(server.executeMissionTool({ call_id: "call_complete", tool: "mission.complete", payload: { mission_id: submitted.missionId } })).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("mission completion requires a submitted result"),
+    })
+    await server.shutdown()
+  })
+
+  test("executor mission tool router validates payloads and rejects unknown tools", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    await expect(server.executeMissionTool({ call_id: "call_unknown", tool: "mission.nope", payload: {} })).resolves.toMatchObject({
+      ok: false,
+      error: "unknown executor tool: mission.nope",
+    })
+    await expect(server.executeMissionTool({ call_id: "call_invalid", tool: "mission.get", payload: { mission_id: "  " } })).resolves.toMatchObject({
+      ok: false,
+      error: "mission_id is required",
+    })
+    await expect(server.executeMissionTool({ call_id: "call_bad_limit", tool: "mission.list_recent", payload: { limit: 0 } })).resolves.toMatchObject({
+      ok: false,
+      error: "limit must be a positive integer",
+    })
+    await expect(server.executeMissionTool({ call_id: "call_null_payload", tool: "mission.get", payload: null as unknown as Record<string, unknown> })).resolves.toMatchObject({
+      call_id: "call_null_payload",
+      tool: "mission.get",
+      ok: false,
+      error: "payload must be an object",
+    })
+    await expect(server.executeMissionTool({ tool: "mission.get", payload: {} } as unknown as Parameters<RuntimeServer["executeMissionTool"]>[0])).resolves.toMatchObject({
+      call_id: "invalid_call",
+      tool: "mission.get",
+      ok: false,
+      error: "call_id is required",
+    })
+    await server.shutdown()
+  })
+
+  test("executor mission tool router caps list limits", async () => {
+    let capturedLimit: number | undefined
+    const router = new MissionToolRouter({
+      handlers: {
+        getMission: async () => null,
+        listRecentMissions: async (limit) => {
+          capturedLimit = limit
+          return []
+        },
+        claimMission: async () => {
+          throw new Error("unused")
+        },
+        recordMissionProgress: async () => {
+          throw new Error("unused")
+        },
+        submitMissionResult: async () => {
+          throw new Error("unused")
+        },
+        completeMission: async () => {
+          throw new Error("unused")
+        },
+        failMission: async () => {
+          throw new Error("unused")
+        },
+        cancelMission: async () => {
+          throw new Error("unused")
+        },
+        releaseMissionClaim: async () => {
+          throw new Error("unused")
+        },
+        listMissionClaims: async () => [],
+        listMissionProgress: async () => [],
+        listMissionResults: async () => [],
+      },
+    })
+
+    await expect(router.handle({ call_id: "call_list", tool: "mission.list_recent", payload: { limit: 1000 } })).resolves.toMatchObject({ ok: true, result: [] })
+    expect(capturedLimit).toBe(100)
+  })
+
+  test("executor mission tool router redacts results errors and persisted events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("router redaction")
+    const claim = await server.executeMissionTool({
+      call_id: "call_claim",
+      tool: "mission.claim",
+      payload: { mission_id: submitted.missionId, executor_id: "token=executor-router-secret" },
+    })
+    expect(claim).toMatchObject({ ok: true, result: { executor_id: "[REDACTED]" } })
+    const claimId = String((claim.result as Record<string, unknown>).claim_id)
+    await expect(server.executeMissionTool({
+      call_id: "call_progress",
+      tool: "mission.record_progress",
+      payload: { mission_id: submitted.missionId, claim_id: claimId, message: "working api_key=progress-router-secret" },
+    })).resolves.toMatchObject({ ok: true, result: { message: "working [REDACTED]" } })
+    await expect(server.executeMissionTool({
+      call_id: "call_result",
+      tool: "mission.submit_result",
+      payload: { mission_id: submitted.missionId, claim_id: claimId, summary: "summary secret=result-router-secret" },
+    })).resolves.toMatchObject({ ok: true, result: { summary: "summary [REDACTED]" } })
+    const unknown = await server.executeMissionTool({ call_id: "call_error", tool: "mission.token=error-router-secret", payload: {} })
+    expect(unknown).toMatchObject({ ok: false })
+    const serialized = JSON.stringify({ unknown, events: await readJsonlEvents(dir), status: await server.status() })
+    expect(serialized).not.toContain("executor-router-secret")
+    expect(serialized).not.toContain("progress-router-secret")
+    expect(serialized).not.toContain("result-router-secret")
+    expect(serialized).not.toContain("error-router-secret")
+    await server.shutdown()
+  })
+
+  test("executor mission write tools require active started runtime and held lock", async () => {
+    const notStartedDir = await tempProject()
+    await makeProject(notStartedDir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: notStartedDir, adapter: new LongLivedAdapter() })
+
+    await expect(notStarted.executeMissionTool({
+      call_id: "call_claim",
+      tool: "mission.claim",
+      payload: { mission_id: "mission_1", executor_id: "executor_1" },
+    })).resolves.toMatchObject({ ok: false, error: "runtime must be started before mission execution writes" })
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir)
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", adapter: new LongLivedAdapter() })
+    await statusServer.start()
+    await expect(statusServer.executeMissionTool({
+      call_id: "call_cancel",
+      tool: "mission.cancel",
+      payload: { mission_id: "mission_1" },
+    })).resolves.toMatchObject({ ok: false, error: "runtime.cancel_mission requires active mode" })
+    await statusServer.shutdown()
+  })
+
+  test("executor mission read tools work in status and view-records modes", async () => {
+    const storeDir = await tempProject()
+    const store = new EventStore(join(storeDir, ".nxl", "events.jsonl"))
+    const registry = new MissionRegistry({ eventStore: store, projectDir: storeDir })
+    const created = await registry.createUserMessageMission("read-only mode mission")
+
+    for (const mode of ["status", "view-records"] as const) {
+      const dir = await tempProject()
+      await makeProject(dir)
+      const server = new RuntimeServer({ projectDir: dir, mode, adapter: new LongLivedAdapter(), missionRegistry: registry })
+      await expect(server.executeMissionTool({ call_id: `call_${mode}`, tool: "mission.get", payload: { mission_id: created.mission.mission_id } })).resolves.toMatchObject({
+        ok: true,
+        result: { mission_id: created.mission.mission_id },
+      })
+    }
+  })
+
   test("shutdown then submitUserMessage rejects without sending packet", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -1457,6 +1762,28 @@ describe("MissionRegistry", () => {
 
     await expect(registry.createUserMessageMission("hello")).rejects.toThrow("mission append failed")
     await expect(registry.listRecentMissions()).resolves.toHaveLength(0)
+  })
+
+  test("orphan work intents from failed mission creation do not affect mission summaries or hydration", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const append = store.append.bind(store)
+    store.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if (event.kind === "mission_created") throw new Error("mission_created append failed token=orphan-secret")
+      return append(event)
+    }
+    const registry = new MissionRegistry({ eventStore: store, projectDir: dir })
+
+    await expect(registry.createUserMessageMission("orphan api_key=orphan-payload-secret")).rejects.toThrow("mission_created append failed")
+    await expect(registry.listRecentMissions()).resolves.toEqual([])
+    await expect(registry.statusSummary()).resolves.toMatchObject({ pending_count: 0, failed_count: 0, last_mission_id: undefined })
+
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toEqual(["work_intent_created"])
+    expect(JSON.stringify(events)).not.toContain("orphan-payload-secret")
+    const rebuilt = new MissionRegistry({ eventStore: store, projectDir: dir })
+    await expect(rebuilt.listRecentMissions()).resolves.toEqual([])
+    await expect(rebuilt.statusSummary()).resolves.toMatchObject({ pending_count: 0, failed_count: 0, last_mission_id: undefined })
   })
 
   test("serializes first-time hydration across concurrent readers", async () => {
