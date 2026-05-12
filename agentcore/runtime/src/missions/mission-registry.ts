@@ -55,6 +55,7 @@ export class MissionRegistry {
   private readonly results = new Map<string, MissionResult>()
   private readonly resultsByMission = new Map<string, string[]>()
   private hydrateTask: Promise<void> | null = null
+  private mutationTask: Promise<void> = Promise.resolve()
 
   constructor(options: MissionRegistryOptions) {
     this.eventStore = options.eventStore
@@ -109,23 +110,25 @@ export class MissionRegistry {
   }
 
   async claimMission(input: ClaimMissionInput): Promise<ExecutorClaim> {
-    await this.hydrate()
-    const missionId = cleanRequiredString(input.mission_id, "mission_id")
-    const executorId = cleanRequiredString(input.executor_id, "executor_id")
-    const mission = this.requireMission(missionId)
-    this.assertNotTerminal(mission, "claim")
-    if (this.activeClaimForMission(missionId)) throw new Error(`mission already has an active claim: ${missionId}`)
-    if (mission.status !== "sent") throw new Error(`mission must be sent before claim: ${missionId}`)
-    const claimedAt = this.isoNow()
-    const claim: ExecutorClaim = {
-      claim_id: this.idFactory("claim"),
-      mission_id: missionId,
-      executor_id: redactText(executorId),
-      claimed_at: claimedAt,
-      status: "active",
-    }
-    await this.appendAndApply({ kind: "mission_claimed", claim })
-    return redactValue(this.requireClaim(claim.claim_id))
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const missionId = cleanRequiredString(input.mission_id, "mission_id")
+      const executorId = cleanRequiredString(input.executor_id, "executor_id")
+      const mission = this.requireMission(missionId)
+      this.assertNotTerminal(mission, "claim")
+      if (this.activeClaimForMission(missionId)) throw new Error(`mission already has an active claim: ${missionId}`)
+      if (mission.status !== "sent") throw new Error(`mission must be sent before claim: ${missionId}`)
+      const claimedAt = this.isoNow()
+      const claim: ExecutorClaim = {
+        claim_id: this.idFactory("claim"),
+        mission_id: missionId,
+        executor_id: redactText(executorId),
+        claimed_at: claimedAt,
+        status: "active",
+      }
+      await this.appendAndApply({ kind: "mission_claimed", claim })
+      return redactValue(this.requireClaim(claim.claim_id))
+    })
   }
 
   async getMissionClaim(claimId: string): Promise<ExecutorClaim | null> {
@@ -340,6 +343,20 @@ export class MissionRegistry {
     this.applyEvent(safeEvent)
   }
 
+  private async serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutationTask
+    let release!: () => void
+    this.mutationTask = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release()
+    }
+  }
+
   private applyEvent(event: JsonlEvent | MissionEvent): void {
     switch (event.kind) {
       case "work_intent_created":
@@ -511,7 +528,7 @@ export class MissionRegistry {
 
   private idempotentCompleted(mission: MissionRecord, resultId?: string, summary?: string): MissionRecord {
     const sameResult = resultId === undefined || resultId === mission.completion_result_id
-    const sameSummary = summary === undefined ? mission.completion_summary === undefined : summary === mission.completion_summary
+    const sameSummary = summary === undefined || summary === mission.completion_summary
     if (sameResult && sameSummary) return mission
     throw new Error(`terminal mission completion conflicts with existing completed payload: ${mission.mission_id}`)
   }

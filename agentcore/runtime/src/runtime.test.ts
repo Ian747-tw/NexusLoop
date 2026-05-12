@@ -1525,6 +1525,30 @@ describe("MissionRegistry", () => {
     await expect(registry.claimMission({ mission_id: sent.mission.mission_id, executor_id: "executor_3" })).rejects.toThrow("terminal mission cannot claim")
   })
 
+  test("concurrent mission claims preserve the single active claim invariant", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const created = await registry.createUserMessageMission("race")
+    await registry.markMissionSent(created.mission.mission_id)
+
+    const results = await Promise.allSettled([
+      registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" }),
+      registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_2" }),
+    ])
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1)
+    await expect(registry.listMissionClaims(created.mission.mission_id)).resolves.toMatchObject([{ status: "active" }])
+    await expect(registry.statusSummary()).resolves.toMatchObject({ active_claim_count: 1 })
+  })
+
   test("progress result and completion require active claim and submitted result", async () => {
     const dir = await tempProject()
     const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
@@ -1584,6 +1608,30 @@ describe("MissionRegistry", () => {
     await expect(registry.completeMission(created.mission.mission_id, { result_id: second.result_id })).resolves.toMatchObject({ status: "completed", completion_result_id: second.result_id })
     await expect(registry.completeMission(created.mission.mission_id)).resolves.toMatchObject({ status: "completed", completion_result_id: second.result_id })
     await expect(registry.completeMission(created.mission.mission_id, { result_id: first.result_id })).rejects.toThrow("terminal mission completion conflicts")
+  })
+
+  test("completed mission retry may omit an already persisted summary", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const created = await registry.createUserMessageMission("summary-retry")
+    await registry.markMissionSent(created.mission.mission_id)
+    const claim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+    const result = await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: claim.claim_id, summary: "done" })
+
+    await expect(registry.completeMission(created.mission.mission_id, { result_id: result.result_id, summary: "accepted" })).resolves.toMatchObject({
+      completion_summary: "accepted",
+    })
+    await expect(registry.completeMission(created.mission.mission_id, { result_id: result.result_id })).resolves.toMatchObject({
+      completion_summary: "accepted",
+    })
+    await expect(registry.completeMission(created.mission.mission_id, { result_id: result.result_id, summary: "different" })).rejects.toThrow("terminal mission completion conflicts")
   })
 
   test("released claims are no longer active and allow a later claim", async () => {
