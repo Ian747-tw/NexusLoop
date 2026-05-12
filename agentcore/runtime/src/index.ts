@@ -11,7 +11,25 @@ export type { OpenCodeRuntimeAdapter } from "./opencode/adapter"
 export type { OpenCodeProcessEventSource, OpenCodeSpawn, OpenCodeSpawnedProcess } from "./opencode/process-adapter"
 export { MissionRegistry } from "./missions/mission-registry"
 export { MISSION_PROTOCOL_VERSION } from "./missions/mission-types"
-export type { MissionCreatedResult, MissionPacket, MissionRecord, MissionStatus, MissionStatusSummary, WorkIntent, WorkIntentKind, WorkIntentStatus } from "./missions/mission-types"
+export type {
+  ClaimMissionInput,
+  CompleteMissionInput,
+  ExecutorClaim,
+  ExecutorClaimStatus,
+  MissionCreatedResult,
+  MissionPacket,
+  MissionProgress,
+  MissionProgressInput,
+  MissionRecord,
+  MissionResult,
+  MissionResultInput,
+  MissionResultStatus,
+  MissionStatus,
+  MissionStatusSummary,
+  WorkIntent,
+  WorkIntentKind,
+  WorkIntentStatus,
+} from "./missions/mission-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"
 export type {
