@@ -1,5 +1,6 @@
 import type { RuntimeEvent } from "../events/event-types"
-import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./adapter"
+import type { MissionPacket } from "../missions/mission-types"
+import type { MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./adapter"
 
 export class FakeOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   private phase = "new"
@@ -19,7 +20,7 @@ export class FakeOpenCodeAdapter implements OpenCodeRuntimeAdapter {
     this.events.push({
       type: "ExecutorLifecycle",
       phase: "fake-mission-packet",
-      message: `Fake adapter received mission ${packet.missionId}: ${packet.message}`,
+      message: `Fake adapter received mission ${packet.missionId} protocol ${packet.protocolVersion}`,
     })
   }
 

@@ -71,6 +71,11 @@ export interface RuntimeStatus {
   lockHeld: boolean
   fakeOpenCode: string
   executorStreamError?: string
+  missions?: {
+    pending_count: number
+    failed_count: number
+    last_mission_id?: string
+  }
   researchProjection: RuntimeResearchProjectionHealth
   policy: Record<string, unknown>
 }

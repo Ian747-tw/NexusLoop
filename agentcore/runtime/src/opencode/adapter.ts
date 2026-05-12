@@ -1,13 +1,9 @@
 import type { RuntimeEvent } from "../events/event-types"
+import type { MissionPacket } from "../missions/mission-types"
 
 export interface SessionSpec {
   projectDir: string
   objective: string
-}
-
-export interface MissionPacket {
-  missionId: string
-  message: string
 }
 
 export interface MissionUpdate {

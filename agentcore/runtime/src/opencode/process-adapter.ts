@@ -1,8 +1,9 @@
 import { spawn as nodeSpawn } from "node:child_process"
 import { basename } from "node:path"
 import type { RuntimeEvent } from "../events/event-types"
+import type { MissionPacket } from "../missions/mission-types"
 import { redactText, redactValue } from "../security/redaction"
-import type { MissionPacket, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./adapter"
+import type { MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./adapter"
 
 export interface OpenCodeProcessEventSource {
   on(event: "data", listener: (data: unknown) => void): unknown
