@@ -10,7 +10,9 @@ export { ProcessOpenCodeAdapter } from "./opencode/process-adapter"
 export type { OpenCodeRuntimeAdapter } from "./opencode/adapter"
 export type { OpenCodeProcessEventSource, OpenCodeSpawn, OpenCodeSpawnedProcess } from "./opencode/process-adapter"
 export { MissionRegistry } from "./missions/mission-registry"
+export { MissionToolRouter } from "./missions/mission-tool-router"
 export { MISSION_PROTOCOL_VERSION } from "./missions/mission-types"
+export { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 export type {
   ClaimMissionInput,
   CompleteMissionInput,
@@ -30,6 +32,7 @@ export type {
   WorkIntentKind,
   WorkIntentStatus,
 } from "./missions/mission-types"
+export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"
 export type {

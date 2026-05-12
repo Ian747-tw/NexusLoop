@@ -9,6 +9,8 @@ import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import type { OpenCodeRuntimeAdapter } from "./opencode/adapter"
 import { MissionRegistry } from "./missions/mission-registry"
 import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult, MissionStatusSummary } from "./missions/mission-types"
+import { MissionToolRouter } from "./missions/mission-tool-router"
+import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
 import { SpecService, type SpecSummary } from "./spec/spec-service"
 import { redactValue } from "./security/redaction"
@@ -394,6 +396,26 @@ export class RuntimeServer {
     return this.missionRegistry.statusSummary()
   }
 
+  async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
+    const router = new MissionToolRouter({
+      handlers: {
+        getMission: this.getMission.bind(this),
+        listRecentMissions: this.listRecentMissions.bind(this),
+        claimMission: this.claimMission.bind(this),
+        recordMissionProgress: this.recordMissionProgress.bind(this),
+        submitMissionResult: this.submitMissionResult.bind(this),
+        completeMission: this.completeMission.bind(this),
+        failMission: this.failMission.bind(this),
+        cancelMission: this.cancelMission.bind(this),
+        releaseMissionClaim: this.releaseMissionClaim.bind(this),
+        listMissionClaims: this.listMissionClaims.bind(this),
+        listMissionProgress: this.listMissionProgress.bind(this),
+        listMissionResults: this.listMissionResults.bind(this),
+      },
+    })
+    return router.handle(call)
+  }
+
   async claimMission(input: { mission_id: string; executor_id: string }): Promise<ExecutorClaim> {
     this.requireMissionWriteRuntime("runtime.claim_mission")
     return this.missionRegistry.claimMission(input)
@@ -422,6 +444,23 @@ export class RuntimeServer {
   async cancelMission(missionId: string, reason?: string): Promise<MissionRecord> {
     this.requireMissionWriteRuntime("runtime.cancel_mission")
     return this.missionRegistry.cancelMission(missionId, reason)
+  }
+
+  async releaseMissionClaim(claimId: string, reason?: string): Promise<ExecutorClaim> {
+    this.requireMissionWriteRuntime("runtime.release_mission_claim")
+    return this.missionRegistry.releaseMissionClaim(claimId, reason)
+  }
+
+  async listMissionClaims(missionId: string): Promise<ExecutorClaim[]> {
+    return this.missionRegistry.listMissionClaims(missionId)
+  }
+
+  async listMissionProgress(missionId: string): Promise<MissionProgress[]> {
+    return this.missionRegistry.listMissionProgress(missionId)
+  }
+
+  async listMissionResults(missionId: string): Promise<MissionResult[]> {
+    return this.missionRegistry.listMissionResults(missionId)
   }
 
   async shutdown(reason = "shutdown"): Promise<void> {
