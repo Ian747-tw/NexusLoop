@@ -1770,12 +1770,38 @@ describe("MissionRegistry", () => {
     await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: firstClaim.claim_id, summary: "stale" })
     await registry.releaseMissionClaim(firstClaim.claim_id)
     const activeClaim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_2" })
-    const activeResult = await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: activeClaim.claim_id, summary: "active" })
+    await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: activeClaim.claim_id, summary: "active draft" })
+    const activeResult = await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: activeClaim.claim_id, summary: "active final" })
 
     await expect(registry.completeMission(created.mission.mission_id)).resolves.toMatchObject({
       status: "completed",
       completion_result_id: activeResult.result_id,
     })
+  })
+
+  test("claim release clears prior running timestamp before the next result", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let nextId = 0
+    let nextMs = 0
+    const registry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++nextId}`,
+      now: () => new Date(Date.UTC(2026, 4, 10, 12, 0, 0, nextMs++)),
+    })
+    const created = await registry.createUserMessageMission("running-handoff")
+    await registry.markMissionSent(created.mission.mission_id)
+    const firstClaim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_1" })
+    const progress = await registry.recordMissionProgress({ mission_id: created.mission.mission_id, claim_id: firstClaim.claim_id, message: "first attempt" })
+    await expect(registry.getMission(created.mission.mission_id)).resolves.toMatchObject({ running_at: progress.created_at })
+    await registry.releaseMissionClaim(firstClaim.claim_id)
+    await expect(registry.getMission(created.mission.mission_id)).resolves.not.toHaveProperty("running_at")
+
+    const activeClaim = await registry.claimMission({ mission_id: created.mission.mission_id, executor_id: "executor_2" })
+    const result = await registry.submitMissionResult({ mission_id: created.mission.mission_id, claim_id: activeClaim.claim_id, summary: "second attempt" })
+
+    await expect(registry.getMission(created.mission.mission_id)).resolves.toMatchObject({ running_at: result.created_at })
   })
 
   test("failure and cancellation mark active claims and terminal rewrites are idempotent only for matching payloads", async () => {

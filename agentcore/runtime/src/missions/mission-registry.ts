@@ -214,7 +214,7 @@ export class MissionRegistry {
       this.assertNotTerminal(mission, "complete")
       const activeClaim = this.activeClaimForMission(id)
       if (!activeClaim) throw new Error(`mission completion requires an active claim: ${id}`)
-      const result = resultId ? this.requireResult(resultId) : this.firstSubmittedResultForClaim(id, activeClaim.claim_id)
+      const result = resultId ? this.requireResult(resultId) : this.latestSubmittedResultForClaim(id, activeClaim.claim_id)
       if (!result || result.mission_id !== id || result.status !== "submitted") throw new Error(`mission completion requires a submitted result: ${id}`)
       if (result.claim_id !== activeClaim.claim_id) throw new Error(`mission completion result must belong to active claim: ${id}`)
       await this.appendAndApply({
@@ -473,7 +473,8 @@ export class MissionRegistry {
     const claim = this.requireClaim(claimId)
     this.claims.set(claimId, redactValue({ ...claim, status: "released", released_at: releasedAt, release_reason: releaseReason }))
     const mission = this.requireMission(claim.mission_id)
-    if (!TERMINAL_STATUSES.has(mission.status)) this.missions.set(mission.mission_id, redactValue({ ...mission, status: "sent", updated_at: releasedAt }))
+    const { running_at: _runningAt, ...releasedMission } = mission
+    if (!TERMINAL_STATUSES.has(mission.status)) this.missions.set(mission.mission_id, redactValue({ ...releasedMission, status: "sent", updated_at: releasedAt }))
   }
 
   private updateIntentStatus(intentId: string, status: WorkIntent["status"]): void {
@@ -520,16 +521,10 @@ export class MissionRegistry {
     return undefined
   }
 
-  private firstSubmittedResult(missionId: string): MissionResult | undefined {
-    for (const resultId of this.resultsByMission.get(missionId) ?? []) {
-      const result = this.results.get(resultId)
-      if (result?.status === "submitted") return result
-    }
-    return undefined
-  }
-
-  private firstSubmittedResultForClaim(missionId: string, claimId: string): MissionResult | undefined {
-    for (const resultId of this.resultsByMission.get(missionId) ?? []) {
+  private latestSubmittedResultForClaim(missionId: string, claimId: string): MissionResult | undefined {
+    const resultIds = this.resultsByMission.get(missionId) ?? []
+    for (let index = resultIds.length - 1; index >= 0; index--) {
+      const resultId = resultIds[index]
       const result = this.results.get(resultId)
       if (result?.status === "submitted" && result.claim_id === claimId) return result
     }
