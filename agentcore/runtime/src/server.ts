@@ -6,7 +6,7 @@ import { modeRequiresApprovedSpec } from "./project/project-status"
 import { locateProjectRoot, projectName } from "./project/project-root"
 import { RunLock } from "./project/run-lock"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
-import type { OpenCodeRuntimeAdapter } from "./opencode/adapter"
+import type { ExecutorToolHandlerAdapter, OpenCodeRuntimeAdapter } from "./opencode/adapter"
 import { MissionRegistry } from "./missions/mission-registry"
 import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult, MissionStatusSummary } from "./missions/mission-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
@@ -82,6 +82,7 @@ export class RuntimeServer {
     this.policyService = new PolicyService(this.projectDir)
     this.runLock = new RunLock(join(this.projectDir, ".nxl", "run.lock"))
     this.adapter = options.adapter ?? new FakeOpenCodeAdapter()
+    this.registerExecutorToolHandler(this.adapter)
     this.missionRegistry = options.missionRegistry ?? new MissionRegistry({ eventStore: this.eventStore, projectDir: this.projectDir })
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
@@ -416,6 +417,11 @@ export class RuntimeServer {
     return router.handle(call)
   }
 
+  private registerExecutorToolHandler(adapter: OpenCodeRuntimeAdapter): void {
+    if (!isExecutorToolHandlerAdapter(adapter)) return
+    adapter.setExecutorToolHandler((call) => this.executeMissionTool(call))
+  }
+
   async claimMission(input: { mission_id: string; executor_id: string }): Promise<ExecutorClaim> {
     this.requireMissionWriteRuntime("runtime.claim_mission")
     return this.missionRegistry.claimMission(input)
@@ -657,6 +663,10 @@ function assertProjectionDb(db: RuntimeResearchDbProjection): RuntimeResearchDbP
     if (typeof candidate[method] !== "function") throw new Error(`researchDb must support Branch 4D projection API: missing ${method}`)
   }
   return db
+}
+
+function isExecutorToolHandlerAdapter(adapter: OpenCodeRuntimeAdapter): adapter is OpenCodeRuntimeAdapter & ExecutorToolHandlerAdapter {
+  return typeof (adapter as Partial<ExecutorToolHandlerAdapter>).setExecutorToolHandler === "function"
 }
 
 function requiredString(value: unknown, field: string): string {
