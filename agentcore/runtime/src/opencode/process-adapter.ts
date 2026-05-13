@@ -1,9 +1,10 @@
 import { spawn as nodeSpawn } from "node:child_process"
 import { basename } from "node:path"
 import type { RuntimeEvent } from "../events/event-types"
+import type { ExecutorToolCall, ExecutorToolResult } from "../missions/mission-tool-types"
 import type { MissionPacket } from "../missions/mission-types"
 import { redactText, redactValue } from "../security/redaction"
-import type { MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./adapter"
+import type { ExecutorToolHandler, ExecutorToolHandlerAdapter, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./adapter"
 
 export interface OpenCodeProcessEventSource {
   on(event: "data", listener: (data: unknown) => void): unknown
@@ -40,11 +41,12 @@ export interface ProcessOpenCodeAdapterOptions {
   spawn?: OpenCodeSpawn
   spawnTimeoutMs?: number
   shutdownTimeoutMs?: number
+  toolHandler?: ExecutorToolHandler
 }
 
 type ProcessAdapterPhase = "new" | "running" | "failed" | "exited" | "shutdown"
 
-export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
+export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorToolHandlerAdapter {
   private readonly command: string
   private readonly args: string[]
   private readonly cwd?: string
@@ -65,6 +67,8 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   private streamClosed = true
   private shutdownRequested = false
   private lastError: string | null = null
+  private readonly stdoutBuffers = new WeakMap<object, string>()
+  private toolHandler: ExecutorToolHandler | null
 
   constructor(options: ProcessOpenCodeAdapterOptions) {
     if (!options.command.trim()) throw new Error("OpenCode process command is required")
@@ -76,6 +80,11 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
     this.spawnTimeoutMs = options.spawnTimeoutMs ?? 1000
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5000
     this.commandLabel = basename(options.command) || options.command
+    this.toolHandler = options.toolHandler ?? null
+  }
+
+  setExecutorToolHandler(handler: ExecutorToolHandler): void {
+    this.toolHandler = handler
   }
 
   async startSession(sessionSpec: SessionSpec): Promise<void> {
@@ -197,7 +206,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   }
 
   private attachProcessListeners(child: OpenCodeSpawnedProcess): void {
-    child.stdout?.on("data", (data) => this.queue("process-stdout", dataToText(data)))
+    child.stdout?.on("data", (data) => this.handleStdoutData(child, dataToText(data)))
     child.stderr?.on("data", (data) => this.queue("process-stderr", dataToText(data)))
     child.on("error", (error) => {
       if (this.expectedExitProcesses.has(child) && this.process !== child) {
@@ -210,6 +219,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
       this.queue("process-error", this.lastError)
     })
     child.on("exit", (code, signal) => {
+      this.flushStdoutBuffer(child)
       const message = exitMessage("OpenCode process exited", code, signal)
       this.terminalProcesses.set(child, message)
       if (this.process === child) this.process = null
@@ -238,6 +248,71 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter {
   private queue(phase: string, message: string): void {
     this.events.push({ type: "ExecutorLifecycle", phase, message: redactText(message) })
     this.notifyStream()
+  }
+
+  private handleStdoutData(child: OpenCodeSpawnedProcess, text: string): void {
+    const existing = this.stdoutBuffers.get(child) ?? ""
+    if (!existing && !text.includes("\n") && !text.includes("\r")) {
+      this.handleStdoutLine(child, text)
+      return
+    }
+    const buffered = existing + text
+    const lines = buffered.split(/\r?\n/)
+    this.stdoutBuffers.set(child, lines.pop() ?? "")
+    for (const line of lines) this.handleStdoutLine(child, line)
+  }
+
+  private flushStdoutBuffer(child: OpenCodeSpawnedProcess): void {
+    const line = this.stdoutBuffers.get(child) ?? ""
+    if (!line) return
+    this.stdoutBuffers.delete(child)
+    this.handleStdoutLine(child, line)
+  }
+
+  private handleStdoutLine(child: OpenCodeSpawnedProcess, line: string): void {
+    const parsed = parseJsonObject(line)
+    if (!parsed || parsed.type !== "nxl.executor_tool_call") {
+      this.queue("process-stdout", line)
+      return
+    }
+    void this.handleExecutorToolCall(child, parsed)
+  }
+
+  private async handleExecutorToolCall(child: OpenCodeSpawnedProcess, envelope: Record<string, unknown>): Promise<void> {
+    const call = envelope as unknown as ExecutorToolCall
+    const result = this.toolHandler
+      ? await this.callToolHandler(call)
+      : missingToolHandlerResult(call)
+    this.writeToolResult(child, result)
+  }
+
+  private async callToolHandler(call: ExecutorToolCall): Promise<ExecutorToolResult> {
+    try {
+      return redactValue(await this.toolHandler!(call)) as ExecutorToolResult
+    } catch (error) {
+      return {
+        call_id: fallbackString(call, "call_id", "invalid_call"),
+        tool: fallbackString(call, "tool", "invalid_tool"),
+        ok: false,
+        error: redactText(`executor tool handler failed: ${errorMessage(error)}`),
+        created_at: new Date().toISOString(),
+      }
+    }
+  }
+
+  private writeToolResult(child: OpenCodeSpawnedProcess, result: ExecutorToolResult): void {
+    const message = JSON.stringify(redactValue({
+      type: "nxl.executor_tool_result",
+      ...result,
+    })) + "\n"
+    try {
+      if (typeof child.stdin?.write !== "function") throw new Error("child stdin is not writable")
+      child.stdin.write(message)
+    } catch (error) {
+      this.phase = "failed"
+      this.lastError = redactText(`OpenCode tool result write failed: ${errorMessage(error)}`)
+      this.queue("process-tool-result-write-failed", this.lastError)
+    }
   }
 
   private compactDrainedEvents(): void {
@@ -307,6 +382,31 @@ function dataToText(data: unknown): string {
   if (typeof data === "string") return data
   if (data instanceof Uint8Array) return new TextDecoder().decode(data)
   return String(data)
+}
+
+function parseJsonObject(line: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(line)
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
+function missingToolHandlerResult(call: ExecutorToolCall): ExecutorToolResult {
+  return {
+    call_id: fallbackString(call, "call_id", "invalid_call"),
+    tool: fallbackString(call, "tool", "invalid_tool"),
+    ok: false,
+    error: "executor tool handler is not installed",
+    created_at: new Date().toISOString(),
+  }
+}
+
+function fallbackString(value: unknown, field: string, fallback: string): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return fallback
+  const candidate = (value as Record<string, unknown>)[field]
+  return typeof candidate === "string" && candidate.trim() ? redactText(candidate.trim()) : fallback
 }
 
 function errorMessage(error: unknown): string {

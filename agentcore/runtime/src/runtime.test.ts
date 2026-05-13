@@ -14,7 +14,7 @@ import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
 import type { MissionPacket } from "./missions/mission-types"
-import type { MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
+import type { ExecutorToolHandler, ExecutorToolHandlerAdapter, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
 import { RunLock } from "./project/run-lock"
 import {
@@ -227,6 +227,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   readonly stdinWrites: string[] = []
   stdinEnded = false
   killedWith: NodeJS.Signals | undefined
+  stdinWriteError: Error | null
   private spawned = false
   private readonly autoClose: boolean
   private readonly spawnListeners: Array<() => void> = []
@@ -234,13 +235,15 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   private readonly exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
   private readonly errorListeners: Array<(error: Error) => void> = []
 
-  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean } = {}) {
+  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean; stdinWriteError?: Error } = {}) {
     this.spawned = options.spawned ?? true
     this.autoClose = options.autoClose ?? true
+    this.stdinWriteError = options.stdinWriteError ?? null
   }
 
   stdin = {
     write: (data: string) => {
+      if (this.stdinWriteError) throw this.stdinWriteError
       this.stdinWrites.push(data)
       return true
     },
@@ -282,6 +285,14 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
 
   emitError(error: Error): void {
     for (const listener of this.errorListeners) listener(error)
+  }
+}
+
+class HandlerCapableAdapter extends LongLivedAdapter implements ExecutorToolHandlerAdapter {
+  handler: ExecutorToolHandler | null = null
+
+  setExecutorToolHandler(handler: ExecutorToolHandler): void {
+    this.handler = handler
   }
 }
 
@@ -1045,6 +1056,146 @@ describe("RuntimeServer core", () => {
       payload: { mission_id: "mission_1" },
     })).resolves.toMatchObject({ ok: false, error: "runtime.cancel_mission requires active mode" })
     await statusServer.shutdown()
+  })
+
+  test("RuntimeServer registers executeMissionTool with handler-capable adapter", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new HandlerCapableAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    expect(typeof adapter.handler).toBe("function")
+    await expect(adapter.handler?.({ call_id: "call_registered", tool: "mission.list_recent", payload: { limit: 1 } })).resolves.toMatchObject({
+      call_id: "call_registered",
+      tool: "mission.list_recent",
+      ok: true,
+      result: [],
+    })
+    await server.shutdown()
+  })
+
+  test("process-originated mission.get works through RuntimeServer executeMissionTool", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+    const created = await server.missionRegistry.createUserMessageMission("process get")
+
+    await server.start()
+    process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_get", tool: "mission.get", payload: { mission_id: created.mission.mission_id } })}\n`)
+
+    expect(readToolResultLine((await waitForStdinWrite(process))[0] ?? "")).toMatchObject({
+      type: "nxl.executor_tool_result",
+      call_id: "call_get",
+      tool: "mission.get",
+      ok: true,
+      result: { mission_id: created.mission.mission_id, objective: "process get" },
+    })
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("process-originated mission write fails before runtime start or without active authority", async () => {
+    const notStartedDir = await tempProject()
+    await makeProject(notStartedDir, { approvedSpec: true })
+    const notStartedProcess = new FakeSpawnedProcess()
+    const notStartedAdapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: notStartedDir, spawn: () => notStartedProcess })
+    const notStarted = new RuntimeServer({ projectDir: notStartedDir, adapter: notStartedAdapter })
+    const notStartedMission = await notStarted.missionRegistry.createUserMessageMission("not started process claim")
+    await notStarted.missionRegistry.markMissionSent(notStartedMission.mission.mission_id)
+
+    await notStartedAdapter.startSession({ projectDir: notStartedDir, objective: "manual process boundary" })
+    notStartedProcess.stdout.emitData(`${JSON.stringify({
+      type: "nxl.executor_tool_call",
+      call_id: "call_before_start",
+      tool: "mission.claim",
+      payload: { mission_id: notStartedMission.mission.mission_id, executor_id: "executor_1" },
+    })}\n`)
+    expect(readToolResultLine((await waitForStdinWrite(notStartedProcess))[0] ?? "")).toMatchObject({
+      call_id: "call_before_start",
+      ok: false,
+      error: "runtime must be started before mission execution writes",
+    })
+    const notStartedShutdown = notStartedAdapter.shutdown()
+    notStartedProcess.emitExit(0, null)
+    await notStartedShutdown
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir)
+    const statusProcess = new FakeSpawnedProcess()
+    const statusAdapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: statusDir, spawn: () => statusProcess })
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", adapter: statusAdapter })
+    await statusServer.start()
+    await statusAdapter.startSession({ projectDir: statusDir, objective: "manual status process boundary" })
+    statusProcess.stdout.emitData(`${JSON.stringify({
+      type: "nxl.executor_tool_call",
+      call_id: "call_status_mode",
+      tool: "mission.cancel",
+      payload: { mission_id: "mission_1" },
+    })}\n`)
+
+    expect(readToolResultLine((await waitForStdinWrite(statusProcess))[0] ?? "")).toMatchObject({
+      call_id: "call_status_mode",
+      ok: false,
+      error: "runtime.cancel_mission requires active mode",
+    })
+    const statusShutdown = statusServer.shutdown()
+    statusProcess.emitExit(0, null)
+    await statusShutdown
+  })
+
+  test("process-originated claim progress result and complete happy path works after started active runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+    const created = await server.missionRegistry.createUserMessageMission("process lifecycle")
+    await server.missionRegistry.markMissionSent(created.mission.mission_id)
+
+    await server.start()
+    process.stdout.emitData(`${JSON.stringify({
+      type: "nxl.executor_tool_call",
+      call_id: "call_claim",
+      tool: "mission.claim",
+      payload: { mission_id: created.mission.mission_id, executor_id: "executor_1" },
+    })}\n`)
+    const claimResult = readToolResultLine((await waitForStdinWrite(process, 1))[0] ?? "")
+    const claimId = String((claimResult.result as Record<string, unknown>).claim_id)
+
+    process.stdout.emitData(`${JSON.stringify({
+      type: "nxl.executor_tool_call",
+      call_id: "call_progress",
+      tool: "mission.record_progress",
+      payload: { mission_id: created.mission.mission_id, claim_id: claimId, message: "halfway" },
+    })}\n`)
+    process.stdout.emitData(`${JSON.stringify({
+      type: "nxl.executor_tool_call",
+      call_id: "call_result",
+      tool: "mission.submit_result",
+      payload: { mission_id: created.mission.mission_id, claim_id: claimId, summary: "done" },
+    })}\n`)
+    await waitForStdinWrite(process, 3)
+    const submittedResult = readToolResultLine(process.stdinWrites[2] ?? "")
+
+    process.stdout.emitData(`${JSON.stringify({
+      type: "nxl.executor_tool_call",
+      call_id: "call_complete",
+      tool: "mission.complete",
+      payload: { mission_id: created.mission.mission_id, result_id: (submittedResult.result as Record<string, unknown>).result_id },
+    })}\n`)
+    await waitForStdinWrite(process, 4)
+
+    expect(claimResult).toMatchObject({ call_id: "call_claim", ok: true, result: { mission_id: created.mission.mission_id, status: "active" } })
+    expect(readToolResultLine(process.stdinWrites[1] ?? "")).toMatchObject({ call_id: "call_progress", ok: true, result: { claim_id: claimId, message: "halfway" } })
+    expect(submittedResult).toMatchObject({ call_id: "call_result", ok: true, result: { claim_id: claimId, summary: "done" } })
+    expect(readToolResultLine(process.stdinWrites[3] ?? "")).toMatchObject({ call_id: "call_complete", ok: true, result: { status: "completed" } })
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
   })
 
   test("executor mission read tools work in status and view-records modes", async () => {
@@ -2299,6 +2450,20 @@ async function readProcessEvents(adapter: ProcessOpenCodeAdapter, count: number)
   return events
 }
 
+async function waitForStdinWrite(process: FakeSpawnedProcess, count = 1): Promise<string[]> {
+  const deadline = Date.now() + NON_BLOCKING_START_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    if (process.stdinWrites.length >= count) return process.stdinWrites
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`timed out waiting for ${count} stdin writes`)
+}
+
+function readToolResultLine(line: string): Record<string, unknown> {
+  expect(line.endsWith("\n")).toBe(true)
+  return JSON.parse(line) as Record<string, unknown>
+}
+
 async function waitForRuntimeEvent(server: RuntimeServer, predicate: (event: RuntimeEvent) => boolean): Promise<RuntimeEvent> {
   const deadline = Date.now() + NON_BLOCKING_START_TIMEOUT_MS
   while (Date.now() < deadline) {
@@ -2518,6 +2683,196 @@ describe("ProcessOpenCodeAdapter", () => {
 
     expect(next).toEqual([{ type: "ExecutorLifecycle", phase: "process-stdout", message: "three" }])
     expect((adapter as unknown as { events: RuntimeEvent[] }).events).toHaveLength(0)
+  })
+
+  test("parses executor tool call stdout JSONL and invokes injected handler", async () => {
+    const process = new FakeSpawnedProcess()
+    const calls: unknown[] = []
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+      toolHandler: async (call) => {
+        calls.push(call)
+        return { call_id: call.call_id, tool: call.tool, ok: true, result: { mission_id: call.payload.mission_id }, created_at: "2026-05-13T00:00:00.000Z" }
+      },
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdout.emitData(JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_1", tool: "mission.get", payload: { mission_id: "mission_1" } }) + "\n")
+
+    const [write] = await waitForStdinWrite(process)
+    expect(calls).toEqual([{ type: "nxl.executor_tool_call", call_id: "call_1", tool: "mission.get", payload: { mission_id: "mission_1" } }])
+    expect(readToolResultLine(write)).toEqual({
+      type: "nxl.executor_tool_result",
+      call_id: "call_1",
+      tool: "mission.get",
+      ok: true,
+      result: { mission_id: "mission_1" },
+      created_at: "2026-05-13T00:00:00.000Z",
+    })
+  })
+
+  test("writes exactly one newline-terminated executor tool result JSON line", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+      toolHandler: async (call) => ({ call_id: call.call_id, tool: call.tool, ok: true, result: { ok: true }, created_at: "2026-05-13T00:00:00.000Z" }),
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_single", tool: "mission.get", payload: {} })}\n`)
+    await waitForStdinWrite(process)
+
+    expect(process.stdinWrites).toHaveLength(1)
+    expect(process.stdinWrites[0]?.endsWith("\n")).toBe(true)
+    expect(process.stdinWrites[0]?.split("\n")).toHaveLength(2)
+    expect(readToolResultLine(process.stdinWrites[0] ?? "")).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_single", ok: true })
+  })
+
+  test("non-tool stdout and non-tool JSON remain process stdout events", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdout.emitData("plain output\n")
+    process.stdout.emitData(`${JSON.stringify({ type: "nxl.not_a_tool", call_id: "call_ignored" })}\n`)
+
+    const events = await readProcessEvents(adapter, 2)
+
+    expect(events).toEqual([
+      { type: "ExecutorLifecycle", phase: "process-stdout", message: "plain output" },
+      { type: "ExecutorLifecycle", phase: "process-stdout", message: JSON.stringify({ type: "nxl.not_a_tool", call_id: "call_ignored" }) },
+    ])
+    expect(process.stdinWrites).toHaveLength(0)
+  })
+
+  test("malformed JSON stdout does not crash adapter", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdout.emitData("{not-json\n")
+
+    expect(await readProcessEvents(adapter, 1)).toEqual([{ type: "ExecutorLifecycle", phase: "process-stdout", message: "{not-json" }])
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "running" })
+  })
+
+  test("unknown tool result is written as ok false and redacted", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+      toolHandler: async (call) => ({
+        call_id: call.call_id,
+        tool: call.tool,
+        ok: false,
+        error: `unknown executor tool: ${call.tool}`,
+        created_at: "2026-05-13T00:00:00.000Z",
+      }),
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_unknown", tool: "mission.token=secret-tool", payload: {} })}\n`)
+
+    const [write] = await waitForStdinWrite(process)
+    const result = readToolResultLine(write)
+
+    expect(result).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_unknown", ok: false })
+    expect(JSON.stringify(result)).toContain("[REDACTED]")
+    expect(JSON.stringify(result)).not.toContain("secret-tool")
+  })
+
+  test("malformed tool envelope returns ok false result when fallback fields are possible", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+      toolHandler: async (call) => ({
+        call_id: typeof call.call_id === "string" ? call.call_id : "invalid_call",
+        tool: typeof call.tool === "string" ? call.tool : "invalid_tool",
+        ok: false,
+        error: "payload must be an object",
+        created_at: "2026-05-13T00:00:00.000Z",
+      }),
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_bad", tool: "mission.get", payload: null })}\n`)
+
+    expect(readToolResultLine((await waitForStdinWrite(process))[0] ?? "")).toMatchObject({
+      type: "nxl.executor_tool_result",
+      call_id: "call_bad",
+      tool: "mission.get",
+      ok: false,
+      error: "payload must be an object",
+    })
+  })
+
+  test("tool handler rejection returns ok false result and does not crash stream", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+      toolHandler: async () => {
+        throw new Error("handler failed token=handler-secret")
+      },
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_reject", tool: "mission.get", payload: {} })}\n`)
+    const result = readToolResultLine((await waitForStdinWrite(process))[0] ?? "")
+    process.stdout.emitData("after rejection\n")
+
+    expect(result).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_reject", tool: "mission.get", ok: false })
+    expect(JSON.stringify(result)).not.toContain("handler-secret")
+    expect(await readProcessEvents(adapter, 1)).toEqual([{ type: "ExecutorLifecycle", phase: "process-stdout", message: "after rejection" }])
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "running" })
+  })
+
+  test("stdin write failure emits lifecycle error and updates adapter status", async () => {
+    const process = new FakeSpawnedProcess(4242, { stdinWriteError: new Error("stdin failed token=stdin-secret") })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+      toolHandler: async (call) => ({ call_id: call.call_id, tool: call.tool, ok: true, result: {}, created_at: "2026-05-13T00:00:00.000Z" }),
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_write", tool: "mission.get", payload: {} })}\n`)
+
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-tool-result-write-failed", message: "OpenCode tool result write failed: stdin failed [REDACTED]" }])
+    expect(status).toMatchObject({ phase: "failed", lastError: "OpenCode tool result write failed: stdin failed [REDACTED]" })
+    expect(JSON.stringify({ events, status })).not.toContain("stdin-secret")
+  })
+
+  test("tool call without installed handler returns clear failure result", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_no_handler", tool: "mission.get", payload: {} })}\n`)
+
+    expect(readToolResultLine((await waitForStdinWrite(process))[0] ?? "")).toMatchObject({
+      type: "nxl.executor_tool_result",
+      call_id: "call_no_handler",
+      tool: "mission.get",
+      ok: false,
+      error: "executor tool handler is not installed",
+    })
   })
 
   test("stdout stderr and status text are redacted", async () => {
