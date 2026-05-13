@@ -3128,6 +3128,55 @@ describe("ProcessOpenCodeAdapter", () => {
     await shutdown
   })
 
+  test("superseded child async tool results are ignored before stale stdin write", async () => {
+    const processes: FakeSpawnedProcess[] = []
+    let releaseHandler!: () => void
+    const handlerReleased = new Promise<void>((resolve) => {
+      releaseHandler = resolve
+    })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => {
+        const process = new FakeSpawnedProcess(6500 + processes.length, {
+          stdinWriteError: processes.length === 0 ? new Error("stale stdin token=old-secret") : undefined,
+        })
+        processes.push(process)
+        return process
+      },
+      toolHandler: async (call) => {
+        if (call.call_id === "call_old_async") await handlerReleased
+        return { call_id: call.call_id, tool: call.tool, ok: true, result: { handled: call.call_id }, created_at: "2026-05-13T00:00:00.000Z" }
+      },
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "first" })
+    processes[0]?.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_old_async", tool: "mission.get", payload: {} })}\n`)
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "second" })
+    releaseHandler()
+    await timeout(20)
+    processes[1]?.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_new_async", tool: "mission.get", payload: {} })}\n`)
+
+    await waitForStdinWrite(processes[1]!)
+    const events = await readProcessEvents(adapter, 4)
+    const status = await adapter.getStatus()
+
+    expect(processes[0]?.stdinWrites).toHaveLength(0)
+    expect(readToolResultLine(processes[1]?.stdinWrites[0] ?? "")).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_new_async", ok: true })
+    expect(status).toMatchObject({ phase: "running", pid: 6501 })
+    expect(JSON.stringify({ events, status })).not.toContain("old-secret")
+    expect(events).toContainEqual({
+      type: "ExecutorLifecycle",
+      phase: "process-superseded-tool-call-ignored",
+      message: "Ignored executor tool result from superseded process: call_old_async mission.get",
+    })
+
+    processes[0]?.emitExit(0, null)
+    const shutdown = adapter.shutdown()
+    processes[1]?.emitExit(0, null)
+    await shutdown
+  })
+
   test("RuntimeServer keeps process event pump open after failed replacement spawn", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

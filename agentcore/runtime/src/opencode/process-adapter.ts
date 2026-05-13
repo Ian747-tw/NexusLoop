@@ -276,15 +276,27 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   }
 
   private async handleExecutorToolCall(child: OpenCodeSpawnedProcess, envelope: Record<string, unknown>): Promise<void> {
-    if (this.process !== child || this.expectedExitProcesses.has(child) || this.terminatingProcesses.has(child)) {
-      this.queue("process-superseded-tool-call-ignored", `Ignored executor tool call from superseded process: ${fallbackString(envelope, "call_id", "invalid_call")} ${fallbackString(envelope, "tool", "invalid_tool")}`)
+    if (!this.isCurrentToolCallChild(child)) {
+      this.queueSupersededToolCallIgnored(envelope, "call")
       return
     }
     const call = envelope as unknown as ExecutorToolCall
     const result = this.toolHandler
       ? await this.callToolHandler(call)
       : missingToolHandlerResult(call)
+    if (!this.isCurrentToolCallChild(child)) {
+      this.queueSupersededToolCallIgnored(envelope, "result")
+      return
+    }
     this.writeToolResult(child, result)
+  }
+
+  private isCurrentToolCallChild(child: OpenCodeSpawnedProcess): boolean {
+    return this.process === child && !this.expectedExitProcesses.has(child) && !this.terminatingProcesses.has(child)
+  }
+
+  private queueSupersededToolCallIgnored(envelope: Record<string, unknown>, stage: "call" | "result"): void {
+    this.queue("process-superseded-tool-call-ignored", `Ignored executor tool ${stage} from superseded process: ${fallbackString(envelope, "call_id", "invalid_call")} ${fallbackString(envelope, "tool", "invalid_tool")}`)
   }
 
   private async callToolHandler(call: ExecutorToolCall): Promise<ExecutorToolResult> {
