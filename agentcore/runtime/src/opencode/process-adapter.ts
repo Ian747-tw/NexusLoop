@@ -233,6 +233,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       this.queue("process-exited", this.lastError)
     })
     child.on("close", () => {
+      this.flushStdoutBuffer(child)
       this.terminatingProcesses.delete(child)
       const exitWaiters = this.exitWaiters.get(child)
       this.exitWaiters.delete(child)
@@ -252,10 +253,6 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
 
   private handleStdoutData(child: OpenCodeSpawnedProcess, text: string): void {
     const existing = this.stdoutBuffers.get(child) ?? ""
-    if (!existing && !text.includes("\n") && !text.includes("\r")) {
-      this.handleStdoutLine(child, text)
-      return
-    }
     const buffered = existing + text
     const lines = buffered.split(/\r?\n/)
     this.stdoutBuffers.set(child, lines.pop() ?? "")
@@ -279,6 +276,10 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   }
 
   private async handleExecutorToolCall(child: OpenCodeSpawnedProcess, envelope: Record<string, unknown>): Promise<void> {
+    if (this.process !== child || this.expectedExitProcesses.has(child) || this.terminatingProcesses.has(child)) {
+      this.queue("process-superseded-tool-call-ignored", `Ignored executor tool call from superseded process: ${fallbackString(envelope, "call_id", "invalid_call")} ${fallbackString(envelope, "tool", "invalid_tool")}`)
+      return
+    }
     const call = envelope as unknown as ExecutorToolCall
     const result = this.toolHandler
       ? await this.callToolHandler(call)

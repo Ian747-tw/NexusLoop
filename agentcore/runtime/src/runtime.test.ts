@@ -2659,7 +2659,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     const first = await readProcessEvents(adapter, 1)
 
-    process.stdout.emitData("hello")
+    process.stdout.emitData("hello\n")
     const second = await readProcessEvents(adapter, 1)
 
     expect(first).toHaveLength(1)
@@ -2672,13 +2672,13 @@ describe("ProcessOpenCodeAdapter", () => {
     const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
 
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
-    process.stdout.emitData("one")
+    process.stdout.emitData("one\n")
     process.stderr.emitData("two")
     await readProcessEvents(adapter, 3)
 
     expect((adapter as unknown as { events: RuntimeEvent[] }).events).toHaveLength(0)
 
-    process.stdout.emitData("three")
+    process.stdout.emitData("three\n")
     const next = await readProcessEvents(adapter, 1)
 
     expect(next).toEqual([{ type: "ExecutorLifecycle", phase: "process-stdout", message: "three" }])
@@ -2710,6 +2710,87 @@ describe("ProcessOpenCodeAdapter", () => {
       ok: true,
       result: { mission_id: "mission_1" },
       created_at: "2026-05-13T00:00:00.000Z",
+    })
+  })
+
+  test("parses split executor tool-call JSONL exactly once", async () => {
+    const process = new FakeSpawnedProcess()
+    const calls: unknown[] = []
+    const line = JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_split", tool: "mission.get", payload: { mission_id: "mission_split" } })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+      toolHandler: async (call) => {
+        calls.push(call)
+        return { call_id: call.call_id, tool: call.tool, ok: true, result: { handled: true }, created_at: "2026-05-13T00:00:00.000Z" }
+      },
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdout.emitData(line.slice(0, 17))
+    await timeout(20)
+    expect(process.stdinWrites).toHaveLength(0)
+    process.stdout.emitData(line.slice(17, 58))
+    process.stdout.emitData(`${line.slice(58)}\n`)
+
+    const [write] = await waitForStdinWrite(process)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ call_id: "call_split", tool: "mission.get", payload: { mission_id: "mission_split" } })
+    expect(process.stdinWrites).toHaveLength(1)
+    expect(readToolResultLine(write)).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_split", ok: true })
+  })
+
+  test("buffers split non-tool stdout until line completion and emits it once", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdout.emitData("split ")
+    await timeout(20)
+    expect((adapter as unknown as { events: RuntimeEvent[] }).events).toHaveLength(0)
+    process.stdout.emitData("stdout\n")
+
+    expect(await readProcessEvents(adapter, 1)).toEqual([{ type: "ExecutorLifecycle", phase: "process-stdout", message: "split stdout" }])
+  })
+
+  test("malformed split JSON stdout does not crash adapter", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdout.emitData("{bad")
+    await timeout(20)
+    expect((adapter as unknown as { events: RuntimeEvent[] }).events).toHaveLength(0)
+    process.stdout.emitData("-json\n")
+
+    expect(await readProcessEvents(adapter, 1)).toEqual([{ type: "ExecutorLifecycle", phase: "process-stdout", message: "{bad-json" }])
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "running" })
+  })
+
+  test("flushes final buffered tool-call line on child close without newline", async () => {
+    const process = new FakeSpawnedProcess(4242, { autoClose: false })
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+      toolHandler: async (call) => ({ call_id: call.call_id, tool: call.tool, ok: true, result: { closed: true }, created_at: "2026-05-13T00:00:00.000Z" }),
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdout.emitData(JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_close_flush", tool: "mission.get", payload: {} }))
+    await timeout(20)
+    expect(process.stdinWrites).toHaveLength(0)
+    process.emitClose(0, null)
+
+    expect(readToolResultLine((await waitForStdinWrite(process))[0] ?? "")).toMatchObject({
+      type: "nxl.executor_tool_result",
+      call_id: "call_close_flush",
+      ok: true,
+      result: { closed: true },
     })
   })
 
@@ -2884,7 +2965,7 @@ describe("ProcessOpenCodeAdapter", () => {
     })
 
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=objective-secret" })
-    process.stdout.emitData("stdout token=stdout-secret")
+    process.stdout.emitData("stdout token=stdout-secret\n")
     process.stderr.emitData("stderr Bearer abc.def.ghi12345")
     process.emitError(new Error("process error api_key=error-secret"))
 
@@ -3004,6 +3085,49 @@ describe("ProcessOpenCodeAdapter", () => {
     await shutdown
   })
 
+  test("superseded child structured tool calls are ignored while active child calls still work", async () => {
+    const processes: FakeSpawnedProcess[] = []
+    const calls: unknown[] = []
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => {
+        const process = new FakeSpawnedProcess(6400 + processes.length)
+        processes.push(process)
+        return process
+      },
+      toolHandler: async (call) => {
+        calls.push(call)
+        return { call_id: call.call_id, tool: call.tool, ok: true, result: { handled: call.call_id }, created_at: "2026-05-13T00:00:00.000Z" }
+      },
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "first" })
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "second" })
+    processes[0]?.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_old", tool: "mission.claim", payload: { token: "old-secret" } })}\n`)
+    processes[1]?.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_new", tool: "mission.get", payload: {} })}\n`)
+
+    await waitForStdinWrite(processes[1]!)
+    const events = await readProcessEvents(adapter, 4)
+    const status = await adapter.getStatus()
+
+    expect(calls).toEqual([{ type: "nxl.executor_tool_call", call_id: "call_new", tool: "mission.get", payload: {} }])
+    expect(processes[0]?.stdinWrites).toHaveLength(0)
+    expect(readToolResultLine(processes[1]?.stdinWrites[0] ?? "")).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_new", ok: true })
+    expect(status).toMatchObject({ phase: "running", pid: 6401 })
+    expect(events).toContainEqual({
+      type: "ExecutorLifecycle",
+      phase: "process-superseded-tool-call-ignored",
+      message: "Ignored executor tool call from superseded process: call_old mission.claim",
+    })
+    expect(JSON.stringify({ events, status })).not.toContain("old-secret")
+
+    processes[0]?.emitExit(0, null)
+    const shutdown = adapter.shutdown()
+    processes[1]?.emitExit(0, null)
+    await shutdown
+  })
+
   test("RuntimeServer keeps process event pump open after failed replacement spawn", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -3058,7 +3182,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await server.startNewSession()
     const shutdown = server.shutdown()
     processes[1]?.emitExit(0, null)
-    processes[0]?.stdout.emitData("terminating child output token=old-child-secret")
+    processes[0]?.stdout.emitData("terminating child output token=old-child-secret\n")
 
     const stdout = await waitForRuntimeEvent(
       server,
