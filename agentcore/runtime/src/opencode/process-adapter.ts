@@ -219,7 +219,6 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       this.queue("process-error", this.lastError)
     })
     child.on("exit", (code, signal) => {
-      this.flushStdoutBuffer(child)
       const message = exitMessage("OpenCode process exited", code, signal)
       this.terminalProcesses.set(child, message)
       if (this.process === child) this.process = null

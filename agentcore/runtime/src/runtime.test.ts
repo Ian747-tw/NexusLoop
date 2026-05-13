@@ -2794,6 +2794,36 @@ describe("ProcessOpenCodeAdapter", () => {
     })
   })
 
+  test("ignores final buffered tool-call line after child exit", async () => {
+    const process = new FakeSpawnedProcess()
+    const calls: unknown[] = []
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => process,
+      toolHandler: async (call) => {
+        calls.push(call)
+        return { call_id: call.call_id, tool: call.tool, ok: true, result: { exited: true }, created_at: "2026-05-13T00:00:00.000Z" }
+      },
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdout.emitData(JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_after_exit", tool: "mission.get", payload: {} }))
+    process.emitExit(0, null)
+
+    const events = await readProcessEvents(adapter, 2)
+    const status = await adapter.getStatus()
+
+    expect(calls).toHaveLength(0)
+    expect(process.stdinWrites).toHaveLength(0)
+    expect(status).toMatchObject({ phase: "exited", lastError: "OpenCode process exited unexpectedly with code 0" })
+    expect(events).toEqual([
+      { type: "ExecutorLifecycle", phase: "process-exited", message: "OpenCode process exited unexpectedly with code 0" },
+      { type: "ExecutorLifecycle", phase: "process-superseded-tool-call-ignored", message: "Ignored executor tool call from superseded process: call_after_exit mission.get" },
+    ])
+  })
+
   test("writes exactly one newline-terminated executor tool result JSON line", async () => {
     const process = new FakeSpawnedProcess()
     const adapter = new ProcessOpenCodeAdapter({
