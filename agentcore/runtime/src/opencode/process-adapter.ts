@@ -15,6 +15,9 @@ export interface OpenCodeSpawnedProcess {
   stdin?: {
     write?(data: string, callback?: (error?: Error | null) => void): unknown
     end?(): unknown
+    on?(event: "error", listener: (error: Error) => void): unknown
+    off?(event: "error", listener: (error: Error) => void): unknown
+    removeListener?(event: "error", listener: (error: Error) => void): unknown
     writable?: boolean
     destroyed?: boolean
   }
@@ -378,28 +381,47 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     const stdin = child.stdin
     const rawWrite = stdin.write!
     const write = rawWrite.bind(stdin) as (data: string, callback?: (error?: Error | null) => void) => unknown
-    if (rawWrite.length < 2) {
-      write(line)
-      return
-    }
     await new Promise<void>((resolve, reject) => {
       let settled = false
+      let successTimer: ReturnType<typeof setTimeout> | null = null
+      let removeErrorListener = () => {}
+      let timeout: ReturnType<typeof setTimeout>
       const finish = (callback: () => void) => {
         if (settled) return
         settled = true
         clearTimeout(timeout)
+        if (successTimer) clearTimeout(successTimer)
+        removeErrorListener()
         callback()
       }
-      const timeout = setTimeout(() => finish(() => reject(new Error(`timed out after ${this.writeTimeoutMs}ms`))), this.writeTimeoutMs)
+      const acknowledgeSuccess = () => {
+        successTimer = setTimeout(() => finish(resolve), 0)
+      }
+      removeErrorListener = this.attachStdinErrorListener(stdin, (error) => finish(() => reject(error)))
+      timeout = setTimeout(() => finish(() => reject(new Error(`timed out after ${this.writeTimeoutMs}ms`))), this.writeTimeoutMs)
       try {
+        if (rawWrite.length < 2) {
+          write(line)
+          acknowledgeSuccess()
+          return
+        }
         write(line, (error?: Error | null) => {
           if (error) finish(() => reject(error))
-          else finish(resolve)
+          else acknowledgeSuccess()
         })
       } catch (error) {
         finish(() => reject(error))
       }
     })
+  }
+
+  private attachStdinErrorListener(stdin: NonNullable<OpenCodeSpawnedProcess["stdin"]>, listener: (error: Error) => void): () => void {
+    if (typeof stdin.on !== "function") return () => {}
+    stdin.on("error", listener)
+    return () => {
+      if (typeof stdin.off === "function") stdin.off("error", listener)
+      else stdin.removeListener?.("error", listener)
+    }
   }
 
   private recordWriteFailure(label: string, reason: string): Error {

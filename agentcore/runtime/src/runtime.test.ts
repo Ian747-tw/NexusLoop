@@ -229,6 +229,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   killedWith: NodeJS.Signals | undefined
   stdinWriteError: Error | null
   stdinAsyncWriteError: Error | null
+  stdinErrorAfterAck: Error | null
   neverAckStdinWrite: boolean
   stdinWritable: boolean
   stdinDestroyed: boolean
@@ -239,13 +240,15 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   private readonly closeListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
   private readonly exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
   private readonly errorListeners: Array<(error: Error) => void> = []
+  private readonly stdinErrorListeners: Array<(error: Error) => void> = []
   stdin: OpenCodeSpawnedProcess["stdin"]
 
-  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean; stdinWriteError?: Error; stdinAsyncWriteError?: Error; neverAckStdinWrite?: boolean; stdinWritable?: boolean; stdinDestroyed?: boolean; missingStdin?: boolean } = {}) {
+  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean; stdinWriteError?: Error; stdinAsyncWriteError?: Error; stdinErrorAfterAck?: Error; neverAckStdinWrite?: boolean; stdinWritable?: boolean; stdinDestroyed?: boolean; missingStdin?: boolean } = {}) {
     this.spawned = options.spawned ?? true
     this.autoClose = options.autoClose ?? true
     this.stdinWriteError = options.stdinWriteError ?? null
     this.stdinAsyncWriteError = options.stdinAsyncWriteError ?? null
+    this.stdinErrorAfterAck = options.stdinErrorAfterAck ?? null
     this.neverAckStdinWrite = options.neverAckStdinWrite ?? false
     this.stdinWritable = options.stdinWritable ?? true
     this.stdinDestroyed = options.stdinDestroyed ?? false
@@ -255,11 +258,23 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
         if (owner.stdinWriteError) throw owner.stdinWriteError
         owner.stdinWrites.push(data)
         owner.onStdinWriteBeforeAck?.()
-        if (!owner.neverAckStdinWrite) queueMicrotask(() => callback?.(owner.stdinAsyncWriteError))
+        if (!owner.neverAckStdinWrite) {
+          queueMicrotask(() => {
+            callback?.(owner.stdinAsyncWriteError)
+            if (!owner.stdinAsyncWriteError && owner.stdinErrorAfterAck) queueMicrotask(() => owner.emitStdinError(owner.stdinErrorAfterAck!))
+          })
+        }
         return true
       },
       end: () => {
         owner.stdinEnded = true
+      },
+      on: (_event: "error", listener: (error: Error) => void) => {
+        owner.stdinErrorListeners.push(listener)
+      },
+      off: (_event: "error", listener: (error: Error) => void) => {
+        const index = owner.stdinErrorListeners.indexOf(listener)
+        if (index >= 0) owner.stdinErrorListeners.splice(index, 1)
       },
       get writable() {
         return owner.stdinWritable
@@ -303,6 +318,10 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
 
   emitError(error: Error): void {
     for (const listener of this.errorListeners) listener(error)
+  }
+
+  emitStdinError(error: Error): void {
+    for (const listener of [...this.stdinErrorListeners]) listener(error)
   }
 }
 
@@ -2581,6 +2600,18 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(status)).not.toContain("async-objective-secret")
   })
 
+  test("session bootstrap stdin error after write callback rejects startSession before readiness", async () => {
+    const process = new FakeSpawnedProcess(4242, { stdinErrorAfterAck: new Error("EPIPE token=session-epipe-secret") })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=session-epipe-objective" })).rejects.toThrow("OpenCode session bootstrap failed: OpenCode session bootstrap write failed: EPIPE [REDACTED]")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ phase: "failed", sessionStarted: false, lastWriteError: "OpenCode session bootstrap write failed: EPIPE [REDACTED]" })
+    expect(JSON.stringify(status)).not.toContain("session-epipe-secret")
+    expect(JSON.stringify(status)).not.toContain("session-epipe-objective")
+  })
+
   test("session bootstrap write acknowledgement timeout rejects startSession", async () => {
     const process = new FakeSpawnedProcess(4242, { neverAckStdinWrite: true })
     const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 1, spawn: () => process })
@@ -3207,20 +3238,38 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify({ events, status })).not.toContain("async-message-secret")
   })
 
+  test("sendMissionPacket waits for stdin error after write callback before reporting success", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdinErrorAfterAck = new Error("EPIPE token=mission-epipe-secret")
+
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_epipe", message: "secret=epipe-message-secret", objective: "secret=epipe-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: EPIPE [REDACTED]")
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: EPIPE [REDACTED]" }])
+    expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: EPIPE [REDACTED]" })
+    expect(JSON.stringify({ events, status })).not.toContain("mission-epipe-secret")
+    expect(JSON.stringify({ events, status })).not.toContain("epipe-message-secret")
+  })
+
   test("sendMissionPacket write acknowledgement timeout rejects before mission success", async () => {
     const process = new FakeSpawnedProcess()
-    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 1, spawn: () => process })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 10, spawn: () => process })
 
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     await readProcessEvents(adapter, 1)
     process.neverAckStdinWrite = true
 
-    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_timeout", message: "secret=timeout-message-secret", objective: "secret=timeout-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: timed out after 1ms")
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_timeout", message: "secret=timeout-message-secret", objective: "secret=timeout-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: timed out after 10ms")
     const events = await readProcessEvents(adapter, 1)
     const status = await adapter.getStatus()
 
-    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: timed out after 1ms" }])
-    expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: timed out after 1ms" })
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: timed out after 10ms" }])
+    expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: timed out after 10ms" })
     expect(JSON.stringify({ events, status })).not.toContain("timeout-message-secret")
   })
 
@@ -3255,7 +3304,7 @@ describe("ProcessOpenCodeAdapter", () => {
       writable: true,
       destroyed: false,
     }
-    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 1, spawn: () => process })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 10, spawn: () => process })
 
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     await adapter.sendMissionPacket(testMissionPacket({ missionId: "m_legacy" }))
@@ -3340,6 +3389,28 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(missions[0]).not.toMatchObject({ status: "sent" })
     expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("async-runtime-secret")
     expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("async-runtime-message-secret")
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("RuntimeServer submitUserMessage waits for stdin error after callback before marking mission sent", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.stdinErrorAfterAck = new Error("EPIPE token=runtime-epipe-secret")
+    await expect(server.submitUserMessage("secret=runtime-epipe-message-secret")).rejects.toThrow("adapter delivery failed")
+    const missions = await server.listRecentMissions()
+
+    expect(missions[0]).toMatchObject({ status: "failed", failure_reason: "OpenCode mission packet write failed: EPIPE [REDACTED]" })
+    expect(missions[0]).not.toMatchObject({ status: "sent" })
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("runtime-epipe-secret")
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("runtime-epipe-message-secret")
 
     const shutdown = server.shutdown()
     process.emitExit(0, null)
