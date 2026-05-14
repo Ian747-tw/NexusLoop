@@ -115,6 +115,8 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       if (terminalError) throw new Error(terminalError)
       failurePrefix = "OpenCode session bootstrap failed"
       await this.writeEnvelope(child, sessionStartEnvelope(sessionSpec), "session bootstrap")
+      const postWriteTerminalError = this.currentChildUnavailableReason(child)
+      if (postWriteTerminalError) throw new Error(postWriteTerminalError)
       this.sessionStarted = true
       this.phase = "running"
       this.queue("process-started", `OpenCode process started: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
@@ -137,6 +139,8 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       throw this.recordWriteFailure("mission packet", "OpenCode process is not running")
     }
     await this.writeEnvelope(child, missionPacketEnvelope(packet), "mission packet")
+    const postWriteTerminalError = this.currentChildUnavailableReason(child)
+    if (postWriteTerminalError) throw this.recordWriteFailure("mission packet", postWriteTerminalError)
     this.queue("process-mission-packet-sent", `OpenCode mission packet sent: ${packet.missionId}`)
   }
 
@@ -313,7 +317,16 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   }
 
   private isCurrentToolCallChild(child: OpenCodeSpawnedProcess): boolean {
-    return this.process === child && !this.expectedExitProcesses.has(child) && !this.terminatingProcesses.has(child)
+    return this.currentChildUnavailableReason(child) === null
+  }
+
+  private currentChildUnavailableReason(child: OpenCodeSpawnedProcess): string | null {
+    const terminalError = this.terminalProcesses.get(child)
+    if (terminalError) return terminalError
+    if (this.process !== child || this.expectedExitProcesses.has(child) || this.terminatingProcesses.has(child)) {
+      return "OpenCode process is no longer running"
+    }
+    return null
   }
 
   private queueSupersededToolCallIgnored(envelope: Record<string, unknown>, stage: "call" | "result"): void {

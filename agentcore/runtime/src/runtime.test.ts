@@ -232,6 +232,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   neverAckStdinWrite: boolean
   stdinWritable: boolean
   stdinDestroyed: boolean
+  onStdinWriteBeforeAck: (() => void) | null = null
   private spawned = false
   private readonly autoClose: boolean
   private readonly spawnListeners: Array<() => void> = []
@@ -253,6 +254,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
       write: (data: string, callback?: (error?: Error | null) => void) => {
         if (owner.stdinWriteError) throw owner.stdinWriteError
         owner.stdinWrites.push(data)
+        owner.onStdinWriteBeforeAck?.()
         if (!owner.neverAckStdinWrite) queueMicrotask(() => callback?.(owner.stdinAsyncWriteError))
         return true
       },
@@ -2590,6 +2592,18 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(status)).not.toContain("timeout-objective-secret")
   })
 
+  test("session bootstrap rejects if child exits before write acknowledgement completes", async () => {
+    const process = new FakeSpawnedProcess(4242)
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+    process.onStdinWriteBeforeAck = () => process.emitExit(7, null)
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=exit-during-bootstrap-objective" })).rejects.toThrow("OpenCode session bootstrap failed: OpenCode process exited with code 7")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ phase: "failed", pid: undefined, sessionStarted: false, lastError: "OpenCode session bootstrap failed: OpenCode process exited with code 7" })
+    expect(JSON.stringify(status)).not.toContain("exit-during-bootstrap-objective")
+  })
+
   test("spawn failure rejects startSession and records redacted error in status", async () => {
     const adapter = new ProcessOpenCodeAdapter({
       command: "/usr/bin/opencode",
@@ -3210,6 +3224,24 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify({ events, status })).not.toContain("timeout-message-secret")
   })
 
+  test("sendMissionPacket fails if child exits before write acknowledgement completes", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.onStdinWriteBeforeAck = () => process.emitExit(9, null)
+
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_exit", message: "secret=exit-message-secret", objective: "secret=exit-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: OpenCode process exited with code 9")
+    const events = await readProcessEvents(adapter, 2)
+    const status = await adapter.getStatus()
+
+    expect(events).toContainEqual({ type: "ExecutorLifecycle", phase: "process-exited", message: "OpenCode process exited unexpectedly with code 9" })
+    expect(events).toContainEqual({ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: OpenCode process exited with code 9" })
+    expect(status).toMatchObject({ phase: "failed", pid: undefined, lastWriteError: "OpenCode mission packet write failed: OpenCode process exited with code 9" })
+    expect(JSON.stringify({ events, status })).not.toContain("exit-message-secret")
+  })
+
   test("sendMissionPacket supports legacy one-argument stdin writers without false timeout", async () => {
     const process = new FakeSpawnedProcess()
     process.stdin = {
@@ -3312,6 +3344,24 @@ describe("ProcessOpenCodeAdapter", () => {
     const shutdown = server.shutdown()
     process.emitExit(0, null)
     await shutdown
+  })
+
+  test("RuntimeServer submitUserMessage fails mission if process exits before write acknowledgement", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.onStdinWriteBeforeAck = () => process.emitExit(11, null)
+    await expect(server.submitUserMessage("secret=exit-runtime-message-secret")).rejects.toThrow("adapter delivery failed")
+    const missions = await server.listRecentMissions()
+
+    expect(missions[0]).toMatchObject({ status: "failed", failure_reason: "OpenCode mission packet write failed: OpenCode process exited with code 11" })
+    expect(missions[0]).not.toMatchObject({ status: "sent" })
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("exit-runtime-message-secret")
+    await server.shutdown()
   })
 
   test("RuntimeServer can use injected process adapter with fake spawn without blocking start", async () => {
