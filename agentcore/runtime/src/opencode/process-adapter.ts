@@ -181,6 +181,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   async shutdown(): Promise<void> {
     this.shutdownRequested = true
     this.phase = "shutdown"
+    this.sessionStarted = false
     const children = new Set(this.terminatingProcesses)
     if (this.process) children.add(this.process)
     if (children.size === 0) {
@@ -200,7 +201,10 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   }
 
   private terminateProcess(child: OpenCodeSpawnedProcess, phase: string, options: { clearCurrent: boolean }): void {
-    if (options.clearCurrent && this.process === child) this.process = null
+    if (this.process === child) {
+      this.sessionStarted = false
+      if (options.clearCurrent) this.process = null
+    }
     this.expectedExitProcesses.add(child)
     this.terminatingProcesses.add(child)
     try {
@@ -243,6 +247,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
         return
       }
       this.phase = "failed"
+      if (this.process === child) this.sessionStarted = false
       this.lastError = redactText(`OpenCode process error: ${errorMessage(error)}`)
       this.terminalProcesses.set(child, this.lastError)
       this.queue("process-error", this.lastError)
@@ -250,7 +255,10 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     child.on("exit", (code, signal) => {
       const message = exitMessage("OpenCode process exited", code, signal)
       this.terminalProcesses.set(child, message)
-      if (this.process === child) this.process = null
+      if (this.process === child) {
+        this.sessionStarted = false
+        this.process = null
+      }
       if (this.shutdownRequested || this.expectedExitProcesses.has(child)) {
         if (this.shutdownRequested) this.phase = "shutdown"
         this.queue("process-exited", message)

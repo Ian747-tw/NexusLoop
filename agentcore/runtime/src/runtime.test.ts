@@ -2724,7 +2724,7 @@ describe("ProcessOpenCodeAdapter", () => {
 
     expect(process.stdinEnded).toBe(true)
     expect(process.killedWith).toBe("SIGTERM")
-    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", sessionStarted: false })
   })
 
   test("shutdown waits for process exit before resolving", async () => {
@@ -2742,7 +2742,7 @@ describe("ProcessOpenCodeAdapter", () => {
     process.emitExit(0, null)
     await expect(pendingShutdown).resolves.toBeUndefined()
     await expect(adapter.shutdown()).resolves.toBeUndefined()
-    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", sessionStarted: false })
   })
 
   test("concurrent shutdown calls share the same process exit", async () => {
@@ -2791,7 +2791,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const status = await adapter.getStatus()
 
     expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-exited", message: "OpenCode process exited unexpectedly with code 7" }])
-    expect(status).toMatchObject({ phase: "exited", lastError: "OpenCode process exited unexpectedly with code 7" })
+    expect(status).toMatchObject({ phase: "exited", sessionStarted: false, lastError: "OpenCode process exited unexpectedly with code 7" })
   })
 
   test("streamExecutorEvents drains only new events", async () => {
