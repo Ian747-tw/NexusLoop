@@ -362,6 +362,13 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     if (child.stdin.writable === false || child.stdin.destroyed === true || typeof child.stdin.write !== "function") {
       throw new Error("child stdin is not writable")
     }
+    const stdin = child.stdin
+    const rawWrite = stdin.write!
+    const write = rawWrite.bind(stdin) as (data: string, callback?: (error?: Error | null) => void) => unknown
+    if (rawWrite.length < 2) {
+      write(line)
+      return
+    }
     await new Promise<void>((resolve, reject) => {
       let settled = false
       const finish = (callback: () => void) => {
@@ -372,7 +379,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       }
       const timeout = setTimeout(() => finish(() => reject(new Error(`timed out after ${this.writeTimeoutMs}ms`))), this.writeTimeoutMs)
       try {
-        child.stdin!.write!(line, (error?: Error | null) => {
+        write(line, (error?: Error | null) => {
           if (error) finish(() => reject(error))
           else finish(resolve)
         })

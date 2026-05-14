@@ -3210,6 +3210,29 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify({ events, status })).not.toContain("timeout-message-secret")
   })
 
+  test("sendMissionPacket supports legacy one-argument stdin writers without false timeout", async () => {
+    const process = new FakeSpawnedProcess()
+    process.stdin = {
+      write: (data: string) => {
+        process.stdinWrites.push(data)
+        return true
+      },
+      end: () => {
+        process.stdinEnded = true
+      },
+      writable: true,
+      destroyed: false,
+    }
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 1, spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await adapter.sendMissionPacket(testMissionPacket({ missionId: "m_legacy" }))
+    const writes = process.stdinWrites.map((line) => JSON.parse(line) as Record<string, unknown>)
+
+    expect(writes).toMatchObject([{ type: "nxl.session_start" }, { type: "nxl.mission_packet", missionId: "m_legacy" }])
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "running", lastWriteError: undefined })
+  })
+
   test("RuntimeServer startup with process adapter bootstrap failure releases run lock", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
