@@ -42,6 +42,7 @@ export interface ProcessOpenCodeAdapterOptions {
   env?: Record<string, string>
   spawn?: OpenCodeSpawn
   spawnTimeoutMs?: number
+  writeTimeoutMs?: number
   shutdownTimeoutMs?: number
   toolHandler?: ExecutorToolHandler
 }
@@ -55,6 +56,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   private readonly env?: Record<string, string>
   private readonly spawn: OpenCodeSpawn
   private readonly spawnTimeoutMs: number
+  private readonly writeTimeoutMs: number
   private readonly shutdownTimeoutMs: number
   private readonly events: RuntimeEvent[] = []
   private readonly commandLabel: string
@@ -82,6 +84,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     this.env = options.env
     this.spawn = options.spawn ?? defaultOpenCodeSpawn
     this.spawnTimeoutMs = options.spawnTimeoutMs ?? 1000
+    this.writeTimeoutMs = options.writeTimeoutMs ?? 1000
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5000
     this.commandLabel = basename(options.command) || options.command
     this.toolHandler = options.toolHandler ?? null
@@ -360,13 +363,21 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       throw new Error("child stdin is not writable")
     }
     await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (callback: () => void) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        callback()
+      }
+      const timeout = setTimeout(() => finish(() => reject(new Error(`timed out after ${this.writeTimeoutMs}ms`))), this.writeTimeoutMs)
       try {
         child.stdin!.write!(line, (error?: Error | null) => {
-          if (error) reject(error)
-          else resolve()
+          if (error) finish(() => reject(error))
+          else finish(resolve)
         })
       } catch (error) {
-        reject(error)
+        finish(() => reject(error))
       }
     })
   }
@@ -460,7 +471,7 @@ function missionPacketEnvelope(packet: MissionPacket): Record<string, unknown> {
     message: packet.message,
     objective: packet.objective,
     protocolVersion: packet.protocolVersion,
-    createdAt: new Date().toISOString(),
+    createdAt: packet.createdAt,
   }
 }
 

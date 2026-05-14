@@ -229,6 +229,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   killedWith: NodeJS.Signals | undefined
   stdinWriteError: Error | null
   stdinAsyncWriteError: Error | null
+  neverAckStdinWrite: boolean
   stdinWritable: boolean
   stdinDestroyed: boolean
   private spawned = false
@@ -239,11 +240,12 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   private readonly errorListeners: Array<(error: Error) => void> = []
   stdin: OpenCodeSpawnedProcess["stdin"]
 
-  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean; stdinWriteError?: Error; stdinAsyncWriteError?: Error; stdinWritable?: boolean; stdinDestroyed?: boolean; missingStdin?: boolean } = {}) {
+  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean; stdinWriteError?: Error; stdinAsyncWriteError?: Error; neverAckStdinWrite?: boolean; stdinWritable?: boolean; stdinDestroyed?: boolean; missingStdin?: boolean } = {}) {
     this.spawned = options.spawned ?? true
     this.autoClose = options.autoClose ?? true
     this.stdinWriteError = options.stdinWriteError ?? null
     this.stdinAsyncWriteError = options.stdinAsyncWriteError ?? null
+    this.neverAckStdinWrite = options.neverAckStdinWrite ?? false
     this.stdinWritable = options.stdinWritable ?? true
     this.stdinDestroyed = options.stdinDestroyed ?? false
     const owner = this
@@ -251,7 +253,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
       write: (data: string, callback?: (error?: Error | null) => void) => {
         if (owner.stdinWriteError) throw owner.stdinWriteError
         owner.stdinWrites.push(data)
-        queueMicrotask(() => callback?.(owner.stdinAsyncWriteError))
+        if (!owner.neverAckStdinWrite) queueMicrotask(() => callback?.(owner.stdinAsyncWriteError))
         return true
       },
       end: () => {
@@ -2577,6 +2579,17 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(status)).not.toContain("async-objective-secret")
   })
 
+  test("session bootstrap write acknowledgement timeout rejects startSession", async () => {
+    const process = new FakeSpawnedProcess(4242, { neverAckStdinWrite: true })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 1, spawn: () => process })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=timeout-objective-secret" })).rejects.toThrow("OpenCode session bootstrap failed: OpenCode session bootstrap write failed: timed out after 1ms")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ phase: "failed", sessionStarted: false, lastWriteError: "OpenCode session bootstrap write failed: timed out after 1ms" })
+    expect(JSON.stringify(status)).not.toContain("timeout-objective-secret")
+  })
+
   test("spawn failure rejects startSession and records redacted error in status", async () => {
     const adapter = new ProcessOpenCodeAdapter({
       command: "/usr/bin/opencode",
@@ -3107,7 +3120,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
 
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "session objective" })
-    await adapter.sendMissionPacket(testMissionPacket({ missionId: "mission_1", intentId: "intent_1", message: "use token=payload-secret", objective: "use token=payload-secret" }))
+    await adapter.sendMissionPacket(testMissionPacket({ missionId: "mission_1", intentId: "intent_1", message: "use token=payload-secret", objective: "use token=payload-secret", createdAt: "2026-05-10T12:34:56.000Z" }))
     const missionLine = process.stdinWrites[1] ?? ""
     const mission = JSON.parse(missionLine) as Record<string, unknown>
     const events = await readProcessEvents(adapter, 2)
@@ -3122,7 +3135,7 @@ describe("ProcessOpenCodeAdapter", () => {
       message: "use token=payload-secret",
       objective: "use token=payload-secret",
       protocolVersion: 1,
-      createdAt: expect.any(String),
+      createdAt: "2026-05-10T12:34:56.000Z",
     })
     expect(events).toContainEqual({ type: "ExecutorLifecycle", phase: "process-mission-packet-sent", message: "OpenCode mission packet sent: mission_1" })
     expect(JSON.stringify({ events, status })).not.toContain("payload-secret")
@@ -3178,6 +3191,23 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: async mission failed [REDACTED]" })
     expect(JSON.stringify({ events, status })).not.toContain("async-mission-secret")
     expect(JSON.stringify({ events, status })).not.toContain("async-message-secret")
+  })
+
+  test("sendMissionPacket write acknowledgement timeout rejects before mission success", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 1, spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.neverAckStdinWrite = true
+
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_timeout", message: "secret=timeout-message-secret", objective: "secret=timeout-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: timed out after 1ms")
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: timed out after 1ms" }])
+    expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: timed out after 1ms" })
+    expect(JSON.stringify({ events, status })).not.toContain("timeout-message-secret")
   })
 
   test("RuntimeServer startup with process adapter bootstrap failure releases run lock", async () => {
