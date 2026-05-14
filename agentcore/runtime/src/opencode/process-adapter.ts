@@ -13,7 +13,7 @@ export interface OpenCodeProcessEventSource {
 export interface OpenCodeSpawnedProcess {
   pid?: number
   stdin?: {
-    write?(data: string): unknown
+    write?(data: string, callback?: (error?: Error | null) => void): unknown
     end?(): unknown
     writable?: boolean
     destroyed?: boolean
@@ -111,7 +111,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       const terminalError = this.terminalProcesses.get(child)
       if (terminalError) throw new Error(terminalError)
       failurePrefix = "OpenCode session bootstrap failed"
-      this.writeEnvelope(child, sessionStartEnvelope(sessionSpec), "session bootstrap")
+      await this.writeEnvelope(child, sessionStartEnvelope(sessionSpec), "session bootstrap")
       this.sessionStarted = true
       this.phase = "running"
       this.queue("process-started", `OpenCode process started: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
@@ -133,7 +133,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     if (!child || this.phase !== "running" || this.expectedExitProcesses.has(child) || this.terminatingProcesses.has(child)) {
       throw this.recordWriteFailure("mission packet", "OpenCode process is not running")
     }
-    this.writeEnvelope(child, missionPacketEnvelope(packet), "mission packet")
+    await this.writeEnvelope(child, missionPacketEnvelope(packet), "mission packet")
     this.queue("process-mission-packet-sent", `OpenCode mission packet sent: ${packet.missionId}`)
   }
 
@@ -306,7 +306,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       this.queueSupersededToolCallIgnored(envelope, "result")
       return
     }
-    this.writeToolResult(child, result)
+    await this.writeToolResult(child, result)
   }
 
   private isCurrentToolCallChild(child: OpenCodeSpawnedProcess): boolean {
@@ -331,13 +331,13 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     }
   }
 
-  private writeToolResult(child: OpenCodeSpawnedProcess, result: ExecutorToolResult): void {
+  private async writeToolResult(child: OpenCodeSpawnedProcess, result: ExecutorToolResult): Promise<void> {
     const message = JSON.stringify(redactValue({
       type: "nxl.executor_tool_result",
       ...result,
     })) + "\n"
     try {
-      this.writeJsonl(child, message)
+      await this.writeJsonl(child, message)
     } catch (error) {
       this.phase = "failed"
       this.lastError = redactText(`OpenCode tool result write failed: ${errorMessage(error)}`)
@@ -346,20 +346,29 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     }
   }
 
-  private writeEnvelope(child: OpenCodeSpawnedProcess, envelope: Record<string, unknown>, label: string): void {
+  private async writeEnvelope(child: OpenCodeSpawnedProcess, envelope: Record<string, unknown>, label: string): Promise<void> {
     try {
-      this.writeJsonl(child, `${JSON.stringify(envelope)}\n`)
+      await this.writeJsonl(child, `${JSON.stringify(envelope)}\n`)
     } catch (error) {
       throw this.recordWriteFailure(label, errorMessage(error))
     }
   }
 
-  private writeJsonl(child: OpenCodeSpawnedProcess, line: string): void {
+  private async writeJsonl(child: OpenCodeSpawnedProcess, line: string): Promise<void> {
     if (!child.stdin) throw new Error("child stdin is missing")
     if (child.stdin.writable === false || child.stdin.destroyed === true || typeof child.stdin.write !== "function") {
       throw new Error("child stdin is not writable")
     }
-    child.stdin.write(line)
+    await new Promise<void>((resolve, reject) => {
+      try {
+        child.stdin!.write!(line, (error?: Error | null) => {
+          if (error) reject(error)
+          else resolve()
+        })
+      } catch (error) {
+        reject(error)
+      }
+    })
   }
 
   private recordWriteFailure(label: string, reason: string): Error {

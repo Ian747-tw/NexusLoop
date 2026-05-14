@@ -228,6 +228,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   stdinEnded = false
   killedWith: NodeJS.Signals | undefined
   stdinWriteError: Error | null
+  stdinAsyncWriteError: Error | null
   stdinWritable: boolean
   stdinDestroyed: boolean
   private spawned = false
@@ -238,17 +239,19 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   private readonly errorListeners: Array<(error: Error) => void> = []
   stdin: OpenCodeSpawnedProcess["stdin"]
 
-  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean; stdinWriteError?: Error; stdinWritable?: boolean; stdinDestroyed?: boolean; missingStdin?: boolean } = {}) {
+  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean; stdinWriteError?: Error; stdinAsyncWriteError?: Error; stdinWritable?: boolean; stdinDestroyed?: boolean; missingStdin?: boolean } = {}) {
     this.spawned = options.spawned ?? true
     this.autoClose = options.autoClose ?? true
     this.stdinWriteError = options.stdinWriteError ?? null
+    this.stdinAsyncWriteError = options.stdinAsyncWriteError ?? null
     this.stdinWritable = options.stdinWritable ?? true
     this.stdinDestroyed = options.stdinDestroyed ?? false
     const owner = this
     this.stdin = options.missingStdin ? undefined : {
-      write: (data: string) => {
+      write: (data: string, callback?: (error?: Error | null) => void) => {
         if (owner.stdinWriteError) throw owner.stdinWriteError
         owner.stdinWrites.push(data)
+        queueMicrotask(() => callback?.(owner.stdinAsyncWriteError))
         return true
       },
       end: () => {
@@ -2562,6 +2565,18 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(status)).not.toContain("objective-secret")
   })
 
+  test("session bootstrap async write failure rejects startSession before readiness", async () => {
+    const process = new FakeSpawnedProcess(4242, { stdinAsyncWriteError: new Error("async stdin failed token=session-async-secret") })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=async-objective-secret" })).rejects.toThrow("OpenCode session bootstrap failed: OpenCode session bootstrap write failed: async stdin failed [REDACTED]")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ phase: "failed", sessionStarted: false, lastWriteError: "OpenCode session bootstrap write failed: async stdin failed [REDACTED]" })
+    expect(JSON.stringify(status)).not.toContain("session-async-secret")
+    expect(JSON.stringify(status)).not.toContain("async-objective-secret")
+  })
+
   test("spawn failure rejects startSession and records redacted error in status", async () => {
     const adapter = new ProcessOpenCodeAdapter({
       command: "/usr/bin/opencode",
@@ -3147,6 +3162,24 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify({ events, status })).not.toContain("message-secret")
   })
 
+  test("sendMissionPacket waits for async stdin write failure before reporting success", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdinAsyncWriteError = new Error("async mission failed token=async-mission-secret")
+
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_async", message: "secret=async-message-secret", objective: "secret=async-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: async mission failed [REDACTED]")
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: async mission failed [REDACTED]" }])
+    expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: async mission failed [REDACTED]" })
+    expect(JSON.stringify({ events, status })).not.toContain("async-mission-secret")
+    expect(JSON.stringify({ events, status })).not.toContain("async-message-secret")
+  })
+
   test("RuntimeServer startup with process adapter bootstrap failure releases run lock", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -3200,6 +3233,28 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(missions[0]).toMatchObject({ status: "failed", failure_reason: "OpenCode mission packet write failed: mission write failed [REDACTED]" })
     expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("mission-write-secret")
     expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("failed-message-secret")
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("RuntimeServer submitUserMessage waits for async process write failure before marking mission sent", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.stdinAsyncWriteError = new Error("async runtime write failed token=async-runtime-secret")
+    await expect(server.submitUserMessage("secret=async-runtime-message-secret")).rejects.toThrow("adapter delivery failed")
+    const missions = await server.listRecentMissions()
+
+    expect(missions[0]).toMatchObject({ status: "failed", failure_reason: "OpenCode mission packet write failed: async runtime write failed [REDACTED]" })
+    expect(missions[0]).not.toMatchObject({ status: "sent" })
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("async-runtime-secret")
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("async-runtime-message-secret")
 
     const shutdown = server.shutdown()
     process.emitExit(0, null)
