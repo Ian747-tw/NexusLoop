@@ -5,6 +5,7 @@ import type { ExecutorToolCall, ExecutorToolResult } from "../missions/mission-t
 import type { MissionPacket } from "../missions/mission-types"
 import { redactText, redactValue } from "../security/redaction"
 import type { ExecutorToolHandler, ExecutorToolHandlerAdapter, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./adapter"
+import { buildOpenCodeSessionContract } from "./session-contract"
 
 export interface OpenCodeProcessEventSource {
   on(event: "data", listener: (data: unknown) => void): unknown
@@ -510,6 +511,10 @@ function sessionStartEnvelope(sessionSpec: SessionSpec): Record<string, unknown>
     objective: sessionSpec.objective,
     protocolVersion: 1,
     createdAt: new Date().toISOString(),
+    contract: buildOpenCodeSessionContract({
+      projectDir: sessionSpec.projectDir,
+      objective: sessionSpec.objective,
+    }),
   }
 }
 

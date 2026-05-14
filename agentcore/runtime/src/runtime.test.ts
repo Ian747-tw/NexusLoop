@@ -10,9 +10,11 @@ import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
 import { MissionRegistry } from "./missions/mission-registry"
 import { MissionToolRouter } from "./missions/mission-tool-router"
+import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
+import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import type { MissionPacket } from "./missions/mission-types"
 import type { ExecutorToolHandler, ExecutorToolHandlerAdapter, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
@@ -2528,6 +2530,11 @@ function readToolResultWrites(process: FakeSpawnedProcess): Record<string, unkno
     .filter((line) => line.type === "nxl.executor_tool_result")
 }
 
+function sessionContractFromWrite(process: FakeSpawnedProcess): Record<string, unknown> {
+  const session = JSON.parse(process.stdinWrites[0] ?? "{}") as Record<string, unknown>
+  return session.contract as Record<string, unknown>
+}
+
 async function waitForRuntimeEvent(server: RuntimeServer, predicate: (event: RuntimeEvent) => boolean): Promise<RuntimeEvent> {
   const deadline = Date.now() + NON_BLOCKING_START_TIMEOUT_MS
   while (Date.now() < deadline) {
@@ -2538,8 +2545,72 @@ async function waitForRuntimeEvent(server: RuntimeServer, predicate: (event: Run
   throw new Error("timed out waiting for runtime event")
 }
 
+describe("OpenCode session contract", () => {
+  test("includes all supported mission tool names", () => {
+    const contract = buildOpenCodeSessionContract({ projectDir: "/tmp/demo", objective: "demo objective" })
+
+    expect(contract.allowedToolNames).toEqual([...MISSION_TOOL_NAMES])
+  })
+
+  test("describes JSONL input and output envelope types", () => {
+    const contract = buildOpenCodeSessionContract({ projectDir: "/tmp/demo", objective: "demo objective" })
+
+    expect(contract.inputEnvelopeTypes).toEqual(["nxl.session_start", "nxl.mission_packet", "nxl.executor_tool_result"])
+    expect(contract.outputEnvelopeTypes).toEqual(["nxl.executor_tool_call"])
+    expect(contract.prompt).toContain("one JSON object per line")
+    expect(contract.prompt).toContain("nxl.session_start")
+    expect(contract.prompt).toContain("nxl.mission_packet")
+    expect(contract.prompt).toContain("nxl.executor_tool_result")
+    expect(contract.prompt).toContain("nxl.executor_tool_call")
+  })
+
+  test("states RuntimeServer and MissionRegistry own mission authority", () => {
+    const contract = buildOpenCodeSessionContract({ projectDir: "/tmp/demo", objective: "demo objective" })
+
+    expect(contract.prompt).toContain("Do not invent mission state")
+    expect(contract.prompt).toContain("Mission authority belongs to RuntimeServer/MissionRegistry")
+  })
+
+  test("states child prose stdout is diagnostic only", () => {
+    const contract = buildOpenCodeSessionContract({ projectDir: "/tmp/demo", objective: "demo objective" })
+
+    expect(contract.prompt).toContain("Child prose/stdout is diagnostic only")
+    expect(contract.prompt).toContain("not authoritative")
+  })
+
+  test("states mission completion flow", () => {
+    const contract = buildOpenCodeSessionContract({ projectDir: "/tmp/demo", objective: "demo objective" })
+
+    expect(contract.prompt).toContain("mission.claim -> mission.record_progress/mission.submit_result -> mission.complete")
+    expect(contract.prompt).toContain("Use mission.record_progress")
+    expect(contract.prompt).toContain("mission.submit_result")
+    expect(contract.prompt).toContain("Use mission.fail")
+    expect(contract.prompt).toContain("Use mission.cancel")
+    expect(contract.prompt).toContain("Unknown tools are invalid")
+  })
+
+  test("is deterministic under fixed inputs", () => {
+    const input = { projectDir: "/tmp/demo", objective: "demo objective" }
+
+    expect(buildOpenCodeSessionContract(input)).toEqual(buildOpenCodeSessionContract(input))
+  })
+
+  test("redacts secret-looking values from contract and prompt", () => {
+    const contract = buildOpenCodeSessionContract({
+      projectDir: "/tmp/token=project-secret",
+      objective: "handle token=objective-secret password=objective-password",
+    })
+    const serialized = JSON.stringify(contract)
+
+    expect(serialized).toContain("[REDACTED]")
+    expect(serialized).not.toContain("project-secret")
+    expect(serialized).not.toContain("objective-secret")
+    expect(serialized).not.toContain("objective-password")
+  })
+})
+
 describe("ProcessOpenCodeAdapter", () => {
-  test("starts with fake spawn and emits lifecycle start event", async () => {
+  test("starts with fake spawn and emits lifecycle start event with session contract", async () => {
     const process = new FakeSpawnedProcess(1234)
     const adapter = new ProcessOpenCodeAdapter({
       command: "opencode",
@@ -2564,7 +2635,34 @@ describe("ProcessOpenCodeAdapter", () => {
       protocolVersion: 1,
       createdAt: expect.any(String),
     })
+    expect(session.contract).toMatchObject({
+      protocolVersion: 1,
+      projectDir: "/tmp/demo",
+      objective: "test objective",
+      allowedToolNames: [...MISSION_TOOL_NAMES],
+      inputEnvelopeTypes: ["nxl.session_start", "nxl.mission_packet", "nxl.executor_tool_result"],
+      outputEnvelopeTypes: ["nxl.executor_tool_call"],
+    })
+    expect(((session.contract as Record<string, unknown>).prompt as string)).toContain("Mission authority belongs to RuntimeServer/MissionRegistry")
     await expect(adapter.getStatus()).resolves.toMatchObject({ adapter: "process", phase: "running", pid: 1234, command: "opencode", transport: "jsonl", sessionStarted: true })
+  })
+
+  test("session bootstrap contract redacts secrets while transport objective remains original", async () => {
+    const process = new FakeSpawnedProcess(1234)
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/token=project-secret", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/token=project-secret", objective: "run token=objective-secret" })
+    const session = JSON.parse(process.stdinWrites[0] ?? "{}") as Record<string, unknown>
+    const contract = session.contract as Record<string, unknown>
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(session).toMatchObject({ type: "nxl.session_start", objective: "run token=objective-secret" })
+    expect(JSON.stringify(contract)).toContain("[REDACTED]")
+    expect(JSON.stringify(contract)).not.toContain("project-secret")
+    expect(JSON.stringify(contract)).not.toContain("objective-secret")
+    expect(JSON.stringify({ events, status })).not.toContain("project-secret")
+    expect(JSON.stringify({ events, status })).not.toContain("objective-secret")
   })
 
   test("session bootstrap write failure rejects startSession and records redacted status", async () => {
@@ -3446,6 +3544,12 @@ describe("ProcessOpenCodeAdapter", () => {
 
     expect(result).toBe("started")
     expect(await server.status()).toMatchObject({ runtimeStatus: "started", lockHeld: true })
+    expect(sessionContractFromWrite(process)).toMatchObject({
+      allowedToolNames: [...MISSION_TOOL_NAMES],
+      inputEnvelopeTypes: ["nxl.session_start", "nxl.mission_packet", "nxl.executor_tool_result"],
+      outputEnvelopeTypes: ["nxl.executor_tool_call"],
+    })
+    expect(String(sessionContractFromWrite(process).prompt)).toContain("Child prose/stdout is diagnostic only")
     expect(server.eventBus.snapshot().map((event) => event.type)).toContain("RuntimeReady")
     const shutdown = server.shutdown()
     process.emitExit(0, null)
@@ -3523,6 +3627,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(processes[0]?.killedWith).toBe("SIGTERM")
     expect(JSON.parse(processes[0]?.stdinWrites[0] ?? "{}")).toMatchObject({ type: "nxl.session_start" })
     expect(JSON.parse(processes[1]?.stdinWrites[0] ?? "{}")).toMatchObject({ type: "nxl.session_start" })
+    expect(sessionContractFromWrite(processes[0]!)).toMatchObject({ allowedToolNames: [...MISSION_TOOL_NAMES] })
+    expect(sessionContractFromWrite(processes[1]!)).toMatchObject({ allowedToolNames: [...MISSION_TOOL_NAMES] })
     expect(result.adapter).toMatchObject({ adapter: "process", phase: "running", pid: 5001 })
 
     processes[0]?.emitExit(0, null)
