@@ -15,6 +15,8 @@ export interface OpenCodeSpawnedProcess {
   stdin?: {
     write?(data: string): unknown
     end?(): unknown
+    writable?: boolean
+    destroyed?: boolean
   }
   stdout?: OpenCodeProcessEventSource | null
   stderr?: OpenCodeProcessEventSource | null
@@ -67,6 +69,8 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   private streamClosed = true
   private shutdownRequested = false
   private lastError: string | null = null
+  private lastWriteError: string | null = null
+  private sessionStarted = false
   private readonly stdoutBuffers = new WeakMap<object, string>()
   private toolHandler: ExecutorToolHandler | null
 
@@ -93,8 +97,11 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     if (previousProcess) this.terminateProcess(previousProcess, "process-restart-requested", { clearCurrent: false })
     this.shutdownRequested = false
     this.lastError = null
+    this.lastWriteError = null
+    this.sessionStarted = false
     this.streamClosed = false
     const cwd = this.cwd ?? sessionSpec.projectDir
+    let failurePrefix = "OpenCode process spawn failed"
 
     try {
       child = this.spawn(this.command, this.args, { cwd, env: this.env })
@@ -103,6 +110,9 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       await this.waitForProcessSpawn(child, this.spawnTimeoutMs)
       const terminalError = this.terminalProcesses.get(child)
       if (terminalError) throw new Error(terminalError)
+      failurePrefix = "OpenCode session bootstrap failed"
+      this.writeEnvelope(child, sessionStartEnvelope(sessionSpec), "session bootstrap")
+      this.sessionStarted = true
       this.phase = "running"
       this.queue("process-started", `OpenCode process started: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
     } catch (error) {
@@ -110,15 +120,21 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       if (child && !this.terminalProcesses.has(child)) this.terminateProcess(child, "process-spawn-cleanup-requested", { clearCurrent: false })
       const restoredPrevious = previousProcess && !this.terminalProcesses.has(previousProcess) ? previousProcess : null
       if (this.process === child) this.process = restoredPrevious
-      this.lastError = redactText(`OpenCode process spawn failed: ${errorMessage(error)}`)
+      this.sessionStarted = false
+      this.lastError = redactText(`${failurePrefix}: ${errorMessage(error)}`)
       this.queue("process-spawn-failed", this.lastError)
       if (!this.process && this.terminatingProcesses.size === 0) this.closeStream()
       throw new Error(this.lastError)
     }
   }
 
-  async sendMissionPacket(_packet: MissionPacket): Promise<void> {
-    throw new Error("real mission packet transport not implemented")
+  async sendMissionPacket(packet: MissionPacket): Promise<void> {
+    const child = this.process
+    if (!child || this.phase !== "running" || this.expectedExitProcesses.has(child) || this.terminatingProcesses.has(child)) {
+      throw this.recordWriteFailure("mission packet", "OpenCode process is not running")
+    }
+    this.writeEnvelope(child, missionPacketEnvelope(packet), "mission packet")
+    this.queue("process-mission-packet-sent", `OpenCode mission packet sent: ${packet.missionId}`)
   }
 
   async pauseAtSafeBoundary(_reason: string): Promise<void> {
@@ -200,6 +216,9 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       pid: this.process?.pid,
       terminatingPids: [...this.terminatingProcesses].map((child) => child.pid).filter((pid) => pid !== undefined),
       command: this.commandLabel,
+      transport: "jsonl",
+      sessionStarted: this.sessionStarted,
+      lastWriteError: this.lastWriteError ?? undefined,
       message: `ProcessOpenCodeAdapter ${this.phase}`,
       lastError: this.lastError ?? undefined,
     })
@@ -318,13 +337,37 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       ...result,
     })) + "\n"
     try {
-      if (typeof child.stdin?.write !== "function") throw new Error("child stdin is not writable")
-      child.stdin.write(message)
+      this.writeJsonl(child, message)
     } catch (error) {
       this.phase = "failed"
       this.lastError = redactText(`OpenCode tool result write failed: ${errorMessage(error)}`)
+      this.lastWriteError = this.lastError
       this.queue("process-tool-result-write-failed", this.lastError)
     }
+  }
+
+  private writeEnvelope(child: OpenCodeSpawnedProcess, envelope: Record<string, unknown>, label: string): void {
+    try {
+      this.writeJsonl(child, `${JSON.stringify(envelope)}\n`)
+    } catch (error) {
+      throw this.recordWriteFailure(label, errorMessage(error))
+    }
+  }
+
+  private writeJsonl(child: OpenCodeSpawnedProcess, line: string): void {
+    if (!child.stdin) throw new Error("child stdin is missing")
+    if (child.stdin.writable === false || child.stdin.destroyed === true || typeof child.stdin.write !== "function") {
+      throw new Error("child stdin is not writable")
+    }
+    child.stdin.write(line)
+  }
+
+  private recordWriteFailure(label: string, reason: string): Error {
+    this.phase = "failed"
+    this.lastWriteError = redactText(`OpenCode ${label} write failed: ${reason}`)
+    this.lastError = this.lastWriteError
+    this.queue(`process-${label.replace(/\s+/g, "-")}-write-failed`, this.lastWriteError)
+    return new Error(this.lastWriteError)
   }
 
   private compactDrainedEvents(): void {
@@ -388,6 +431,28 @@ function defaultOpenCodeSpawn(command: string, args: string[], options: OpenCode
     env: options.env === undefined ? process.env : { ...process.env, ...options.env },
     stdio: ["pipe", "pipe", "pipe"],
   })
+}
+
+function sessionStartEnvelope(sessionSpec: SessionSpec): Record<string, unknown> {
+  return {
+    type: "nxl.session_start",
+    projectDir: sessionSpec.projectDir,
+    objective: sessionSpec.objective,
+    protocolVersion: 1,
+    createdAt: new Date().toISOString(),
+  }
+}
+
+function missionPacketEnvelope(packet: MissionPacket): Record<string, unknown> {
+  return {
+    type: "nxl.mission_packet",
+    missionId: packet.missionId,
+    intentId: packet.intentId,
+    message: packet.message,
+    objective: packet.objective,
+    protocolVersion: packet.protocolVersion,
+    createdAt: new Date().toISOString(),
+  }
 }
 
 function dataToText(data: unknown): string {
