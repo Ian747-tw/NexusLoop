@@ -228,28 +228,61 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   stdinEnded = false
   killedWith: NodeJS.Signals | undefined
   stdinWriteError: Error | null
+  stdinAsyncWriteError: Error | null
+  stdinErrorAfterAck: Error | null
+  neverAckStdinWrite: boolean
+  stdinWritable: boolean
+  stdinDestroyed: boolean
+  onStdinWriteBeforeAck: (() => void) | null = null
   private spawned = false
   private readonly autoClose: boolean
   private readonly spawnListeners: Array<() => void> = []
   private readonly closeListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
   private readonly exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
   private readonly errorListeners: Array<(error: Error) => void> = []
+  private readonly stdinErrorListeners: Array<(error: Error) => void> = []
+  stdin: OpenCodeSpawnedProcess["stdin"]
 
-  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean; stdinWriteError?: Error } = {}) {
+  constructor(readonly pid = 4242, options: { autoClose?: boolean; spawned?: boolean; stdinWriteError?: Error; stdinAsyncWriteError?: Error; stdinErrorAfterAck?: Error; neverAckStdinWrite?: boolean; stdinWritable?: boolean; stdinDestroyed?: boolean; missingStdin?: boolean } = {}) {
     this.spawned = options.spawned ?? true
     this.autoClose = options.autoClose ?? true
     this.stdinWriteError = options.stdinWriteError ?? null
-  }
-
-  stdin = {
-    write: (data: string) => {
-      if (this.stdinWriteError) throw this.stdinWriteError
-      this.stdinWrites.push(data)
-      return true
-    },
-    end: () => {
-      this.stdinEnded = true
-    },
+    this.stdinAsyncWriteError = options.stdinAsyncWriteError ?? null
+    this.stdinErrorAfterAck = options.stdinErrorAfterAck ?? null
+    this.neverAckStdinWrite = options.neverAckStdinWrite ?? false
+    this.stdinWritable = options.stdinWritable ?? true
+    this.stdinDestroyed = options.stdinDestroyed ?? false
+    const owner = this
+    this.stdin = options.missingStdin ? undefined : {
+      write: (data: string, callback?: (error?: Error | null) => void) => {
+        if (owner.stdinWriteError) throw owner.stdinWriteError
+        owner.stdinWrites.push(data)
+        owner.onStdinWriteBeforeAck?.()
+        if (!owner.neverAckStdinWrite) {
+          queueMicrotask(() => {
+            callback?.(owner.stdinAsyncWriteError)
+            if (!owner.stdinAsyncWriteError && owner.stdinErrorAfterAck) queueMicrotask(() => owner.emitStdinError(owner.stdinErrorAfterAck!))
+          })
+        }
+        return true
+      },
+      end: () => {
+        owner.stdinEnded = true
+      },
+      on: (_event: "error", listener: (error: Error) => void) => {
+        owner.stdinErrorListeners.push(listener)
+      },
+      off: (_event: "error", listener: (error: Error) => void) => {
+        const index = owner.stdinErrorListeners.indexOf(listener)
+        if (index >= 0) owner.stdinErrorListeners.splice(index, 1)
+      },
+      get writable() {
+        return owner.stdinWritable
+      },
+      get destroyed() {
+        return owner.stdinDestroyed
+      },
+    }
   }
 
   on(event: "spawn", listener: () => void): void
@@ -285,6 +318,10 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
 
   emitError(error: Error): void {
     for (const listener of this.errorListeners) listener(error)
+  }
+
+  emitStdinError(error: Error): void {
+    for (const listener of [...this.stdinErrorListeners]) listener(error)
   }
 }
 
@@ -1085,7 +1122,7 @@ describe("RuntimeServer core", () => {
     await server.start()
     process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_get", tool: "mission.get", payload: { mission_id: created.mission.mission_id } })}\n`)
 
-    expect(readToolResultLine((await waitForStdinWrite(process))[0] ?? "")).toMatchObject({
+    expect(await waitForToolResult(process)).toMatchObject({
       type: "nxl.executor_tool_result",
       call_id: "call_get",
       tool: "mission.get",
@@ -1113,7 +1150,7 @@ describe("RuntimeServer core", () => {
       tool: "mission.claim",
       payload: { mission_id: notStartedMission.mission.mission_id, executor_id: "executor_1" },
     })}\n`)
-    expect(readToolResultLine((await waitForStdinWrite(notStartedProcess))[0] ?? "")).toMatchObject({
+    expect(await waitForToolResult(notStartedProcess)).toMatchObject({
       call_id: "call_before_start",
       ok: false,
       error: "runtime must be started before mission execution writes",
@@ -1136,7 +1173,7 @@ describe("RuntimeServer core", () => {
       payload: { mission_id: "mission_1" },
     })}\n`)
 
-    expect(readToolResultLine((await waitForStdinWrite(statusProcess))[0] ?? "")).toMatchObject({
+    expect(await waitForToolResult(statusProcess)).toMatchObject({
       call_id: "call_status_mode",
       ok: false,
       error: "runtime.cancel_mission requires active mode",
@@ -1162,7 +1199,7 @@ describe("RuntimeServer core", () => {
       tool: "mission.claim",
       payload: { mission_id: created.mission.mission_id, executor_id: "executor_1" },
     })}\n`)
-    const claimResult = readToolResultLine((await waitForStdinWrite(process, 1))[0] ?? "")
+    const claimResult = await waitForToolResult(process)
     const claimId = String((claimResult.result as Record<string, unknown>).claim_id)
 
     process.stdout.emitData(`${JSON.stringify({
@@ -1177,8 +1214,9 @@ describe("RuntimeServer core", () => {
       tool: "mission.submit_result",
       payload: { mission_id: created.mission.mission_id, claim_id: claimId, summary: "done" },
     })}\n`)
-    await waitForStdinWrite(process, 3)
-    const submittedResult = readToolResultLine(process.stdinWrites[2] ?? "")
+    await waitForStdinWrite(process, 4)
+    const firstResults = readToolResultWrites(process)
+    const submittedResult = firstResults[2] ?? {}
 
     process.stdout.emitData(`${JSON.stringify({
       type: "nxl.executor_tool_call",
@@ -1186,12 +1224,13 @@ describe("RuntimeServer core", () => {
       tool: "mission.complete",
       payload: { mission_id: created.mission.mission_id, result_id: (submittedResult.result as Record<string, unknown>).result_id },
     })}\n`)
-    await waitForStdinWrite(process, 4)
+    await waitForStdinWrite(process, 5)
+    const results = readToolResultWrites(process)
 
     expect(claimResult).toMatchObject({ call_id: "call_claim", ok: true, result: { mission_id: created.mission.mission_id, status: "active" } })
-    expect(readToolResultLine(process.stdinWrites[1] ?? "")).toMatchObject({ call_id: "call_progress", ok: true, result: { claim_id: claimId, message: "halfway" } })
+    expect(results[1]).toMatchObject({ call_id: "call_progress", ok: true, result: { claim_id: claimId, message: "halfway" } })
     expect(submittedResult).toMatchObject({ call_id: "call_result", ok: true, result: { claim_id: claimId, summary: "done" } })
-    expect(readToolResultLine(process.stdinWrites[3] ?? "")).toMatchObject({ call_id: "call_complete", ok: true, result: { status: "completed" } })
+    expect(results[3]).toMatchObject({ call_id: "call_complete", ok: true, result: { status: "completed" } })
 
     const shutdown = server.shutdown()
     process.emitExit(0, null)
@@ -2464,6 +2503,31 @@ function readToolResultLine(line: string): Record<string, unknown> {
   return JSON.parse(line) as Record<string, unknown>
 }
 
+async function waitForJsonlWrite(process: FakeSpawnedProcess, type: string): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + NON_BLOCKING_START_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    for (const line of process.stdinWrites) {
+      const parsed = JSON.parse(line) as Record<string, unknown>
+      if (parsed.type === type) {
+        expect(line.endsWith("\n")).toBe(true)
+        return parsed
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`timed out waiting for ${type} stdin write`)
+}
+
+async function waitForToolResult(process: FakeSpawnedProcess): Promise<Record<string, unknown>> {
+  return waitForJsonlWrite(process, "nxl.executor_tool_result")
+}
+
+function readToolResultWrites(process: FakeSpawnedProcess): Record<string, unknown>[] {
+  return process.stdinWrites
+    .map((line) => readToolResultLine(line))
+    .filter((line) => line.type === "nxl.executor_tool_result")
+}
+
 async function waitForRuntimeEvent(server: RuntimeServer, predicate: (event: RuntimeEvent) => boolean): Promise<RuntimeEvent> {
   const deadline = Date.now() + NON_BLOCKING_START_TIMEOUT_MS
   while (Date.now() < deadline) {
@@ -2486,11 +2550,89 @@ describe("ProcessOpenCodeAdapter", () => {
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test objective" })
 
     const events = await readProcessEvents(adapter, 1)
+    const session = JSON.parse(process.stdinWrites[0] ?? "{}") as Record<string, unknown>
 
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ type: "ExecutorLifecycle", phase: "process-started" })
     expect(events[0]?.type === "ExecutorLifecycle" ? events[0].message : "").toContain("pid 1234")
-    await expect(adapter.getStatus()).resolves.toMatchObject({ adapter: "process", phase: "running", pid: 1234, command: "opencode" })
+    expect(process.stdinWrites).toHaveLength(1)
+    expect(process.stdinWrites[0]?.endsWith("\n")).toBe(true)
+    expect(session).toMatchObject({
+      type: "nxl.session_start",
+      projectDir: "/tmp/demo",
+      objective: "test objective",
+      protocolVersion: 1,
+      createdAt: expect.any(String),
+    })
+    await expect(adapter.getStatus()).resolves.toMatchObject({ adapter: "process", phase: "running", pid: 1234, command: "opencode", transport: "jsonl", sessionStarted: true })
+  })
+
+  test("session bootstrap write failure rejects startSession and records redacted status", async () => {
+    const process = new FakeSpawnedProcess(4242, { stdinWriteError: new Error("stdin failed token=session-secret") })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=objective-secret" })).rejects.toThrow("OpenCode session bootstrap failed: OpenCode session bootstrap write failed: stdin failed [REDACTED]")
+    const status = await adapter.getStatus()
+
+    expect(process.stdinEnded).toBe(true)
+    expect(process.killedWith).toBe("SIGTERM")
+    expect(status).toMatchObject({
+      adapter: "process",
+      phase: "failed",
+      pid: undefined,
+      sessionStarted: false,
+      lastWriteError: "OpenCode session bootstrap write failed: stdin failed [REDACTED]",
+      lastError: "OpenCode session bootstrap failed: OpenCode session bootstrap write failed: stdin failed [REDACTED]",
+    })
+    expect(JSON.stringify(status)).not.toContain("session-secret")
+    expect(JSON.stringify(status)).not.toContain("objective-secret")
+  })
+
+  test("session bootstrap async write failure rejects startSession before readiness", async () => {
+    const process = new FakeSpawnedProcess(4242, { stdinAsyncWriteError: new Error("async stdin failed token=session-async-secret") })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=async-objective-secret" })).rejects.toThrow("OpenCode session bootstrap failed: OpenCode session bootstrap write failed: async stdin failed [REDACTED]")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ phase: "failed", sessionStarted: false, lastWriteError: "OpenCode session bootstrap write failed: async stdin failed [REDACTED]" })
+    expect(JSON.stringify(status)).not.toContain("session-async-secret")
+    expect(JSON.stringify(status)).not.toContain("async-objective-secret")
+  })
+
+  test("session bootstrap stdin error after write callback rejects startSession before readiness", async () => {
+    const process = new FakeSpawnedProcess(4242, { stdinErrorAfterAck: new Error("EPIPE token=session-epipe-secret") })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=session-epipe-objective" })).rejects.toThrow("OpenCode session bootstrap failed: OpenCode session bootstrap write failed: EPIPE [REDACTED]")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ phase: "failed", sessionStarted: false, lastWriteError: "OpenCode session bootstrap write failed: EPIPE [REDACTED]" })
+    expect(JSON.stringify(status)).not.toContain("session-epipe-secret")
+    expect(JSON.stringify(status)).not.toContain("session-epipe-objective")
+  })
+
+  test("session bootstrap write acknowledgement timeout rejects startSession", async () => {
+    const process = new FakeSpawnedProcess(4242, { neverAckStdinWrite: true })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 1, spawn: () => process })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=timeout-objective-secret" })).rejects.toThrow("OpenCode session bootstrap failed: OpenCode session bootstrap write failed: timed out after 1ms")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ phase: "failed", sessionStarted: false, lastWriteError: "OpenCode session bootstrap write failed: timed out after 1ms" })
+    expect(JSON.stringify(status)).not.toContain("timeout-objective-secret")
+  })
+
+  test("session bootstrap rejects if child exits before write acknowledgement completes", async () => {
+    const process = new FakeSpawnedProcess(4242)
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+    process.onStdinWriteBeforeAck = () => process.emitExit(7, null)
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "secret=exit-during-bootstrap-objective" })).rejects.toThrow("OpenCode session bootstrap failed: OpenCode process exited with code 7")
+    const status = await adapter.getStatus()
+
+    expect(status).toMatchObject({ phase: "failed", pid: undefined, sessionStarted: false, lastError: "OpenCode session bootstrap failed: OpenCode process exited with code 7" })
+    expect(JSON.stringify(status)).not.toContain("exit-during-bootstrap-objective")
   })
 
   test("spawn failure rejects startSession and records redacted error in status", async () => {
@@ -2582,7 +2724,7 @@ describe("ProcessOpenCodeAdapter", () => {
 
     expect(process.stdinEnded).toBe(true)
     expect(process.killedWith).toBe("SIGTERM")
-    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", sessionStarted: false })
   })
 
   test("shutdown waits for process exit before resolving", async () => {
@@ -2600,7 +2742,7 @@ describe("ProcessOpenCodeAdapter", () => {
     process.emitExit(0, null)
     await expect(pendingShutdown).resolves.toBeUndefined()
     await expect(adapter.shutdown()).resolves.toBeUndefined()
-    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown" })
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "shutdown", sessionStarted: false })
   })
 
   test("concurrent shutdown calls share the same process exit", async () => {
@@ -2649,7 +2791,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const status = await adapter.getStatus()
 
     expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-exited", message: "OpenCode process exited unexpectedly with code 7" }])
-    expect(status).toMatchObject({ phase: "exited", lastError: "OpenCode process exited unexpectedly with code 7" })
+    expect(status).toMatchObject({ phase: "exited", sessionStarted: false, lastError: "OpenCode process exited unexpectedly with code 7" })
   })
 
   test("streamExecutorEvents drains only new events", async () => {
@@ -2701,9 +2843,9 @@ describe("ProcessOpenCodeAdapter", () => {
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     process.stdout.emitData(JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_1", tool: "mission.get", payload: { mission_id: "mission_1" } }) + "\n")
 
-    const [write] = await waitForStdinWrite(process)
+    const result = await waitForToolResult(process)
     expect(calls).toEqual([{ type: "nxl.executor_tool_call", call_id: "call_1", tool: "mission.get", payload: { mission_id: "mission_1" } }])
-    expect(readToolResultLine(write)).toEqual({
+    expect(result).toEqual({
       type: "nxl.executor_tool_result",
       call_id: "call_1",
       tool: "mission.get",
@@ -2730,16 +2872,16 @@ describe("ProcessOpenCodeAdapter", () => {
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     process.stdout.emitData(line.slice(0, 17))
     await timeout(20)
-    expect(process.stdinWrites).toHaveLength(0)
+    expect(process.stdinWrites).toHaveLength(1)
     process.stdout.emitData(line.slice(17, 58))
     process.stdout.emitData(`${line.slice(58)}\n`)
 
-    const [write] = await waitForStdinWrite(process)
+    const result = await waitForToolResult(process)
 
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ call_id: "call_split", tool: "mission.get", payload: { mission_id: "mission_split" } })
-    expect(process.stdinWrites).toHaveLength(1)
-    expect(readToolResultLine(write)).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_split", ok: true })
+    expect(process.stdinWrites).toHaveLength(2)
+    expect(result).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_split", ok: true })
   })
 
   test("buffers split non-tool stdout until line completion and emits it once", async () => {
@@ -2783,10 +2925,10 @@ describe("ProcessOpenCodeAdapter", () => {
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     process.stdout.emitData(JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_close_flush", tool: "mission.get", payload: {} }))
     await timeout(20)
-    expect(process.stdinWrites).toHaveLength(0)
+    expect(process.stdinWrites).toHaveLength(1)
     process.emitClose(0, null)
 
-    expect(readToolResultLine((await waitForStdinWrite(process))[0] ?? "")).toMatchObject({
+    expect(await waitForToolResult(process)).toMatchObject({
       type: "nxl.executor_tool_result",
       call_id: "call_close_flush",
       ok: true,
@@ -2816,7 +2958,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const status = await adapter.getStatus()
 
     expect(calls).toHaveLength(0)
-    expect(process.stdinWrites).toHaveLength(0)
+    expect(process.stdinWrites).toHaveLength(1)
     expect(status).toMatchObject({ phase: "exited", lastError: "OpenCode process exited unexpectedly with code 0" })
     expect(events).toEqual([
       { type: "ExecutorLifecycle", phase: "process-exited", message: "OpenCode process exited unexpectedly with code 0" },
@@ -2835,12 +2977,13 @@ describe("ProcessOpenCodeAdapter", () => {
 
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_single", tool: "mission.get", payload: {} })}\n`)
-    await waitForStdinWrite(process)
+    await waitForToolResult(process)
 
-    expect(process.stdinWrites).toHaveLength(1)
-    expect(process.stdinWrites[0]?.endsWith("\n")).toBe(true)
-    expect(process.stdinWrites[0]?.split("\n")).toHaveLength(2)
-    expect(readToolResultLine(process.stdinWrites[0] ?? "")).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_single", ok: true })
+    expect(process.stdinWrites).toHaveLength(2)
+    const toolResultWrite = process.stdinWrites.find((line) => (JSON.parse(line) as Record<string, unknown>).type === "nxl.executor_tool_result") ?? ""
+    expect(toolResultWrite.endsWith("\n")).toBe(true)
+    expect(toolResultWrite.split("\n")).toHaveLength(2)
+    expect(readToolResultLine(toolResultWrite)).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_single", ok: true })
   })
 
   test("non-tool stdout and non-tool JSON remain process stdout events", async () => {
@@ -2858,7 +3001,7 @@ describe("ProcessOpenCodeAdapter", () => {
       { type: "ExecutorLifecycle", phase: "process-stdout", message: "plain output" },
       { type: "ExecutorLifecycle", phase: "process-stdout", message: JSON.stringify({ type: "nxl.not_a_tool", call_id: "call_ignored" }) },
     ])
-    expect(process.stdinWrites).toHaveLength(0)
+    expect(process.stdinWrites).toHaveLength(1)
   })
 
   test("malformed JSON stdout does not crash adapter", async () => {
@@ -2891,8 +3034,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_unknown", tool: "mission.token=secret-tool", payload: {} })}\n`)
 
-    const [write] = await waitForStdinWrite(process)
-    const result = readToolResultLine(write)
+    const result = await waitForToolResult(process)
 
     expect(result).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_unknown", ok: false })
     expect(JSON.stringify(result)).toContain("[REDACTED]")
@@ -2917,7 +3059,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_bad", tool: "mission.get", payload: null })}\n`)
 
-    expect(readToolResultLine((await waitForStdinWrite(process))[0] ?? "")).toMatchObject({
+    expect(await waitForToolResult(process)).toMatchObject({
       type: "nxl.executor_tool_result",
       call_id: "call_bad",
       tool: "mission.get",
@@ -2940,7 +3082,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     await readProcessEvents(adapter, 1)
     process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_reject", tool: "mission.get", payload: {} })}\n`)
-    const result = readToolResultLine((await waitForStdinWrite(process))[0] ?? "")
+    const result = await waitForToolResult(process)
     process.stdout.emitData("after rejection\n")
 
     expect(result).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_reject", tool: "mission.get", ok: false })
@@ -2950,7 +3092,7 @@ describe("ProcessOpenCodeAdapter", () => {
   })
 
   test("stdin write failure emits lifecycle error and updates adapter status", async () => {
-    const process = new FakeSpawnedProcess(4242, { stdinWriteError: new Error("stdin failed token=stdin-secret") })
+    const process = new FakeSpawnedProcess(4242)
     const adapter = new ProcessOpenCodeAdapter({
       command: "opencode",
       cwd: "/tmp/demo",
@@ -2959,6 +3101,7 @@ describe("ProcessOpenCodeAdapter", () => {
     })
 
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    process.stdinWriteError = new Error("stdin failed token=stdin-secret")
     await readProcessEvents(adapter, 1)
     process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_write", tool: "mission.get", payload: {} })}\n`)
 
@@ -2977,7 +3120,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
     process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_no_handler", tool: "mission.get", payload: {} })}\n`)
 
-    expect(readToolResultLine((await waitForStdinWrite(process))[0] ?? "")).toMatchObject({
+    expect(await waitForToolResult(process)).toMatchObject({
       type: "nxl.executor_tool_result",
       call_id: "call_no_handler",
       tool: "mission.get",
@@ -3010,10 +3153,286 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(serialized).not.toContain("/opt/opencode")
   })
 
-  test("sendMissionPacket fails clearly when real transport is not implemented", async () => {
+  test("sendMissionPacket fails clearly when process is not running", async () => {
     const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => new FakeSpawnedProcess() })
 
-    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m1" }))).rejects.toThrow("real mission packet transport not implemented")
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m1" }))).rejects.toThrow("OpenCode mission packet write failed: OpenCode process is not running")
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: OpenCode process is not running" })
+  })
+
+  test("sendMissionPacket writes one newline-terminated mission packet JSONL line", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "session objective" })
+    await adapter.sendMissionPacket(testMissionPacket({ missionId: "mission_1", intentId: "intent_1", message: "use token=payload-secret", objective: "use token=payload-secret", createdAt: "2026-05-10T12:34:56.000Z" }))
+    const missionLine = process.stdinWrites[1] ?? ""
+    const mission = JSON.parse(missionLine) as Record<string, unknown>
+    const events = await readProcessEvents(adapter, 2)
+    const status = await adapter.getStatus()
+
+    expect(process.stdinWrites).toHaveLength(2)
+    expect(missionLine.endsWith("\n")).toBe(true)
+    expect(mission).toMatchObject({
+      type: "nxl.mission_packet",
+      missionId: "mission_1",
+      intentId: "intent_1",
+      message: "use token=payload-secret",
+      objective: "use token=payload-secret",
+      protocolVersion: 1,
+      createdAt: "2026-05-10T12:34:56.000Z",
+    })
+    expect(events).toContainEqual({ type: "ExecutorLifecycle", phase: "process-mission-packet-sent", message: "OpenCode mission packet sent: mission_1" })
+    expect(JSON.stringify({ events, status })).not.toContain("payload-secret")
+  })
+
+  test("sendMissionPacket fails when stdin is missing or non-writable", async () => {
+    const missing = new FakeSpawnedProcess(4242)
+    const missingAdapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => missing })
+    await missingAdapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    missing.stdin = undefined
+    await expect(missingAdapter.sendMissionPacket(testMissionPacket({ missionId: "m_missing" }))).rejects.toThrow("OpenCode mission packet write failed: child stdin is missing")
+
+    const nonWritable = new FakeSpawnedProcess(4243)
+    const nonWritableAdapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => nonWritable })
+    await nonWritableAdapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    nonWritable.stdinWritable = false
+
+    await expect(nonWritableAdapter.sendMissionPacket(testMissionPacket({ missionId: "m_non_writable" }))).rejects.toThrow("OpenCode mission packet write failed: child stdin is not writable")
+    await expect(nonWritableAdapter.getStatus()).resolves.toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: child stdin is not writable" })
+  })
+
+  test("sendMissionPacket fails when stdin.write throws and redacts lifecycle status", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdinWriteError = new Error("write exploded token=write-secret")
+
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_throw", message: "secret=message-secret", objective: "secret=message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: write exploded [REDACTED]")
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: write exploded [REDACTED]" }])
+    expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: write exploded [REDACTED]" })
+    expect(JSON.stringify({ events, status })).not.toContain("write-secret")
+    expect(JSON.stringify({ events, status })).not.toContain("message-secret")
+  })
+
+  test("sendMissionPacket waits for async stdin write failure before reporting success", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdinAsyncWriteError = new Error("async mission failed token=async-mission-secret")
+
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_async", message: "secret=async-message-secret", objective: "secret=async-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: async mission failed [REDACTED]")
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: async mission failed [REDACTED]" }])
+    expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: async mission failed [REDACTED]" })
+    expect(JSON.stringify({ events, status })).not.toContain("async-mission-secret")
+    expect(JSON.stringify({ events, status })).not.toContain("async-message-secret")
+  })
+
+  test("sendMissionPacket waits for stdin error after write callback before reporting success", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.stdinErrorAfterAck = new Error("EPIPE token=mission-epipe-secret")
+
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_epipe", message: "secret=epipe-message-secret", objective: "secret=epipe-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: EPIPE [REDACTED]")
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: EPIPE [REDACTED]" }])
+    expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: EPIPE [REDACTED]" })
+    expect(JSON.stringify({ events, status })).not.toContain("mission-epipe-secret")
+    expect(JSON.stringify({ events, status })).not.toContain("epipe-message-secret")
+  })
+
+  test("sendMissionPacket write acknowledgement timeout rejects before mission success", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 10, spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.neverAckStdinWrite = true
+
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_timeout", message: "secret=timeout-message-secret", objective: "secret=timeout-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: timed out after 10ms")
+    const events = await readProcessEvents(adapter, 1)
+    const status = await adapter.getStatus()
+
+    expect(events).toEqual([{ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: timed out after 10ms" }])
+    expect(status).toMatchObject({ phase: "failed", lastWriteError: "OpenCode mission packet write failed: timed out after 10ms" })
+    expect(JSON.stringify({ events, status })).not.toContain("timeout-message-secret")
+  })
+
+  test("sendMissionPacket fails if child exits before write acknowledgement completes", async () => {
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await readProcessEvents(adapter, 1)
+    process.onStdinWriteBeforeAck = () => process.emitExit(9, null)
+
+    await expect(adapter.sendMissionPacket(testMissionPacket({ missionId: "m_exit", message: "secret=exit-message-secret", objective: "secret=exit-message-secret" }))).rejects.toThrow("OpenCode mission packet write failed: OpenCode process exited with code 9")
+    const events = await readProcessEvents(adapter, 2)
+    const status = await adapter.getStatus()
+
+    expect(events).toContainEqual({ type: "ExecutorLifecycle", phase: "process-exited", message: "OpenCode process exited unexpectedly with code 9" })
+    expect(events).toContainEqual({ type: "ExecutorLifecycle", phase: "process-mission-packet-write-failed", message: "OpenCode mission packet write failed: OpenCode process exited with code 9" })
+    expect(status).toMatchObject({ phase: "failed", pid: undefined, lastWriteError: "OpenCode mission packet write failed: OpenCode process exited with code 9" })
+    expect(JSON.stringify({ events, status })).not.toContain("exit-message-secret")
+  })
+
+  test("sendMissionPacket supports legacy one-argument stdin writers without false timeout", async () => {
+    const process = new FakeSpawnedProcess()
+    process.stdin = {
+      write: (data: string) => {
+        process.stdinWrites.push(data)
+        return true
+      },
+      end: () => {
+        process.stdinEnded = true
+      },
+      writable: true,
+      destroyed: false,
+    }
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: "/tmp/demo", writeTimeoutMs: 10, spawn: () => process })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "test" })
+    await adapter.sendMissionPacket(testMissionPacket({ missionId: "m_legacy" }))
+    const writes = process.stdinWrites.map((line) => JSON.parse(line) as Record<string, unknown>)
+
+    expect(writes).toMatchObject([{ type: "nxl.session_start" }, { type: "nxl.mission_packet", missionId: "m_legacy" }])
+    await expect(adapter.getStatus()).resolves.toMatchObject({ phase: "running", lastWriteError: undefined })
+  })
+
+  test("RuntimeServer startup with process adapter bootstrap failure releases run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess(4242, { stdinWriteError: new Error("bootstrap failed token=bootstrap-secret") })
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    const start = server.start()
+    const deadline = Date.now() + NON_BLOCKING_START_TIMEOUT_MS
+    while (!process.killedWith && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
+    process.emitExit(0, null)
+    await expect(start).rejects.toThrow("OpenCode session bootstrap failed")
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect(server.eventBus.snapshot().map((event) => event.type)).not.toContain("RuntimeReady")
+    expect(JSON.stringify(await adapter.getStatus())).not.toContain("bootstrap-secret")
+  })
+
+  test("RuntimeServer submitUserMessage with process adapter writes mission packet and marks sent", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    const result = await server.submitUserMessage("transport secret=runtime-message-secret")
+    const mission = await server.getMission(result.missionId)
+    const missionEnvelope = process.stdinWrites.map((line) => JSON.parse(line) as Record<string, unknown>).find((line) => line.type === "nxl.mission_packet")
+
+    expect(mission).toMatchObject({ mission_id: result.missionId, status: "sent", objective: "transport [REDACTED]" })
+    expect(missionEnvelope).toMatchObject({ type: "nxl.mission_packet", missionId: result.missionId, intentId: result.intentId, message: "transport secret=runtime-message-secret" })
+    expect(JSON.stringify({ status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("runtime-message-secret")
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("RuntimeServer submitUserMessage with process adapter write failure marks mission failed", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.stdinWriteError = new Error("mission write failed token=mission-write-secret")
+    await expect(server.submitUserMessage("secret=failed-message-secret")).rejects.toThrow("adapter delivery failed")
+    const missions = await server.listRecentMissions()
+
+    expect(missions[0]).toMatchObject({ status: "failed", failure_reason: "OpenCode mission packet write failed: mission write failed [REDACTED]" })
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("mission-write-secret")
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("failed-message-secret")
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("RuntimeServer submitUserMessage waits for async process write failure before marking mission sent", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.stdinAsyncWriteError = new Error("async runtime write failed token=async-runtime-secret")
+    await expect(server.submitUserMessage("secret=async-runtime-message-secret")).rejects.toThrow("adapter delivery failed")
+    const missions = await server.listRecentMissions()
+
+    expect(missions[0]).toMatchObject({ status: "failed", failure_reason: "OpenCode mission packet write failed: async runtime write failed [REDACTED]" })
+    expect(missions[0]).not.toMatchObject({ status: "sent" })
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("async-runtime-secret")
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("async-runtime-message-secret")
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("RuntimeServer submitUserMessage waits for stdin error after callback before marking mission sent", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.stdinErrorAfterAck = new Error("EPIPE token=runtime-epipe-secret")
+    await expect(server.submitUserMessage("secret=runtime-epipe-message-secret")).rejects.toThrow("adapter delivery failed")
+    const missions = await server.listRecentMissions()
+
+    expect(missions[0]).toMatchObject({ status: "failed", failure_reason: "OpenCode mission packet write failed: EPIPE [REDACTED]" })
+    expect(missions[0]).not.toMatchObject({ status: "sent" })
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("runtime-epipe-secret")
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("runtime-epipe-message-secret")
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("RuntimeServer submitUserMessage fails mission if process exits before write acknowledgement", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const adapter = new ProcessOpenCodeAdapter({ command: "opencode", cwd: dir, spawn: () => process })
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    await server.start()
+    process.onStdinWriteBeforeAck = () => process.emitExit(11, null)
+    await expect(server.submitUserMessage("secret=exit-runtime-message-secret")).rejects.toThrow("adapter delivery failed")
+    const missions = await server.listRecentMissions()
+
+    expect(missions[0]).toMatchObject({ status: "failed", failure_reason: "OpenCode mission packet write failed: OpenCode process exited with code 11" })
+    expect(missions[0]).not.toMatchObject({ status: "sent" })
+    expect(JSON.stringify({ missions, status: await server.status(), events: server.eventBus.snapshot() })).not.toContain("exit-runtime-message-secret")
+    await server.shutdown()
   })
 
   test("RuntimeServer can use injected process adapter with fake spawn without blocking start", async () => {
@@ -3102,6 +3521,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(processes).toHaveLength(2)
     expect(processes[0]?.stdinEnded).toBe(true)
     expect(processes[0]?.killedWith).toBe("SIGTERM")
+    expect(JSON.parse(processes[0]?.stdinWrites[0] ?? "{}")).toMatchObject({ type: "nxl.session_start" })
+    expect(JSON.parse(processes[1]?.stdinWrites[0] ?? "{}")).toMatchObject({ type: "nxl.session_start" })
     expect(result.adapter).toMatchObject({ adapter: "process", phase: "running", pid: 5001 })
 
     processes[0]?.emitExit(0, null)
@@ -3137,13 +3558,13 @@ describe("ProcessOpenCodeAdapter", () => {
     processes[0]?.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_old", tool: "mission.claim", payload: { token: "old-secret" } })}\n`)
     processes[1]?.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_new", tool: "mission.get", payload: {} })}\n`)
 
-    await waitForStdinWrite(processes[1]!)
+    const result = await waitForToolResult(processes[1]!)
     const events = await readProcessEvents(adapter, 4)
     const status = await adapter.getStatus()
 
     expect(calls).toEqual([{ type: "nxl.executor_tool_call", call_id: "call_new", tool: "mission.get", payload: {} }])
-    expect(processes[0]?.stdinWrites).toHaveLength(0)
-    expect(readToolResultLine(processes[1]?.stdinWrites[0] ?? "")).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_new", ok: true })
+    expect(processes[0]?.stdinWrites).toHaveLength(1)
+    expect(result).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_new", ok: true })
     expect(status).toMatchObject({ phase: "running", pid: 6401 })
     expect(events).toContainEqual({
       type: "ExecutorLifecycle",
@@ -3168,9 +3589,7 @@ describe("ProcessOpenCodeAdapter", () => {
       command: "opencode",
       cwd: "/tmp/demo",
       spawn: () => {
-        const process = new FakeSpawnedProcess(6500 + processes.length, {
-          stdinWriteError: processes.length === 0 ? new Error("stale stdin token=old-secret") : undefined,
-        })
+        const process = new FakeSpawnedProcess(6500 + processes.length)
         processes.push(process)
         return process
       },
@@ -3187,12 +3606,12 @@ describe("ProcessOpenCodeAdapter", () => {
     await timeout(20)
     processes[1]?.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_new_async", tool: "mission.get", payload: {} })}\n`)
 
-    await waitForStdinWrite(processes[1]!)
+    const result = await waitForToolResult(processes[1]!)
     const events = await readProcessEvents(adapter, 4)
     const status = await adapter.getStatus()
 
-    expect(processes[0]?.stdinWrites).toHaveLength(0)
-    expect(readToolResultLine(processes[1]?.stdinWrites[0] ?? "")).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_new_async", ok: true })
+    expect(processes[0]?.stdinWrites).toHaveLength(1)
+    expect(result).toMatchObject({ type: "nxl.executor_tool_result", call_id: "call_new_async", ok: true })
     expect(status).toMatchObject({ phase: "running", pid: 6501 })
     expect(JSON.stringify({ events, status })).not.toContain("old-secret")
     expect(events).toContainEqual({
@@ -3294,5 +3713,38 @@ describe("ProcessOpenCodeAdapter", () => {
     firstProcess.emitExit(0, null)
     await expect(shutdown).resolves.toBeUndefined()
     expect(JSON.stringify(await adapter.getStatus())).not.toContain("replacement-secret")
+  })
+
+  test("failed replacement bootstrap terminates replacement and preserves shutdown cleanup", async () => {
+    const processes: FakeSpawnedProcess[] = []
+    const adapter = new ProcessOpenCodeAdapter({
+      command: "opencode",
+      cwd: "/tmp/demo",
+      spawn: () => {
+        const process = new FakeSpawnedProcess(6600 + processes.length, {
+          stdinWriteError: processes.length === 1 ? new Error("replacement stdin failed token=replacement-bootstrap-secret") : undefined,
+        })
+        processes.push(process)
+        return process
+      },
+    })
+
+    await adapter.startSession({ projectDir: "/tmp/demo", objective: "first" })
+
+    await expect(adapter.startSession({ projectDir: "/tmp/demo", objective: "second secret=second-objective-secret" })).rejects.toThrow("OpenCode session bootstrap failed")
+    const status = await adapter.getStatus()
+
+    expect(processes[0]?.stdinEnded).toBe(true)
+    expect(processes[0]?.killedWith).toBe("SIGTERM")
+    expect(processes[1]?.stdinEnded).toBe(true)
+    expect(processes[1]?.killedWith).toBe("SIGTERM")
+    expect(status).toMatchObject({ phase: "failed", pid: 6600, terminatingPids: [6600, 6601], sessionStarted: false })
+    expect(JSON.stringify(status)).not.toContain("replacement-bootstrap-secret")
+    expect(JSON.stringify(status)).not.toContain("second-objective-secret")
+
+    const shutdown = adapter.shutdown()
+    processes[0]?.emitExit(0, null)
+    processes[1]?.emitExit(0, null)
+    await shutdown
   })
 })

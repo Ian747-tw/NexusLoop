@@ -13,8 +13,13 @@ export interface OpenCodeProcessEventSource {
 export interface OpenCodeSpawnedProcess {
   pid?: number
   stdin?: {
-    write?(data: string): unknown
+    write?(data: string, callback?: (error?: Error | null) => void): unknown
     end?(): unknown
+    on?(event: "error", listener: (error: Error) => void): unknown
+    off?(event: "error", listener: (error: Error) => void): unknown
+    removeListener?(event: "error", listener: (error: Error) => void): unknown
+    writable?: boolean
+    destroyed?: boolean
   }
   stdout?: OpenCodeProcessEventSource | null
   stderr?: OpenCodeProcessEventSource | null
@@ -40,6 +45,7 @@ export interface ProcessOpenCodeAdapterOptions {
   env?: Record<string, string>
   spawn?: OpenCodeSpawn
   spawnTimeoutMs?: number
+  writeTimeoutMs?: number
   shutdownTimeoutMs?: number
   toolHandler?: ExecutorToolHandler
 }
@@ -53,6 +59,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   private readonly env?: Record<string, string>
   private readonly spawn: OpenCodeSpawn
   private readonly spawnTimeoutMs: number
+  private readonly writeTimeoutMs: number
   private readonly shutdownTimeoutMs: number
   private readonly events: RuntimeEvent[] = []
   private readonly commandLabel: string
@@ -67,6 +74,8 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   private streamClosed = true
   private shutdownRequested = false
   private lastError: string | null = null
+  private lastWriteError: string | null = null
+  private sessionStarted = false
   private readonly stdoutBuffers = new WeakMap<object, string>()
   private toolHandler: ExecutorToolHandler | null
 
@@ -78,6 +87,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     this.env = options.env
     this.spawn = options.spawn ?? defaultOpenCodeSpawn
     this.spawnTimeoutMs = options.spawnTimeoutMs ?? 1000
+    this.writeTimeoutMs = options.writeTimeoutMs ?? 1000
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5000
     this.commandLabel = basename(options.command) || options.command
     this.toolHandler = options.toolHandler ?? null
@@ -93,8 +103,11 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     if (previousProcess) this.terminateProcess(previousProcess, "process-restart-requested", { clearCurrent: false })
     this.shutdownRequested = false
     this.lastError = null
+    this.lastWriteError = null
+    this.sessionStarted = false
     this.streamClosed = false
     const cwd = this.cwd ?? sessionSpec.projectDir
+    let failurePrefix = "OpenCode process spawn failed"
 
     try {
       child = this.spawn(this.command, this.args, { cwd, env: this.env })
@@ -103,6 +116,11 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       await this.waitForProcessSpawn(child, this.spawnTimeoutMs)
       const terminalError = this.terminalProcesses.get(child)
       if (terminalError) throw new Error(terminalError)
+      failurePrefix = "OpenCode session bootstrap failed"
+      await this.writeEnvelope(child, sessionStartEnvelope(sessionSpec), "session bootstrap")
+      const postWriteTerminalError = this.currentChildUnavailableReason(child)
+      if (postWriteTerminalError) throw new Error(postWriteTerminalError)
+      this.sessionStarted = true
       this.phase = "running"
       this.queue("process-started", `OpenCode process started: ${this.commandLabel}${child.pid === undefined ? "" : ` pid ${child.pid}`}`)
     } catch (error) {
@@ -110,15 +128,23 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       if (child && !this.terminalProcesses.has(child)) this.terminateProcess(child, "process-spawn-cleanup-requested", { clearCurrent: false })
       const restoredPrevious = previousProcess && !this.terminalProcesses.has(previousProcess) ? previousProcess : null
       if (this.process === child) this.process = restoredPrevious
-      this.lastError = redactText(`OpenCode process spawn failed: ${errorMessage(error)}`)
+      this.sessionStarted = false
+      this.lastError = redactText(`${failurePrefix}: ${errorMessage(error)}`)
       this.queue("process-spawn-failed", this.lastError)
       if (!this.process && this.terminatingProcesses.size === 0) this.closeStream()
       throw new Error(this.lastError)
     }
   }
 
-  async sendMissionPacket(_packet: MissionPacket): Promise<void> {
-    throw new Error("real mission packet transport not implemented")
+  async sendMissionPacket(packet: MissionPacket): Promise<void> {
+    const child = this.process
+    if (!child || this.phase !== "running" || this.expectedExitProcesses.has(child) || this.terminatingProcesses.has(child)) {
+      throw this.recordWriteFailure("mission packet", "OpenCode process is not running")
+    }
+    await this.writeEnvelope(child, missionPacketEnvelope(packet), "mission packet")
+    const postWriteTerminalError = this.currentChildUnavailableReason(child)
+    if (postWriteTerminalError) throw this.recordWriteFailure("mission packet", postWriteTerminalError)
+    this.queue("process-mission-packet-sent", `OpenCode mission packet sent: ${packet.missionId}`)
   }
 
   async pauseAtSafeBoundary(_reason: string): Promise<void> {
@@ -155,6 +181,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   async shutdown(): Promise<void> {
     this.shutdownRequested = true
     this.phase = "shutdown"
+    this.sessionStarted = false
     const children = new Set(this.terminatingProcesses)
     if (this.process) children.add(this.process)
     if (children.size === 0) {
@@ -174,7 +201,10 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
   }
 
   private terminateProcess(child: OpenCodeSpawnedProcess, phase: string, options: { clearCurrent: boolean }): void {
-    if (options.clearCurrent && this.process === child) this.process = null
+    if (this.process === child) {
+      this.sessionStarted = false
+      if (options.clearCurrent) this.process = null
+    }
     this.expectedExitProcesses.add(child)
     this.terminatingProcesses.add(child)
     try {
@@ -200,6 +230,9 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       pid: this.process?.pid,
       terminatingPids: [...this.terminatingProcesses].map((child) => child.pid).filter((pid) => pid !== undefined),
       command: this.commandLabel,
+      transport: "jsonl",
+      sessionStarted: this.sessionStarted,
+      lastWriteError: this.lastWriteError ?? undefined,
       message: `ProcessOpenCodeAdapter ${this.phase}`,
       lastError: this.lastError ?? undefined,
     })
@@ -214,6 +247,7 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
         return
       }
       this.phase = "failed"
+      if (this.process === child) this.sessionStarted = false
       this.lastError = redactText(`OpenCode process error: ${errorMessage(error)}`)
       this.terminalProcesses.set(child, this.lastError)
       this.queue("process-error", this.lastError)
@@ -221,7 +255,10 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     child.on("exit", (code, signal) => {
       const message = exitMessage("OpenCode process exited", code, signal)
       this.terminalProcesses.set(child, message)
-      if (this.process === child) this.process = null
+      if (this.process === child) {
+        this.sessionStarted = false
+        this.process = null
+      }
       if (this.shutdownRequested || this.expectedExitProcesses.has(child)) {
         if (this.shutdownRequested) this.phase = "shutdown"
         this.queue("process-exited", message)
@@ -287,11 +324,20 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
       this.queueSupersededToolCallIgnored(envelope, "result")
       return
     }
-    this.writeToolResult(child, result)
+    await this.writeToolResult(child, result)
   }
 
   private isCurrentToolCallChild(child: OpenCodeSpawnedProcess): boolean {
-    return this.process === child && !this.expectedExitProcesses.has(child) && !this.terminatingProcesses.has(child)
+    return this.currentChildUnavailableReason(child) === null
+  }
+
+  private currentChildUnavailableReason(child: OpenCodeSpawnedProcess): string | null {
+    const terminalError = this.terminalProcesses.get(child)
+    if (terminalError) return terminalError
+    if (this.process !== child || this.expectedExitProcesses.has(child) || this.terminatingProcesses.has(child)) {
+      return "OpenCode process is no longer running"
+    }
+    return null
   }
 
   private queueSupersededToolCallIgnored(envelope: Record<string, unknown>, stage: "call" | "result"): void {
@@ -312,19 +358,86 @@ export class ProcessOpenCodeAdapter implements OpenCodeRuntimeAdapter, ExecutorT
     }
   }
 
-  private writeToolResult(child: OpenCodeSpawnedProcess, result: ExecutorToolResult): void {
+  private async writeToolResult(child: OpenCodeSpawnedProcess, result: ExecutorToolResult): Promise<void> {
     const message = JSON.stringify(redactValue({
       type: "nxl.executor_tool_result",
       ...result,
     })) + "\n"
     try {
-      if (typeof child.stdin?.write !== "function") throw new Error("child stdin is not writable")
-      child.stdin.write(message)
+      await this.writeJsonl(child, message)
     } catch (error) {
       this.phase = "failed"
       this.lastError = redactText(`OpenCode tool result write failed: ${errorMessage(error)}`)
+      this.lastWriteError = this.lastError
       this.queue("process-tool-result-write-failed", this.lastError)
     }
+  }
+
+  private async writeEnvelope(child: OpenCodeSpawnedProcess, envelope: Record<string, unknown>, label: string): Promise<void> {
+    try {
+      await this.writeJsonl(child, `${JSON.stringify(envelope)}\n`)
+    } catch (error) {
+      throw this.recordWriteFailure(label, errorMessage(error))
+    }
+  }
+
+  private async writeJsonl(child: OpenCodeSpawnedProcess, line: string): Promise<void> {
+    if (!child.stdin) throw new Error("child stdin is missing")
+    if (child.stdin.writable === false || child.stdin.destroyed === true || typeof child.stdin.write !== "function") {
+      throw new Error("child stdin is not writable")
+    }
+    const stdin = child.stdin
+    const rawWrite = stdin.write!
+    const write = rawWrite.bind(stdin) as (data: string, callback?: (error?: Error | null) => void) => unknown
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      let successTimer: ReturnType<typeof setTimeout> | null = null
+      let removeErrorListener = () => {}
+      let timeout: ReturnType<typeof setTimeout>
+      const finish = (callback: () => void) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        if (successTimer) clearTimeout(successTimer)
+        removeErrorListener()
+        callback()
+      }
+      const acknowledgeSuccess = () => {
+        successTimer = setTimeout(() => finish(resolve), 0)
+      }
+      removeErrorListener = this.attachStdinErrorListener(stdin, (error) => finish(() => reject(error)))
+      timeout = setTimeout(() => finish(() => reject(new Error(`timed out after ${this.writeTimeoutMs}ms`))), this.writeTimeoutMs)
+      try {
+        if (rawWrite.length < 2) {
+          write(line)
+          acknowledgeSuccess()
+          return
+        }
+        write(line, (error?: Error | null) => {
+          if (error) finish(() => reject(error))
+          else acknowledgeSuccess()
+        })
+      } catch (error) {
+        finish(() => reject(error))
+      }
+    })
+  }
+
+  private attachStdinErrorListener(stdin: NonNullable<OpenCodeSpawnedProcess["stdin"]>, listener: (error: Error) => void): () => void {
+    if (typeof stdin.on !== "function") return () => {}
+    stdin.on("error", listener)
+    return () => {
+      if (typeof stdin.off === "function") stdin.off("error", listener)
+      else stdin.removeListener?.("error", listener)
+    }
+  }
+
+  private recordWriteFailure(label: string, reason: string): Error {
+    this.phase = "failed"
+    this.lastWriteError = redactText(`OpenCode ${label} write failed: ${reason}`)
+    this.lastError = this.lastWriteError
+    this.queue(`process-${label.replace(/\s+/g, "-")}-write-failed`, this.lastWriteError)
+    return new Error(this.lastWriteError)
   }
 
   private compactDrainedEvents(): void {
@@ -388,6 +501,28 @@ function defaultOpenCodeSpawn(command: string, args: string[], options: OpenCode
     env: options.env === undefined ? process.env : { ...process.env, ...options.env },
     stdio: ["pipe", "pipe", "pipe"],
   })
+}
+
+function sessionStartEnvelope(sessionSpec: SessionSpec): Record<string, unknown> {
+  return {
+    type: "nxl.session_start",
+    projectDir: sessionSpec.projectDir,
+    objective: sessionSpec.objective,
+    protocolVersion: 1,
+    createdAt: new Date().toISOString(),
+  }
+}
+
+function missionPacketEnvelope(packet: MissionPacket): Record<string, unknown> {
+  return {
+    type: "nxl.mission_packet",
+    missionId: packet.missionId,
+    intentId: packet.intentId,
+    message: packet.message,
+    objective: packet.objective,
+    protocolVersion: packet.protocolVersion,
+    createdAt: packet.createdAt,
+  }
 }
 
 function dataToText(data: unknown): string {
