@@ -24,6 +24,7 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
   let state = initialState(projectDir)
   const iterator = runtime.stream()[Symbol.asyncIterator]()
   let sawEvent = false
+  let idleTimedOut = false
   const useIdleBreak = runtime.streamMode === "long-lived"
   try {
     while (true) {
@@ -33,12 +34,18 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
             new Promise<"idle">((resolve) => setTimeout(() => resolve("idle"), HEADLESS_STREAM_IDLE_TIMEOUT_MS)),
           ])
         : await iterator.next()
-      if (next === "idle" || next.done) break
+      if (next === "idle") {
+        idleTimedOut = true
+        break
+      }
+      if (next.done) break
       sawEvent = true
       state = reduceRuntimeEvent(state, next.value)
     }
   } finally {
-    await iterator.return?.()
+    const close = iterator.return?.()
+    if (idleTimedOut) void close?.catch(() => {})
+    else await close
   }
 
   const commands = env.NXL_TUI_KEYS ? (JSON.parse(env.NXL_TUI_KEYS) as KeyCommand[]) : []

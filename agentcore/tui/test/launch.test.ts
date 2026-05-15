@@ -32,6 +32,33 @@ class DelayedFiniteRuntimeClient extends TestRuntimeClient {
   }
 }
 
+class BlockingLongLivedRuntimeClient extends TestRuntimeClient {
+  readonly streamMode = "long-lived" as const
+  returnCalls = 0
+
+  stream(): AsyncIterable<RuntimeEvent> {
+    const self = this
+    let eventCount = 0
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          async next(): Promise<IteratorResult<RuntimeEvent>> {
+            eventCount += 1
+            if (eventCount === 1) {
+              return { done: false, value: { type: "RuntimeReady", projectName: "launch-test", runtimeStatus: "started" } }
+            }
+            return await new Promise<IteratorResult<RuntimeEvent>>(() => {})
+          },
+          return(): Promise<IteratorResult<RuntimeEvent>> {
+            self.returnCalls += 1
+            return new Promise<IteratorResult<RuntimeEvent>>(() => {})
+          },
+        }
+      },
+    }
+  }
+}
+
 describe("TUI launch boundary", () => {
   test("headless entrypoint shuts down owning runtime client after snapshot", async () => {
     const runtime = new TestRuntimeClient()
@@ -76,6 +103,22 @@ describe("TUI launch boundary", () => {
 
     expect(output.join("\n")).toContain("screen=resume")
     expect(output.join("\n")).toContain("Resume previous run")
+    expect(runtime.shutdownCount).toBe(1)
+  })
+
+  test("headless entrypoint does not hang when a long-lived stream idles with pending next", async () => {
+    const runtime = new BlockingLongLivedRuntimeClient()
+    const output: string[] = []
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-blocking-long-lived",
+      env: { NXL_TUI_HEADLESS: "1" },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("launch-test")
+    expect(runtime.returnCalls).toBe(1)
     expect(runtime.shutdownCount).toBe(1)
   })
 
