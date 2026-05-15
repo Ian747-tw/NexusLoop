@@ -14,6 +14,7 @@ import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
+import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCodeAdapterConfig, validateOpenCodeAdapterConfig } from "./opencode/adapter-config"
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import type { MissionPacket } from "./missions/mission-types"
 import type { ExecutorToolHandler, ExecutorToolHandlerAdapter, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
@@ -2544,6 +2545,181 @@ async function waitForRuntimeEvent(server: RuntimeServer, predicate: (event: Run
   }
   throw new Error("timed out waiting for runtime event")
 }
+
+describe("OpenCode adapter config", () => {
+  test("RuntimeServer defaults to FakeOpenCodeAdapter when no adapter config or injection is provided", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir })
+
+    expect(server.adapter).toBeInstanceOf(FakeOpenCodeAdapter)
+    await server.start()
+    expect(await server.status()).toMatchObject({
+      fakeOpenCode: "Real OpenCode runtime integration is intentionally not implemented in R3.",
+      adapterStatus: { adapter: "fake", phase: "started" },
+    })
+    await server.shutdown()
+  })
+
+  test("direct injected adapter takes precedence over adapter config", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      openCodeAdapterConfig: { kind: "process", command: "" },
+    })
+
+    expect(server.adapter).toBe(adapter)
+    await server.start()
+    expect(adapter.startCalls).toBe(1)
+    await server.shutdown()
+  })
+
+  test("factory creates FakeOpenCodeAdapter for fake config and rejects process-only fake fields", () => {
+    expect(createOpenCodeAdapter({ kind: "fake" })).toBeInstanceOf(FakeOpenCodeAdapter)
+    expect(() => createOpenCodeAdapter({ kind: "fake", command: "opencode" })).toThrow("process-only field: command")
+  })
+
+  test("factory creates ProcessOpenCodeAdapter for process config without spawning", () => {
+    let spawnCalls = 0
+    const adapter = createOpenCodeAdapter(
+      { kind: "process", command: "opencode", args: ["--stdio"], cwd: "/tmp/demo", spawnTimeoutMs: 1000, writeTimeoutMs: 1000, shutdownTimeoutMs: 5000 },
+      {
+        spawn: () => {
+          spawnCalls += 1
+          return new FakeSpawnedProcess()
+        },
+      },
+    )
+
+    expect(adapter).toBeInstanceOf(ProcessOpenCodeAdapter)
+    expect(spawnCalls).toBe(0)
+  })
+
+  test("process config validates blank command args env and timeouts", () => {
+    expect(() => validateOpenCodeAdapterConfig({ kind: "process", command: "" })).toThrow("command must be a nonblank string")
+    expect(() => validateOpenCodeAdapterConfig({ kind: "process", command: "opencode", args: ["--stdio", 7] as unknown as string[] })).toThrow("args must be an array of strings")
+    expect(() => validateOpenCodeAdapterConfig({ kind: "process", command: "opencode", env: { NXL_TOKEN: 7 } as unknown as Record<string, string> })).toThrow("env keys and values must be strings")
+    expect(() => validateOpenCodeAdapterConfig({ kind: "process", command: "opencode", spawnTimeoutMs: 0 })).toThrow("spawnTimeoutMs must be a positive integer")
+    expect(() => validateOpenCodeAdapterConfig({ kind: "process", command: "opencode", writeTimeoutMs: 1.5 })).toThrow("writeTimeoutMs must be a positive integer")
+    expect(() => validateOpenCodeAdapterConfig({ kind: "process", command: "opencode", shutdownTimeoutMs: -1 })).toThrow("shutdownTimeoutMs must be a positive integer")
+  })
+
+  test("RuntimeServer with process config and fake spawn starts writes session contract and registers tool handler", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      openCodeAdapterConfig: { kind: "process", command: "opencode", args: ["--stdio"] },
+      openCodeAdapterFactoryOptions: { spawn: () => process },
+    })
+
+    await server.start()
+    expect(process.stdinWrites).toHaveLength(1)
+    expect(sessionContractFromWrite(process)).toMatchObject({
+      allowedToolNames: [...MISSION_TOOL_NAMES],
+      inputEnvelopeTypes: ["nxl.session_start", "nxl.mission_packet", "nxl.executor_tool_result"],
+    })
+
+    process.stdout.emitData(`${JSON.stringify({ type: "nxl.executor_tool_call", call_id: "call_registered", tool: "mission.list_recent", payload: { limit: 1 } })}\n`)
+    expect(await waitForToolResult(process)).toMatchObject({
+      type: "nxl.executor_tool_result",
+      call_id: "call_registered",
+      tool: "mission.list_recent",
+      ok: true,
+      result: [],
+    })
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("RuntimeServer with process config can submit a message and write mission packet", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      openCodeAdapterConfig: { kind: "process", command: "opencode" },
+      openCodeAdapterFactoryOptions: { spawn: () => process },
+    })
+
+    await server.start()
+    const result = await server.submitUserMessage("configured transport message")
+    const missionEnvelope = await waitForJsonlWrite(process, "nxl.mission_packet")
+
+    expect(missionEnvelope).toMatchObject({ type: "nxl.mission_packet", missionId: result.missionId, intentId: result.intentId, message: "configured transport message" })
+    expect(await server.getMission(result.missionId)).toMatchObject({ status: "sent" })
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("config and status redacts secret-looking command env and args values", async () => {
+    const config = {
+      kind: "process" as const,
+      command: "/tmp/token=command-secret/opencode",
+      args: ["--api-key=arg-secret", "--stdio"],
+      env: { NXL_TOKEN: "env-secret", SAFE: "value" },
+    }
+    const redactedConfig = redactOpenCodeAdapterConfig(config)
+
+    expect(JSON.stringify(redactedConfig)).toContain("[REDACTED]")
+    expect(JSON.stringify(redactedConfig)).not.toContain("command-secret")
+    expect(JSON.stringify(redactedConfig)).not.toContain("arg-secret")
+    expect(JSON.stringify(redactedConfig)).not.toContain("env-secret")
+
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      openCodeAdapterConfig: config,
+      openCodeAdapterFactoryOptions: { spawn: () => process },
+    })
+    await server.start()
+    const statusAndEvents = JSON.stringify({ status: await server.status(), events: server.eventBus.snapshot() })
+
+    expect(statusAndEvents).not.toContain("command-secret")
+    expect(statusAndEvents).not.toContain("arg-secret")
+    expect(statusAndEvents).not.toContain("env-secret")
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("env parser works for valid fake and process configs", () => {
+    expect(readOpenCodeAdapterConfigFromEnv({ NXL_OPENCODE_ADAPTER: "fake" })).toEqual({ kind: "fake" })
+    expect(readOpenCodeAdapterConfigFromEnv({
+      NXL_OPENCODE_ADAPTER: "process",
+      NXL_OPENCODE_COMMAND: "opencode",
+      NXL_OPENCODE_ARGS_JSON: "[\"--stdio\"]",
+      NXL_OPENCODE_SPAWN_TIMEOUT_MS: "1000",
+      NXL_OPENCODE_WRITE_TIMEOUT_MS: "1001",
+      NXL_OPENCODE_SHUTDOWN_TIMEOUT_MS: "5000",
+    })).toEqual({
+      kind: "process",
+      command: "opencode",
+      args: ["--stdio"],
+      cwd: undefined,
+      env: undefined,
+      spawnTimeoutMs: 1000,
+      writeTimeoutMs: 1001,
+      shutdownTimeoutMs: 5000,
+    })
+  })
+
+  test("env parser fails clearly for invalid kind invalid args JSON and bad timeouts", () => {
+    expect(() => readOpenCodeAdapterConfigFromEnv({ NXL_OPENCODE_ADAPTER: "real" })).toThrow("unknown OpenCode adapter kind")
+    expect(() => readOpenCodeAdapterConfigFromEnv({ NXL_OPENCODE_ADAPTER: "process", NXL_OPENCODE_COMMAND: "opencode", NXL_OPENCODE_ARGS_JSON: "not-json" })).toThrow("NXL_OPENCODE_ARGS_JSON must be valid JSON")
+    expect(() => readOpenCodeAdapterConfigFromEnv({ NXL_OPENCODE_ADAPTER: "process", NXL_OPENCODE_COMMAND: "opencode", NXL_OPENCODE_WRITE_TIMEOUT_MS: "0" })).toThrow("NXL_OPENCODE_WRITE_TIMEOUT_MS must be a positive integer")
+  })
+})
 
 describe("OpenCode session contract", () => {
   test("includes all supported mission tool names", () => {
