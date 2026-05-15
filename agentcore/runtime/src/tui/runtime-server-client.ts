@@ -3,6 +3,8 @@ import { redactText } from "../security/redaction"
 import { RuntimeServer } from "../server"
 import type { RuntimeClient, SubmitUserMessageResult } from "./runtime-client"
 
+const serverStartTasks = new WeakMap<RuntimeServer, Promise<void>>()
+
 export interface RuntimeServerClientOptions {
   server: RuntimeServer
   autoStart?: boolean
@@ -29,7 +31,7 @@ export class RuntimeServerClient implements RuntimeClient {
     if (this.started) return
     this.startTask ??= (async () => {
       const status = await this.server.status()
-      if (status.runtimeStatus !== "started") await this.server.start()
+      if (status.runtimeStatus !== "started") await startServerOnce(this.server)
     })()
       .then(() => {
         this.started = true
@@ -108,4 +110,15 @@ export class RuntimeServerClient implements RuntimeClient {
 
 function redactError(error: unknown): Error {
   return new Error(redactText(error instanceof Error ? error.message : String(error)))
+}
+
+async function startServerOnce(server: RuntimeServer): Promise<void> {
+  let task = serverStartTasks.get(server)
+  if (!task) {
+    task = server.start().finally(() => {
+      serverStartTasks.delete(server)
+    })
+    serverStartTasks.set(server, task)
+  }
+  await task
 }

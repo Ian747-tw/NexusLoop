@@ -2980,6 +2980,25 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("auto-start serializes concurrent clients sharing one server", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+    const firstClient = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const secondClient = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+
+    const [first, second] = await Promise.all([
+      firstClient.command("runtime.status"),
+      secondClient.command("runtime.status"),
+    ])
+
+    expect(first).toMatchObject({ runtimeStatus: "started" })
+    expect(second).toMatchObject({ runtimeStatus: "started" })
+    expect(adapter.startCalls).toBe(1)
+    await firstClient.shutdown({ force: true })
+  })
+
   test("auto-start attaches to an already-started server without restarting", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
