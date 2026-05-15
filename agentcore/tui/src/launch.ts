@@ -23,13 +23,17 @@ async function defaultRunOpenTui(runtime: RuntimeClient, projectDir: string): Pr
 export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: string, env: Record<string, string | undefined>): Promise<string> {
   let state = initialState(projectDir)
   const iterator = runtime.stream()[Symbol.asyncIterator]()
+  let sawEvent = false
   try {
     while (true) {
-      const next = await Promise.race([
-        iterator.next(),
-        new Promise<"idle">((resolve) => setTimeout(() => resolve("idle"), HEADLESS_STREAM_IDLE_TIMEOUT_MS)),
-      ])
+      const next = sawEvent
+        ? await Promise.race([
+            iterator.next(),
+            new Promise<"idle">((resolve) => setTimeout(() => resolve("idle"), HEADLESS_STREAM_IDLE_TIMEOUT_MS)),
+          ])
+        : await iterator.next()
       if (next === "idle" || next.done) break
+      sawEvent = true
       state = reduceRuntimeEvent(state, next.value)
     }
   } finally {

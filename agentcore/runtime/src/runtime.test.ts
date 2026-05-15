@@ -2995,6 +2995,22 @@ describe("RuntimeServerClient", () => {
     expect(await client.server.status()).toMatchObject({ lockHeld: false, runtimeStatus: "created" })
   })
 
+  test("owned client rejects command and submit after shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    await client.command("runtime.status")
+    await client.shutdown()
+
+    await expect(client.command("runtime.status")).rejects.toThrow("runtime client has been shut down")
+    await expect(client.submitUserMessage("after shutdown")).rejects.toThrow("runtime client has been shut down")
+  })
+
   test("caller-owned server is not shut down unless forced", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

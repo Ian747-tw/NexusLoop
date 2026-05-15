@@ -4,9 +4,14 @@ import { runTuiEntrypoint } from "../src/launch"
 import type { RuntimeClient } from "../src/runtime"
 
 class TestRuntimeClient implements RuntimeClient {
+  constructor(private readonly firstEventDelayMs = 0) {}
+
   shutdownCount = 0
 
   async *stream(): AsyncIterable<RuntimeEvent> {
+    if (this.firstEventDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.firstEventDelayMs))
+    }
     yield { type: "RuntimeReady", projectName: "launch-test", runtimeStatus: "started" }
   }
 
@@ -26,6 +31,21 @@ describe("TUI launch boundary", () => {
 
     await runTuiEntrypoint({
       projectDir: "/tmp/nxl-launch-headless",
+      env: { NXL_TUI_HEADLESS: "1" },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("launch-test")
+    expect(runtime.shutdownCount).toBe(1)
+  })
+
+  test("headless entrypoint waits for the first runtime event before idle timeout", async () => {
+    const runtime = new TestRuntimeClient(75)
+    const output: string[] = []
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-delayed-headless",
       env: { NXL_TUI_HEADLESS: "1" },
       runtime,
       writeOutput: (snapshot) => output.push(snapshot),
