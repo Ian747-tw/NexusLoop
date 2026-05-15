@@ -3012,6 +3012,24 @@ describe("RuntimeServerClient", () => {
     await client.shutdown({ force: true })
   })
 
+  test("stream attached to an already-started status-mode server yields initialized state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter: new LongLivedAdapter() })
+    await server.start()
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const iterator = client.stream()[Symbol.asyncIterator]()
+
+    const first = await iterator.next()
+    const second = await iterator.next()
+
+    expect(first.value).toMatchObject({ type: "RuntimeReady", runtimeStatus: "started" })
+    expect(second.value).toMatchObject({ type: "ProjectInitialized", projectDir: dir })
+
+    await iterator.return?.()
+    await client.shutdown({ force: true })
+  })
+
   test("runtime.shutdown command resets auto-start state", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

@@ -74,7 +74,9 @@ export class RuntimeServerClient implements RuntimeClient {
         projectName: status.projectName,
         runtimeStatus: status.runtimeStatus,
       }
-      if (status.specApproved) yield { type: "ProjectInitialized", projectDir: status.projectDir }
+      if (status.runtimeStatus === "started" || status.specApproved) {
+        yield { type: "ProjectInitialized", projectDir: status.projectDir }
+      }
       let next = await iterator.next()
       while (!next.done) {
         yield next.value
