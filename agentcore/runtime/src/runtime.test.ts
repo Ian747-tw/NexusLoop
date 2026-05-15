@@ -3085,6 +3085,22 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("runtime.shutdown command does not auto-start an unstarted server", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const adapter = new LongLivedAdapter()
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    await expect(client.command("runtime.shutdown", { reason: "pre-start cleanup" })).resolves.toBeUndefined()
+
+    expect(adapter.startCalls).toBe(0)
+    await expect(client.command("runtime.status")).rejects.toThrow("approved spec")
+  })
+
   test("shutdown is idempotent for owned server", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
