@@ -28,7 +28,16 @@ export class RuntimeServerClient implements RuntimeClient {
 
   async start(): Promise<void> {
     if (this.shutdownRequested) throw new Error("runtime client has been shut down")
-    if (this.started) return
+    if (this.started) {
+      try {
+        const status = await this.server.status()
+        if (status.runtimeStatus === "started") return
+        this.started = false
+        this.startTask = null
+      } catch (error) {
+        throw redactError(error)
+      }
+    }
     this.startTask ??= (async () => {
       const status = await this.server.status()
       if (status.runtimeStatus !== "started") await startServerOnce(this.server)

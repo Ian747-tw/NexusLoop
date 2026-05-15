@@ -2999,6 +2999,24 @@ describe("RuntimeServerClient", () => {
     await firstClient.shutdown({ force: true })
   })
 
+  test("auto-start rechecks shared server state after another client shuts it down", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+    const owner = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const attached = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+
+    await expect(owner.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+    await expect(attached.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+
+    await owner.shutdown({ force: true })
+
+    await expect(attached.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+    expect(adapter.startCalls).toBe(2)
+    await attached.shutdown({ force: true })
+  })
+
   test("auto-start attaches to an already-started server without restarting", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
