@@ -1,0 +1,134 @@
+import type { RuntimeEvent } from "../events/event-types"
+import { redactText } from "../security/redaction"
+import { RuntimeServer } from "../server"
+import type { RuntimeClient, SubmitUserMessageResult } from "./runtime-client"
+
+const serverStartTasks = new WeakMap<RuntimeServer, Promise<void>>()
+
+export interface RuntimeServerClientOptions {
+  server: RuntimeServer
+  autoStart?: boolean
+  ownsServer?: boolean
+}
+
+export class RuntimeServerClient implements RuntimeClient {
+  readonly server: RuntimeServer
+  private readonly autoStart: boolean
+  private readonly ownsServer: boolean
+  private startTask: Promise<void> | null = null
+  private shutdownTask: Promise<void> | null = null
+  private started = false
+  private shutdownRequested = false
+
+  constructor(options: RuntimeServerClientOptions) {
+    this.server = options.server
+    this.autoStart = options.autoStart ?? false
+    this.ownsServer = options.ownsServer ?? false
+  }
+
+  async start(): Promise<void> {
+    if (this.shutdownRequested) throw new Error("runtime client has been shut down")
+    if (this.started) {
+      try {
+        const status = await this.server.status()
+        if (status.runtimeStatus === "started") return
+        this.started = false
+        this.startTask = null
+      } catch (error) {
+        throw redactError(error)
+      }
+    }
+    this.startTask ??= (async () => {
+      const status = await this.server.status()
+      if (status.runtimeStatus !== "started") await startServerOnce(this.server)
+    })()
+      .then(() => {
+        this.started = true
+      })
+      .catch((error) => {
+        this.startTask = null
+        throw redactError(error)
+      })
+    await this.startTask
+  }
+
+  command = (async (name: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
+    if (name !== "runtime.shutdown") await this.ensureStarted()
+    try {
+      const result = await this.server.command(name, payload)
+      if (name === "runtime.shutdown") {
+        this.started = false
+        this.startTask = null
+      }
+      return result
+    } catch (error) {
+      throw redactError(error)
+    }
+  }) as RuntimeClient["command"]
+
+  async submitUserMessage(message: string): Promise<SubmitUserMessageResult> {
+    await this.ensureStarted()
+    try {
+      return await this.server.submitUserMessage(message)
+    } catch (error) {
+      throw redactError(error)
+    }
+  }
+
+  async *stream(): AsyncIterable<RuntimeEvent> {
+    let iterator: AsyncIterator<RuntimeEvent> | null = null
+    try {
+      await this.ensureStarted()
+      const status = await this.server.status()
+      yield {
+        type: "RuntimeReady",
+        projectName: status.projectName,
+        runtimeStatus: status.runtimeStatus,
+      }
+      if (status.runtimeStatus === "started" || status.specApproved) {
+        yield { type: "ProjectInitialized", projectDir: status.projectDir }
+      }
+      iterator = this.server.eventBus.streamFromNow()[Symbol.asyncIterator]()
+      let next = await iterator.next()
+      while (!next.done) {
+        yield next.value
+        next = await iterator.next()
+      }
+    } finally {
+      await iterator?.return?.()
+    }
+  }
+
+  async shutdown(options: { force?: boolean } = {}): Promise<void> {
+    if (!this.ownsServer && !options.force) {
+      this.shutdownRequested = true
+      return
+    }
+    this.shutdownRequested = true
+    this.shutdownTask ??= this.server.shutdown().catch((error) => {
+      this.shutdownTask = null
+      throw redactError(error)
+    })
+    await this.shutdownTask
+  }
+
+  private async ensureStarted(): Promise<void> {
+    if (!this.autoStart) return
+    await this.start()
+  }
+}
+
+function redactError(error: unknown): Error {
+  return new Error(redactText(error instanceof Error ? error.message : String(error)))
+}
+
+async function startServerOnce(server: RuntimeServer): Promise<void> {
+  let task = serverStartTasks.get(server)
+  if (!task) {
+    task = server.start().finally(() => {
+      serverStartTasks.delete(server)
+    })
+    serverStartTasks.set(server, task)
+  }
+  await task
+}

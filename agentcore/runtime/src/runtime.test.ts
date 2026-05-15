@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
 import type { RuntimeResearchDbProjection } from "./server"
 import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv } from "./launch-config"
+import { RuntimeServerClient } from "./tui/runtime-server-client"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
@@ -2896,6 +2897,301 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
     await server.start()
     expect(adapter.startCalls).toBe(1)
     await server.shutdown()
+  })
+})
+
+describe("RuntimeServerClient", () => {
+  test("delegates runtime.status", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    const status = await client.command("runtime.status")
+    expect(status).toMatchObject({ runtimeStatus: "started", lockHeld: true })
+    await client.shutdown()
+  })
+
+  test("delegates runtime.submit_user_message command and submitUserMessage", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    const commandResult = await client.command("runtime.submit_user_message", { message: "from command" })
+    const submitResult = await client.submitUserMessage("from method")
+
+    expect(commandResult).toMatchObject({ accepted: true, missionId: expect.any(String), intentId: expect.any(String) })
+    expect(submitResult).toMatchObject({ accepted: true, missionId: expect.any(String), intentId: expect.any(String) })
+    expect(adapter.packets.map((packet) => packet.message)).toEqual(["from command", "from method"])
+    await client.shutdown()
+  })
+
+  test("streams runtime events from RuntimeServer", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() }),
+      autoStart: true,
+      ownsServer: true,
+    })
+    const iterator = client.stream()[Symbol.asyncIterator]()
+
+    const events: RuntimeEvent[] = []
+    for (let index = 0; index < 5; index += 1) {
+      const next = await Promise.race([
+        iterator.next(),
+        timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
+          throw new Error("timed out waiting for client stream event")
+        }),
+      ])
+      if (next.done) break
+      events.push(next.value)
+      if (next.value.type === "RuntimeReady") break
+    }
+
+    expect(events.map((event) => event.type)).toContain("RuntimeReady")
+    await iterator.return?.()
+    await client.shutdown()
+  })
+
+  test("auto-start stream does not replay queued startup events after synthetic boot state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() }),
+      autoStart: true,
+      ownsServer: true,
+    })
+    const iterator = client.stream()[Symbol.asyncIterator]()
+
+    const events: RuntimeEvent[] = []
+    for (let index = 0; index < 2; index += 1) {
+      const next = await Promise.race([
+        iterator.next(),
+        timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
+          throw new Error("timed out waiting for client stream startup event")
+        }),
+      ])
+      expect(next.done).toBe(false)
+      events.push(next.value)
+    }
+
+    expect(events.map((event) => event.type)).toEqual(["RuntimeReady", "ProjectInitialized"])
+    const nextEvent = iterator.next()
+    await client.command("runtime.resume")
+    const possibleQueuedDuplicate = await Promise.race([
+      nextEvent.then((next) => next.value?.type ?? "done"),
+      timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
+        throw new Error("timed out waiting for client stream post-start event")
+      }),
+    ])
+    expect(possibleQueuedDuplicate).toBe("ResumeSummaryLoaded")
+
+    await iterator.return?.()
+    await client.shutdown()
+  })
+
+  test("auto-start serializes concurrent commands and starts once", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    const [first, second] = await Promise.all([
+      client.command("runtime.status"),
+      client.command("runtime.status"),
+    ])
+
+    expect(first).toMatchObject({ runtimeStatus: "started" })
+    expect(second).toMatchObject({ runtimeStatus: "started" })
+    expect(adapter.startCalls).toBe(1)
+    await client.shutdown()
+  })
+
+  test("auto-start serializes concurrent clients sharing one server", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+    const firstClient = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const secondClient = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+
+    const [first, second] = await Promise.all([
+      firstClient.command("runtime.status"),
+      secondClient.command("runtime.status"),
+    ])
+
+    expect(first).toMatchObject({ runtimeStatus: "started" })
+    expect(second).toMatchObject({ runtimeStatus: "started" })
+    expect(adapter.startCalls).toBe(1)
+    await firstClient.shutdown({ force: true })
+  })
+
+  test("auto-start rechecks shared server state after another client shuts it down", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+    const owner = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const attached = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+
+    await expect(owner.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+    await expect(attached.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+
+    await owner.shutdown({ force: true })
+
+    await expect(attached.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+    expect(adapter.startCalls).toBe(2)
+    await attached.shutdown({ force: true })
+  })
+
+  test("auto-start attaches to an already-started server without restarting", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+    await server.start()
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+
+    await expect(client.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started", lockHeld: true })
+
+    expect(adapter.startCalls).toBe(1)
+    await client.shutdown({ force: true })
+  })
+
+  test("stream attached to an already-started server yields current boot state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    await server.start()
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const iterator = client.stream()[Symbol.asyncIterator]()
+
+    const first = await iterator.next()
+    const second = await iterator.next()
+
+    expect(first.value).toMatchObject({ type: "RuntimeReady", runtimeStatus: "started" })
+    expect(second.value).toMatchObject({ type: "ProjectInitialized", projectDir: dir })
+
+    await iterator.return?.()
+    await client.shutdown({ force: true })
+  })
+
+  test("stream attached to an already-started status-mode server yields initialized state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter: new LongLivedAdapter() })
+    await server.start()
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const iterator = client.stream()[Symbol.asyncIterator]()
+
+    const first = await iterator.next()
+    const second = await iterator.next()
+
+    expect(first.value).toMatchObject({ type: "RuntimeReady", runtimeStatus: "started" })
+    expect(second.value).toMatchObject({ type: "ProjectInitialized", projectDir: dir })
+
+    await iterator.return?.()
+    await client.shutdown({ force: true })
+  })
+
+  test("runtime.shutdown command resets auto-start state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    await expect(client.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+    await client.command("runtime.shutdown", { reason: "test command" })
+    await expect(client.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+
+    expect(adapter.startCalls).toBe(2)
+    await client.shutdown()
+  })
+
+  test("runtime.shutdown command does not auto-start an unstarted server", async () => {
+    const dir = await tempProject()
+    await makeProject(dir)
+    const adapter = new LongLivedAdapter()
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    await expect(client.command("runtime.shutdown", { reason: "pre-start cleanup" })).resolves.toBeUndefined()
+
+    expect(adapter.startCalls).toBe(0)
+    await expect(client.command("runtime.status")).rejects.toThrow("approved spec")
+  })
+
+  test("shutdown is idempotent for owned server", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    await client.command("runtime.status")
+    await client.shutdown()
+    await client.shutdown()
+    expect(await client.server.status()).toMatchObject({ lockHeld: false, runtimeStatus: "created" })
+  })
+
+  test("owned client rejects command and submit after shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    await client.command("runtime.status")
+    await client.shutdown()
+
+    await expect(client.command("runtime.status")).rejects.toThrow("runtime client has been shut down")
+    await expect(client.submitUserMessage("after shutdown")).rejects.toThrow("runtime client has been shut down")
+  })
+
+  test("caller-owned server is not shut down unless forced", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    await server.start()
+    const client = new RuntimeServerClient({ server, ownsServer: false })
+
+    await client.shutdown()
+    expect(await server.status()).toMatchObject({ lockHeld: true, runtimeStatus: "started" })
+    await client.shutdown({ force: true })
+    expect(await server.status()).toMatchObject({ lockHeld: false, runtimeStatus: "created" })
+  })
+
+  test("errors from RuntimeServer propagate clearly and redacted", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { draftSpec: true })
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    await expect(client.command("runtime.status")).rejects.toThrow("approved spec required")
   })
 })
 

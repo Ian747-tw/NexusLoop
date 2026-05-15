@@ -10,7 +10,8 @@ export interface SubmitUserMessageResult {
 
 export interface RuntimeClient {
   command(name: "runtime.status"): Promise<RuntimeStatus>
-  command(name: "runtime.resume" | "runtime.start_new_session" | "runtime.view_records" | "runtime.shutdown"): Promise<unknown>
+  command(name: "runtime.resume" | "runtime.start_new_session" | "runtime.view_records"): Promise<unknown>
+  command(name: "runtime.shutdown", payload?: { reason?: string }): Promise<unknown>
   command(name: "runtime.get_mission", payload: { missionId: string }): Promise<MissionRecord | null>
   command(name: "runtime.list_recent_missions", payload?: { limit?: number }): Promise<MissionRecord[]>
   command(name: "runtime.claim_mission", payload: { missionId: string; executorId: string }): Promise<ExecutorClaim>
@@ -25,6 +26,7 @@ export interface RuntimeClient {
   command(name: "research.search_notes", payload: { topicId: string; query: string; options?: SearchOptions }): Promise<Note[]>
   command(name: "research.projection_status"): Promise<RuntimeResearchProjectionHealth>
   command(name: "research.rebuild_projection", payload?: { force?: boolean }): Promise<RuntimeResearchProjectionHealth>
+  command(name: "runtime.submit_user_message", payload: { message: string }): Promise<SubmitUserMessageResult>
   submitUserMessage(message: string): Promise<SubmitUserMessageResult>
   stream(): AsyncIterable<RuntimeEvent>
 }

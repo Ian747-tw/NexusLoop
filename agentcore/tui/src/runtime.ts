@@ -3,9 +3,11 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 
 export interface RuntimeClient {
+  readonly streamMode?: "finite" | "long-lived"
   stream(): AsyncIterable<RuntimeEvent>
   sendUserMessage(message: string): Promise<void>
   sendCommand(command: string): Promise<void>
+  shutdown?(): Promise<void>
 }
 
 export class FakeRuntimeClient implements RuntimeClient {
