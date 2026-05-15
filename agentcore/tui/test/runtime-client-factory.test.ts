@@ -3,7 +3,9 @@ import { mkdtemp, rm, writeFile, mkdir } from "fs/promises"
 import { join } from "path"
 import { tmpdir } from "os"
 import { FakeRuntimeClient } from "../src/runtime"
-import { createTuiRuntimeClient, readRuntimeClientKind, TuiRuntimeServerClient } from "../src/runtime-client-factory"
+import { reduceRuntimeEvent } from "../src/reducer"
+import { initialState } from "../src/state"
+import { createTuiRuntimeClient, isTuiRuntimeEvent, readRuntimeClientKind, TuiRuntimeServerClient } from "../src/runtime-client-factory"
 import type { OpenCodeProcessEventSource, OpenCodeSpawnedProcess } from "../../runtime/src/index"
 
 const cleanup: string[] = []
@@ -103,6 +105,19 @@ async function waitForJsonlWrite(process: FakeSpawnedProcess, type: string): Pro
   throw new Error(`timed out waiting for ${type}`)
 }
 
+async function readFirst<T>(stream: AsyncIterable<T>): Promise<T> {
+  const deadline = Date.now() + TEST_TIMEOUT_MS
+  const iterator = stream[Symbol.asyncIterator]()
+  while (Date.now() < deadline) {
+    const result = await Promise.race([
+      iterator.next(),
+      new Promise<IteratorResult<T>>((resolve) => setTimeout(() => resolve({ done: true, value: undefined as T }), 10)),
+    ])
+    if (!result.done) return result.value
+  }
+  throw new Error("timed out waiting for stream event")
+}
+
 describe("TUI runtime client factory", () => {
   test("no env keeps fake default behavior", async () => {
     const dir = await tempProject()
@@ -199,6 +214,49 @@ describe("TUI runtime client factory", () => {
     })
 
     expect(client).toBe(injected)
+  })
+
+  test("filters runtime events unsupported by the TUI reducer", () => {
+    expect(isTuiRuntimeEvent({ type: "ResearchProjectionChecked", status: "ok" })).toBe(false)
+    expect(isTuiRuntimeEvent({ type: "RuntimeReady", projectName: "proj", runtimeStatus: "started" })).toBe(true)
+  })
+
+  test("real runtime stream only yields reducer-safe TUI events", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    const event = await readFirst(client.stream())
+    expect(isTuiRuntimeEvent(event)).toBe(true)
+    const state = reduceRuntimeEvent(initialState(dir), event)
+    expect(state).toBeDefined()
+
+    await client.runtime.shutdown()
+  })
+
+  test("real runtime client maps resume menu commands to runtime commands", async () => {
+    const commands: string[] = []
+    const shutdownOptions: unknown[] = []
+    const runtime = {
+      command: async (command: string) => {
+        commands.push(command)
+      },
+      shutdown: async (options?: unknown) => {
+        shutdownOptions.push(options)
+      },
+    }
+    const client = new TuiRuntimeServerClient(runtime as unknown as TuiRuntimeServerClient["runtime"])
+
+    await client.sendCommand("resume")
+    await client.sendCommand("new-session")
+    await client.sendCommand("records")
+    await client.sendCommand("shutdown")
+
+    expect(commands).toEqual(["runtime.resume", "runtime.start_new_session", "runtime.view_records"])
+    expect(shutdownOptions).toEqual([{ force: true }])
   })
 
   test("secret-looking env values do not leak through runtime status or event snapshots", async () => {

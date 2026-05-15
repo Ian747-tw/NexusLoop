@@ -5,6 +5,7 @@ import {
   RuntimeServerClient,
   type OpenCodeAdapterFactoryOptions,
 } from "../../runtime/src/index"
+import { supportedRuntimeEventTypes, type RuntimeEvent } from "./events"
 import { FakeRuntimeClient, type RuntimeClient } from "./runtime"
 
 export type TuiRuntimeClientKind = "fake" | "real"
@@ -42,11 +43,19 @@ export function readRuntimeClientKind(env: Record<string, string | undefined>): 
   throw new Error(`unknown runtime client kind in NXL_RUNTIME_CLIENT: ${raw}`)
 }
 
+export function isTuiRuntimeEvent(event: unknown): event is RuntimeEvent {
+  if (typeof event !== "object" || event === null) return false
+  const type = (event as { type?: unknown }).type
+  return typeof type === "string" && supportedRuntimeEventTypes.includes(type as RuntimeEvent["type"])
+}
+
 export class TuiRuntimeServerClient implements RuntimeClient {
   constructor(readonly runtime: RuntimeServerClient) {}
 
-  stream(): AsyncIterable<import("./events").RuntimeEvent> {
-    return this.runtime.stream() as AsyncIterable<import("./events").RuntimeEvent>
+  async *stream(): AsyncIterable<RuntimeEvent> {
+    for await (const event of this.runtime.stream()) {
+      if (isTuiRuntimeEvent(event)) yield event
+    }
   }
 
   async sendUserMessage(message: string): Promise<void> {
@@ -58,8 +67,11 @@ export class TuiRuntimeServerClient implements RuntimeClient {
       case "resume":
         await this.runtime.command("runtime.resume")
         return
-      case "start-new":
+      case "new-session":
         await this.runtime.command("runtime.start_new_session")
+        return
+      case "records":
+        await this.runtime.command("runtime.view_records")
         return
       case "shutdown":
         await this.runtime.shutdown({ force: true })
