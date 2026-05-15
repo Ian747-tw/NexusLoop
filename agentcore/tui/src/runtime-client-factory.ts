@@ -21,10 +21,17 @@ export interface TuiRuntimeClientFactoryOptions {
 
 export function createTuiRuntimeClient(options: TuiRuntimeClientFactoryOptions): RuntimeClient {
   if (options.client) return options.client
+  if (options.server) {
+    return new TuiRuntimeServerClient(new RuntimeServerClient({
+      server: options.server,
+      autoStart: true,
+      ownsServer: false,
+    }))
+  }
   const env = options.env ?? {}
   const kind = readRuntimeClientKind(env)
   if (kind === "fake") return new FakeRuntimeClient(options.projectDir, options.projectName ?? basename(options.projectDir))
-  const server = options.server ?? createRuntimeServerFromLaunchConfig({
+  const server = createRuntimeServerFromLaunchConfig({
     projectDir: options.projectDir,
     env,
     openCodeAdapterFactoryOptions: options.openCodeAdapterFactoryOptions,
@@ -32,7 +39,7 @@ export function createTuiRuntimeClient(options: TuiRuntimeClientFactoryOptions):
   return new TuiRuntimeServerClient(new RuntimeServerClient({
     server,
     autoStart: true,
-    ownsServer: options.server === undefined,
+    ownsServer: true,
   }))
 }
 
@@ -50,6 +57,8 @@ export function isTuiRuntimeEvent(event: unknown): event is RuntimeEvent {
 }
 
 export class TuiRuntimeServerClient implements RuntimeClient {
+  readonly streamMode = "long-lived" as const
+
   constructor(readonly runtime: RuntimeServerClient) {}
 
   async *stream(): AsyncIterable<RuntimeEvent> {

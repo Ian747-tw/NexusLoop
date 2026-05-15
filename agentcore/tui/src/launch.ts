@@ -24,9 +24,10 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
   let state = initialState(projectDir)
   const iterator = runtime.stream()[Symbol.asyncIterator]()
   let sawEvent = false
+  const useIdleBreak = runtime.streamMode === "long-lived"
   try {
     while (true) {
-      const next = sawEvent
+      const next = useIdleBreak && sawEvent
         ? await Promise.race([
             iterator.next(),
             new Promise<"idle">((resolve) => setTimeout(() => resolve("idle"), HEADLESS_STREAM_IDLE_TIMEOUT_MS)),

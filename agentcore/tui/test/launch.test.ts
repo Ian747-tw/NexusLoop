@@ -24,6 +24,14 @@ class TestRuntimeClient implements RuntimeClient {
   }
 }
 
+class DelayedFiniteRuntimeClient extends TestRuntimeClient {
+  async *stream(): AsyncIterable<RuntimeEvent> {
+    yield { type: "RuntimeReady", projectName: "launch-test", runtimeStatus: "started" }
+    await new Promise((resolve) => setTimeout(resolve, 75))
+    yield { type: "ProjectInitialized", projectDir: "/tmp/nxl-launch-delayed-finite" }
+  }
+}
+
 describe("TUI launch boundary", () => {
   test("headless entrypoint shuts down owning runtime client after snapshot", async () => {
     const runtime = new TestRuntimeClient()
@@ -52,6 +60,22 @@ describe("TUI launch boundary", () => {
     })
 
     expect(output.join("\n")).toContain("launch-test")
+    expect(runtime.shutdownCount).toBe(1)
+  })
+
+  test("headless entrypoint consumes a full finite stream before rendering", async () => {
+    const runtime = new DelayedFiniteRuntimeClient()
+    const output: string[] = []
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-delayed-finite",
+      env: { NXL_TUI_HEADLESS: "1" },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("screen=resume")
+    expect(output.join("\n")).toContain("Resume previous run")
     expect(runtime.shutdownCount).toBe(1)
   })
 

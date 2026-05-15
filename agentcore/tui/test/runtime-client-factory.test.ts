@@ -6,7 +6,7 @@ import { FakeRuntimeClient } from "../src/runtime"
 import { reduceRuntimeEvent } from "../src/reducer"
 import { initialState } from "../src/state"
 import { createTuiRuntimeClient, isTuiRuntimeEvent, readRuntimeClientKind, TuiRuntimeServerClient } from "../src/runtime-client-factory"
-import type { OpenCodeProcessEventSource, OpenCodeSpawnedProcess } from "../../runtime/src/index"
+import { FakeOpenCodeAdapter, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
 
 const cleanup: string[] = []
 const TEST_TIMEOUT_MS = 1000
@@ -214,6 +214,15 @@ describe("TUI runtime client factory", () => {
     })
 
     expect(client).toBe(injected)
+  })
+
+  test("direct injected server selects real runtime client without env", async () => {
+    const dir = await tempProject()
+    const server = new RuntimeServer({ projectDir: dir, adapter: new FakeOpenCodeAdapter() })
+    const client = createTuiRuntimeClient({ projectDir: dir, server, env: {} })
+
+    expect(client).toBeInstanceOf(TuiRuntimeServerClient)
+    expect((client as TuiRuntimeServerClient).runtime.server).toBe(server)
   })
 
   test("filters runtime events unsupported by the TUI reducer", () => {
