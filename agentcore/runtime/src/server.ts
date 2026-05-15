@@ -7,6 +7,7 @@ import { locateProjectRoot, projectName } from "./project/project-root"
 import { RunLock } from "./project/run-lock"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import type { ExecutorToolHandlerAdapter, OpenCodeRuntimeAdapter } from "./opencode/adapter"
+import { createOpenCodeAdapter, type OpenCodeAdapterConfig, type OpenCodeAdapterFactoryOptions } from "./opencode/adapter-config"
 import { MissionRegistry } from "./missions/mission-registry"
 import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult, MissionStatusSummary } from "./missions/mission-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
@@ -32,6 +33,8 @@ export interface RuntimeServerOptions {
   projectDir?: string
   mode?: RuntimeMode
   adapter?: OpenCodeRuntimeAdapter
+  openCodeAdapterConfig?: OpenCodeAdapterConfig
+  openCodeAdapterFactoryOptions?: Omit<OpenCodeAdapterFactoryOptions, "projectDir">
   missionRegistry?: MissionRegistry
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
@@ -81,7 +84,7 @@ export class RuntimeServer {
     this.specService = new SpecService(this.projectDir)
     this.policyService = new PolicyService(this.projectDir)
     this.runLock = new RunLock(join(this.projectDir, ".nxl", "run.lock"))
-    this.adapter = options.adapter ?? new FakeOpenCodeAdapter()
+    this.adapter = options.adapter ?? (options.openCodeAdapterConfig ? createOpenCodeAdapter(options.openCodeAdapterConfig, { ...options.openCodeAdapterFactoryOptions, projectDir: this.projectDir }) : new FakeOpenCodeAdapter())
     this.registerExecutorToolHandler(this.adapter)
     this.missionRegistry = options.missionRegistry ?? new MissionRegistry({ eventStore: this.eventStore, projectDir: this.projectDir })
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
@@ -277,6 +280,7 @@ export class RuntimeServer {
   async status(): Promise<RuntimeStatus> {
     this.checkResearchProjectionForStatus()
     const policy = await this.policyService.metadata()
+    const adapterStatus = await this.adapter.getStatus()
     return redactValue({
       projectDir: this.projectDir,
       projectName: projectName(this.projectDir),
@@ -284,7 +288,8 @@ export class RuntimeServer {
       specApproved: this.specSummary?.status === "approved",
       runtimeStatus: this.started ? "started" : "created",
       lockHeld: this.runLock.isHeld(),
-      fakeOpenCode: String((await this.adapter.getStatus()).message ?? ""),
+      fakeOpenCode: String(adapterStatus.message ?? ""),
+      adapterStatus,
       executorStreamError: this.executorStreamError ?? undefined,
       missions: await this.missionRegistry.statusSummary(),
       researchProjection: this.researchProjectionHealth,

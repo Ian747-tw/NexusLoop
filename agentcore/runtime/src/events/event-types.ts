@@ -70,6 +70,7 @@ export interface RuntimeStatus {
   runtimeStatus: string
   lockHeld: boolean
   fakeOpenCode: string
+  adapterStatus?: Record<string, unknown>
   executorStreamError?: string
   missions?: {
     pending_count: number
