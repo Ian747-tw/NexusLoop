@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
 import type { RuntimeResearchDbProjection } from "./server"
+import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv } from "./launch-config"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
@@ -2718,6 +2719,183 @@ describe("OpenCode adapter config", () => {
     expect(() => readOpenCodeAdapterConfigFromEnv({ NXL_OPENCODE_ADAPTER: "real" })).toThrow("unknown OpenCode adapter kind")
     expect(() => readOpenCodeAdapterConfigFromEnv({ NXL_OPENCODE_ADAPTER: "process", NXL_OPENCODE_COMMAND: "opencode", NXL_OPENCODE_ARGS_JSON: "not-json" })).toThrow("NXL_OPENCODE_ARGS_JSON must be valid JSON")
     expect(() => readOpenCodeAdapterConfigFromEnv({ NXL_OPENCODE_ADAPTER: "process", NXL_OPENCODE_COMMAND: "opencode", NXL_OPENCODE_WRITE_TIMEOUT_MS: "0" })).toThrow("NXL_OPENCODE_WRITE_TIMEOUT_MS must be a positive integer")
+  })
+})
+
+describe("RuntimeServer launch OpenCode env wiring", () => {
+  test("no env config preserves fake default launch behavior", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
+
+    expect(server.adapter).toBeInstanceOf(FakeOpenCodeAdapter)
+    await server.start()
+    expect(await server.status()).toMatchObject({ adapterStatus: { adapter: "fake", phase: "started" } })
+    await server.shutdown()
+  })
+
+  test("env fake explicitly selects fake adapter", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const options = readRuntimeServerLaunchOptionsFromEnv({ NXL_OPENCODE_ADAPTER: "fake" }, { projectDir: dir })
+    const server = createRuntimeServerFromLaunchConfig({ ...options })
+
+    expect(options.openCodeAdapterConfig).toEqual({ kind: "fake" })
+    expect(server.adapter).toBeInstanceOf(FakeOpenCodeAdapter)
+    await server.start()
+    expect(await server.status()).toMatchObject({ adapterStatus: { adapter: "fake", phase: "started" } })
+    await server.shutdown()
+  })
+
+  test("env process config with fake spawn creates process adapter through launch wiring", () => {
+    const process = new FakeSpawnedProcess()
+    let spawnCalls = 0
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: "/tmp/demo",
+      env: {
+        NXL_OPENCODE_ADAPTER: "process",
+        NXL_OPENCODE_COMMAND: "opencode",
+        NXL_OPENCODE_ARGS_JSON: "[\"--stdio\"]",
+      },
+      openCodeAdapterFactoryOptions: {
+        spawn: () => {
+          spawnCalls += 1
+          return process
+        },
+      },
+    })
+
+    expect(server.adapter).toBeInstanceOf(ProcessOpenCodeAdapter)
+    expect(spawnCalls).toBe(0)
+  })
+
+  test("env process config starts runtime with fake spawn and writes session start", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        NXL_OPENCODE_ADAPTER: "process",
+        NXL_OPENCODE_COMMAND: "opencode",
+        NXL_OPENCODE_ARGS_JSON: "[\"--stdio\"]",
+      },
+      openCodeAdapterFactoryOptions: { spawn: () => process },
+    })
+
+    await server.start()
+    expect(await waitForJsonlWrite(process, "nxl.session_start")).toMatchObject({
+      type: "nxl.session_start",
+      protocolVersion: 1,
+    })
+    expect(sessionContractFromWrite(process)).toMatchObject({
+      inputEnvelopeTypes: ["nxl.session_start", "nxl.mission_packet", "nxl.executor_tool_result"],
+    })
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("env process config allows submitUserMessage and writes mission packet", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        NXL_OPENCODE_ADAPTER: "process",
+        NXL_OPENCODE_COMMAND: "opencode",
+      },
+      openCodeAdapterFactoryOptions: { spawn: () => process },
+    })
+
+    await server.start()
+    const result = await server.submitUserMessage("env launch message")
+    expect(await waitForJsonlWrite(process, "nxl.mission_packet")).toMatchObject({
+      type: "nxl.mission_packet",
+      missionId: result.missionId,
+      intentId: result.intentId,
+      message: "env launch message",
+    })
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("invalid env adapter kind fails clearly before runtime start", () => {
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: "/tmp/demo",
+      env: { NXL_OPENCODE_ADAPTER: "real" },
+    })).toThrow("unknown OpenCode adapter kind")
+  })
+
+  test("invalid env args JSON fails clearly before runtime start", () => {
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: "/tmp/demo",
+      env: {
+        NXL_OPENCODE_ADAPTER: "process",
+        NXL_OPENCODE_COMMAND: "opencode",
+        NXL_OPENCODE_ARGS_JSON: "not-json",
+      },
+    })).toThrow("NXL_OPENCODE_ARGS_JSON must be valid JSON")
+  })
+
+  test("invalid env timeout fails clearly before runtime start", () => {
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: "/tmp/demo",
+      env: {
+        NXL_OPENCODE_ADAPTER: "process",
+        NXL_OPENCODE_COMMAND: "opencode",
+        NXL_OPENCODE_WRITE_TIMEOUT_MS: "0",
+      },
+    })).toThrow("NXL_OPENCODE_WRITE_TIMEOUT_MS must be a positive integer")
+  })
+
+  test("secret-looking env launch values do not leak into runtime status events or errors", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        NXL_OPENCODE_ADAPTER: "process",
+        NXL_OPENCODE_COMMAND: "/tmp/token=command-secret/opencode",
+        NXL_OPENCODE_ARGS_JSON: "[\"--api-key=arg-secret\",\"--stdio\"]",
+        NXL_TOKEN: "env-secret",
+      },
+      openCodeAdapterFactoryOptions: { spawn: () => process },
+    })
+
+    await server.start()
+    const serialized = JSON.stringify({ status: await server.status(), events: server.eventBus.snapshot() })
+    expect(serialized).not.toContain("command-secret")
+    expect(serialized).not.toContain("arg-secret")
+    expect(serialized).not.toContain("env-secret")
+
+    const shutdown = server.shutdown()
+    process.emitExit(0, null)
+    await shutdown
+  })
+
+  test("direct adapter injection still takes precedence over env launch config", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      adapter,
+      env: {
+        NXL_OPENCODE_ADAPTER: "process",
+        NXL_OPENCODE_COMMAND: "",
+      },
+    })
+
+    expect(server.adapter).toBe(adapter)
+    await server.start()
+    expect(adapter.startCalls).toBe(1)
+    await server.shutdown()
   })
 })
 
