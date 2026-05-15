@@ -80,4 +80,8 @@ export class TuiRuntimeServerClient implements RuntimeClient {
         return
     }
   }
+
+  async shutdown(): Promise<void> {
+    await this.runtime.shutdown()
+  }
 }

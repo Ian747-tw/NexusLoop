@@ -6,6 +6,7 @@ export interface RuntimeClient {
   stream(): AsyncIterable<RuntimeEvent>
   sendUserMessage(message: string): Promise<void>
   sendCommand(command: string): Promise<void>
+  shutdown?(): Promise<void>
 }
 
 export class FakeRuntimeClient implements RuntimeClient {
