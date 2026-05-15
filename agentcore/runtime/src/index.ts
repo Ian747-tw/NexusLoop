@@ -1,5 +1,7 @@
 export { RuntimeServer } from "./server"
 export type { RuntimeResearchDbProjection, RuntimeResearchDbReader, RuntimeServerOptions } from "./server"
+export { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv } from "./launch-config"
+export type { RuntimeServerLaunchConfig } from "./launch-config"
 export { EventStore } from "./events/event-store"
 export { RuntimeEventBus } from "./events/event-bus"
 export type { RuntimeEvent, RuntimeMode, RuntimeResearchProjectionHealth, RuntimeResearchProjectionMode, RuntimeStatus } from "./events/event-types"
