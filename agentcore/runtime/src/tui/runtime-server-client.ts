@@ -27,7 +27,10 @@ export class RuntimeServerClient implements RuntimeClient {
   async start(): Promise<void> {
     if (this.shutdownRequested) throw new Error("runtime client has been shut down")
     if (this.started) return
-    this.startTask ??= this.server.start()
+    this.startTask ??= (async () => {
+      const status = await this.server.status()
+      if (status.runtimeStatus !== "started") await this.server.start()
+    })()
       .then(() => {
         this.started = true
       })
@@ -63,10 +66,16 @@ export class RuntimeServerClient implements RuntimeClient {
 
   async *stream(): AsyncIterable<RuntimeEvent> {
     const iterator = this.server.eventBus.streamFromNow()[Symbol.asyncIterator]()
-    const first = iterator.next()
     try {
       await this.ensureStarted()
-      let next = await first
+      const status = await this.server.status()
+      yield {
+        type: "RuntimeReady",
+        projectName: status.projectName,
+        runtimeStatus: status.runtimeStatus,
+      }
+      if (status.specApproved) yield { type: "ProjectInitialized", projectDir: status.projectDir }
+      let next = await iterator.next()
       while (!next.done) {
         yield next.value
         next = await iterator.next()

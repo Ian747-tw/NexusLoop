@@ -2980,6 +2980,38 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("auto-start attaches to an already-started server without restarting", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+    await server.start()
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+
+    await expect(client.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started", lockHeld: true })
+
+    expect(adapter.startCalls).toBe(1)
+    await client.shutdown({ force: true })
+  })
+
+  test("stream attached to an already-started server yields current boot state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    await server.start()
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const iterator = client.stream()[Symbol.asyncIterator]()
+
+    const first = await iterator.next()
+    const second = await iterator.next()
+
+    expect(first.value).toMatchObject({ type: "RuntimeReady", runtimeStatus: "started" })
+    expect(second.value).toMatchObject({ type: "ProjectInitialized", projectDir: dir })
+
+    await iterator.return?.()
+    await client.shutdown({ force: true })
+  })
+
   test("runtime.shutdown command resets auto-start state", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
