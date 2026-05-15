@@ -25,6 +25,7 @@ export interface RuntimeClient {
   command(name: "research.search_notes", payload: { topicId: string; query: string; options?: SearchOptions }): Promise<Note[]>
   command(name: "research.projection_status"): Promise<RuntimeResearchProjectionHealth>
   command(name: "research.rebuild_projection", payload?: { force?: boolean }): Promise<RuntimeResearchProjectionHealth>
+  command(name: "runtime.submit_user_message", payload: { message: string }): Promise<SubmitUserMessageResult>
   submitUserMessage(message: string): Promise<SubmitUserMessageResult>
   stream(): AsyncIterable<RuntimeEvent>
 }
