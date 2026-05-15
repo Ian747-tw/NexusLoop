@@ -2959,6 +2959,43 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("auto-start stream does not replay queued startup events after synthetic boot state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() }),
+      autoStart: true,
+      ownsServer: true,
+    })
+    const iterator = client.stream()[Symbol.asyncIterator]()
+
+    const events: RuntimeEvent[] = []
+    for (let index = 0; index < 2; index += 1) {
+      const next = await Promise.race([
+        iterator.next(),
+        timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
+          throw new Error("timed out waiting for client stream startup event")
+        }),
+      ])
+      expect(next.done).toBe(false)
+      events.push(next.value)
+    }
+
+    expect(events.map((event) => event.type)).toEqual(["RuntimeReady", "ProjectInitialized"])
+    const nextEvent = iterator.next()
+    await client.command("runtime.resume")
+    const possibleQueuedDuplicate = await Promise.race([
+      nextEvent.then((next) => next.value?.type ?? "done"),
+      timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
+        throw new Error("timed out waiting for client stream post-start event")
+      }),
+    ])
+    expect(possibleQueuedDuplicate).toBe("ResumeSummaryLoaded")
+
+    await iterator.return?.()
+    await client.shutdown()
+  })
+
   test("auto-start serializes concurrent commands and starts once", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

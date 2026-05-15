@@ -76,7 +76,7 @@ export class RuntimeServerClient implements RuntimeClient {
   }
 
   async *stream(): AsyncIterable<RuntimeEvent> {
-    const iterator = this.server.eventBus.streamFromNow()[Symbol.asyncIterator]()
+    let iterator: AsyncIterator<RuntimeEvent> | null = null
     try {
       await this.ensureStarted()
       const status = await this.server.status()
@@ -88,13 +88,14 @@ export class RuntimeServerClient implements RuntimeClient {
       if (status.runtimeStatus === "started" || status.specApproved) {
         yield { type: "ProjectInitialized", projectDir: status.projectDir }
       }
+      iterator = this.server.eventBus.streamFromNow()[Symbol.asyncIterator]()
       let next = await iterator.next()
       while (!next.done) {
         yield next.value
         next = await iterator.next()
       }
     } finally {
-      await iterator.return?.()
+      await iterator?.return?.()
     }
   }
 
