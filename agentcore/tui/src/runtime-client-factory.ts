@@ -24,7 +24,7 @@ export function createTuiRuntimeClient(options: TuiRuntimeClientFactoryOptions):
   if (options.server) {
     return new TuiRuntimeServerClient(new RuntimeServerClient({
       server: options.server,
-      autoStart: true,
+      autoStart: false,
       ownsServer: false,
     }))
   }

@@ -225,6 +225,17 @@ describe("TUI runtime client factory", () => {
     expect((client as TuiRuntimeServerClient).runtime.server).toBe(server)
   })
 
+  test("direct injected started server is attached without auto-starting again", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new FakeOpenCodeAdapter() })
+    await server.start()
+    const client = createTuiRuntimeClient({ projectDir: dir, server, env: {} }) as TuiRuntimeServerClient
+
+    await expect(client.runtime.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started", lockHeld: true })
+    await client.runtime.shutdown({ force: true })
+  })
+
   test("filters runtime events unsupported by the TUI reducer", () => {
     expect(isTuiRuntimeEvent({ type: "ResearchProjectionChecked", status: "ok" })).toBe(false)
     expect(isTuiRuntimeEvent({ type: "RuntimeReady", projectName: "proj", runtimeStatus: "started" })).toBe(true)
