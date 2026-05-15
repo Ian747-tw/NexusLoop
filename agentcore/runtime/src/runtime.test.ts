@@ -2980,6 +2980,24 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("runtime.shutdown command resets auto-start state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const client = new RuntimeServerClient({
+      server: new RuntimeServer({ projectDir: dir, adapter }),
+      autoStart: true,
+      ownsServer: true,
+    })
+
+    await expect(client.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+    await client.command("runtime.shutdown", { reason: "test command" })
+    await expect(client.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+
+    expect(adapter.startCalls).toBe(2)
+    await client.shutdown()
+  })
+
   test("shutdown is idempotent for owned server", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
