@@ -105,7 +105,7 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
       if (state.messageDraft.trim() === "") return { state, effects: [] }
       const runtimeCommand = parseRuntimeCommand(state.messageDraft)
       if (runtimeCommand) {
-        const detail = [runtimeCommand.command, ...runtimeCommand.args].join(" ")
+        const detail = redactText([runtimeCommand.command, ...runtimeCommand.args].join(" "))
         return {
           state: {
             ...state,

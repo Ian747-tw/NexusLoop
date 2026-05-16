@@ -98,6 +98,21 @@ describe("TUI keyboard command model", () => {
     expect(result.effects).toEqual([{ type: "send-command", command: "notes", args: ["topic-1", "runtime", "projection"] }])
   })
 
+  test("slash command arguments are redacted before entering system actions", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/notes topic-1 token=command-secret",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.systemActions.at(-1)?.detail).toBe("notes topic-1 [REDACTED]")
+    expect(JSON.stringify(result.state)).not.toContain("command-secret")
+    expect(result.effects).toEqual([{ type: "send-command", command: "notes", args: ["topic-1", "token=command-secret"] }])
+  })
+
   test("path-like slash messages remain user messages", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

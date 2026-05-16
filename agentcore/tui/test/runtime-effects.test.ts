@@ -257,6 +257,71 @@ describe("runtime UI effects", () => {
     expect(runtime.calls.filter((call) => call.startsWith("research.projection_status"))).toHaveLength(2)
   })
 
+  test("notes command clears stale selected topic when target topic changes", async () => {
+    const state = {
+      ...initialState("/tmp/demo"),
+      research: {
+        topics: [],
+        notes: [],
+        events: [],
+        selectedTopicId: "topic-a",
+        selectedTopic: {
+          topic: { id: "topic-a", title: "Topic A", status: "active" },
+          stats: {
+            source_count: 1,
+            note_count: 1,
+            artifact_count: 0,
+            report_count: 0,
+            reviewed_source_count: 1,
+            rejected_source_count: 0,
+          },
+        },
+      },
+    }
+
+    const next = await applyRuntimeUiEffect(state, new ResearchRuntime(), {
+      type: "send-command",
+      command: "notes",
+      args: ["topic-b", "runtime"],
+    })
+
+    expect(next.research?.selectedTopicId).toBe("topic-b")
+    expect(next.research?.selectedTopic).toBeNull()
+    expect(next.research?.notes[0]?.topic_id).toBe("topic-b")
+  })
+
+  test("notes command preserves selected topic when target topic matches", async () => {
+    const selectedTopic = {
+      topic: { id: "topic-1", title: "Topic 1", status: "active" },
+      stats: {
+        source_count: 1,
+        note_count: 1,
+        artifact_count: 0,
+        report_count: 0,
+        reviewed_source_count: 1,
+        rejected_source_count: 0,
+      },
+    }
+    const state = {
+      ...initialState("/tmp/demo"),
+      research: {
+        topics: [],
+        notes: [],
+        events: [],
+        selectedTopicId: "topic-1",
+        selectedTopic,
+      },
+    }
+
+    const next = await applyRuntimeUiEffect(state, new ResearchRuntime(), {
+      type: "send-command",
+      command: "notes",
+      args: ["topic-1", "runtime"],
+    })
+
+    expect(next.research?.selectedTopic).toEqual(selectedTopic)
+  })
+
   test("missing research command args produce redacted research errors", async () => {
     const next = await applyRuntimeUiEffect(initialState("/tmp/demo"), new ResearchRuntime(), {
       type: "send-command",

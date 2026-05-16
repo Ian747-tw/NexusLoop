@@ -290,6 +290,7 @@ function applyResearchNotes(state: UiState, value: unknown, topicId: string, que
     research: {
       ...researchState(state),
       notes: value.map(readResearchNote).filter((note): note is ResearchNoteSummary => note !== null).slice(0, limit),
+      selectedTopic: state.research?.selectedTopic?.topic.id === redactText(topicId) ? state.research.selectedTopic : null,
       selectedTopicId: redactText(topicId),
       lastQuery: redactText(query),
       commandError: undefined,
