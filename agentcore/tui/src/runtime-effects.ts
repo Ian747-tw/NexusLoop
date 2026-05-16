@@ -117,12 +117,12 @@ function applyRecentMissions(state: UiState, value: unknown): UiState {
     ...state,
     missions: {
       ...current,
-      last_mission_id: current.last_mission_id ?? recent[0]?.mission_id,
+      last_mission_id: recent[0]?.mission_id ?? current.last_mission_id,
       recent,
     },
     header: {
       ...state.header,
-      activeMissionId: current.last_mission_id ?? recent[0]?.mission_id ?? state.header.activeMissionId,
+      activeMissionId: recent[0]?.mission_id ?? current.last_mission_id ?? state.header.activeMissionId,
     },
   }
 }
