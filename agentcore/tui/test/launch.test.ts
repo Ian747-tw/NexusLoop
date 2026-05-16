@@ -247,6 +247,33 @@ describe("TUI launch boundary", () => {
     expect(snapshot).not.toContain("launch-secret")
   })
 
+  test("shutdown command does not report a false post-shutdown refresh error", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/shutdown" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: {
+        NXL_TUI_HEADLESS: "1",
+        NXL_TUI_KEYS: JSON.stringify(keys),
+        NXL_RUNTIME_CLIENT: "real",
+        NXL_OPENCODE_ADAPTER: "fake",
+      },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("user command -> runtime: shutdown")
+    expect(snapshot).not.toContain("command_error=")
+    expect(snapshot).not.toContain("runtime client has been shut down")
+  })
+
   test("headless entrypoint waits for the first runtime event before idle timeout", async () => {
     const runtime = new TestRuntimeClient(75)
     const output: string[] = []

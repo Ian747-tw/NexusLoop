@@ -5,6 +5,7 @@ import { createStore } from "solid-js/store"
 import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
+import { mergeRuntimeEffectState } from "./runtime-state-merge"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
 import type { RuntimeClient } from "./runtime"
 
@@ -357,7 +358,7 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
     for (const effect of result.effects) {
       void (async () => {
         const next = await applyRuntimeUiEffect(result.state, props.runtime, effect)
-        setState(next)
+        setState((current) => mergeRuntimeEffectState(current, next, result.state.systemActions.length))
         renderer.requestRender()
       })()
     }
@@ -373,14 +374,7 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
     })()
     void (async () => {
       const next = await refreshRuntimeRecords(state, props.runtime)
-      setState("runtimeStatus", next.runtimeStatus)
-      setState("adapterStatus", next.adapterStatus)
-      setState("researchProjection", next.researchProjection)
-      setState("missions", next.missions)
-      setState("runtimeCommandError", next.runtimeCommandError)
-      setState("header", "projectName", next.header.projectName)
-      setState("header", "runtimeStatus", next.header.runtimeStatus)
-      setState("header", "activeMissionId", next.header.activeMissionId)
+      setState((current) => mergeRuntimeEffectState(current, next))
       renderer.requestRender()
     })()
   })
