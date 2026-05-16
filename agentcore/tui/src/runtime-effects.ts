@@ -80,7 +80,7 @@ async function runClientCommand(state: UiState, runtime: RuntimeClient, command:
 }
 
 function shouldRefreshAfterCommand(command: string): boolean {
-  return ["status", "missions", "resume", "new-session", "records"].includes(command)
+  return ["resume", "new-session", "records"].includes(command)
 }
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {

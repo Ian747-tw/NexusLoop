@@ -56,6 +56,27 @@ class RefreshFailAfterSubmitRuntime implements RuntimeClient {
   }
 }
 
+class CountingRuntime implements RuntimeClient {
+  readonly calls: string[] = []
+
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+  async command(name: string): Promise<unknown> {
+    this.calls.push(name)
+    if (name === "runtime.list_recent_missions") return []
+    return {
+      runtimeStatus: "started",
+      mode: "active",
+      projectName: "demo",
+      specApproved: true,
+      lockHeld: true,
+    }
+  }
+}
+
 describe("runtime UI effects", () => {
   test("recent mission refresh advances last and active mission to newest row", async () => {
     const state = {
@@ -114,5 +135,15 @@ describe("runtime UI effects", () => {
     expect(next.header.activeMissionId).toBe("mission-created")
     expect(next.systemActions.some((action) => action.title === "mission submitted")).toBe(true)
     expect(next.runtimeCommandError).toBe("refresh failed after accepted mission")
+  })
+
+  test("status and missions commands do not run duplicate follow-up refreshes", async () => {
+    const runtime = new CountingRuntime()
+    const state = initialState("/tmp/demo")
+
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "status" })
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "missions" })
+
+    expect(runtime.calls).toEqual(["runtime.status", "runtime.list_recent_missions"])
   })
 })
