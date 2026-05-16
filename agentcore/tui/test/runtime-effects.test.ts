@@ -154,6 +154,13 @@ class FailingResearchRuntime extends ResearchRuntime {
   }
 }
 
+class ProjectionFailingResearchRuntime extends ResearchRuntime {
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+    if (name === "research.projection_status") throw new Error("projection failed token=projection-secret")
+    return super.command(name, payload)
+  }
+}
+
 describe("runtime UI effects", () => {
   test("recent mission refresh advances last and active mission to newest row", async () => {
     const state = {
@@ -238,6 +245,29 @@ describe("runtime UI effects", () => {
     expect(next.research?.topics[0]).toMatchObject({ id: "topic-secret", title: "[REDACTED]", status: "active" })
     expect(next.research?.events[0]).toMatchObject({ event_type: "note_added", entity_type: "note", entity_id: "note-1" })
     expect(JSON.stringify(next)).not.toContain("payload-secret")
+  })
+
+  test("research aggregate refresh preserves partial failures from earlier steps", async () => {
+    const state = {
+      ...initialState("/tmp/demo"),
+      research: {
+        topics: [],
+        selectedTopic: null,
+        notes: [],
+        events: [],
+        commandError: "stale failure",
+      },
+    }
+
+    const next = await applyRuntimeUiEffect(state, new ProjectionFailingResearchRuntime(), {
+      type: "send-command",
+      command: "research",
+    })
+
+    expect(next.research?.topics[0]?.id).toBe("topic-secret")
+    expect(next.research?.events[0]?.event_id).toBe("event-1")
+    expect(next.research?.commandError).toBe("projection failed [REDACTED]")
+    expect(JSON.stringify(next)).not.toContain("projection-secret")
   })
 
   test("topic notes events projection and rebuild commands map to research runtime commands", async () => {

@@ -109,7 +109,7 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
 }
 
 export async function refreshResearchRecords(state: UiState, runtime: RuntimeClient): Promise<UiState> {
-  let next = state
+  let next: UiState = { ...state, research: { ...researchState(state), commandError: undefined } }
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-research-projection-status" })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-research-topics", limit: RESEARCH_TOPIC_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-research-events", limit: RESEARCH_EVENT_LIMIT })
@@ -266,7 +266,7 @@ function applyResearchTopics(state: UiState, value: unknown, query: string | und
       ...researchState(state),
       topics: value.map(readResearchTopic).filter((topic): topic is ResearchTopicSummary => topic !== null).slice(0, limit),
       lastQuery: query === undefined ? state.research?.lastQuery : redactText(query),
-      commandError: state.lastCommand === "topics" || state.lastCommand === "research" ? undefined : state.research?.commandError,
+      commandError: state.lastCommand === "topics" ? undefined : state.research?.commandError,
     },
   }
 }
@@ -305,7 +305,7 @@ function applyResearchEvents(state: UiState, value: unknown, limit: number): UiS
     research: {
       ...researchState(state),
       events: value.map(readResearchEvent).filter((event): event is ResearchEventSummary => event !== null).slice(0, limit),
-      commandError: state.lastCommand === "research-events" || state.lastCommand === "research" ? undefined : state.research?.commandError,
+      commandError: state.lastCommand === "research-events" ? undefined : state.research?.commandError,
     },
   }
 }
@@ -317,7 +317,7 @@ function applyResearchProjectionStatus(state: UiState, value: unknown): UiState 
     research: {
       ...researchState(state),
       projection,
-      commandError: state.lastCommand === "projection" || state.lastCommand === "rebuild-projection" || state.lastCommand === "research"
+      commandError: state.lastCommand === "projection" || state.lastCommand === "rebuild-projection"
         ? undefined
         : state.research?.commandError,
     },
