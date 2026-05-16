@@ -43,4 +43,25 @@ describe("interactive runtime effect state merge", () => {
     expect(merged.runtimeStatus?.runtimeStatus).toBe("started")
     expect(merged.header.activeMissionId).toBe("mission-1")
   })
+
+  test("default merge preserves startup refresh error actions", () => {
+    const current: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      systemActions: [{ title: "stream event", detail: "ready" }],
+    }
+    const effectResult: UiState = {
+      ...initialState("/tmp/demo"),
+      runtimeCommandError: "runtime failed",
+      systemActions: [{ title: "runtime command error", detail: "runtime failed", status: "failed" }],
+    }
+
+    const merged = mergeRuntimeEffectState(current, effectResult)
+
+    expect(merged.systemActions).toEqual([
+      { title: "stream event", detail: "ready" },
+      { title: "runtime command error", detail: "runtime failed", status: "failed" },
+    ])
+    expect(merged.runtimeCommandError).toBe("runtime failed")
+  })
 })

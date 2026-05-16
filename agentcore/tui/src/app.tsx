@@ -4,6 +4,7 @@ import { createEffect, For, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
+import { RuntimeEffectOrder } from "./runtime-effect-order"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { mergeRuntimeEffectState } from "./runtime-state-merge"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
@@ -351,13 +352,16 @@ function toCommand(evt: { name: string; shift: boolean; ctrl: boolean; raw?: str
 export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }) {
   const renderer = useRenderer()
   const [state, setState] = createStore<UiState>(props.initial)
+  const runtimeEffectOrder = new RuntimeEffectOrder()
 
   function apply(command: KeyCommand) {
     const result = applyKeyCommandWithEffects(state, command)
     setState(result.state)
     for (const effect of result.effects) {
+      const sequence = runtimeEffectOrder.begin()
       void (async () => {
         const next = await applyRuntimeUiEffect(result.state, props.runtime, effect)
+        if (!runtimeEffectOrder.isCurrent(sequence)) return
         setState((current) => mergeRuntimeEffectState(current, next, result.state.systemActions.length))
         renderer.requestRender()
       })()
@@ -372,8 +376,10 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
         renderer.requestRender()
       }
     })()
+    const sequence = runtimeEffectOrder.begin()
     void (async () => {
       const next = await refreshRuntimeRecords(state, props.runtime)
+      if (!runtimeEffectOrder.isCurrent(sequence)) return
       setState((current) => mergeRuntimeEffectState(current, next))
       renderer.requestRender()
     })()

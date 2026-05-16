@@ -1,6 +1,6 @@
 import type { UiState } from "./state"
 
-export function mergeRuntimeEffectState(current: UiState, next: UiState, previousActionCount = next.systemActions.length): UiState {
+export function mergeRuntimeEffectState(current: UiState, next: UiState, previousActionCount = 0): UiState {
   const addedActions = next.systemActions.slice(previousActionCount)
   return {
     ...current,
