@@ -82,4 +82,18 @@ describe("TUI keyboard command model", () => {
     expect(result.state.lastCommand).toBe("status")
     expect(result.effects).toEqual([{ type: "send-command", command: "status" }])
   })
+
+  test("path-like slash messages remain user messages", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/tmp/repro should be inspected",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.submittedMessages).toEqual(["/tmp/repro should be inspected"])
+    expect(result.effects).toEqual([{ type: "send-user-message", message: "/tmp/repro should be inspected" }])
+  })
 })
