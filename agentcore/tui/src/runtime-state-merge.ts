@@ -1,7 +1,7 @@
 import type { UiState } from "./state"
 
 export function mergeRuntimeEffectState(current: UiState, next: UiState, previousActionCount = 0, baseline?: UiState): UiState {
-  const addedActions = next.systemActions.slice(previousActionCount)
+  const addedActions = addedSystemActions(next.systemActions, previousActionCount, baseline?.systemActions)
   const canUpdateRuntimeStatus = baseline === undefined || stableEqual(current.runtimeStatus, baseline.runtimeStatus)
   const canUpdateAdapterStatus = baseline === undefined || stableEqual(current.adapterStatus, baseline.adapterStatus)
   const canUpdateResearchProjection =
@@ -37,4 +37,27 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
 
 function stableEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function addedSystemActions(
+  nextActions: UiState["systemActions"],
+  previousActionCount: number,
+  baselineActions?: UiState["systemActions"],
+): UiState["systemActions"] {
+  if (baselineActions === undefined) return nextActions.slice(previousActionCount)
+  const overlap = overlappingActionCount(baselineActions, nextActions)
+  return nextActions.slice(overlap)
+}
+
+function overlappingActionCount(
+  baselineActions: UiState["systemActions"],
+  nextActions: UiState["systemActions"],
+): number {
+  const max = Math.min(baselineActions.length, nextActions.length)
+  for (let count = max; count > 0; count -= 1) {
+    const baselineSuffix = baselineActions.slice(baselineActions.length - count)
+    const nextPrefix = nextActions.slice(0, count)
+    if (stableEqual(baselineSuffix, nextPrefix)) return count
+  }
+  return 0
 }

@@ -120,4 +120,28 @@ describe("interactive runtime effect state merge", () => {
     ])
     expect(merged.runtimeCommandError).toBe("runtime failed")
   })
+
+  test("preserves new effect action when effect result action list is capped", () => {
+    const baselineActions = Array.from({ length: 12 }, (_, index) => ({ title: `baseline-${index + 1}` }))
+    const baseline: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      systemActions: baselineActions,
+    }
+    const current: UiState = {
+      ...baseline,
+      systemActions: baselineActions,
+    }
+    const effectAction = { title: "mission submitted", detail: "mission_id=mission-1 intent_id=intent-1" }
+    const effectResult: UiState = {
+      ...baseline,
+      systemActions: [...baselineActions, effectAction].slice(-12),
+    }
+
+    const merged = mergeRuntimeEffectState(current, effectResult, baseline.systemActions.length, baseline)
+
+    expect(merged.systemActions).toHaveLength(12)
+    expect(merged.systemActions.at(-1)).toEqual(effectAction)
+    expect(merged.systemActions[0]).toEqual({ title: "baseline-2" })
+  })
 })
