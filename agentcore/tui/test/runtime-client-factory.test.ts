@@ -270,13 +270,32 @@ describe("TUI runtime client factory", () => {
     }
     const client = new TuiRuntimeServerClient(runtime as unknown as TuiRuntimeServerClient["runtime"])
 
+    await client.sendCommand("status")
+    await client.sendCommand("missions")
     await client.sendCommand("resume")
     await client.sendCommand("new-session")
     await client.sendCommand("records")
     await client.sendCommand("shutdown")
 
-    expect(commands).toEqual(["runtime.resume", "runtime.start_new_session", "runtime.view_records"])
+    expect(commands).toEqual([
+      "runtime.status",
+      "runtime.list_recent_missions",
+      "runtime.resume",
+      "runtime.start_new_session",
+      "runtime.view_records",
+    ])
     expect(shutdownOptions).toEqual([{ force: true }])
+  })
+
+  test("real runtime client rejects unknown TUI commands", async () => {
+    const client = new TuiRuntimeServerClient({
+      command: async () => ({ ok: true }),
+      shutdown: async () => {},
+      submitUserMessage: async () => ({ accepted: true, missionId: "m", intentId: "i" }),
+      stream: async function* () {},
+    } as unknown as TuiRuntimeServerClient["runtime"])
+
+    await expect(client.sendCommand("token=command-secret")).rejects.toThrow("unknown TUI command")
   })
 
   test("secret-looking env values do not leak through runtime status or event snapshots", async () => {

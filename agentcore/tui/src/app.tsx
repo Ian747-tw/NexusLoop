@@ -4,6 +4,9 @@ import { createEffect, For, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
+import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
+import { mergeRuntimeEffectState } from "./runtime-state-merge"
+import { snapshotUiState } from "./state-snapshot"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
 import type { RuntimeClient } from "./runtime"
 
@@ -163,6 +166,54 @@ function CommanderPanel(props: { state: UiState }) {
   )
 }
 
+function RuntimePanel(props: { state: UiState }) {
+  const runtime = () => props.state.runtimeStatus
+  const projection = () => props.state.researchProjection
+  const missions = () => props.state.missions
+  const adapter = () => props.state.adapterStatus
+  return (
+    <Panel title="Runtime" focus="system-actions" state={props.state}>
+      <text fg={color.text}>
+        status: {runtime()?.runtimeStatus ?? props.state.header.runtimeStatus} mode: {runtime()?.mode ?? "unknown"}
+      </text>
+      <text fg={color.muted}>
+        spec: {runtime()?.specApproved ? "approved" : "not approved"} lock: {runtime()?.lockHeld ? "held" : "free"}
+      </text>
+      <Show when={adapter()}>
+        {(value) => (
+          <text fg={color.muted}>
+            adapter: {String(value().kind ?? "unknown")} {String(value().phase ?? value().status ?? "")}
+          </text>
+        )}
+      </Show>
+      <Show when={projection()}>
+        {(value) => (
+          <text fg={value().ok ? color.accent : color.warning}>
+            projection: {value().ok ? "ok" : "not-ok"} stale={String(value().stale)} pending={value().pending_count}
+            {value().reason ? ` ${value().reason}` : ""}
+          </text>
+        )}
+      </Show>
+      <Show when={missions()}>
+        {(value) => (
+          <>
+            <text fg={color.text}>
+              missions: pending={value().pending_count} failed={value().failed_count} completed={value().completed_count ?? 0}
+            </text>
+            <text fg={color.muted}>last: {value().last_mission_id ?? "none"}</text>
+            <For each={value().recent.slice(0, 3)}>
+              {(mission) => <text fg={color.accent}>{mission.mission_id} [{mission.status}]</text>}
+            </For>
+          </>
+        )}
+      </Show>
+      <Show when={props.state.runtimeCommandError}>
+        {(value) => <text fg={color.warning}>error: {value()}</text>}
+      </Show>
+    </Panel>
+  )
+}
+
 function SearchPanel(props: { state: UiState }) {
   return (
     <Panel title="Search / records" focus="search-records" state={props.state}>
@@ -251,6 +302,7 @@ function MainShell(props: { state: UiState; onDraft: (value: string) => void; on
               items={props.state.systemActions}
               empty="No runtime actions yet."
             />
+            <RuntimePanel state={props.state} />
             <SearchPanel state={props.state} />
             <ApprovalPanel state={props.state} />
           </box>
@@ -266,6 +318,7 @@ function MainShell(props: { state: UiState; onDraft: (value: string) => void; on
               items={props.state.systemActions}
               empty="No runtime actions yet."
             />
+            <RuntimePanel state={props.state} />
             <OnboardingPanel state={props.state} />
           </box>
           <box flexGrow={2} minWidth={0} gap={1}>
@@ -304,8 +357,12 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
     const result = applyKeyCommandWithEffects(state, command)
     setState(result.state)
     for (const effect of result.effects) {
-      if (effect.type === "send-user-message") void props.runtime.sendUserMessage(effect.message)
-      if (effect.type === "send-command") void props.runtime.sendCommand(effect.command)
+      const baseline = snapshotUiState(result.state)
+      void (async () => {
+        const next = await applyRuntimeUiEffect(baseline, props.runtime, effect)
+        setState((current) => mergeRuntimeEffectState(current, next, baseline.systemActions.length, baseline))
+        renderer.requestRender()
+      })()
     }
     renderer.requestRender()
   }
@@ -316,6 +373,12 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
         setState((current) => reduceRuntimeEvent(current, event))
         renderer.requestRender()
       }
+    })()
+    const baseline = snapshotUiState(state)
+    void (async () => {
+      const next = await refreshRuntimeRecords(baseline, props.runtime)
+      setState((current) => mergeRuntimeEffectState(current, next, 0, baseline))
+      renderer.requestRender()
     })()
   })
 

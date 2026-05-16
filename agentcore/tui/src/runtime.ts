@@ -1,18 +1,29 @@
 import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
+import { redactText } from "./redaction"
+import type { MissionRecord } from "./state"
+
+export interface SubmitUserMessageResult {
+  accepted: true
+  missionId: string
+  intentId: string
+}
 
 export interface RuntimeClient {
   readonly streamMode?: "finite" | "long-lived"
   stream(): AsyncIterable<RuntimeEvent>
-  sendUserMessage(message: string): Promise<void>
-  sendCommand(command: string): Promise<void>
+  command(name: string, payload?: Record<string, unknown>): Promise<unknown>
+  sendUserMessage(message: string): Promise<SubmitUserMessageResult | void>
+  sendCommand(command: string): Promise<unknown>
   shutdown?(): Promise<void>
 }
 
 export class FakeRuntimeClient implements RuntimeClient {
   readonly sentMessages: string[] = []
   readonly sentCommands: string[] = []
+  private readonly missions: MissionRecord[] = []
+  private sequence = 0
 
   constructor(
     private readonly projectDir: string,
@@ -53,10 +64,10 @@ export class FakeRuntimeClient implements RuntimeClient {
     }
   }
 
-  async sendUserMessage(message: string): Promise<void> {
+  async sendUserMessage(message: string): Promise<SubmitUserMessageResult> {
     this.sentMessages.push(message)
     const python = process.env.NXL_PYTHON_EXECUTABLE ?? "python"
-    const result = Bun.spawnSync({
+    const onboarding = Bun.spawnSync({
       cmd: [
         python,
         "-m",
@@ -70,13 +81,88 @@ export class FakeRuntimeClient implements RuntimeClient {
       stderr: "pipe",
       env: process.env,
     })
-    if (result.exitCode !== 0) {
-      const stderr = new TextDecoder().decode(result.stderr).trim()
+    if (onboarding.exitCode !== 0) {
+      const stderr = new TextDecoder().decode(onboarding.stderr).trim()
       throw new Error(`spec onboarding failed: ${stderr}`)
+    }
+    return this.createMission(message)
+  }
+
+  async sendCommand(command: string): Promise<unknown> {
+    this.sentCommands.push(command)
+    switch (command) {
+      case "status":
+        return this.command("runtime.status")
+      case "missions":
+        return this.command("runtime.list_recent_missions", { limit: 5 })
+      case "resume":
+      case "new-session":
+      case "records":
+      case "shutdown":
+      case "initialize":
+      case "cancel":
+        return { ok: true, command }
+      default:
+        throw new Error(`unknown TUI command: ${redactText(command)}`)
     }
   }
 
-  async sendCommand(command: string): Promise<void> {
-    this.sentCommands.push(command)
+  async command(name: string, payload: Record<string, unknown> = {}): Promise<unknown> {
+    switch (name) {
+      case "runtime.status":
+        return {
+          runtimeStatus: "fake runtime connected",
+          mode: "active",
+          projectName: this.projectName,
+          specApproved: existsSync(join(this.projectDir, ".nxl")),
+          lockHeld: false,
+          adapterStatus: { kind: "fake", phase: "idle" },
+          missions: this.missionSummary(),
+          researchProjection: { mode: "disabled", ok: true, stale: false, reason: "disabled", pending_count: 0 },
+        }
+      case "runtime.list_recent_missions":
+        return this.missions.slice(0, readLimit(payload.limit, 5))
+      case "runtime.submit_user_message":
+        return this.createMission(String(payload.message ?? ""))
+      case "runtime.resume":
+      case "runtime.start_new_session":
+      case "runtime.view_records":
+      case "runtime.shutdown":
+        return { ok: true }
+      default:
+        throw new Error(`unknown runtime command: ${redactText(name)}`)
+    }
   }
+
+  private createMission(message: string): SubmitUserMessageResult {
+    this.sequence += 1
+    const missionId = `fake-mission-${this.sequence}`
+    const intentId = `fake-intent-${this.sequence}`
+    const now = new Date(0).toISOString()
+    this.missions.unshift({
+      mission_id: missionId,
+      intent_id: intentId,
+      objective: redactText(message),
+      status: "sent",
+      created_at: now,
+      updated_at: now,
+    })
+    return { accepted: true, missionId, intentId }
+  }
+
+  private missionSummary() {
+    return {
+      pending_count: this.missions.filter((mission) => mission.status === "created" || mission.status === "sent").length,
+      failed_count: this.missions.filter((mission) => mission.status === "failed").length,
+      active_claim_count: this.missions.filter((mission) => mission.status === "claimed" || mission.status === "running").length,
+      completed_count: this.missions.filter((mission) => mission.status === "completed").length,
+      cancelled_count: this.missions.filter((mission) => mission.status === "cancelled").length,
+      last_mission_id: this.missions[0]?.mission_id,
+    }
+  }
+}
+
+function readLimit(value: unknown, fallback: number): number {
+  if (!Number.isInteger(value) || Number(value) < 1) return fallback
+  return Math.min(Number(value), 100)
 }

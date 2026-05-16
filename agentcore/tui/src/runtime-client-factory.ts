@@ -6,7 +6,7 @@ import {
   type OpenCodeAdapterFactoryOptions,
 } from "../../runtime/src/index"
 import { supportedRuntimeEventTypes, type RuntimeEvent } from "./events"
-import { FakeRuntimeClient, type RuntimeClient } from "./runtime"
+import { FakeRuntimeClient, type RuntimeClient, type SubmitUserMessageResult } from "./runtime"
 
 export type TuiRuntimeClientKind = "fake" | "real"
 
@@ -67,27 +67,31 @@ export class TuiRuntimeServerClient implements RuntimeClient {
     }
   }
 
-  async sendUserMessage(message: string): Promise<void> {
-    await this.runtime.submitUserMessage(message)
+  async sendUserMessage(message: string): Promise<SubmitUserMessageResult> {
+    return await this.runtime.submitUserMessage(message)
   }
 
-  async sendCommand(command: string): Promise<void> {
+  async sendCommand(command: string): Promise<unknown> {
     switch (command) {
+      case "status":
+        return await this.runtime.command("runtime.status")
+      case "missions":
+        return await this.runtime.command("runtime.list_recent_missions", { limit: 5 })
       case "resume":
-        await this.runtime.command("runtime.resume")
-        return
+        return await this.runtime.command("runtime.resume")
       case "new-session":
-        await this.runtime.command("runtime.start_new_session")
-        return
+        return await this.runtime.command("runtime.start_new_session")
       case "records":
-        await this.runtime.command("runtime.view_records")
-        return
+        return await this.runtime.command("runtime.view_records")
       case "shutdown":
-        await this.runtime.shutdown({ force: true })
-        return
+        return await this.runtime.shutdown({ force: true })
       default:
-        return
+        throw new Error(`unknown TUI command: ${command}`)
     }
+  }
+
+  async command(name: string, payload: Record<string, unknown> = {}): Promise<unknown> {
+    return await this.runtime.command(name as never, payload as never)
   }
 
   async shutdown(): Promise<void> {
