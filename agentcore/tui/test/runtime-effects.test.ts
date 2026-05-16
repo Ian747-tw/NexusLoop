@@ -81,6 +81,8 @@ describe("runtime UI effects", () => {
   test("recent mission refresh advances last and active mission to newest row", async () => {
     const state = {
       ...initialState("/tmp/demo"),
+      lastCommand: "missions",
+      runtimeCommandError: "previous failure",
       missions: {
         pending_count: 0,
         failed_count: 0,
@@ -100,6 +102,7 @@ describe("runtime UI effects", () => {
 
     expect(next.missions?.last_mission_id).toBe("mission-new")
     expect(next.header.activeMissionId).toBe("mission-new")
+    expect(next.runtimeCommandError).toBeUndefined()
     expect(next.missions?.recent).toEqual([
       {
         mission_id: "mission-new",

@@ -128,6 +128,7 @@ function applyRecentMissions(state: UiState, value: unknown): UiState {
       last_mission_id: recent[0]?.mission_id ?? current.last_mission_id,
       recent,
     },
+    runtimeCommandError: state.lastCommand === "missions" ? undefined : state.runtimeCommandError,
     header: {
       ...state.header,
       activeMissionId: recent[0]?.mission_id ?? current.last_mission_id ?? state.header.activeMissionId,

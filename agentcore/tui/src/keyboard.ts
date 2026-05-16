@@ -145,7 +145,7 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
 
 function parseRuntimeCommand(value: string): string | undefined {
   const trimmed = value.trim()
-  const match = /^[/.:]([a-z][a-z-]*)(?:\s|$)/i.exec(trimmed)
+  const match = /^\/([a-z][a-z-]*)(?:\s|$)/i.exec(trimmed)
   const command = match?.[1]?.toLowerCase()
   return command && runtimeCommands.has(command) ? command : undefined
 }

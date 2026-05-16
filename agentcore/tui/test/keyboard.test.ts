@@ -96,4 +96,20 @@ describe("TUI keyboard command model", () => {
     expect(result.state.submittedMessages).toEqual(["/tmp/repro should be inspected"])
     expect(result.effects).toEqual([{ type: "send-user-message", message: "/tmp/repro should be inspected" }])
   })
+
+  test("dot and colon prefixed text remains a user message", () => {
+    for (const message of [".status notes", ":missions"]) {
+      const state: UiState = {
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }
+
+      const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+      expect(result.state.submittedMessages).toEqual([message])
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
 })
