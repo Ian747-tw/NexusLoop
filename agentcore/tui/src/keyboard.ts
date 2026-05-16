@@ -12,7 +12,7 @@ export type KeyCommand =
   | { type: "backspace" }
 
 export type KeySideEffect =
-  | { type: "send-command"; command: string }
+  | { type: "send-command"; command: string; args?: string[] }
   | { type: "send-user-message"; message: string }
 
 export type KeyCommandResult = {
@@ -105,14 +105,19 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
       if (state.messageDraft.trim() === "") return { state, effects: [] }
       const runtimeCommand = parseRuntimeCommand(state.messageDraft)
       if (runtimeCommand) {
+        const detail = [runtimeCommand.command, ...runtimeCommand.args].join(" ")
         return {
           state: {
             ...state,
-            lastCommand: runtimeCommand,
-            systemActions: [...state.systemActions, { title: "user command -> runtime", detail: runtimeCommand }],
+            lastCommand: runtimeCommand.command,
+            systemActions: [...state.systemActions, { title: "user command -> runtime", detail }],
             messageDraft: "",
           },
-          effects: [{ type: "send-command", command: runtimeCommand }],
+          effects: [{
+            type: "send-command",
+            command: runtimeCommand.command,
+            ...(runtimeCommand.args.length > 0 ? { args: runtimeCommand.args } : {}),
+          }],
         }
       }
       const redactedMessage = redactText(state.messageDraft)
@@ -143,11 +148,27 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
   }
 }
 
-function parseRuntimeCommand(value: string): string | undefined {
+function parseRuntimeCommand(value: string): { command: string; args: string[] } | undefined {
   const trimmed = value.trim()
-  const match = /^\/([a-z][a-z-]*)(?:\s|$)/i.exec(trimmed)
+  const match = /^\/([a-z][a-z-]*)(?:\s+(.+))?$/i.exec(trimmed)
   const command = match?.[1]?.toLowerCase()
-  return command && runtimeCommands.has(command) ? command : undefined
+  if (!command || !runtimeCommands.has(command)) return undefined
+  const rest = match?.[2]?.trim()
+  return { command, args: rest ? rest.split(/\s+/) : [] }
 }
 
-const runtimeCommands = new Set(["status", "missions", "resume", "new-session", "records", "shutdown"])
+const runtimeCommands = new Set([
+  "status",
+  "missions",
+  "resume",
+  "new-session",
+  "records",
+  "shutdown",
+  "research",
+  "topics",
+  "topic",
+  "notes",
+  "research-events",
+  "projection",
+  "rebuild-projection",
+])

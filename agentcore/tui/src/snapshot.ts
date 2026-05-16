@@ -59,6 +59,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(`  filters=${state.search.recordFilters.join(", ")}`)
   out.push(`  labels=${state.search.labelFilters.join(", ")}`)
   out.push(...lines(state.search.records))
+  out.push(...researchLines(state))
   out.push("Approval / clarification")
   out.push(...lines([...state.approval.specApprovals, ...state.approval.candidateApprovals, ...state.approval.clarifications]))
   out.push(`Message box: ${state.messageDraft}`)
@@ -94,6 +95,43 @@ function runtimeLines(state: UiState): string[] {
     else out.push(...state.missions.recent.map((mission) => `    - ${mission.mission_id} [${mission.status}]`))
   }
   if (state.runtimeCommandError) out.push(`  command_error=${redactText(state.runtimeCommandError)}`)
+  return out
+}
+
+function researchLines(state: UiState): string[] {
+  const research = state.research
+  const out = ["Research records"]
+  if (!research) {
+    out.push("  topics=0")
+    return out
+  }
+  if (research.projection) {
+    out.push(`  projection=${research.projection.ok ? "ok" : "not-ok"} stale=${research.projection.stale} pending=${research.projection.pending_count}`)
+    out.push(`  projection_mode=${research.projection.mode}`)
+    if (research.projection.last_event_id) out.push(`  last_event=${research.projection.last_event_id}`)
+    if (research.projection.reason) out.push(`  projection_reason=${research.projection.reason}`)
+  }
+  out.push(`  topics=${research.topics.length}`)
+  if (research.topics.length === 0) out.push("  topic_rows=empty")
+  else out.push(...research.topics.map((topic) => `  - topic ${topic.id} [${topic.status}]: ${topic.title}`))
+  if (research.selectedTopic) {
+    out.push(`  selected_topic=${research.selectedTopic.topic.id} [${research.selectedTopic.topic.status}]: ${research.selectedTopic.topic.title}`)
+    out.push(
+      `  selected_counts sources=${research.selectedTopic.stats.source_count} notes=${research.selectedTopic.stats.note_count} artifacts=${research.selectedTopic.stats.artifact_count} reports=${research.selectedTopic.stats.report_count}`,
+    )
+  } else if (research.selectedTopicId) {
+    out.push(`  selected_topic=${research.selectedTopicId} [missing]`)
+  }
+  if (research.lastQuery) out.push(`  last_query=${research.lastQuery}`)
+  out.push(`  notes=${research.notes.length}`)
+  if (research.notes.length > 0) {
+    out.push(...research.notes.map((note) => `  - note ${note.id} topic=${note.topic_id} source=${note.source_id ?? "none"} tags=${note.tags.join(",") || "none"}: ${note.content}`))
+  }
+  out.push(`  events=${research.events.length}`)
+  if (research.events.length > 0) {
+    out.push(...research.events.map((event) => `  - event ${event.event_type} ${event.entity_type}/${event.entity_id} id=${event.event_id} time=${event.created_at ?? "unknown"}`))
+  }
+  if (research.commandError) out.push(`  command_error=${redactText(research.commandError)}`)
   return out
 }
 

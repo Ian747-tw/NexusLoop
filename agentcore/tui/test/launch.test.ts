@@ -36,6 +36,35 @@ class TestRuntimeClient implements RuntimeClient {
       }
     }
     if (name === "runtime.list_recent_missions") return []
+    if (name === "research.projection_status" || name === "research.rebuild_projection") {
+      return { mode: "auto_rebuild", ok: true, stale: false, pending_count: 0, last_event_id: "research-event-1" }
+    }
+    if (name === "research.list_topics") {
+      return [{ id: "topic-1", title: "Runtime bridge topic", status: "active" }]
+    }
+    if (name === "research.get_topic_snapshot") {
+      return {
+        topic: { id: "topic-1", title: "Runtime bridge topic", status: "active" },
+        sources: [],
+        notes: [],
+        artifacts: [],
+        stats: {
+          source_count: 1,
+          note_count: 2,
+          artifact_count: 3,
+          report_count: 0,
+          reviewed_source_count: 1,
+          rejected_source_count: 0,
+        },
+        latest_event: null,
+      }
+    }
+    if (name === "research.search_notes") {
+      return [{ id: "note-1", topic_id: "topic-1", source_id: "source-1", content: "Runtime note token=note-secret", tags: ["runtime"] }]
+    }
+    if (name === "research.list_events") {
+      return [{ event_id: "research-event-1", event_type: "note_added", entity_type: "note", entity_id: "note-1", payload: { token: "event-secret" }, created_at: "2026-05-16T00:00:00Z" }]
+    }
     return { ok: true }
   }
 
@@ -229,6 +258,112 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("user command -> runtime: missions")
     expect(snapshot).toContain("status=started")
     expect(snapshot).toContain("recent_missions")
+  })
+
+  test("default fake headless snapshot includes research section after research command", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/research" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Research records")
+    expect(snapshot).toContain("projection=ok stale=false pending=0")
+    expect(snapshot).toContain("topic fake-topic-1 [active]: Fake runtime research topic")
+    expect(snapshot).toContain("event topic_created topic/fake-topic-1")
+  })
+
+  test("real headless runtime client loads projection and topics through research command", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/research" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: {
+        NXL_TUI_HEADLESS: "1",
+        NXL_TUI_KEYS: JSON.stringify(keys),
+        NXL_RUNTIME_CLIENT: "real",
+        NXL_OPENCODE_ADAPTER: "fake",
+      },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Research records")
+    expect(snapshot).toContain("projection=ok stale=false pending=0")
+    expect(snapshot).toContain("topics=0")
+  })
+
+  test("research browsing commands render bounded records and redacted notes", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/topics" },
+      { type: "submit" },
+      { type: "insert", text: "/topic topic-1" },
+      { type: "submit" },
+      { type: "insert", text: "/notes topic-1 runtime" },
+      { type: "submit" },
+      { type: "insert", text: "/research-events" },
+      { type: "submit" },
+      { type: "insert", text: "/projection" },
+      { type: "submit" },
+      { type: "insert", text: "/rebuild-projection" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-research",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("topic topic-1 [active]: Runtime bridge topic")
+    expect(snapshot).toContain("selected_topic=topic-1 [active]: Runtime bridge topic")
+    expect(snapshot).toContain("selected_counts sources=1 notes=2 artifacts=3 reports=0")
+    expect(snapshot).toContain("note note-1 topic=topic-1 source=source-1 tags=runtime: Runtime note [REDACTED]")
+    expect(snapshot).toContain("event note_added note/note-1")
+    expect(snapshot).not.toContain("note-secret")
+    expect(snapshot).not.toContain("event-secret")
+  })
+
+  test("missing research command args render research command error", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/topic" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-research-error",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("research command error")
+    expect(snapshot).toContain("command_error=topicId is required")
   })
 
   test("runtime command errors are redacted in headless state and snapshot", async () => {

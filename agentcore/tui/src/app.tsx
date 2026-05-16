@@ -215,12 +215,42 @@ function RuntimePanel(props: { state: UiState }) {
 }
 
 function SearchPanel(props: { state: UiState }) {
+  const research = () => props.state.research
   return (
     <Panel title="Search / records" focus="search-records" state={props.state}>
-      <text fg={color.muted}>Search placeholder: indexed runtime records will plug in here.</text>
       <text fg={color.text}>types: {props.state.search.recordFilters.join(", ")}</text>
       <text fg={color.text}>labels: {props.state.search.labelFilters.join(", ")}</text>
       <For each={props.state.search.records}>{(item) => <text fg={color.accent}>{lineText(item)}</text>}</For>
+      <Show when={research()?.projection}>
+        {(projection) => (
+          <text fg={projection().ok ? color.accent : color.warning}>
+            projection: {projection().mode} {projection().ok ? "ok" : "not-ok"} stale={String(projection().stale)} pending={projection().pending_count}
+          </text>
+        )}
+      </Show>
+      <text fg={color.text}>topics: {research()?.topics.length ?? 0}</text>
+      <For each={(research()?.topics ?? []).slice(0, 5)}>
+        {(topic) => <text fg={color.accent}>{topic.id} [{topic.status}] {topic.title}</text>}
+      </For>
+      <Show when={research()?.selectedTopic}>
+        {(snapshot) => (
+          <>
+            <text fg={color.text}>selected: {snapshot().topic.id} [{snapshot().topic.status}] {snapshot().topic.title}</text>
+            <text fg={color.muted}>
+              counts: sources={snapshot().stats.source_count} notes={snapshot().stats.note_count} artifacts={snapshot().stats.artifact_count}
+            </text>
+          </>
+        )}
+      </Show>
+      <For each={(research()?.notes ?? []).slice(0, 5)}>
+        {(note) => <text fg={color.text}>note {note.id}: {note.content}</text>}
+      </For>
+      <For each={(research()?.events ?? []).slice(0, 5)}>
+        {(event) => <text fg={color.muted}>event {event.event_type} {event.entity_type}/{event.entity_id}</text>}
+      </For>
+      <Show when={research()?.commandError}>
+        {(value) => <text fg={color.warning}>research error: {value()}</text>}
+      </Show>
     </Panel>
   )
 }
