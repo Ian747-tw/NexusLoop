@@ -25,11 +25,11 @@ export async function applyRuntimeUiEffect(
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
-        return await refreshRuntimeRecords(next, runtime)
+        return await refreshRuntimeRecordsOrRecordError(next, runtime)
       }
       case "send-command": {
         const next = await applyNamedRuntimeCommand(state, runtime, effect.command)
-        return shouldRefreshAfterCommand(effect.command) ? await refreshRuntimeRecords(next, runtime) : next
+        return shouldRefreshAfterCommand(effect.command) ? await refreshRuntimeRecordsOrRecordError(next, runtime) : next
       }
     }
   } catch (error) {
@@ -42,6 +42,14 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-runtime-status" })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-recent-missions", limit: 5 })
   return next
+}
+
+async function refreshRuntimeRecordsOrRecordError(state: UiState, runtime: RuntimeClient): Promise<UiState> {
+  try {
+    return await refreshRuntimeRecords(state, runtime)
+  } catch (error) {
+    return recordRuntimeCommandError(state, error)
+  }
 }
 
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string): Promise<UiState> {

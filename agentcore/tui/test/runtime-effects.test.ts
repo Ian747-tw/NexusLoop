@@ -43,6 +43,19 @@ class RejectingRuntime implements RuntimeClient {
   }
 }
 
+class RefreshFailAfterSubmitRuntime implements RuntimeClient {
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<{ accepted: true; missionId: string; intentId: string }> {
+    return { accepted: true, missionId: "mission-created", intentId: "intent-created" }
+  }
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+  async command(): Promise<unknown> {
+    throw new Error("refresh failed after accepted mission")
+  }
+}
+
 describe("runtime UI effects", () => {
   test("recent mission refresh advances last and active mission to newest row", async () => {
     const state = {
@@ -88,5 +101,18 @@ describe("runtime UI effects", () => {
     expect(next.runtimeCommandError).toBeUndefined()
     expect(runtime.commandCalls).toBe(0)
     expect(runtime.sendCommandCalls).toBe(0)
+  })
+
+  test("post-submit refresh failure preserves accepted mission state", async () => {
+    const state = initialState("/tmp/demo")
+
+    const next = await applyRuntimeUiEffect(state, new RefreshFailAfterSubmitRuntime(), {
+      type: "send-user-message",
+      message: "start mission",
+    })
+
+    expect(next.header.activeMissionId).toBe("mission-created")
+    expect(next.systemActions.some((action) => action.title === "mission submitted")).toBe(true)
+    expect(next.runtimeCommandError).toBe("refresh failed after accepted mission")
   })
 })

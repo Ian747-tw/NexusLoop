@@ -6,6 +6,7 @@ import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { mergeRuntimeEffectState } from "./runtime-state-merge"
+import { snapshotUiState } from "./state-snapshot"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
 import type { RuntimeClient } from "./runtime"
 
@@ -356,9 +357,10 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
     const result = applyKeyCommandWithEffects(state, command)
     setState(result.state)
     for (const effect of result.effects) {
+      const baseline = snapshotUiState(result.state)
       void (async () => {
-        const next = await applyRuntimeUiEffect(result.state, props.runtime, effect)
-        setState((current) => mergeRuntimeEffectState(current, next, result.state.systemActions.length, result.state))
+        const next = await applyRuntimeUiEffect(baseline, props.runtime, effect)
+        setState((current) => mergeRuntimeEffectState(current, next, baseline.systemActions.length, baseline))
         renderer.requestRender()
       })()
     }
@@ -372,7 +374,7 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
         renderer.requestRender()
       }
     })()
-    const baseline = state
+    const baseline = snapshotUiState(state)
     void (async () => {
       const next = await refreshRuntimeRecords(baseline, props.runtime)
       setState((current) => mergeRuntimeEffectState(current, next, 0, baseline))
