@@ -60,7 +60,7 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return runClientCommand(state, runtime, command)
     case "initialize":
     case "cancel":
-      return runClientCommand(state, runtime, command)
+      return Promise.resolve({ ...state, lastCommand: command, runtimeCommandError: undefined })
     default:
       throw new Error(`unknown TUI command: ${command}`)
   }

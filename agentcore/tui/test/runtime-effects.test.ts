@@ -27,6 +27,22 @@ class RecentMissionRuntime implements RuntimeClient {
   }
 }
 
+class RejectingRuntime implements RuntimeClient {
+  commandCalls = 0
+  sendCommandCalls = 0
+
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    this.sendCommandCalls += 1
+    throw new Error("runtime should not receive init command")
+  }
+  async command(): Promise<unknown> {
+    this.commandCalls += 1
+    throw new Error("runtime should not receive init command")
+  }
+}
+
 describe("runtime UI effects", () => {
   test("recent mission refresh advances last and active mission to newest row", async () => {
     const state = {
@@ -60,5 +76,17 @@ describe("runtime UI effects", () => {
         updated_at: "2026-05-16T00:00:00Z",
       },
     ])
+  })
+
+  test("init-only commands are handled locally without runtime dispatch", async () => {
+    const runtime = new RejectingRuntime()
+    const state = initialState("/tmp/demo")
+
+    const next = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "initialize" })
+
+    expect(next.lastCommand).toBe("initialize")
+    expect(next.runtimeCommandError).toBeUndefined()
+    expect(runtime.commandCalls).toBe(0)
+    expect(runtime.sendCommandCalls).toBe(0)
   })
 })
