@@ -1,5 +1,6 @@
 import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
+import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { type RuntimeClient } from "./runtime"
 import { createTuiRuntimeClient } from "./runtime-client-factory"
 import { layoutSnapshot } from "./snapshot"
@@ -48,13 +49,14 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
     else await close
   }
 
+  state = await refreshRuntimeRecords(state, runtime)
+
   const commands = env.NXL_TUI_KEYS ? (JSON.parse(env.NXL_TUI_KEYS) as KeyCommand[]) : []
   for (const command of commands) {
     const result = applyKeyCommandWithEffects(state, command)
     state = result.state
     for (const effect of result.effects) {
-      if (effect.type === "send-user-message") await runtime.sendUserMessage(effect.message)
-      if (effect.type === "send-command") await runtime.sendCommand(effect.command)
+      state = await applyRuntimeUiEffect(state, runtime, effect)
     }
   }
 

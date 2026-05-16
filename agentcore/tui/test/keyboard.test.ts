@@ -67,4 +67,19 @@ describe("TUI keyboard command model", () => {
     expect(JSON.stringify(state)).not.toContain("sk-test-SECRET123")
     expect(state.submittedMessages).toEqual(["provider key [REDACTED]"])
   })
+
+  test("slash commands route through runtime command effects", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/status",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("status")
+    expect(result.effects).toEqual([{ type: "send-command", command: "status" }])
+  })
 })

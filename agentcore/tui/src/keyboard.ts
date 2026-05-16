@@ -103,6 +103,18 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
         }
       }
       if (state.messageDraft.trim() === "") return { state, effects: [] }
+      const runtimeCommand = parseRuntimeCommand(state.messageDraft)
+      if (runtimeCommand) {
+        return {
+          state: {
+            ...state,
+            lastCommand: runtimeCommand,
+            systemActions: [...state.systemActions, { title: "user command -> runtime", detail: runtimeCommand }],
+            messageDraft: "",
+          },
+          effects: [{ type: "send-command", command: runtimeCommand }],
+        }
+      }
       const redactedMessage = redactText(state.messageDraft)
       return {
         state: {
@@ -129,4 +141,10 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
         effects: [],
       }
   }
+}
+
+function parseRuntimeCommand(value: string): string | undefined {
+  const trimmed = value.trim()
+  const match = /^[/.:]([a-z][a-z-]*)(?:\s|$)/i.exec(trimmed)
+  return match?.[1]?.toLowerCase()
 }

@@ -71,6 +71,41 @@ export type SearchState = {
   records: StreamLine[]
 }
 
+export type RuntimeStatusSummary = {
+  runtimeStatus: string
+  mode: string
+  projectName: string
+  specApproved: boolean
+  lockHeld: boolean
+}
+
+export type ResearchProjectionSummary = {
+  mode: string
+  ok: boolean
+  stale: boolean
+  reason?: string
+  pending_count: number
+}
+
+export type MissionRecord = {
+  mission_id: string
+  intent_id?: string
+  objective?: string
+  status: string
+  created_at?: string
+  updated_at?: string
+}
+
+export type MissionSummaryState = {
+  pending_count: number
+  failed_count: number
+  active_claim_count?: number
+  completed_count?: number
+  cancelled_count?: number
+  last_mission_id?: string
+  recent: MissionRecord[]
+}
+
 export type UiState = {
   screen: Screen
   projectDir: string
@@ -90,6 +125,11 @@ export type UiState = {
   messageDraft: string
   submittedMessages: string[]
   lastCommand?: string
+  runtimeStatus?: RuntimeStatusSummary
+  adapterStatus?: Record<string, unknown>
+  researchProjection?: ResearchProjectionSummary
+  missions?: MissionSummaryState
+  runtimeCommandError?: string
 }
 
 export function initialState(projectDir: string): UiState {
@@ -156,5 +196,13 @@ export function initialState(projectDir: string): UiState {
     },
     messageDraft: "",
     submittedMessages: [],
+    missions: {
+      pending_count: 0,
+      failed_count: 0,
+      active_claim_count: 0,
+      completed_count: 0,
+      cancelled_count: 0,
+      recent: [],
+    },
   }
 }
