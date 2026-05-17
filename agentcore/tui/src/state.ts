@@ -94,6 +94,13 @@ export type MissionRecord = {
   status: string
   created_at?: string
   updated_at?: string
+  claimed_at?: string
+  completed_at?: string
+  cancelled_at?: string
+  failure_reason?: string
+  cancellation_reason?: string
+  completion_summary?: string
+  completion_result_id?: string
 }
 
 export type MissionSummaryState = {
@@ -104,6 +111,45 @@ export type MissionSummaryState = {
   cancelled_count?: number
   last_mission_id?: string
   recent: MissionRecord[]
+}
+
+export type ExecutorClaimSummary = {
+  claim_id: string
+  mission_id: string
+  executor_id: string
+  status: string
+  claimed_at?: string
+  released_at?: string
+  release_reason?: string
+}
+
+export type MissionProgressSummary = {
+  progress_id: string
+  mission_id: string
+  claim_id: string
+  message: string
+  created_at?: string
+}
+
+export type MissionResultSummary = {
+  result_id: string
+  mission_id: string
+  claim_id: string
+  summary: string
+  status: string
+  created_at?: string
+}
+
+export type MissionExecutionState = {
+  selectedMissionId?: string
+  selectedClaimId?: string
+  selectedResultId?: string
+  selectedMission?: MissionRecord | null
+  claims: ExecutorClaimSummary[]
+  progress: MissionProgressSummary[]
+  results: MissionResultSummary[]
+  commandError?: string
+  lastCommand?: string
 }
 
 export type ResearchTopicSummary = {
@@ -182,6 +228,7 @@ export type UiState = {
   adapterStatus?: Record<string, unknown>
   researchProjection?: ResearchProjectionSummary
   missions?: MissionSummaryState
+  missionExecution?: MissionExecutionState
   runtimeCommandError?: string
   research?: ResearchRecordsState
 }
@@ -257,6 +304,11 @@ export function initialState(projectDir: string): UiState {
       completed_count: 0,
       cancelled_count: 0,
       recent: [],
+    },
+    missionExecution: {
+      claims: [],
+      progress: [],
+      results: [],
     },
     research: {
       topics: [],

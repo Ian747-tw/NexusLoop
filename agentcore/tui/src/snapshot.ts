@@ -43,6 +43,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(`  obligations=${state.commander.obligations.join(", ") || "none"}`)
   out.push(`  candidates=${state.commander.candidates.join(", ") || "none"}`)
   out.push(...runtimeLines(state))
+  out.push(...missionExecutionLines(state))
   out.push("Live system actions")
   out.push(...lines(state.systemActions))
   out.push("Onboarding")
@@ -133,6 +134,42 @@ function researchLines(state: UiState): string[] {
   }
   if (research.commandError) out.push(`  command_error=${redactText(research.commandError)}`)
   return out
+}
+
+function missionExecutionLines(state: UiState): string[] {
+  const execution = state.missionExecution
+  const out = ["Mission execution"]
+  if (!execution) {
+    out.push("  selected_mission=none")
+    return out
+  }
+  if (execution.selectedMission) {
+    out.push(`  selected_mission=${execution.selectedMission.mission_id} [${execution.selectedMission.status}]`)
+    if (execution.selectedMission.objective) out.push(`  objective=${preview(execution.selectedMission.objective)}`)
+    if (execution.selectedMission.completion_result_id) out.push(`  completion_result=${execution.selectedMission.completion_result_id}`)
+  } else {
+    out.push(`  selected_mission=${execution.selectedMissionId ?? "none"}${execution.selectedMissionId ? " [missing]" : ""}`)
+  }
+  out.push(`  selected_claim=${execution.selectedClaimId ?? "none"}`)
+  out.push(`  selected_result=${execution.selectedResultId ?? "none"}`)
+  out.push(`  claims=${execution.claims.length}`)
+  if (execution.claims.length > 0) {
+    out.push(...execution.claims.map((claim) => `  - claim ${claim.claim_id} [${claim.status}] executor=${claim.executor_id}`))
+  }
+  out.push(`  progress=${execution.progress.length}`)
+  if (execution.progress.length > 0) {
+    out.push(...execution.progress.map((progress) => `  - progress ${progress.progress_id} claim=${progress.claim_id}: ${preview(progress.message)}`))
+  }
+  out.push(`  results=${execution.results.length}`)
+  if (execution.results.length > 0) {
+    out.push(...execution.results.map((result) => `  - result ${result.result_id} [${result.status}] claim=${result.claim_id}: ${preview(result.summary)}`))
+  }
+  if (execution.commandError) out.push(`  command_error=${redactText(execution.commandError)}`)
+  return out
+}
+
+function preview(value: string): string {
+  return value.length > 160 ? `${value.slice(0, 160)}...` : value
 }
 
 function adapterSummary(adapter: Record<string, unknown>): string {

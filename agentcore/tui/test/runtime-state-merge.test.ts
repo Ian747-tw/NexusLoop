@@ -187,4 +187,107 @@ describe("interactive runtime effect state merge", () => {
       status: "failed",
     })
   })
+
+  test("preserves newer mission execution state while keeping older effect actions", () => {
+    const baseline: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      missionExecution: {
+        selectedMissionId: "mission-old",
+        claims: [{ claim_id: "claim-old", mission_id: "mission-old", executor_id: "executor-old", status: "active" }],
+        progress: [],
+        results: [],
+      },
+      systemActions: [{ title: "user command -> runtime", detail: "claim mission-old executor-old" }],
+    }
+    const current: UiState = {
+      ...baseline,
+      missionExecution: {
+        selectedMissionId: "mission-new",
+        selectedClaimId: "claim-new",
+        claims: [{ claim_id: "claim-new", mission_id: "mission-new", executor_id: "executor-new", status: "active" }],
+        progress: [],
+        results: [],
+      },
+    }
+    const olderEffectResult: UiState = {
+      ...baseline,
+      missionExecution: {
+        ...baseline.missionExecution!,
+        commandError: "older claim failed",
+      },
+      systemActions: [
+        ...baseline.systemActions,
+        { title: "mission execution command error", detail: "older claim failed", status: "failed" },
+      ],
+    }
+
+    const merged = mergeRuntimeEffectState(current, olderEffectResult, baseline.systemActions.length, baseline)
+
+    expect(merged.missionExecution?.selectedMissionId).toBe("mission-new")
+    expect(merged.missionExecution?.selectedClaimId).toBe("claim-new")
+    expect(merged.missionExecution?.commandError).toBeUndefined()
+    expect(merged.systemActions.at(-1)).toEqual({
+      title: "mission execution command error",
+      detail: "older claim failed",
+      status: "failed",
+    })
+  })
+
+  test("keeps header mission aligned when mission execution rebases over newer mission summary", () => {
+    const baseline: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      header: {
+        ...initialState("/tmp/demo").header,
+        activeMissionId: "mission-a",
+      },
+      missions: {
+        pending_count: 1,
+        failed_count: 0,
+        recent: [{ mission_id: "mission-a", status: "sent" }],
+      },
+      missionExecution: {
+        selectedMissionId: "mission-a",
+        selectedMission: { mission_id: "mission-a", status: "sent" },
+        claims: [],
+        progress: [],
+        results: [],
+      },
+      systemActions: [{ title: "user command -> runtime", detail: "mission mission-b" }],
+    }
+    const current: UiState = {
+      ...baseline,
+      header: {
+        ...baseline.header,
+        activeMissionId: "mission-a",
+      },
+      missions: {
+        pending_count: 1,
+        failed_count: 0,
+        recent: [{ mission_id: "mission-stream", status: "sent" }],
+        last_mission_id: "mission-stream",
+      },
+    }
+    const effectResult: UiState = {
+      ...baseline,
+      header: {
+        ...baseline.header,
+        activeMissionId: "mission-b",
+      },
+      missionExecution: {
+        selectedMissionId: "mission-b",
+        selectedMission: { mission_id: "mission-b", status: "sent" },
+        claims: [],
+        progress: [],
+        results: [],
+      },
+    }
+
+    const merged = mergeRuntimeEffectState(current, effectResult, baseline.systemActions.length, baseline)
+
+    expect(merged.missions?.last_mission_id).toBe("mission-stream")
+    expect(merged.missionExecution?.selectedMissionId).toBe("mission-b")
+    expect(merged.header.activeMissionId).toBe("mission-b")
+  })
 })

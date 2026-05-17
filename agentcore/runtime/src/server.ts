@@ -239,7 +239,7 @@ export class RuntimeServer {
       case "runtime.submit_user_message":
         return this.submitUserMessage(String(payload.message ?? ""))
       case "runtime.get_mission":
-        return this.getMission(requiredString(payload.missionId, "missionId"))
+        return this.getMission(requiredString(payload.missionId ?? payload.mission_id, "missionId"))
       case "runtime.list_recent_missions":
         return this.listRecentMissions(optionalPositiveInteger(payload.limit, "limit", 100))
       case "runtime.claim_mission":
@@ -270,6 +270,14 @@ export class RuntimeServer {
         return this.failMission(requiredString(payload.missionId ?? payload.mission_id, "missionId"), requiredString(payload.reason, "reason"))
       case "runtime.cancel_mission":
         return this.cancelMission(requiredString(payload.missionId ?? payload.mission_id, "missionId"), optionalString(payload.reason, "reason"))
+      case "runtime.release_mission_claim":
+        return this.releaseMissionClaim(requiredString(payload.claimId ?? payload.claim_id, "claimId"), optionalString(payload.reason, "reason"))
+      case "runtime.list_mission_claims":
+        return this.listMissionClaims(requiredString(payload.missionId ?? payload.mission_id, "missionId"))
+      case "runtime.list_mission_progress":
+        return this.listMissionProgress(requiredString(payload.missionId ?? payload.mission_id, "missionId"))
+      case "runtime.list_mission_results":
+        return this.listMissionResults(requiredString(payload.missionId ?? payload.mission_id, "missionId"))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:

@@ -7,6 +7,8 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
   const canUpdateResearchProjection =
     baseline === undefined || stableEqual(current.researchProjection, baseline.researchProjection)
   const canUpdateMissions = baseline === undefined || stableEqual(current.missions, baseline.missions)
+  const canUpdateMissionExecution =
+    baseline === undefined || stableEqual(current.missionExecution, baseline.missionExecution)
   const canUpdateResearch = baseline === undefined || stableEqual(current.research, baseline.research)
   const canUpdateRuntimeCommandError =
     baseline === undefined ||
@@ -17,6 +19,12 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
   const canUpdateHeaderRuntimeStatus =
     canUpdateRuntimeStatus || current.header.runtimeStatus === baseline?.header.runtimeStatus
   const canUpdateActiveMissionId = canUpdateMissions || current.header.activeMissionId === baseline?.header.activeMissionId
+  const mergedMissionExecution = canUpdateMissionExecution ? next.missionExecution : current.missionExecution
+  const missionExecutionChanged =
+    canUpdateMissionExecution && !stableEqual(next.missionExecution, baseline?.missionExecution)
+  const missionExecutionActiveMissionId = missionExecutionChanged
+    ? next.missionExecution?.selectedMissionId
+    : undefined
 
   return {
     ...current,
@@ -25,6 +33,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     adapterStatus: canUpdateAdapterStatus ? next.adapterStatus : current.adapterStatus,
     researchProjection: canUpdateResearchProjection ? next.researchProjection : current.researchProjection,
     missions: canUpdateMissions ? next.missions : current.missions,
+    missionExecution: mergedMissionExecution,
     research: canUpdateResearch ? next.research : current.research,
     runtimeCommandError: canUpdateRuntimeCommandError ? next.runtimeCommandError : current.runtimeCommandError,
     lastCommand: canUpdateLastCommand ? next.lastCommand : current.lastCommand,
@@ -32,7 +41,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
       ...current.header,
       projectName: canUpdateProjectName ? next.header.projectName : current.header.projectName,
       runtimeStatus: canUpdateHeaderRuntimeStatus ? next.header.runtimeStatus : current.header.runtimeStatus,
-      activeMissionId: canUpdateActiveMissionId ? next.header.activeMissionId : current.header.activeMissionId,
+      activeMissionId: missionExecutionActiveMissionId ?? (canUpdateActiveMissionId ? next.header.activeMissionId : current.header.activeMissionId),
     },
   }
 }

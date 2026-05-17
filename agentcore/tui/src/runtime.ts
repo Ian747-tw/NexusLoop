@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText } from "./redaction"
-import type { MissionRecord } from "./state"
+import type { ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -23,6 +23,9 @@ export class FakeRuntimeClient implements RuntimeClient {
   readonly sentMessages: string[] = []
   readonly sentCommands: string[] = []
   private readonly missions: MissionRecord[] = []
+  private readonly claims: ExecutorClaimSummary[] = []
+  private readonly progress: MissionProgressSummary[] = []
+  private readonly results: MissionResultSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -123,6 +126,36 @@ export class FakeRuntimeClient implements RuntimeClient {
         }
       case "runtime.list_recent_missions":
         return this.missions.slice(0, readLimit(payload.limit, 5))
+      case "runtime.get_mission":
+        return this.getMission(String(payload.missionId ?? payload.mission_id ?? ""))
+      case "runtime.claim_mission":
+        return this.claimMission(String(payload.missionId ?? payload.mission_id ?? ""), String(payload.executorId ?? payload.executor_id ?? ""))
+      case "runtime.record_mission_progress":
+        return this.recordMissionProgress(
+          String(payload.missionId ?? payload.mission_id ?? ""),
+          String(payload.claimId ?? payload.claim_id ?? ""),
+          String(payload.message ?? ""),
+        )
+      case "runtime.submit_mission_result":
+        return this.submitMissionResult(
+          String(payload.missionId ?? payload.mission_id ?? ""),
+          String(payload.claimId ?? payload.claim_id ?? ""),
+          String(payload.summary ?? ""),
+        )
+      case "runtime.complete_mission":
+        return this.completeMission(String(payload.missionId ?? payload.mission_id ?? ""), payload)
+      case "runtime.fail_mission":
+        return this.failMission(String(payload.missionId ?? payload.mission_id ?? ""), String(payload.reason ?? ""))
+      case "runtime.cancel_mission":
+        return this.cancelMission(String(payload.missionId ?? payload.mission_id ?? ""), optionalString(payload.reason))
+      case "runtime.release_mission_claim":
+        return this.releaseMissionClaim(String(payload.claimId ?? payload.claim_id ?? ""), optionalString(payload.reason))
+      case "runtime.list_mission_claims":
+        return this.claims.filter((claim) => claim.mission_id === String(payload.missionId ?? payload.mission_id ?? ""))
+      case "runtime.list_mission_progress":
+        return this.progress.filter((item) => item.mission_id === String(payload.missionId ?? payload.mission_id ?? ""))
+      case "runtime.list_mission_results":
+        return this.results.filter((result) => result.mission_id === String(payload.missionId ?? payload.mission_id ?? ""))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -162,6 +195,158 @@ export class FakeRuntimeClient implements RuntimeClient {
       updated_at: now,
     })
     return { accepted: true, missionId, intentId }
+  }
+
+  private getMission(missionId: string): MissionRecord | null {
+    if (!missionId.trim()) throw new Error("missionId is required")
+    return this.missions.find((mission) => mission.mission_id === missionId) ?? null
+  }
+
+  private ensureMission(missionId: string): MissionRecord {
+    const id = missionId.trim()
+    if (!id) throw new Error("missionId is required")
+    let mission = this.missions.find((item) => item.mission_id === id)
+    if (mission) return mission
+    const now = new Date(0).toISOString()
+    mission = {
+      mission_id: id,
+      intent_id: `fake-intent-for-${redactText(id)}`,
+      objective: `Fake mission ${redactText(id)}`,
+      status: "sent",
+      created_at: now,
+      updated_at: now,
+    }
+    this.missions.unshift(mission)
+    return mission
+  }
+
+  private claimMission(missionId: string, executorId: string): ExecutorClaimSummary {
+    const mission = this.ensureMission(missionId)
+    const executor = redactText(requiredString(executorId, "executorId"))
+    const existing = this.claims.find((claim) => claim.mission_id === mission.mission_id && claim.status === "active")
+    if (existing) throw new Error(`mission already has an active claim: ${redactText(mission.mission_id)}`)
+    if (mission.status !== "sent") throw new Error(`mission must be sent before claim: ${redactText(mission.mission_id)}`)
+    this.sequence += 1
+    const now = new Date(0).toISOString()
+    const claim: ExecutorClaimSummary = {
+      claim_id: `fake-claim-${this.sequence}`,
+      mission_id: mission.mission_id,
+      executor_id: executor,
+      status: "active",
+      claimed_at: now,
+    }
+    this.claims.unshift(claim)
+    mission.status = "claimed"
+    mission.claimed_at = now
+    mission.updated_at = now
+    return claim
+  }
+
+  private recordMissionProgress(missionId: string, claimId: string, message: string): MissionProgressSummary {
+    const mission = this.ensureMission(missionId)
+    const claim = this.requireClaim(claimId, mission.mission_id)
+    if (claim.status !== "active") throw new Error(`claim is not active: ${redactText(claim.claim_id)}`)
+    this.sequence += 1
+    const now = new Date(0).toISOString()
+    const progress: MissionProgressSummary = {
+      progress_id: `fake-progress-${this.sequence}`,
+      mission_id: mission.mission_id,
+      claim_id: claim.claim_id,
+      message: redactText(requiredString(message, "message")),
+      created_at: now,
+    }
+    this.progress.unshift(progress)
+    mission.status = "running"
+    mission.updated_at = now
+    return progress
+  }
+
+  private submitMissionResult(missionId: string, claimId: string, summary: string): MissionResultSummary {
+    const mission = this.ensureMission(missionId)
+    const claim = this.requireClaim(claimId, mission.mission_id)
+    if (claim.status !== "active") throw new Error(`claim is not active: ${redactText(claim.claim_id)}`)
+    this.sequence += 1
+    const now = new Date(0).toISOString()
+    const result: MissionResultSummary = {
+      result_id: `fake-result-${this.sequence}`,
+      mission_id: mission.mission_id,
+      claim_id: claim.claim_id,
+      summary: redactText(requiredString(summary, "summary")),
+      status: "submitted",
+      created_at: now,
+    }
+    this.results.unshift(result)
+    mission.status = "running"
+    mission.updated_at = now
+    return result
+  }
+
+  private completeMission(missionId: string, payload: Record<string, unknown>): MissionRecord {
+    const mission = this.ensureMission(missionId)
+    const activeClaim = this.claims.find((claim) => claim.mission_id === mission.mission_id && claim.status === "active")
+    if (!activeClaim) throw new Error(`mission completion requires an active claim: ${redactText(mission.mission_id)}`)
+    const payloadResultId = optionalString(payload.resultId) ?? optionalString(payload.result_id)
+    const result = payloadResultId
+      ? this.results.find((item) => item.result_id === payloadResultId && item.mission_id === mission.mission_id)
+      : this.results.find((item) => item.mission_id === mission.mission_id && item.claim_id === activeClaim.claim_id)
+    if (!result) throw new Error(`mission completion requires a submitted result: ${redactText(mission.mission_id)}`)
+    if (result.claim_id !== activeClaim.claim_id) throw new Error(`result must belong to active claim: ${redactText(result.result_id)}`)
+    const now = new Date(0).toISOString()
+    result.status = "accepted"
+    activeClaim.status = "completed"
+    mission.status = "completed"
+    mission.completed_at = now
+    mission.updated_at = now
+    mission.completion_result_id = result.result_id
+    const summary = optionalString(payload.summary)
+    if (summary) mission.completion_summary = redactText(summary)
+    return mission
+  }
+
+  private failMission(missionId: string, reason: string): MissionRecord {
+    const mission = this.ensureMission(missionId)
+    const now = new Date(0).toISOString()
+    mission.status = "failed"
+    mission.updated_at = now
+    mission.failure_reason = redactText(requiredString(reason, "reason"))
+    for (const claim of this.claims.filter((item) => item.mission_id === mission.mission_id && item.status === "active")) {
+      claim.status = "failed"
+    }
+    return mission
+  }
+
+  private cancelMission(missionId: string, reason?: string): MissionRecord {
+    const mission = this.ensureMission(missionId)
+    const now = new Date(0).toISOString()
+    mission.status = "cancelled"
+    mission.cancelled_at = now
+    mission.updated_at = now
+    if (reason) mission.cancellation_reason = redactText(reason)
+    for (const claim of this.claims.filter((item) => item.mission_id === mission.mission_id && item.status === "active")) {
+      claim.status = "cancelled"
+    }
+    return mission
+  }
+
+  private releaseMissionClaim(claimId: string, reason?: string): ExecutorClaimSummary {
+    const claim = this.requireClaim(claimId)
+    if (claim.status !== "active") return claim
+    claim.status = "released"
+    claim.released_at = new Date(0).toISOString()
+    if (reason) claim.release_reason = redactText(reason)
+    const mission = this.missions.find((item) => item.mission_id === claim.mission_id)
+    if (mission && !isTerminalMissionStatus(mission.status)) {
+      mission.status = "sent"
+      mission.updated_at = new Date(0).toISOString()
+    }
+    return claim
+  }
+
+  private requireClaim(claimId: string, missionId?: string): ExecutorClaimSummary {
+    const id = requiredString(claimId, "claimId")
+    const claim = this.claims.find((item) => item.claim_id === id && (missionId === undefined || item.mission_id === missionId))
+    if (!claim) throw new Error(`unknown mission claim: ${redactText(id)}`)
+    return claim
   }
 
   private missionSummary() {
@@ -259,4 +444,20 @@ function readLimit(value: unknown, fallback: number): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function requiredString(value: string, name: string): string {
+  const cleaned = value.trim()
+  if (!cleaned) throw new Error(`${name} is required`)
+  return cleaned
+}
+
+function optionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const cleaned = value.trim()
+  return cleaned ? cleaned : undefined
+}
+
+function isTerminalMissionStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled"
 }

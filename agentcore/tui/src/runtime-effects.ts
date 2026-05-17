@@ -2,7 +2,11 @@ import { redactText, redactUnknown } from "./redaction"
 import type { KeySideEffect } from "./keyboard"
 import type { RuntimeClient, SubmitUserMessageResult } from "./runtime"
 import type {
+  ExecutorClaimSummary,
   MissionRecord,
+  MissionExecutionState,
+  MissionProgressSummary,
+  MissionResultSummary,
   MissionSummaryState,
   ResearchEventSummary,
   ResearchNoteSummary,
@@ -18,6 +22,7 @@ import type {
 const RESEARCH_TOPIC_LIMIT = 10
 const RESEARCH_NOTE_LIMIT = 10
 const RESEARCH_EVENT_LIMIT = 10
+const MISSION_EXECUTION_LIMIT = 10
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -32,6 +37,18 @@ export type RuntimeUiEffect =
   | { type: "load-research-projection-status" }
   | { type: "rebuild-research-projection" }
   | { type: "refresh-research-records" }
+  | { type: "load-mission-details"; missionId: string }
+  | { type: "load-mission-execution-records"; missionId: string }
+  | { type: "load-mission-claims"; missionId: string }
+  | { type: "load-mission-progress"; missionId: string }
+  | { type: "load-mission-results"; missionId: string }
+  | { type: "claim-mission"; missionId: string; executorId: string }
+  | { type: "record-mission-progress"; missionId: string; claimId: string; message: string }
+  | { type: "submit-mission-result"; missionId: string; claimId: string; summary: string }
+  | { type: "complete-mission"; missionId: string; resultId?: string; summary?: string }
+  | { type: "fail-mission"; missionId: string; reason: string }
+  | { type: "cancel-mission"; missionId: string; reason?: string }
+  | { type: "release-mission-claim"; claimId: string; reason?: string }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -85,6 +102,48 @@ export async function applyRuntimeUiEffect(
       }
       case "refresh-research-records":
         return await refreshResearchRecords(state, runtime)
+      case "load-mission-details":
+        return applyMissionDetails(state, await runtime.command("runtime.get_mission", { missionId: effect.missionId }), effect.missionId)
+      case "load-mission-execution-records":
+        return await loadMissionExecutionRecords(state, runtime, effect.missionId)
+      case "load-mission-claims":
+        return applyMissionClaims(state, await runtime.command("runtime.list_mission_claims", { missionId: effect.missionId }), effect.missionId)
+      case "load-mission-progress":
+        return applyMissionProgress(state, await runtime.command("runtime.list_mission_progress", { missionId: effect.missionId }), effect.missionId)
+      case "load-mission-results":
+        return applyMissionResults(state, await runtime.command("runtime.list_mission_results", { missionId: effect.missionId }), effect.missionId)
+      case "claim-mission": {
+        const next = applyMissionClaim(state, await runtime.command("runtime.claim_mission", { missionId: effect.missionId, executorId: effect.executorId }))
+        return await refreshAfterMissionWrite(next, runtime, effect.missionId)
+      }
+      case "record-mission-progress": {
+        const next = applyMissionProgressRecord(state, await runtime.command("runtime.record_mission_progress", { missionId: effect.missionId, claimId: effect.claimId, message: effect.message }))
+        return await refreshAfterMissionWrite(next, runtime, effect.missionId)
+      }
+      case "submit-mission-result": {
+        const next = applyMissionResultRecord(state, await runtime.command("runtime.submit_mission_result", { missionId: effect.missionId, claimId: effect.claimId, summary: effect.summary }))
+        return await refreshAfterMissionWrite(next, runtime, effect.missionId)
+      }
+      case "complete-mission": {
+        const next = applyMissionDetails(state, await runtime.command("runtime.complete_mission", { missionId: effect.missionId, resultId: effect.resultId, summary: effect.summary }), effect.missionId)
+        return await refreshAfterMissionWrite(next, runtime, effect.missionId)
+      }
+      case "fail-mission": {
+        const next = applyMissionDetails(state, await runtime.command("runtime.fail_mission", { missionId: effect.missionId, reason: effect.reason }), effect.missionId)
+        return await refreshAfterMissionWrite(next, runtime, effect.missionId)
+      }
+      case "cancel-mission": {
+        const next = applyMissionDetails(state, await runtime.command("runtime.cancel_mission", { missionId: effect.missionId, reason: effect.reason }), effect.missionId)
+        return await refreshAfterMissionWrite(next, runtime, effect.missionId)
+      }
+      case "release-mission-claim": {
+        const value = await runtime.command("runtime.release_mission_claim", { claimId: effect.claimId, reason: effect.reason })
+        const rawMissionId = readRawStringField(value, "mission_id")
+        const claim = readExecutorClaim(value)
+        if (!claim || !rawMissionId) throw new Error("runtime.release_mission_claim returned invalid claim")
+        const next = applyMissionClaim(state, claim)
+        return await refreshAfterMissionWrite(next, runtime, rawMissionId)
+      }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -96,6 +155,7 @@ export async function applyRuntimeUiEffect(
       }
     }
   } catch (error) {
+    if (isMissionExecutionEffect(effect)) return recordMissionExecutionCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -132,6 +192,27 @@ async function refreshResearchRecordsOrRecordError(state: UiState, runtime: Runt
   }
 }
 
+async function loadMissionExecutionRecords(state: UiState, runtime: RuntimeClient, missionId: string): Promise<UiState> {
+  let next = await applyRuntimeUiEffect(state, runtime, { type: "load-mission-details", missionId })
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-mission-claims", missionId })
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-mission-progress", missionId })
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-mission-results", missionId })
+  return next
+}
+
+async function refreshAfterMissionWrite(state: UiState, runtime: RuntimeClient, missionId: string): Promise<UiState> {
+  let next = await loadMissionExecutionRecords(state, runtime, missionId)
+  const activeMissionId = next.missionExecution?.selectedMissionId ?? redactText(missionId)
+  next = await refreshRuntimeRecordsOrRecordError(next, runtime)
+  return {
+    ...next,
+    header: {
+      ...next.header,
+      activeMissionId,
+    },
+  }
+}
+
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
   const commandState = { ...state, lastCommand: command }
   switch (command) {
@@ -158,6 +239,50 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-projection-status" })
     case "rebuild-projection":
       return applyRuntimeUiEffect(commandState, runtime, { type: "rebuild-research-projection" })
+    case "mission":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-mission-execution-records", missionId: requiredArg(args, 0, "missionId") })
+    case "claims":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-mission-claims", missionId: requiredArg(args, 0, "missionId") })
+    case "progress":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-mission-progress", missionId: requiredArg(args, 0, "missionId") })
+    case "results":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-mission-results", missionId: requiredArg(args, 0, "missionId") })
+    case "claim":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "claim-mission", missionId: requiredArg(args, 0, "missionId"), executorId: requiredArg(args, 1, "executorId") })
+    case "progress-add":
+      return applyRuntimeUiEffect(commandState, runtime, {
+        type: "record-mission-progress",
+        missionId: requiredArg(args, 0, "missionId"),
+        claimId: requiredArg(args, 1, "claimId"),
+        message: requiredRest(args, 2, "message"),
+      })
+    case "result":
+      return applyRuntimeUiEffect(commandState, runtime, {
+        type: "submit-mission-result",
+        missionId: requiredArg(args, 0, "missionId"),
+        claimId: requiredArg(args, 1, "claimId"),
+        summary: requiredRest(args, 2, "summary"),
+      })
+    case "complete":
+      return applyRuntimeUiEffect(commandState, runtime, completeMissionEffect(args))
+    case "fail":
+      return applyRuntimeUiEffect(commandState, runtime, {
+        type: "fail-mission",
+        missionId: requiredArg(args, 0, "missionId"),
+        reason: requiredRest(args, 1, "reason"),
+      })
+    case "cancel-mission":
+      return applyRuntimeUiEffect(commandState, runtime, {
+        type: "cancel-mission",
+        missionId: requiredArg(args, 0, "missionId"),
+        reason: optionalRest(args, 1),
+      })
+    case "release-claim":
+      return applyRuntimeUiEffect(commandState, runtime, {
+        type: "release-mission-claim",
+        claimId: requiredArg(args, 0, "claimId"),
+        reason: optionalRest(args, 1),
+      })
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -203,6 +328,42 @@ const researchCommands = new Set([
   "research-events",
   "projection",
   "rebuild-projection",
+])
+
+function isMissionExecutionEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") {
+    return missionExecutionEffectTypes.has(effect.type)
+  }
+  return missionExecutionCommands.has(effect.command)
+}
+
+const missionExecutionCommands = new Set([
+  "mission",
+  "claims",
+  "progress",
+  "results",
+  "claim",
+  "progress-add",
+  "result",
+  "complete",
+  "fail",
+  "cancel-mission",
+  "release-claim",
+])
+
+const missionExecutionEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-mission-details",
+  "load-mission-execution-records",
+  "load-mission-claims",
+  "load-mission-progress",
+  "load-mission-results",
+  "claim-mission",
+  "record-mission-progress",
+  "submit-mission-result",
+  "complete-mission",
+  "fail-mission",
+  "cancel-mission",
+  "release-mission-claim",
 ])
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
@@ -254,6 +415,155 @@ function applyRecentMissions(state: UiState, value: unknown): UiState {
     header: {
       ...state.header,
       activeMissionId: recent[0]?.mission_id ?? current.last_mission_id ?? state.header.activeMissionId,
+    },
+  }
+}
+
+function applyMissionDetails(state: UiState, value: unknown, missionId: string): UiState {
+  const selectedMissionId = redactText(missionId)
+  const previous = missionExecutionState(state)
+  const sameTarget = previous.selectedMissionId === selectedMissionId
+  return {
+    ...state,
+    missionExecution: {
+      ...previous,
+      selectedMissionId,
+      selectedMission: readMissionRecord(value),
+      selectedClaimId: sameTarget ? previous.selectedClaimId : undefined,
+      selectedResultId: sameTarget ? previous.selectedResultId : undefined,
+      claims: sameTarget ? previous.claims : [],
+      progress: sameTarget ? previous.progress : [],
+      results: sameTarget ? previous.results : [],
+      commandError: undefined,
+    },
+    header: {
+      ...state.header,
+      activeMissionId: selectedMissionId,
+    },
+  }
+}
+
+function applyMissionClaims(state: UiState, value: unknown, missionId: string): UiState {
+  if (!Array.isArray(value)) throw new Error("runtime.list_mission_claims returned non-array result")
+  const selectedMissionId = redactText(missionId)
+  const previous = missionExecutionState(state)
+  const sameTarget = previous.selectedMissionId === selectedMissionId
+  return {
+    ...state,
+    missionExecution: {
+      ...previous,
+      selectedMissionId,
+      selectedMission: selectedMissionForTarget(state, selectedMissionId),
+      selectedClaimId: sameTarget ? previous.selectedClaimId : undefined,
+      selectedResultId: sameTarget ? previous.selectedResultId : undefined,
+      claims: value.map(readExecutorClaim).filter((claim): claim is ExecutorClaimSummary => claim !== null).slice(0, MISSION_EXECUTION_LIMIT),
+      progress: sameTarget ? previous.progress : [],
+      results: sameTarget ? previous.results : [],
+      commandError: state.lastCommand === "claims" ? undefined : state.missionExecution?.commandError,
+    },
+    header: {
+      ...state.header,
+      activeMissionId: selectedMissionId,
+    },
+  }
+}
+
+function applyMissionProgress(state: UiState, value: unknown, missionId: string): UiState {
+  if (!Array.isArray(value)) throw new Error("runtime.list_mission_progress returned non-array result")
+  const selectedMissionId = redactText(missionId)
+  const previous = missionExecutionState(state)
+  const sameTarget = previous.selectedMissionId === selectedMissionId
+  return {
+    ...state,
+    missionExecution: {
+      ...previous,
+      selectedMissionId,
+      selectedMission: selectedMissionForTarget(state, selectedMissionId),
+      selectedClaimId: sameTarget ? previous.selectedClaimId : undefined,
+      selectedResultId: sameTarget ? previous.selectedResultId : undefined,
+      claims: sameTarget ? previous.claims : [],
+      progress: value.map(readMissionProgress).filter((item): item is MissionProgressSummary => item !== null).slice(0, MISSION_EXECUTION_LIMIT),
+      results: sameTarget ? previous.results : [],
+      commandError: state.lastCommand === "progress" ? undefined : state.missionExecution?.commandError,
+    },
+    header: {
+      ...state.header,
+      activeMissionId: selectedMissionId,
+    },
+  }
+}
+
+function applyMissionResults(state: UiState, value: unknown, missionId: string): UiState {
+  if (!Array.isArray(value)) throw new Error("runtime.list_mission_results returned non-array result")
+  const selectedMissionId = redactText(missionId)
+  const previous = missionExecutionState(state)
+  const sameTarget = previous.selectedMissionId === selectedMissionId
+  return {
+    ...state,
+    missionExecution: {
+      ...previous,
+      selectedMissionId,
+      selectedMission: selectedMissionForTarget(state, selectedMissionId),
+      selectedClaimId: sameTarget ? previous.selectedClaimId : undefined,
+      selectedResultId: sameTarget ? previous.selectedResultId : undefined,
+      claims: sameTarget ? previous.claims : [],
+      progress: sameTarget ? previous.progress : [],
+      results: value.map(readMissionResult).filter((item): item is MissionResultSummary => item !== null).slice(0, MISSION_EXECUTION_LIMIT),
+      commandError: state.lastCommand === "results" ? undefined : state.missionExecution?.commandError,
+    },
+    header: {
+      ...state.header,
+      activeMissionId: selectedMissionId,
+    },
+  }
+}
+
+function applyMissionClaim(state: UiState, value: unknown): UiState {
+  const claim = readExecutorClaim(value)
+  if (!claim) throw new Error("runtime.claim_mission returned invalid claim")
+  const current = missionExecutionState(state)
+  const claims = [claim, ...current.claims.filter((item) => item.claim_id !== claim.claim_id)].slice(0, MISSION_EXECUTION_LIMIT)
+  return {
+    ...state,
+    missionExecution: {
+      ...current,
+      selectedMissionId: claim.mission_id,
+      selectedClaimId: claim.claim_id,
+      claims,
+      commandError: undefined,
+    },
+  }
+}
+
+function applyMissionProgressRecord(state: UiState, value: unknown): UiState {
+  const progress = readMissionProgress(value)
+  if (!progress) throw new Error("runtime.record_mission_progress returned invalid progress")
+  const current = missionExecutionState(state)
+  return {
+    ...state,
+    missionExecution: {
+      ...current,
+      selectedMissionId: progress.mission_id,
+      selectedClaimId: progress.claim_id,
+      progress: [progress, ...current.progress.filter((item) => item.progress_id !== progress.progress_id)].slice(0, MISSION_EXECUTION_LIMIT),
+      commandError: undefined,
+    },
+  }
+}
+
+function applyMissionResultRecord(state: UiState, value: unknown): UiState {
+  const result = readMissionResult(value)
+  if (!result) throw new Error("runtime.submit_mission_result returned invalid result")
+  const current = missionExecutionState(state)
+  return {
+    ...state,
+    missionExecution: {
+      ...current,
+      selectedMissionId: result.mission_id,
+      selectedClaimId: result.claim_id,
+      selectedResultId: result.result_id,
+      results: [result, ...current.results.filter((item) => item.result_id !== result.result_id)].slice(0, MISSION_EXECUTION_LIMIT),
+      commandError: undefined,
     },
   }
 }
@@ -356,6 +666,18 @@ function recordResearchCommandError(state: UiState, error: unknown): UiState {
   }
 }
 
+function recordMissionExecutionCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    missionExecution: {
+      ...missionExecutionState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "mission execution command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -401,6 +723,53 @@ function readMissionRecord(value: unknown): MissionRecord | null {
     status: redactText(value.status),
     created_at: typeof value.created_at === "string" ? redactText(value.created_at) : undefined,
     updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : undefined,
+    claimed_at: typeof value.claimed_at === "string" ? redactText(value.claimed_at) : undefined,
+    completed_at: typeof value.completed_at === "string" ? redactText(value.completed_at) : undefined,
+    cancelled_at: typeof value.cancelled_at === "string" ? redactText(value.cancelled_at) : undefined,
+    failure_reason: typeof value.failure_reason === "string" ? redactText(value.failure_reason) : undefined,
+    cancellation_reason: typeof value.cancellation_reason === "string" ? redactText(value.cancellation_reason) : undefined,
+    completion_summary: typeof value.completion_summary === "string" ? redactText(value.completion_summary) : undefined,
+    completion_result_id: typeof value.completion_result_id === "string" ? redactText(value.completion_result_id) : undefined,
+  }
+}
+
+function readExecutorClaim(value: unknown): ExecutorClaimSummary | null {
+  if (!isRecord(value) || typeof value.claim_id !== "string" || typeof value.mission_id !== "string") return null
+  return {
+    claim_id: redactText(value.claim_id),
+    mission_id: redactText(value.mission_id),
+    executor_id: redactText(readString(value.executor_id, "unknown")),
+    status: redactText(readString(value.status, "unknown")),
+    claimed_at: typeof value.claimed_at === "string" ? redactText(value.claimed_at) : undefined,
+    released_at: typeof value.released_at === "string" ? redactText(value.released_at) : undefined,
+    release_reason: typeof value.release_reason === "string" ? redactText(value.release_reason) : undefined,
+  }
+}
+
+function readRawStringField(value: unknown, key: string): string | undefined {
+  return isRecord(value) && typeof value[key] === "string" ? value[key] : undefined
+}
+
+function readMissionProgress(value: unknown): MissionProgressSummary | null {
+  if (!isRecord(value) || typeof value.progress_id !== "string" || typeof value.mission_id !== "string" || typeof value.claim_id !== "string") return null
+  return {
+    progress_id: redactText(value.progress_id),
+    mission_id: redactText(value.mission_id),
+    claim_id: redactText(value.claim_id),
+    message: preview(readString(value.message, "")),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : undefined,
+  }
+}
+
+function readMissionResult(value: unknown): MissionResultSummary | null {
+  if (!isRecord(value) || typeof value.result_id !== "string" || typeof value.mission_id !== "string" || typeof value.claim_id !== "string") return null
+  return {
+    result_id: redactText(value.result_id),
+    mission_id: redactText(value.mission_id),
+    claim_id: redactText(value.claim_id),
+    summary: preview(readString(value.summary, "")),
+    status: redactText(readString(value.status, "unknown")),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : undefined,
   }
 }
 
@@ -468,9 +837,40 @@ function researchState(state: UiState): ResearchRecordsState {
   return state.research ?? { topics: [], selectedTopic: null, notes: [], events: [] }
 }
 
+function missionExecutionState(state: UiState): MissionExecutionState {
+  return state.missionExecution ?? { claims: [], progress: [], results: [] }
+}
+
+function selectedMissionForTarget(state: UiState, selectedMissionId: string): MissionRecord | null {
+  return state.missionExecution?.selectedMission?.mission_id === selectedMissionId
+    ? state.missionExecution.selectedMission
+    : null
+}
+
+function completeMissionEffect(args: string[]): Extract<RuntimeUiEffect, { type: "complete-mission" }> {
+  const missionId = requiredMissionIdArg(args, 0)
+  const second = args[1]
+  if (!second) return { type: "complete-mission", missionId }
+  if (second === "--result") {
+    return { type: "complete-mission", missionId, resultId: requiredArg(args, 2, "resultId"), summary: optionalRest(args, 3) }
+  }
+  if (second.startsWith("--result=")) {
+    const resultId = second.slice("--result=".length).trim()
+    if (!resultId) throw new Error("resultId is required")
+    return { type: "complete-mission", missionId, resultId, summary: optionalRest(args, 2) }
+  }
+  return { type: "complete-mission", missionId, summary: requiredRest(args, 1, "summary") }
+}
+
 function requiredArg(args: string[], index: number, field: string): string {
   const value = args[index]
   if (!value) throw new Error(`${field} is required`)
+  return value
+}
+
+function requiredMissionIdArg(args: string[], index: number): string {
+  const value = args[index]
+  if (!value || value.startsWith("--")) throw new Error("missionId is required")
   return value
 }
 
@@ -478,6 +878,11 @@ function requiredRest(args: string[], index: number, field: string): string {
   const value = args.slice(index).join(" ").trim()
   if (!value) throw new Error(`${field} is required`)
   return value
+}
+
+function optionalRest(args: string[], index: number): string | undefined {
+  const value = args.slice(index).join(" ").trim()
+  return value || undefined
 }
 
 function preview(value: string): string {
