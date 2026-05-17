@@ -788,8 +788,13 @@ function completeMissionEffect(args: string[]): Extract<RuntimeUiEffect, { type:
   const missionId = requiredArg(args, 0, "missionId")
   const second = args[1]
   if (!second) return { type: "complete-mission", missionId }
-  if (second === "-" || second.includes("result")) {
-    return { type: "complete-mission", missionId, resultId: second === "-" ? undefined : second, summary: optionalRest(args, 2) }
+  if (second === "--result") {
+    return { type: "complete-mission", missionId, resultId: requiredArg(args, 2, "resultId"), summary: optionalRest(args, 3) }
+  }
+  if (second.startsWith("--result=")) {
+    const resultId = second.slice("--result=".length).trim()
+    if (!resultId) throw new Error("resultId is required")
+    return { type: "complete-mission", missionId, resultId, summary: optionalRest(args, 2) }
   }
   return { type: "complete-mission", missionId, summary: requiredRest(args, 1, "summary") }
 }

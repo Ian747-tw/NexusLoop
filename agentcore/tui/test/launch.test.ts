@@ -320,7 +320,7 @@ describe("TUI launch boundary", () => {
       { type: "submit" },
       { type: "insert", text: "/result mission-demo fake-claim-1 done token=result-secret" },
       { type: "submit" },
-      { type: "insert", text: "/complete mission-demo fake-result-3 complete token=completion-secret" },
+      { type: "insert", text: "/complete mission-demo --result=fake-result-3 complete token=completion-secret" },
       { type: "submit" },
     ]
 
@@ -340,6 +340,39 @@ describe("TUI launch boundary", () => {
     expect(snapshot).not.toContain("progress-secret")
     expect(snapshot).not.toContain("result-secret")
     expect(snapshot).not.toContain("completion-secret")
+  })
+
+  test("default fake headless release resets running mission and allows reclaim", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/claim mission-release executor-1" },
+      { type: "submit" },
+      { type: "insert", text: "/progress-add mission-release fake-claim-1 running token=progress-secret" },
+      { type: "submit" },
+      { type: "insert", text: "/release-claim fake-claim-1 release token=release-secret" },
+      { type: "submit" },
+      { type: "insert", text: "/mission mission-release" },
+      { type: "submit" },
+      { type: "insert", text: "/claim mission-release executor-2" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("selected_mission=mission-release [claimed]")
+    expect(snapshot).toContain("claim fake-claim-1 [released] executor=executor-1")
+    expect(snapshot).toContain("claim fake-claim-3 [active] executor=executor-2")
+    expect(snapshot).toContain("- mission-release [claimed]")
+    expect(snapshot).not.toContain("running]")
+    expect(snapshot).not.toContain("progress-secret")
+    expect(snapshot).not.toContain("release-secret")
   })
 
   test("research browsing commands render bounded records and redacted notes", async () => {

@@ -225,6 +225,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const executor = redactText(requiredString(executorId, "executorId"))
     const existing = this.claims.find((claim) => claim.mission_id === mission.mission_id && claim.status === "active")
     if (existing) throw new Error(`mission already has an active claim: ${redactText(mission.mission_id)}`)
+    if (mission.status !== "sent") throw new Error(`mission must be sent before claim: ${redactText(mission.mission_id)}`)
     this.sequence += 1
     const now = new Date(0).toISOString()
     const claim: ExecutorClaimSummary = {
@@ -333,7 +334,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     claim.released_at = new Date(0).toISOString()
     if (reason) claim.release_reason = redactText(reason)
     const mission = this.missions.find((item) => item.mission_id === claim.mission_id)
-    if (mission && mission.status === "claimed") {
+    if (mission && !isTerminalMissionStatus(mission.status)) {
       mission.status = "sent"
       mission.updated_at = new Date(0).toISOString()
     }
@@ -454,4 +455,8 @@ function optionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const cleaned = value.trim()
   return cleaned ? cleaned : undefined
+}
+
+function isTerminalMissionStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled"
 }

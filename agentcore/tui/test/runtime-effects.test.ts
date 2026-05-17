@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
-import type { RuntimeClient } from "../src/runtime"
+import { FakeRuntimeClient, type RuntimeClient } from "../src/runtime"
 import { initialState } from "../src/state"
 
 class RecentMissionRuntime implements RuntimeClient {
@@ -560,7 +560,7 @@ describe("runtime UI effects", () => {
     expect(resultId).toBe("result-3")
     expect(state.missionExecution?.results[0]?.summary).toBe("summary [REDACTED]")
 
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "complete", args: ["mission-1", resultId!, "done", "token=completion-secret"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "complete", args: ["mission-1", "--result", resultId!, "done", "token=completion-secret"] })
     expect(state.missionExecution?.selectedMission?.status).toBe("completed")
     expect(state.missions?.completed_count).toBe(1)
     expect(JSON.stringify(state)).not.toContain("executor-secret")
@@ -592,6 +592,89 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(localCancel)).not.toContain("release-secret")
     expect(JSON.stringify(localCancel)).not.toContain("fail-secret")
     expect(JSON.stringify(localCancel)).not.toContain("cancel-secret")
+  })
+
+  test("complete command treats normal result-like words as summary text", async () => {
+    const runtime = new MissionExecutionRuntime()
+
+    const next = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, {
+      type: "send-command",
+      command: "complete",
+      args: ["mission-1", "resulting", "summary", "text"],
+    })
+
+    const call = runtime.calls.find((item) => item.startsWith("runtime.complete_mission:"))
+    expect(call).toBe('runtime.complete_mission:{"missionId":"mission-1","summary":"resulting summary text"}')
+    expect(next.missionExecution?.selectedMission?.completion_summary).toBe("resulting summary text")
+  })
+
+  test("complete command accepts explicit result id flags", async () => {
+    const runtime = new MissionExecutionRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "complete", args: ["mission-1", "--result", "result-1", "final", "summary"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "complete", args: ["mission-1", "--result=result-2", "other", "summary"] })
+
+    expect(runtime.calls).toContain('runtime.complete_mission:{"missionId":"mission-1","resultId":"result-1","summary":"final summary"}')
+    expect(runtime.calls).toContain('runtime.complete_mission:{"missionId":"mission-1","resultId":"result-2","summary":"other summary"}')
+    expect(JSON.stringify(state)).not.toContain("result-secret")
+  })
+
+  test("complete command reports missing explicit result id clearly", async () => {
+    const next = await applyRuntimeUiEffect(initialState("/tmp/demo"), new MissionExecutionRuntime(), {
+      type: "send-command",
+      command: "complete",
+      args: ["mission-1", "--result"],
+    })
+
+    expect(next.missionExecution?.commandError).toBe("resultId is required")
+    expect(next.systemActions.at(-1)).toMatchObject({ title: "mission execution command error", status: "failed" })
+  })
+
+  test("complete command reports missing mission id clearly", async () => {
+    const next = await applyRuntimeUiEffect(initialState("/tmp/demo"), new MissionExecutionRuntime(), {
+      type: "send-command",
+      command: "complete",
+      args: [],
+    })
+
+    expect(next.missionExecution?.commandError).toBe("missionId is required")
+    expect(next.systemActions.at(-1)).toMatchObject({ title: "mission execution command error", status: "failed" })
+  })
+
+  test("fake runtime release resets running mission after progress or result and preserves terminal statuses", async () => {
+    const progressRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await progressRuntime.command("runtime.claim_mission", { missionId: "mission-progress", executorId: "executor-1" })
+    await progressRuntime.command("runtime.record_mission_progress", { missionId: "mission-progress", claimId: "fake-claim-1", message: "working" })
+    await progressRuntime.command("runtime.release_mission_claim", { claimId: "fake-claim-1", reason: "done" })
+    await expect(progressRuntime.command("runtime.get_mission", { missionId: "mission-progress" })).resolves.toMatchObject({ status: "sent" })
+    await expect(progressRuntime.command("runtime.status")).resolves.toMatchObject({ missions: { pending_count: 1, active_claim_count: 0 } })
+
+    const resultRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await resultRuntime.command("runtime.claim_mission", { missionId: "mission-result", executorId: "executor-1" })
+    await resultRuntime.command("runtime.submit_mission_result", { missionId: "mission-result", claimId: "fake-claim-1", summary: "ready" })
+    await resultRuntime.command("runtime.release_mission_claim", { claimId: "fake-claim-1", reason: "done" })
+    await expect(resultRuntime.command("runtime.get_mission", { missionId: "mission-result" })).resolves.toMatchObject({ status: "sent" })
+    await expect(resultRuntime.command("runtime.claim_mission", { missionId: "mission-result", executorId: "executor-2" })).resolves.toMatchObject({ status: "active" })
+
+    const completedRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await completedRuntime.command("runtime.claim_mission", { missionId: "mission-completed", executorId: "executor-1" })
+    await completedRuntime.command("runtime.submit_mission_result", { missionId: "mission-completed", claimId: "fake-claim-1", summary: "ready" })
+    await completedRuntime.command("runtime.complete_mission", { missionId: "mission-completed" })
+    await completedRuntime.command("runtime.release_mission_claim", { claimId: "fake-claim-1", reason: "late" })
+    await expect(completedRuntime.command("runtime.get_mission", { missionId: "mission-completed" })).resolves.toMatchObject({ status: "completed" })
+
+    const failedRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await failedRuntime.command("runtime.claim_mission", { missionId: "mission-failed", executorId: "executor-1" })
+    await failedRuntime.command("runtime.fail_mission", { missionId: "mission-failed", reason: "failed" })
+    await failedRuntime.command("runtime.release_mission_claim", { claimId: "fake-claim-1", reason: "late" })
+    await expect(failedRuntime.command("runtime.get_mission", { missionId: "mission-failed" })).resolves.toMatchObject({ status: "failed" })
+
+    const cancelledRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await cancelledRuntime.command("runtime.claim_mission", { missionId: "mission-cancelled", executorId: "executor-1" })
+    await cancelledRuntime.command("runtime.cancel_mission", { missionId: "mission-cancelled", reason: "cancelled" })
+    await cancelledRuntime.command("runtime.release_mission_claim", { claimId: "fake-claim-1", reason: "late" })
+    await expect(cancelledRuntime.command("runtime.get_mission", { missionId: "mission-cancelled" })).resolves.toMatchObject({ status: "cancelled" })
   })
 
   test("mission list commands load bounded execution rows", async () => {
