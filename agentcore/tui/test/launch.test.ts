@@ -309,6 +309,39 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("topics=0")
   })
 
+  test("default fake headless snapshot renders mission execution controls", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/claim mission-demo token=executor-secret" },
+      { type: "submit" },
+      { type: "insert", text: "/progress-add mission-demo fake-claim-1 working token=progress-secret" },
+      { type: "submit" },
+      { type: "insert", text: "/result mission-demo fake-claim-1 done token=result-secret" },
+      { type: "submit" },
+      { type: "insert", text: "/complete mission-demo fake-result-3 complete token=completion-secret" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Mission execution")
+    expect(snapshot).toContain("selected_mission=mission-demo [completed]")
+    expect(snapshot).toContain("claim fake-claim-1 [completed] executor=[REDACTED]")
+    expect(snapshot).toContain("progress fake-progress-2 claim=fake-claim-1: working [REDACTED]")
+    expect(snapshot).toContain("result fake-result-3 [accepted] claim=fake-claim-1: done [REDACTED]")
+    expect(snapshot).not.toContain("executor-secret")
+    expect(snapshot).not.toContain("progress-secret")
+    expect(snapshot).not.toContain("result-secret")
+    expect(snapshot).not.toContain("completion-secret")
+  })
+
   test("research browsing commands render bounded records and redacted notes", async () => {
     const runtime = new TestRuntimeClient()
     const output: string[] = []
@@ -364,6 +397,27 @@ describe("TUI launch boundary", () => {
     const snapshot = output.join("\n")
     expect(snapshot).toContain("research command error")
     expect(snapshot).toContain("command_error=topicId is required")
+  })
+
+  test("missing mission command args render mission execution command error", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/claim mission-1" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-mission-error",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("mission execution command error")
+    expect(snapshot).toContain("command_error=executorId is required")
   })
 
   test("runtime command errors are redacted in headless state and snapshot", async () => {

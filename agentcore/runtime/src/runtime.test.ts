@@ -777,6 +777,12 @@ describe("RuntimeServer core", () => {
     await expect(server.command("runtime.record_mission_progress", { missionId: submitted.missionId, claimId, message: "" })).rejects.toThrow("message is required")
     const progress = await server.command("runtime.record_mission_progress", { missionId: submitted.missionId, claimId, message: "working api_key=progress-secret" })
     expect(progress).toMatchObject({ progress_id: expect.any(String), message: "working [REDACTED]" })
+    await expect(server.command("runtime.list_mission_claims", { missionId: submitted.missionId })).resolves.toMatchObject([
+      { claim_id: claimId, status: "active" },
+    ])
+    await expect(server.command("runtime.list_mission_progress", { missionId: submitted.missionId })).resolves.toMatchObject([
+      { progress_id: (progress as { progress_id: string }).progress_id, message: "working [REDACTED]" },
+    ])
 
     const result = await server.command("runtime.submit_mission_result", {
       missionId: submitted.missionId,
@@ -786,12 +792,22 @@ describe("RuntimeServer core", () => {
       researchResultIds: ["research_1"],
     })
     expect(result).toMatchObject({ result_id: expect.any(String), summary: "summary [REDACTED]", artifacts: ["artifact_1"], research_result_ids: ["research_1"] })
+    await expect(server.command("runtime.list_mission_results", { missionId: submitted.missionId })).resolves.toMatchObject([
+      { result_id: (result as { result_id: string }).result_id, summary: "summary [REDACTED]" },
+    ])
 
     await expect(server.command("runtime.complete_mission", { missionId: submitted.missionId })).resolves.toMatchObject({ status: "completed" })
+    const releaseSubmitted = await server.submitUserMessage("release claim mission")
+    const releaseClaim = await server.command("runtime.claim_mission", { missionId: releaseSubmitted.missionId, executorId: "release_executor" })
+    await expect(server.command("runtime.release_mission_claim", {
+      claimId: (releaseClaim as { claim_id: string }).claim_id,
+      reason: "release secret=release-secret",
+    })).resolves.toMatchObject({ status: "released", release_reason: "release [REDACTED]" })
     const serialized = JSON.stringify({ status: await server.status(), events: await readJsonlEvents(dir) })
     expect(serialized).not.toContain("executor-secret")
     expect(serialized).not.toContain("progress-secret")
     expect(serialized).not.toContain("result-secret")
+    expect(serialized).not.toContain("release-secret")
     expect(await server.status()).toMatchObject({ missions: { active_claim_count: 0, completed_count: 1, cancelled_count: 0 } })
     await server.shutdown()
   })

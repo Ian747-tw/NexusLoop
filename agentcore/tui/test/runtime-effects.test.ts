@@ -161,6 +161,154 @@ class ProjectionFailingResearchRuntime extends ResearchRuntime {
   }
 }
 
+class MissionExecutionRuntime implements RuntimeClient {
+  readonly calls: string[] = []
+  readonly missions = new Map<string, Record<string, unknown>>([
+    [
+      "mission-1",
+      {
+        mission_id: "mission-1",
+        intent_id: "intent-1",
+        objective: "mission objective",
+        status: "sent",
+        created_at: "2026-05-16T00:00:00Z",
+        updated_at: "2026-05-16T00:00:00Z",
+      },
+    ],
+  ])
+  readonly claims = new Map<string, Record<string, unknown>>()
+  readonly progress = new Map<string, Record<string, unknown>>()
+  readonly results = new Map<string, Record<string, unknown>>()
+  private sequence = 0
+
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+
+  async command(name: string, payload: Record<string, unknown> = {}): Promise<unknown> {
+    this.calls.push(`${name}:${JSON.stringify(payload)}`)
+    const missionId = String(payload.missionId ?? payload.mission_id ?? "mission-1")
+    switch (name) {
+      case "runtime.status":
+        return {
+          runtimeStatus: "started",
+          mode: "active",
+          projectName: "demo",
+          specApproved: true,
+          lockHeld: true,
+          missions: {
+            pending_count: [...this.missions.values()].filter((mission) => mission.status === "sent").length,
+            failed_count: [...this.missions.values()].filter((mission) => mission.status === "failed").length,
+            active_claim_count: [...this.claims.values()].filter((claim) => claim.status === "active").length,
+            completed_count: [...this.missions.values()].filter((mission) => mission.status === "completed").length,
+            cancelled_count: [...this.missions.values()].filter((mission) => mission.status === "cancelled").length,
+            last_mission_id: missionId,
+          },
+        }
+      case "runtime.list_recent_missions":
+        return [...this.missions.values()]
+      case "runtime.get_mission":
+        return this.missions.get(missionId) ?? null
+      case "runtime.list_mission_claims":
+        return [...this.claims.values()].filter((claim) => claim.mission_id === missionId)
+      case "runtime.list_mission_progress":
+        return [...this.progress.values()].filter((item) => item.mission_id === missionId)
+      case "runtime.list_mission_results":
+        return [...this.results.values()].filter((result) => result.mission_id === missionId)
+      case "runtime.claim_mission":
+        return this.claimMission(missionId, String(payload.executorId ?? ""))
+      case "runtime.record_mission_progress":
+        return this.recordProgress(missionId, String(payload.claimId ?? ""), String(payload.message ?? ""))
+      case "runtime.submit_mission_result":
+        return this.submitResult(missionId, String(payload.claimId ?? ""), String(payload.summary ?? ""))
+      case "runtime.complete_mission":
+        return this.completeMission(missionId, typeof payload.resultId === "string" ? payload.resultId : undefined, typeof payload.summary === "string" ? payload.summary : undefined)
+      case "runtime.fail_mission":
+        return this.updateMission(missionId, { status: "failed", failure_reason: payload.reason })
+      case "runtime.cancel_mission":
+        return this.updateMission(missionId, { status: "cancelled", cancellation_reason: payload.reason })
+      case "runtime.release_mission_claim": {
+        const claimId = String(payload.claimId ?? "")
+        const claim = this.claims.get(claimId)
+        if (!claim) throw new Error(`unknown claim token=claim-secret ${claimId}`)
+        claim.status = "released"
+        claim.released_at = "2026-05-16T00:00:00Z"
+        claim.release_reason = payload.reason
+        return claim
+      }
+      default:
+        return { ok: true }
+    }
+  }
+
+  private claimMission(missionId: string, executorId: string): Record<string, unknown> {
+    this.sequence += 1
+    const claim = {
+      claim_id: `claim-${this.sequence}`,
+      mission_id: missionId,
+      executor_id: executorId,
+      status: "active",
+      claimed_at: "2026-05-16T00:00:00Z",
+    }
+    this.claims.set(claim.claim_id, claim)
+    this.updateMission(missionId, { status: "claimed" })
+    return claim
+  }
+
+  private recordProgress(missionId: string, claimId: string, message: string): Record<string, unknown> {
+    this.sequence += 1
+    const progress = {
+      progress_id: `progress-${this.sequence}`,
+      mission_id: missionId,
+      claim_id: claimId,
+      message,
+      created_at: "2026-05-16T00:00:00Z",
+    }
+    this.progress.set(progress.progress_id, progress)
+    this.updateMission(missionId, { status: "running" })
+    return progress
+  }
+
+  private submitResult(missionId: string, claimId: string, summary: string): Record<string, unknown> {
+    this.sequence += 1
+    const result = {
+      result_id: `result-${this.sequence}`,
+      mission_id: missionId,
+      claim_id: claimId,
+      summary,
+      status: "submitted",
+      created_at: "2026-05-16T00:00:00Z",
+    }
+    this.results.set(result.result_id, result)
+    return result
+  }
+
+  private completeMission(missionId: string, resultId: string | undefined, summary: string | undefined): Record<string, unknown> {
+    const latestResult = resultId ? this.results.get(resultId) : [...this.results.values()].find((result) => result.mission_id === missionId)
+    return this.updateMission(missionId, {
+      status: "completed",
+      completion_result_id: latestResult?.result_id,
+      completion_summary: summary,
+    })
+  }
+
+  private updateMission(missionId: string, patch: Record<string, unknown>): Record<string, unknown> {
+    const mission = this.missions.get(missionId)
+    if (!mission) throw new Error(`unknown mission token=mission-secret ${missionId}`)
+    Object.assign(mission, patch, { updated_at: "2026-05-16T00:00:00Z" })
+    return mission
+  }
+}
+
+class FailingMissionExecutionRuntime extends MissionExecutionRuntime {
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+    if (name === "runtime.claim_mission") throw new Error("claim failed token=mission-command-secret")
+    return super.command(name, payload)
+  }
+}
+
 describe("runtime UI effects", () => {
   test("recent mission refresh advances last and active mission to newest row", async () => {
     const state = {
@@ -375,5 +523,122 @@ describe("runtime UI effects", () => {
     expect(next.runtimeStatus).toEqual(state.runtimeStatus)
     expect(next.missions).toEqual(state.missions)
     expect(next.research?.commandError).toBe("research failed [REDACTED]")
+  })
+
+  test("mission command loads selected mission details and execution records", async () => {
+    const runtime = new MissionExecutionRuntime()
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "mission-1", executorId: "executor-1" }) as { claim_id: string }
+    await runtime.command("runtime.record_mission_progress", { missionId: "mission-1", claimId: claim.claim_id, message: "started" })
+    await runtime.command("runtime.submit_mission_result", { missionId: "mission-1", claimId: claim.claim_id, summary: "result summary" })
+
+    const next = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, {
+      type: "send-command",
+      command: "mission",
+      args: ["mission-1"],
+    })
+
+    expect(next.missionExecution?.selectedMission?.mission_id).toBe("mission-1")
+    expect(next.missionExecution?.claims[0]?.claim_id).toBe(claim.claim_id)
+    expect(next.missionExecution?.progress[0]?.message).toBe("started")
+    expect(next.missionExecution?.results[0]?.summary).toBe("result summary")
+  })
+
+  test("mission lifecycle commands call runtime and refresh mission records", async () => {
+    const runtime = new MissionExecutionRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "claim", args: ["mission-1", "token=executor-secret"] })
+    const claimId = state.missionExecution?.selectedClaimId
+    expect(claimId).toBe("claim-1")
+    expect(state.missionExecution?.claims[0]?.executor_id).toBe("[REDACTED]")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "progress-add", args: ["mission-1", claimId!, "working", "api_key=progress-secret"] })
+    expect(state.missionExecution?.progress[0]?.message).toBe("working [REDACTED]")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "result", args: ["mission-1", claimId!, "summary", "token=result-secret"] })
+    const resultId = state.missionExecution?.selectedResultId
+    expect(resultId).toBe("result-3")
+    expect(state.missionExecution?.results[0]?.summary).toBe("summary [REDACTED]")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "complete", args: ["mission-1", resultId!, "done", "token=completion-secret"] })
+    expect(state.missionExecution?.selectedMission?.status).toBe("completed")
+    expect(state.missions?.completed_count).toBe(1)
+    expect(JSON.stringify(state)).not.toContain("executor-secret")
+    expect(JSON.stringify(state)).not.toContain("progress-secret")
+    expect(JSON.stringify(state)).not.toContain("result-secret")
+    expect(JSON.stringify(state)).not.toContain("completion-secret")
+  })
+
+  test("mission fail cancel and release commands update execution state without colliding with local cancel", async () => {
+    const runtime = new MissionExecutionRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "claim", args: ["mission-1", "executor-1"] })
+    const claimId = state.missionExecution?.selectedClaimId!
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "release-claim", args: [claimId, "token=release-secret"] })
+    expect(state.missionExecution?.claims[0]).toMatchObject({ claim_id: claimId, status: "released", release_reason: "[REDACTED]" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "fail", args: ["mission-1", "token=fail-secret"] })
+    expect(state.missionExecution?.selectedMission?.status).toBe("failed")
+    expect(state.missions?.failed_count).toBe(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel-mission", args: ["mission-1", "token=cancel-secret"] })
+    expect(state.missionExecution?.selectedMission?.status).toBe("cancelled")
+
+    const localCancel = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel" })
+    expect(localCancel.missionExecution?.selectedMission?.status).toBe("cancelled")
+    expect(localCancel.runtimeCommandError).toBeUndefined()
+    expect(JSON.stringify(localCancel)).not.toContain("release-secret")
+    expect(JSON.stringify(localCancel)).not.toContain("fail-secret")
+    expect(JSON.stringify(localCancel)).not.toContain("cancel-secret")
+  })
+
+  test("mission list commands load bounded execution rows", async () => {
+    const runtime = new MissionExecutionRuntime()
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "mission-1", executorId: "executor-1" }) as { claim_id: string }
+    await runtime.command("runtime.record_mission_progress", { missionId: "mission-1", claimId: claim.claim_id, message: "progress row" })
+    await runtime.command("runtime.submit_mission_result", { missionId: "mission-1", claimId: claim.claim_id, summary: "result row" })
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "claims", args: ["mission-1"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "progress", args: ["mission-1"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "results", args: ["mission-1"] })
+
+    expect(state.missionExecution?.claims).toHaveLength(1)
+    expect(state.missionExecution?.progress).toHaveLength(1)
+    expect(state.missionExecution?.results).toHaveLength(1)
+  })
+
+  test("missing mission command args produce redacted mission execution errors", async () => {
+    const next = await applyRuntimeUiEffect(initialState("/tmp/demo"), new MissionExecutionRuntime(), {
+      type: "send-command",
+      command: "progress-add",
+      args: ["mission-1", "claim-1"],
+    })
+
+    expect(next.missionExecution?.commandError).toBe("message is required")
+    expect(next.systemActions.at(-1)).toMatchObject({ title: "mission execution command error", status: "failed" })
+  })
+
+  test("failing mission commands preserve runtime mission and research state", async () => {
+    const state = {
+      ...initialState("/tmp/demo"),
+      runtimeStatus: { runtimeStatus: "started", mode: "active", projectName: "demo", specApproved: true, lockHeld: true },
+      missions: { pending_count: 1, failed_count: 0, recent: [{ mission_id: "mission-old", status: "sent" }] },
+      research: {
+        topics: [{ id: "topic-1", title: "Topic 1", status: "active" }],
+        selectedTopic: null,
+        notes: [],
+        events: [],
+      },
+    }
+
+    const next = await applyRuntimeUiEffect(state, new FailingMissionExecutionRuntime(), { type: "send-command", command: "claim", args: ["mission-1", "executor-1"] })
+
+    expect(next.runtimeStatus).toEqual(state.runtimeStatus)
+    expect(next.missions).toEqual(state.missions)
+    expect(next.research).toEqual(state.research)
+    expect(next.missionExecution?.commandError).toBe("claim failed [REDACTED]")
   })
 })

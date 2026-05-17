@@ -98,6 +98,23 @@ describe("TUI keyboard command model", () => {
     expect(result.effects).toEqual([{ type: "send-command", command: "notes", args: ["topic-1", "runtime", "projection"] }])
   })
 
+  test("mission execution slash commands route through whitelisted runtime command effects with args", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/progress-add mission-1 claim-1 working on runtime bridge",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("progress-add")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "progress-add", args: ["mission-1", "claim-1", "working", "on", "runtime", "bridge"] },
+    ])
+  })
+
   test("slash command arguments are redacted before entering system actions", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -111,6 +128,21 @@ describe("TUI keyboard command model", () => {
     expect(result.state.systemActions.at(-1)?.detail).toBe("notes topic-1 [REDACTED]")
     expect(JSON.stringify(result.state)).not.toContain("command-secret")
     expect(result.effects).toEqual([{ type: "send-command", command: "notes", args: ["topic-1", "token=command-secret"] }])
+  })
+
+  test("mission command arguments are redacted before entering system actions", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/result mission-1 claim-1 token=mission-secret",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.systemActions.at(-1)?.detail).toBe("result mission-1 claim-1 [REDACTED]")
+    expect(JSON.stringify(result.state)).not.toContain("mission-secret")
+    expect(result.effects).toEqual([{ type: "send-command", command: "result", args: ["mission-1", "claim-1", "token=mission-secret"] }])
   })
 
   test("path-like slash messages remain user messages", () => {
@@ -142,7 +174,7 @@ describe("TUI keyboard command model", () => {
   })
 
   test("dot and colon prefixed text remains a user message", () => {
-    for (const message of [".status notes", ":missions", ".topics", ":research"]) {
+    for (const message of [".status notes", ":missions", ".topics", ":research", ".mission", ":claim"]) {
       const state: UiState = {
         ...initialState("/tmp/demo"),
         screen: "main",

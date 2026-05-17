@@ -216,6 +216,7 @@ function RuntimePanel(props: { state: UiState }) {
 
 function SearchPanel(props: { state: UiState }) {
   const research = () => props.state.research
+  const missionExecution = () => props.state.missionExecution
   return (
     <Panel title="Search / records" focus="search-records" state={props.state}>
       <text fg={color.text}>types: {props.state.search.recordFilters.join(", ")}</text>
@@ -250,6 +251,28 @@ function SearchPanel(props: { state: UiState }) {
       </For>
       <Show when={research()?.commandError}>
         {(value) => <text fg={color.warning}>research error: {value()}</text>}
+      </Show>
+      <Show when={missionExecution()}>
+        {(execution) => (
+          <>
+            <text fg={color.text}>mission execution: {execution().selectedMission?.mission_id ?? execution().selectedMissionId ?? "none"}</text>
+            <Show when={execution().selectedMission}>
+              {(mission) => <text fg={color.muted}>selected: {mission().status} {mission().objective ?? ""}</text>}
+            </Show>
+            <For each={execution().claims.slice(0, 3)}>
+              {(claim) => <text fg={color.accent}>claim {claim.claim_id} [{claim.status}] {claim.executor_id}</text>}
+            </For>
+            <For each={execution().progress.slice(0, 3)}>
+              {(progress) => <text fg={color.text}>progress {progress.progress_id}: {progress.message}</text>}
+            </For>
+            <For each={execution().results.slice(0, 3)}>
+              {(result) => <text fg={color.muted}>result {result.result_id} [{result.status}] {result.summary}</text>}
+            </For>
+            <Show when={execution().commandError}>
+              {(value) => <text fg={color.warning}>mission error: {value()}</text>}
+            </Show>
+          </>
+        )}
       </Show>
     </Panel>
   )

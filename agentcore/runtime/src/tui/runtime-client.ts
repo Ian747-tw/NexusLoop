@@ -20,6 +20,10 @@ export interface RuntimeClient {
   command(name: "runtime.complete_mission", payload: { missionId: string; resultId?: string; summary?: string }): Promise<MissionRecord>
   command(name: "runtime.fail_mission", payload: { missionId: string; reason: string }): Promise<MissionRecord>
   command(name: "runtime.cancel_mission", payload: { missionId: string; reason?: string }): Promise<MissionRecord>
+  command(name: "runtime.release_mission_claim", payload: { claimId: string; reason?: string }): Promise<ExecutorClaim>
+  command(name: "runtime.list_mission_claims", payload: { missionId: string }): Promise<ExecutorClaim[]>
+  command(name: "runtime.list_mission_progress", payload: { missionId: string }): Promise<MissionProgress[]>
+  command(name: "runtime.list_mission_results", payload: { missionId: string }): Promise<MissionResult[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -45,6 +49,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.complete_mission"
     | "runtime.fail_mission"
     | "runtime.cancel_mission"
+    | "runtime.release_mission_claim"
+    | "runtime.list_mission_claims"
+    | "runtime.list_mission_progress"
+    | "runtime.list_mission_results"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

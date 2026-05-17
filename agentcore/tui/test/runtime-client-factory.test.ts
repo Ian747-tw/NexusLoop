@@ -7,6 +7,7 @@ import { reduceRuntimeEvent } from "../src/reducer"
 import { initialState } from "../src/state"
 import { createTuiRuntimeClient, isTuiRuntimeEvent, readRuntimeClientKind, TuiRuntimeServerClient } from "../src/runtime-client-factory"
 import { FakeOpenCodeAdapter, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
+import { applyRuntimeUiEffect } from "../src/runtime-effects"
 
 const cleanup: string[] = []
 const TEST_TIMEOUT_MS = 1000
@@ -155,6 +156,32 @@ describe("TUI runtime client factory", () => {
     }) as TuiRuntimeServerClient
 
     await expect(client.runtime.command("runtime.status")).resolves.toMatchObject({ runtimeStatus: "started" })
+    await client.runtime.shutdown()
+  })
+
+  test("real runtime client path can claim a submitted mission through TUI effects", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    let state = await applyRuntimeUiEffect(initialState(dir), client, {
+      type: "send-user-message",
+      message: "real mission execution path",
+    })
+    const missionId = state.header.activeMissionId
+    state = await applyRuntimeUiEffect(state, client, {
+      type: "send-command",
+      command: "claim",
+      args: [missionId, "executor-real"],
+    })
+
+    expect(state.missionExecution?.selectedMissionId).toBe(missionId)
+    expect(state.missionExecution?.selectedClaimId).toMatch(/^claim_/)
+    expect(state.missionExecution?.selectedMission?.status).toBe("claimed")
+
     await client.runtime.shutdown()
   })
 
