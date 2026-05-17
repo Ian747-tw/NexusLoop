@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText } from "./redaction"
-import type { ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary } from "./state"
+import type { ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -26,6 +26,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly claims: ExecutorClaimSummary[] = []
   private readonly progress: MissionProgressSummary[] = []
   private readonly results: MissionResultSummary[] = []
+  private readonly reviews: ReviewRequestSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -122,6 +123,7 @@ export class FakeRuntimeClient implements RuntimeClient {
           lockHeld: false,
           adapterStatus: { kind: "fake", phase: "idle" },
           missions: this.missionSummary(),
+          reviews: this.reviewSummary(),
           researchProjection: { mode: "disabled", ok: true, stale: false, reason: "disabled", pending_count: 0 },
         }
       case "runtime.list_recent_missions":
@@ -156,6 +158,20 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.progress.filter((item) => item.mission_id === String(payload.missionId ?? payload.mission_id ?? ""))
       case "runtime.list_mission_results":
         return this.results.filter((result) => result.mission_id === String(payload.missionId ?? payload.mission_id ?? ""))
+      case "runtime.create_review_request":
+        return this.createReviewRequest(payload)
+      case "runtime.get_review_request":
+        return this.getReviewRequest(String(payload.reviewId ?? payload.review_id ?? ""))
+      case "runtime.list_review_requests":
+        return this.listReviewRequests(optionalString(payload.status), readLimit(payload.limit, 20))
+      case "runtime.approve_review_request":
+        return this.decideReview(String(payload.reviewId ?? payload.review_id ?? ""), "approved", String(payload.decidedBy ?? payload.decided_by ?? ""), optionalString(payload.reason))
+      case "runtime.reject_review_request":
+        return this.decideReview(String(payload.reviewId ?? payload.review_id ?? ""), "rejected", String(payload.decidedBy ?? payload.decided_by ?? ""), optionalString(payload.reason))
+      case "runtime.cancel_review_request":
+        return this.decideReview(String(payload.reviewId ?? payload.review_id ?? ""), "cancelled", String(payload.decidedBy ?? payload.decided_by ?? ""), optionalString(payload.reason))
+      case "runtime.review_status":
+        return this.reviewSummary()
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -342,6 +358,55 @@ export class FakeRuntimeClient implements RuntimeClient {
     return claim
   }
 
+  private createReviewRequest(payload: Record<string, unknown>): ReviewRequestSummary {
+    const missionId = optionalString(payload.missionId) ?? optionalString(payload.mission_id)
+    if (missionId) this.ensureMission(missionId)
+    this.sequence += 1
+    const now = new Date(0).toISOString()
+    const review: ReviewRequestSummary = {
+      review_id: `fake-review-${this.sequence}`,
+      mission_id: missionId ? redactText(missionId) : undefined,
+      claim_id: optionalString(payload.claimId) ?? optionalString(payload.claim_id),
+      result_id: optionalString(payload.resultId) ?? optionalString(payload.result_id),
+      request_type: optionalString(payload.requestType) ?? optionalString(payload.request_type) ?? "other",
+      title: redactText(requiredString(String(payload.title ?? ""), "title")),
+      summary: redactText(requiredString(String(payload.summary ?? ""), "summary")),
+      requested_by: redactText(requiredString(String(payload.requestedBy ?? payload.requested_by ?? ""), "requestedBy")),
+      status: "pending",
+      created_at: now,
+      updated_at: now,
+    }
+    this.reviews.unshift(review)
+    return review
+  }
+
+  private getReviewRequest(reviewId: string): ReviewRequestSummary | null {
+    const id = requiredString(reviewId, "reviewId")
+    return this.reviews.find((review) => review.review_id === id) ?? null
+  }
+
+  private listReviewRequests(status: string | undefined, limit: number): ReviewRequestSummary[] {
+    return this.reviews.filter((review) => status === undefined || review.status === status).slice(0, limit)
+  }
+
+  private decideReview(reviewId: string, decision: "approved" | "rejected" | "cancelled", decidedBy: string, reason?: string): ReviewRequestSummary {
+    const review = this.reviews.find((item) => item.review_id === requiredString(reviewId, "reviewId"))
+    if (!review) throw new Error(`review request not found: ${redactText(reviewId)}`)
+    const by = redactText(requiredString(decidedBy, "decidedBy"))
+    const safeReason = reason === undefined ? undefined : redactText(requiredString(reason, "reason"))
+    if (review.status !== "pending") {
+      if (review.status === decision && review.decision_by === by && review.decision_reason === safeReason) return review
+      throw new Error(`terminal review decision conflicts with existing ${redactText(review.status)} payload: ${redactText(review.review_id)}`)
+    }
+    const now = new Date(0).toISOString()
+    review.status = decision
+    review.updated_at = now
+    review.decision_at = now
+    review.decision_by = by
+    review.decision_reason = safeReason
+    return review
+  }
+
   private requireClaim(claimId: string, missionId?: string): ExecutorClaimSummary {
     const id = requiredString(claimId, "claimId")
     const claim = this.claims.find((item) => item.claim_id === id && (missionId === undefined || item.mission_id === missionId))
@@ -357,6 +422,16 @@ export class FakeRuntimeClient implements RuntimeClient {
       completed_count: this.missions.filter((mission) => mission.status === "completed").length,
       cancelled_count: this.missions.filter((mission) => mission.status === "cancelled").length,
       last_mission_id: this.missions[0]?.mission_id,
+    }
+  }
+
+  private reviewSummary() {
+    return {
+      pending_count: this.reviews.filter((review) => review.status === "pending").length,
+      approved_count: this.reviews.filter((review) => review.status === "approved").length,
+      rejected_count: this.reviews.filter((review) => review.status === "rejected").length,
+      cancelled_count: this.reviews.filter((review) => review.status === "cancelled").length,
+      last_review_id: this.reviews[0]?.review_id,
     }
   }
 

@@ -152,6 +152,39 @@ export type MissionExecutionState = {
   lastCommand?: string
 }
 
+export type ReviewRequestSummary = {
+  review_id: string
+  mission_id?: string
+  claim_id?: string
+  result_id?: string
+  request_type: string
+  title: string
+  summary: string
+  requested_by: string
+  status: string
+  created_at?: string
+  updated_at?: string
+  decision_at?: string
+  decision_by?: string
+  decision_reason?: string
+}
+
+export type ReviewStatusSummary = {
+  pending_count: number
+  approved_count: number
+  rejected_count: number
+  cancelled_count: number
+  last_review_id?: string
+}
+
+export type ReviewsState = {
+  pending: ReviewRequestSummary[]
+  recent: ReviewRequestSummary[]
+  selectedReview?: ReviewRequestSummary | null
+  summary?: ReviewStatusSummary
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -231,6 +264,7 @@ export type UiState = {
   missionExecution?: MissionExecutionState
   runtimeCommandError?: string
   research?: ResearchRecordsState
+  reviews?: ReviewsState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -315,6 +349,10 @@ export function initialState(projectDir: string): UiState {
       selectedTopic: null,
       notes: [],
       events: [],
+    },
+    reviews: {
+      pending: [],
+      recent: [],
     },
   }
 }

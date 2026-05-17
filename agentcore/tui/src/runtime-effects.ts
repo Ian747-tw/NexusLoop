@@ -13,6 +13,9 @@ import type {
   ResearchProjectionSummary,
   ResearchProjectionUiSummary,
   ResearchRecordsState,
+  ReviewRequestSummary,
+  ReviewsState,
+  ReviewStatusSummary,
   ResearchTopicSnapshotSummary,
   ResearchTopicSummary,
   RuntimeStatusSummary,
@@ -23,6 +26,7 @@ const RESEARCH_TOPIC_LIMIT = 10
 const RESEARCH_NOTE_LIMIT = 10
 const RESEARCH_EVENT_LIMIT = 10
 const MISSION_EXECUTION_LIMIT = 10
+const REVIEW_LIMIT = 10
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -49,6 +53,12 @@ export type RuntimeUiEffect =
   | { type: "fail-mission"; missionId: string; reason: string }
   | { type: "cancel-mission"; missionId: string; reason?: string }
   | { type: "release-mission-claim"; claimId: string; reason?: string }
+  | { type: "load-reviews"; limit?: number }
+  | { type: "load-review"; reviewId: string }
+  | { type: "create-review-request"; missionId: string; title: string; summary: string }
+  | { type: "approve-review"; reviewId: string; reason?: string }
+  | { type: "reject-review"; reviewId: string; reason: string }
+  | { type: "cancel-review"; reviewId: string; reason?: string }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -144,6 +154,48 @@ export async function applyRuntimeUiEffect(
         const next = applyMissionClaim(state, claim)
         return await refreshAfterMissionWrite(next, runtime, rawMissionId)
       }
+      case "load-reviews":
+        return await loadReviews(state, runtime, effect.limit ?? REVIEW_LIMIT)
+      case "load-review":
+        return applySelectedReview(state, await runtime.command("runtime.get_review_request", { reviewId: effect.reviewId }), effect.reviewId)
+      case "create-review-request": {
+        const next = applySelectedReview(
+          state,
+          await runtime.command("runtime.create_review_request", {
+            missionId: effect.missionId,
+            requestType: "operator_checkpoint",
+            title: effect.title,
+            summary: effect.summary,
+            requestedBy: "operator",
+          }),
+          undefined,
+        )
+        return await loadReviews(next, runtime, REVIEW_LIMIT)
+      }
+      case "approve-review": {
+        const next = applySelectedReview(
+          state,
+          await runtime.command("runtime.approve_review_request", { reviewId: effect.reviewId, decidedBy: "operator", reason: effect.reason }),
+          effect.reviewId,
+        )
+        return await loadReviews(next, runtime, REVIEW_LIMIT)
+      }
+      case "reject-review": {
+        const next = applySelectedReview(
+          state,
+          await runtime.command("runtime.reject_review_request", { reviewId: effect.reviewId, decidedBy: "operator", reason: effect.reason }),
+          effect.reviewId,
+        )
+        return await loadReviews(next, runtime, REVIEW_LIMIT)
+      }
+      case "cancel-review": {
+        const next = applySelectedReview(
+          state,
+          await runtime.command("runtime.cancel_review_request", { reviewId: effect.reviewId, decidedBy: "operator", reason: effect.reason }),
+          effect.reviewId,
+        )
+        return await loadReviews(next, runtime, REVIEW_LIMIT)
+      }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -156,6 +208,7 @@ export async function applyRuntimeUiEffect(
     }
   } catch (error) {
     if (isMissionExecutionEffect(effect)) return recordMissionExecutionCommandError(state, error)
+    if (isReviewEffect(effect)) return recordReviewCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -165,6 +218,7 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
   let next = state
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-runtime-status" })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-recent-missions", limit: 5 })
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-reviews", limit: REVIEW_LIMIT })
   return next
 }
 
@@ -209,6 +263,22 @@ async function refreshAfterMissionWrite(state: UiState, runtime: RuntimeClient, 
     header: {
       ...next.header,
       activeMissionId,
+    },
+  }
+}
+
+async function loadReviews(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const summary = readReviewSummary(await runtime.command("runtime.review_status"))
+  const pending = readReviewList(await runtime.command("runtime.list_review_requests", { status: "pending", limit }), "runtime.list_review_requests")
+  const recent = readReviewList(await runtime.command("runtime.list_review_requests", { limit }), "runtime.list_review_requests")
+  return {
+    ...state,
+    reviews: {
+      ...reviewsState(state),
+      summary,
+      pending,
+      recent,
+      commandError: state.lastCommand === "reviews" ? undefined : state.reviews?.commandError,
     },
   }
 }
@@ -283,6 +353,18 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
         claimId: requiredArg(args, 0, "claimId"),
         reason: optionalRest(args, 1),
       })
+    case "reviews":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-reviews", limit: REVIEW_LIMIT })
+    case "review":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-review", reviewId: requiredArg(args, 0, "reviewId") })
+    case "request-review":
+      return applyRuntimeUiEffect(commandState, runtime, requestReviewEffect(args))
+    case "approve":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "approve-review", reviewId: requiredArg(args, 0, "reviewId"), reason: optionalRest(args, 1) })
+    case "reject":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "reject-review", reviewId: requiredArg(args, 0, "reviewId"), reason: requiredRest(args, 1, "reason") })
+    case "cancel-review":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-review", reviewId: requiredArg(args, 0, "reviewId"), reason: optionalRest(args, 1) })
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -366,6 +448,29 @@ const missionExecutionEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "release-mission-claim",
 ])
 
+function isReviewEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return reviewEffectTypes.has(effect.type)
+  return reviewCommands.has(effect.command)
+}
+
+const reviewCommands = new Set([
+  "reviews",
+  "review",
+  "request-review",
+  "approve",
+  "reject",
+  "cancel-review",
+])
+
+const reviewEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-reviews",
+  "load-review",
+  "create-review-request",
+  "approve-review",
+  "reject-review",
+  "cancel-review",
+])
+
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   if (!isRecord(value)) throw new Error("runtime.status returned non-object result")
   const runtimeStatus: RuntimeStatusSummary = {
@@ -377,12 +482,14 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   }
   const researchProjection = readResearchProjection(value.researchProjection)
   const missions = readMissionSummary(value.missions, state.missions?.recent ?? [])
+  const reviewSummary = readReviewSummary(value.reviews)
   return {
     ...state,
     runtimeStatus,
     adapterStatus: isRecord(value.adapterStatus) ? redactUnknown(value.adapterStatus) : state.adapterStatus,
     researchProjection: researchProjection ?? state.researchProjection,
     missions: missions ?? state.missions,
+    reviews: reviewSummary ? { ...reviewsState(state), summary: reviewSummary } : state.reviews,
     runtimeCommandError: undefined,
     header: {
       ...state.header,
@@ -416,6 +523,24 @@ function applyRecentMissions(state: UiState, value: unknown): UiState {
       ...state.header,
       activeMissionId: recent[0]?.mission_id ?? current.last_mission_id ?? state.header.activeMissionId,
     },
+  }
+}
+
+function applySelectedReview(state: UiState, value: unknown, reviewId: string | undefined): UiState {
+  const review = readReview(value)
+  if (!review && value !== null) throw new Error("runtime.get_review_request returned invalid review")
+  const selectedReviewId = review?.review_id ?? (reviewId ? redactText(reviewId) : undefined)
+  return {
+    ...state,
+    reviews: {
+      ...reviewsState(state),
+      selectedReview: review,
+      recent: review ? [review, ...reviewsState(state).recent.filter((item) => item.review_id !== review.review_id)].slice(0, REVIEW_LIMIT) : reviewsState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedReviewId
+      ? [...state.systemActions, { title: "review selected", detail: `review_id=${selectedReviewId}`, status: review?.status }].slice(-12)
+      : state.systemActions,
   }
 }
 
@@ -678,6 +803,18 @@ function recordMissionExecutionCommandError(state: UiState, error: unknown): UiS
   }
 }
 
+function recordReviewCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    reviews: {
+      ...reviewsState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "review command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -711,6 +848,42 @@ function readMissionSummary(value: unknown, recent: MissionRecord[]): MissionSum
     cancelled_count: readNumber(value.cancelled_count, 0),
     last_mission_id: typeof value.last_mission_id === "string" ? redactText(value.last_mission_id) : undefined,
     recent,
+  }
+}
+
+function readReviewSummary(value: unknown): ReviewStatusSummary | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    pending_count: readNumber(value.pending_count, 0),
+    approved_count: readNumber(value.approved_count, 0),
+    rejected_count: readNumber(value.rejected_count, 0),
+    cancelled_count: readNumber(value.cancelled_count, 0),
+    last_review_id: typeof value.last_review_id === "string" ? redactText(value.last_review_id) : undefined,
+  }
+}
+
+function readReviewList(value: unknown, commandName: string): ReviewRequestSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readReview).filter((review): review is ReviewRequestSummary => review !== null).slice(0, REVIEW_LIMIT)
+}
+
+function readReview(value: unknown): ReviewRequestSummary | null {
+  if (!isRecord(value) || typeof value.review_id !== "string" || typeof value.status !== "string") return null
+  return {
+    review_id: redactText(value.review_id),
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    claim_id: typeof value.claim_id === "string" ? redactText(value.claim_id) : undefined,
+    result_id: typeof value.result_id === "string" ? redactText(value.result_id) : undefined,
+    request_type: readString(value.request_type, "other"),
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    requested_by: readString(value.requested_by, "unknown"),
+    status: readString(value.status, "unknown"),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : undefined,
+    updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : undefined,
+    decision_at: typeof value.decision_at === "string" ? redactText(value.decision_at) : undefined,
+    decision_by: typeof value.decision_by === "string" ? redactText(value.decision_by) : undefined,
+    decision_reason: typeof value.decision_reason === "string" ? preview(redactText(value.decision_reason)) : undefined,
   }
 }
 
@@ -837,6 +1010,10 @@ function researchState(state: UiState): ResearchRecordsState {
   return state.research ?? { topics: [], selectedTopic: null, notes: [], events: [] }
 }
 
+function reviewsState(state: UiState): ReviewsState {
+  return state.reviews ?? { pending: [], recent: [] }
+}
+
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
 }
@@ -860,6 +1037,17 @@ function completeMissionEffect(args: string[]): Extract<RuntimeUiEffect, { type:
     return { type: "complete-mission", missionId, resultId, summary: optionalRest(args, 2) }
   }
   return { type: "complete-mission", missionId, summary: requiredRest(args, 1, "summary") }
+}
+
+function requestReviewEffect(args: string[]): Extract<RuntimeUiEffect, { type: "create-review-request" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const separator = args.indexOf("--")
+  if (separator < 2) throw new Error("-- separator is required between review title and summary")
+  const title = args.slice(1, separator).join(" ").trim()
+  const summary = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!summary) throw new Error("summary is required")
+  return { type: "create-review-request", missionId, title, summary }
 }
 
 function requiredArg(args: string[], index: number, field: string): string {

@@ -325,6 +325,31 @@ describe("TUI runtime client factory", () => {
     await expect(client.sendCommand("token=command-secret")).rejects.toThrow("unknown TUI command")
   })
 
+  test("real runtime client path exercises review create list and approve with fake adapter", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    const review = await client.command("runtime.create_review_request", {
+      title: "Operator checkpoint",
+      summary: "ready for approval",
+      requestedBy: "tester",
+    }) as { review_id: string }
+    await expect(client.command("runtime.list_review_requests", { status: "pending" })).resolves.toMatchObject([
+      { review_id: review.review_id, status: "pending" },
+    ])
+    await expect(client.command("runtime.approve_review_request", {
+      reviewId: review.review_id,
+      decidedBy: "tester",
+      reason: "ok",
+    })).resolves.toMatchObject({ review_id: review.review_id, status: "approved" })
+
+    await client.runtime.shutdown()
+  })
+
   test("secret-looking env values do not leak through runtime status or event snapshots", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)

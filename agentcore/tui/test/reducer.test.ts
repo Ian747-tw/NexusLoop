@@ -63,6 +63,48 @@ describe("TUI runtime event reducer", () => {
     expect(state.approval.specApprovals.at(-1)?.detail).toBe("Approve spec candidate?")
   })
 
+  test("layout snapshot renders bounded review approval state", () => {
+    const state = {
+      ...initialState("/tmp/demo"),
+      reviews: {
+        summary: { pending_count: 1, approved_count: 1, rejected_count: 0, cancelled_count: 0, last_review_id: "review-2" },
+        pending: [{
+          review_id: "review-2",
+          mission_id: "mission-1",
+          request_type: "mission_completion",
+          title: "Complete mission",
+          summary: "summary",
+          requested_by: "operator",
+          status: "pending",
+        }],
+        recent: [{
+          review_id: "review-1",
+          request_type: "operator_checkpoint",
+          title: "Checkpoint",
+          summary: "done",
+          requested_by: "operator",
+          status: "approved",
+        }],
+        selectedReview: {
+          review_id: "review-2",
+          mission_id: "mission-1",
+          request_type: "mission_completion",
+          title: "Complete mission",
+          summary: "summary secret=snapshot-secret",
+          requested_by: "operator",
+          status: "pending",
+        },
+      },
+    }
+
+    const snapshot = layoutSnapshot(state)
+
+    expect(snapshot).toContain("Reviews / approvals")
+    expect(snapshot).toContain("pending=1 approved=1 rejected=0 cancelled=0")
+    expect(snapshot).toContain("review-2 [pending] mission_completion mission=mission-1")
+    expect(snapshot).not.toContain("snapshot-secret")
+  })
+
   test("provider and spec onboarding state never stores API keys", () => {
     let state = initialState("/tmp/demo")
     state = reduceRuntimeEvent(state, {
