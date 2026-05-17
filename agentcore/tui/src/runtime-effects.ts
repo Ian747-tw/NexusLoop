@@ -137,10 +137,12 @@ export async function applyRuntimeUiEffect(
         return await refreshAfterMissionWrite(next, runtime, effect.missionId)
       }
       case "release-mission-claim": {
-        const claim = readExecutorClaim(await runtime.command("runtime.release_mission_claim", { claimId: effect.claimId, reason: effect.reason }))
-        if (!claim) throw new Error("runtime.release_mission_claim returned invalid claim")
+        const value = await runtime.command("runtime.release_mission_claim", { claimId: effect.claimId, reason: effect.reason })
+        const rawMissionId = readRawStringField(value, "mission_id")
+        const claim = readExecutorClaim(value)
+        if (!claim || !rawMissionId) throw new Error("runtime.release_mission_claim returned invalid claim")
         const next = applyMissionClaim(state, claim)
-        return await refreshAfterMissionWrite(next, runtime, claim.mission_id)
+        return await refreshAfterMissionWrite(next, runtime, rawMissionId)
       }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
@@ -200,8 +202,15 @@ async function loadMissionExecutionRecords(state: UiState, runtime: RuntimeClien
 
 async function refreshAfterMissionWrite(state: UiState, runtime: RuntimeClient, missionId: string): Promise<UiState> {
   let next = await loadMissionExecutionRecords(state, runtime, missionId)
+  const activeMissionId = next.missionExecution?.selectedMissionId ?? redactText(missionId)
   next = await refreshRuntimeRecordsOrRecordError(next, runtime)
-  return next
+  return {
+    ...next,
+    header: {
+      ...next.header,
+      activeMissionId,
+    },
+  }
 }
 
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
@@ -735,6 +744,10 @@ function readExecutorClaim(value: unknown): ExecutorClaimSummary | null {
     released_at: typeof value.released_at === "string" ? redactText(value.released_at) : undefined,
     release_reason: typeof value.release_reason === "string" ? redactText(value.release_reason) : undefined,
   }
+}
+
+function readRawStringField(value: unknown, key: string): string | undefined {
+  return isRecord(value) && typeof value[key] === "string" ? value[key] : undefined
 }
 
 function readMissionProgress(value: unknown): MissionProgressSummary | null {

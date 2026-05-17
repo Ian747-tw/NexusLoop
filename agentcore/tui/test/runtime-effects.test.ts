@@ -585,6 +585,31 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("completion-secret")
   })
 
+  test("mission writes preserve selected mission when newer recent missions exist", async () => {
+    const runtime = new MissionExecutionRuntime()
+    const missionOne = runtime.missions.get("mission-1")!
+    runtime.missions.delete("mission-1")
+    runtime.missions.set("mission-new", {
+      mission_id: "mission-new",
+      intent_id: "intent-new",
+      objective: "newer mission objective",
+      status: "sent",
+      created_at: "2026-05-16T00:01:00Z",
+      updated_at: "2026-05-16T00:01:00Z",
+    })
+    runtime.missions.set("mission-1", missionOne)
+
+    const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, {
+      type: "send-command",
+      command: "claim",
+      args: ["mission-1", "executor-1"],
+    })
+
+    expect(state.missions?.recent[0]?.mission_id).toBe("mission-new")
+    expect(state.missionExecution?.selectedMissionId).toBe("mission-1")
+    expect(state.header.activeMissionId).toBe("mission-1")
+  })
+
   test("mission fail cancel and release commands update execution state without colliding with local cancel", async () => {
     const runtime = new MissionExecutionRuntime()
     let state = initialState("/tmp/demo")
@@ -608,6 +633,40 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(localCancel)).not.toContain("release-secret")
     expect(JSON.stringify(localCancel)).not.toContain("fail-secret")
     expect(JSON.stringify(localCancel)).not.toContain("cancel-secret")
+  })
+
+  test("release claim refreshes with raw mission id while storing redacted mission state", async () => {
+    const runtime = new MissionExecutionRuntime()
+    const missionId = "token=mission-secret"
+    runtime.missions.set(missionId, {
+      mission_id: missionId,
+      intent_id: "intent-secret",
+      objective: "secret mission objective",
+      status: "sent",
+      created_at: "2026-05-16T00:00:00Z",
+      updated_at: "2026-05-16T00:00:00Z",
+    })
+
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, {
+      type: "send-command",
+      command: "claim",
+      args: [missionId, "executor-1"],
+    })
+    const claimId = state.missionExecution?.selectedClaimId!
+    const beforeReleaseCallCount = runtime.calls.length
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "release-claim",
+      args: [claimId, "handoff"],
+    })
+    const releaseRefreshCalls = runtime.calls.slice(beforeReleaseCallCount)
+
+    expect(state.missionExecution?.commandError).toBeUndefined()
+    expect(state.missionExecution?.selectedMissionId).toBe("[REDACTED]")
+    expect(state.missionExecution?.selectedMission?.mission_id).toBe("[REDACTED]")
+    expect(releaseRefreshCalls).toContain(`runtime.get_mission:{"missionId":"${missionId}"}`)
+    expect(JSON.stringify(state)).not.toContain("mission-secret")
   })
 
   test("complete command treats normal result-like words as summary text", async () => {
