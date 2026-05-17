@@ -2622,6 +2622,68 @@ describe("ReviewRegistry", () => {
 
     await expect(registry.listReviewRequests()).rejects.toThrow("request_type is invalid")
   })
+
+  test("created review events must replay as pending", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await store.append({
+      kind: "review_request_created",
+      review: {
+        review_id: "review_bad_status",
+        request_type: "other",
+        title: "title",
+        summary: "summary",
+        requested_by: "operator",
+        status: "approved",
+        created_at: "2026-05-10T12:00:00.000Z",
+        updated_at: "2026-05-10T12:00:00.000Z",
+      },
+    })
+    const registry = new ReviewRegistry({ eventStore: store })
+
+    await expect(registry.listReviewRequests()).rejects.toThrow("review_request_created must start pending")
+  })
+
+  test("hydration rejects conflicting terminal review decisions", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await store.append({
+      kind: "review_request_created",
+      review: {
+        review_id: "review_conflict",
+        request_type: "other",
+        title: "title",
+        summary: "summary",
+        requested_by: "operator",
+        status: "pending",
+        created_at: "2026-05-10T12:00:00.000Z",
+        updated_at: "2026-05-10T12:00:00.000Z",
+      },
+    })
+    await store.append({
+      kind: "review_request_approved",
+      decision: {
+        review_id: "review_conflict",
+        decision: "approved",
+        decided_by: "operator",
+        reason: "ok",
+        decided_at: "2026-05-10T12:00:01.000Z",
+      },
+    })
+    await store.append({
+      kind: "review_request_rejected",
+      decision: {
+        review_id: "review_conflict",
+        decision: "rejected",
+        decided_by: "operator",
+        reason: "no",
+        decided_at: "2026-05-10T12:00:02.000Z",
+      },
+    })
+    const registry = new ReviewRegistry({ eventStore: store })
+
+    await expect(registry.getReviewRequest("review_conflict")).rejects.toThrow("terminal review decision conflicts")
+  })
 })
 
 describe("SpecService", () => {

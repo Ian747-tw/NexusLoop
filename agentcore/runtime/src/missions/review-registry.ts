@@ -210,12 +210,17 @@ export class ReviewRegistry {
   }
 
   private applyCreated(review: ReviewRequest): void {
+    if (review.status !== "pending") throw new Error(`review_request_created must start pending: ${review.review_id}`)
     if (!this.reviews.has(review.review_id)) this.reviewOrder.push(review.review_id)
     this.reviews.set(review.review_id, redactValue(review))
   }
 
   private applyDecision(decision: ReviewDecision): void {
     const review = this.requireReview(decision.review_id)
+    if (TERMINAL_STATUSES.has(review.status)) {
+      this.idempotentDecision(review, decision.decision, decision.decided_by, decision.reason)
+      return
+    }
     this.reviews.set(decision.review_id, redactValue({
       ...review,
       status: decision.decision,
