@@ -411,17 +411,25 @@ function applyRecentMissions(state: UiState, value: unknown): UiState {
 }
 
 function applyMissionDetails(state: UiState, value: unknown, missionId: string): UiState {
+  const selectedMissionId = redactText(missionId)
+  const previous = missionExecutionState(state)
+  const sameTarget = previous.selectedMissionId === selectedMissionId
   return {
     ...state,
     missionExecution: {
-      ...missionExecutionState(state),
-      selectedMissionId: redactText(missionId),
+      ...previous,
+      selectedMissionId,
       selectedMission: readMissionRecord(value),
+      selectedClaimId: sameTarget ? previous.selectedClaimId : undefined,
+      selectedResultId: sameTarget ? previous.selectedResultId : undefined,
+      claims: sameTarget ? previous.claims : [],
+      progress: sameTarget ? previous.progress : [],
+      results: sameTarget ? previous.results : [],
       commandError: undefined,
     },
     header: {
       ...state.header,
-      activeMissionId: redactText(missionId),
+      activeMissionId: selectedMissionId,
     },
   }
 }

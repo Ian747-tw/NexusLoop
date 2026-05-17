@@ -531,16 +531,32 @@ describe("runtime UI effects", () => {
     await runtime.command("runtime.record_mission_progress", { missionId: "mission-1", claimId: claim.claim_id, message: "started" })
     await runtime.command("runtime.submit_mission_result", { missionId: "mission-1", claimId: claim.claim_id, summary: "result summary" })
 
-    const next = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      missionExecution: {
+        selectedMissionId: "mission-old",
+        selectedMission: { mission_id: "mission-old", status: "sent" },
+        selectedClaimId: "claim-old",
+        selectedResultId: "result-old",
+        claims: [{ claim_id: "claim-old", mission_id: "mission-old", executor_id: "executor-old", status: "active" }],
+        progress: [{ progress_id: "progress-old", mission_id: "mission-old", claim_id: "claim-old", message: "old progress" }],
+        results: [{ result_id: "result-old", mission_id: "mission-old", claim_id: "claim-old", status: "submitted", summary: "old result" }],
+      },
+    }
+
+    const next = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
       command: "mission",
       args: ["mission-1"],
     })
 
     expect(next.missionExecution?.selectedMission?.mission_id).toBe("mission-1")
+    expect(next.missionExecution?.selectedClaimId).toBeUndefined()
+    expect(next.missionExecution?.selectedResultId).toBeUndefined()
     expect(next.missionExecution?.claims[0]?.claim_id).toBe(claim.claim_id)
     expect(next.missionExecution?.progress[0]?.message).toBe("started")
     expect(next.missionExecution?.results[0]?.summary).toBe("result summary")
+    expect(JSON.stringify(next.missionExecution)).not.toContain("mission-old")
   })
 
   test("mission lifecycle commands call runtime and refresh mission records", async () => {
