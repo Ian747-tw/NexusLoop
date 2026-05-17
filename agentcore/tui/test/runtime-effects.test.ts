@@ -688,6 +688,24 @@ describe("runtime UI effects", () => {
     await expect(cancelledRuntime.command("runtime.get_mission", { missionId: "mission-cancelled" })).resolves.toMatchObject({ status: "cancelled" })
   })
 
+  test("fake runtime rejects completing active claim with stale result from released claim", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const firstClaim = await runtime.command("runtime.claim_mission", { missionId: "mission-stale-result", executorId: "executor-1" }) as { claim_id: string }
+    const staleResult = await runtime.command("runtime.submit_mission_result", {
+      missionId: "mission-stale-result",
+      claimId: firstClaim.claim_id,
+      summary: "ready",
+    }) as { result_id: string }
+    await runtime.command("runtime.release_mission_claim", { claimId: firstClaim.claim_id, reason: "handoff" })
+    await runtime.command("runtime.claim_mission", { missionId: "mission-stale-result", executorId: "executor-2" })
+
+    await expect(runtime.command("runtime.complete_mission", {
+      missionId: "mission-stale-result",
+      resultId: staleResult.result_id,
+    })).rejects.toThrow("result must belong to active claim")
+    await expect(runtime.command("runtime.get_mission", { missionId: "mission-stale-result" })).resolves.toMatchObject({ status: "claimed" })
+  })
+
   test("mission list commands load bounded execution rows", async () => {
     const runtime = new MissionExecutionRuntime()
     const claim = await runtime.command("runtime.claim_mission", { missionId: "mission-1", executorId: "executor-1" }) as { claim_id: string }
@@ -715,6 +733,8 @@ describe("runtime UI effects", () => {
           status: "sent",
           objective: "old mission",
         },
+        selectedClaimId: "claim-a",
+        selectedResultId: "result-a",
         claims: [],
         progress: [],
         results: [],
@@ -724,6 +744,8 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "claims", args: ["mission-1"] })
     expect(state.missionExecution?.selectedMissionId).toBe("mission-1")
     expect(state.missionExecution?.selectedMission).toBeNull()
+    expect(state.missionExecution?.selectedClaimId).toBeUndefined()
+    expect(state.missionExecution?.selectedResultId).toBeUndefined()
 
     state = {
       ...state,
@@ -735,12 +757,16 @@ describe("runtime UI effects", () => {
           status: "sent",
           objective: "old mission",
         },
+        selectedClaimId: "claim-a",
+        selectedResultId: "result-a",
       },
     }
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "progress", args: ["mission-1"] })
     expect(state.missionExecution?.selectedMissionId).toBe("mission-1")
     expect(state.missionExecution?.selectedMission).toBeNull()
+    expect(state.missionExecution?.selectedClaimId).toBeUndefined()
+    expect(state.missionExecution?.selectedResultId).toBeUndefined()
 
     state = {
       ...state,
@@ -752,12 +778,16 @@ describe("runtime UI effects", () => {
           status: "sent",
           objective: "old mission",
         },
+        selectedClaimId: "claim-a",
+        selectedResultId: "result-a",
       },
     }
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "results", args: ["mission-1"] })
     expect(state.missionExecution?.selectedMissionId).toBe("mission-1")
     expect(state.missionExecution?.selectedMission).toBeNull()
+    expect(state.missionExecution?.selectedClaimId).toBeUndefined()
+    expect(state.missionExecution?.selectedResultId).toBeUndefined()
   })
 
   test("missing mission command args produce redacted mission execution errors", async () => {

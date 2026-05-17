@@ -290,6 +290,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       ? this.results.find((item) => item.result_id === payloadResultId && item.mission_id === mission.mission_id)
       : this.results.find((item) => item.mission_id === mission.mission_id && item.claim_id === activeClaim.claim_id)
     if (!result) throw new Error(`mission completion requires a submitted result: ${redactText(mission.mission_id)}`)
+    if (result.claim_id !== activeClaim.claim_id) throw new Error(`result must belong to active claim: ${redactText(result.result_id)}`)
     const now = new Date(0).toISOString()
     result.status = "accepted"
     activeClaim.status = "completed"
