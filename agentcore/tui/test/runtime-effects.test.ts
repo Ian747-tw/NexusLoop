@@ -746,6 +746,7 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.selectedMission).toBeNull()
     expect(state.missionExecution?.selectedClaimId).toBeUndefined()
     expect(state.missionExecution?.selectedResultId).toBeUndefined()
+    expect(state.header.activeMissionId).toBe("mission-1")
 
     state = {
       ...state,
@@ -767,6 +768,7 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.selectedMission).toBeNull()
     expect(state.missionExecution?.selectedClaimId).toBeUndefined()
     expect(state.missionExecution?.selectedResultId).toBeUndefined()
+    expect(state.header.activeMissionId).toBe("mission-1")
 
     state = {
       ...state,
@@ -788,6 +790,7 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.selectedMission).toBeNull()
     expect(state.missionExecution?.selectedClaimId).toBeUndefined()
     expect(state.missionExecution?.selectedResultId).toBeUndefined()
+    expect(state.header.activeMissionId).toBe("mission-1")
   })
 
   test("missing mission command args produce redacted mission execution errors", async () => {
