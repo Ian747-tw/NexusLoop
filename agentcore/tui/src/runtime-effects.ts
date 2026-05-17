@@ -797,7 +797,7 @@ function selectedMissionForTarget(state: UiState, selectedMissionId: string): Mi
 }
 
 function completeMissionEffect(args: string[]): Extract<RuntimeUiEffect, { type: "complete-mission" }> {
-  const missionId = requiredArg(args, 0, "missionId")
+  const missionId = requiredMissionIdArg(args, 0)
   const second = args[1]
   if (!second) return { type: "complete-mission", missionId }
   if (second === "--result") {
@@ -814,6 +814,12 @@ function completeMissionEffect(args: string[]): Extract<RuntimeUiEffect, { type:
 function requiredArg(args: string[], index: number, field: string): string {
   const value = args[index]
   if (!value) throw new Error(`${field} is required`)
+  return value
+}
+
+function requiredMissionIdArg(args: string[], index: number): string {
+  const value = args[index]
+  if (!value || value.startsWith("--")) throw new Error("missionId is required")
   return value
 }
 

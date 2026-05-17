@@ -642,6 +642,17 @@ describe("runtime UI effects", () => {
     expect(next.systemActions.at(-1)).toMatchObject({ title: "mission execution command error", status: "failed" })
   })
 
+  test("complete command rejects result flag as missing mission id", async () => {
+    const next = await applyRuntimeUiEffect(initialState("/tmp/demo"), new MissionExecutionRuntime(), {
+      type: "send-command",
+      command: "complete",
+      args: ["--result", "result-1"],
+    })
+
+    expect(next.missionExecution?.commandError).toBe("missionId is required")
+    expect(next.systemActions.at(-1)).toMatchObject({ title: "mission execution command error", status: "failed" })
+  })
+
   test("fake runtime release resets running mission after progress or result and preserves terminal statuses", async () => {
     const progressRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
     await progressRuntime.command("runtime.claim_mission", { missionId: "mission-progress", executorId: "executor-1" })
