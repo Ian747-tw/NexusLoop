@@ -2684,6 +2684,37 @@ describe("ReviewRegistry", () => {
 
     await expect(registry.getReviewRequest("review_conflict")).rejects.toThrow("terminal review decision conflicts")
   })
+
+  test("hydration rejects review decision event kind mismatches", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await store.append({
+      kind: "review_request_created",
+      review: {
+        review_id: "review_kind_mismatch",
+        request_type: "other",
+        title: "title",
+        summary: "summary",
+        requested_by: "operator",
+        status: "pending",
+        created_at: "2026-05-10T12:00:00.000Z",
+        updated_at: "2026-05-10T12:00:00.000Z",
+      },
+    })
+    await store.append({
+      kind: "review_request_approved",
+      decision: {
+        review_id: "review_kind_mismatch",
+        decision: "rejected",
+        decided_by: "operator",
+        reason: "mismatch",
+        decided_at: "2026-05-10T12:00:01.000Z",
+      },
+    })
+    const registry = new ReviewRegistry({ eventStore: store })
+
+    await expect(registry.getReviewRequest("review_kind_mismatch")).rejects.toThrow("review decision event kind conflicts")
+  })
 })
 
 describe("SpecService", () => {

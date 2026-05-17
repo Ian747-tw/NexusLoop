@@ -200,7 +200,7 @@ export class ReviewRegistry {
       case "review_request_approved":
       case "review_request_rejected":
       case "review_request_cancelled":
-        this.applyDecision(readReviewDecision(event.decision))
+        this.applyDecision(readReviewDecision(event.decision, event.kind))
         break
       default:
         if (typeof event.kind === "string" && event.kind.startsWith("review_")) {
@@ -267,10 +267,13 @@ function readReviewRequest(value: unknown): ReviewRequest {
   }
 }
 
-function readReviewDecision(value: unknown): ReviewDecision {
+function readReviewDecision(value: unknown, eventKind?: string): ReviewDecision {
   if (!isRecord(value)) throw new Error("review decision event missing decision")
   const decision = cleanStatus(value.decision)
   if (decision === "pending") throw new Error("review decision cannot be pending")
+  if (eventKind !== undefined && eventKind !== `review_request_${decision}`) {
+    throw new Error(`review decision event kind conflicts with decision: ${eventKind}`)
+  }
   return {
     review_id: cleanRequiredString(value.review_id, "review_id"),
     decision,
