@@ -144,4 +144,47 @@ describe("interactive runtime effect state merge", () => {
     expect(merged.systemActions.at(-1)).toEqual(effectAction)
     expect(merged.systemActions[0]).toEqual({ title: "baseline-2" })
   })
+
+  test("preserves newer research state while keeping older research effect actions", () => {
+    const baseline: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      research: {
+        topics: [{ id: "topic-old", title: "Old topic", status: "open" }],
+        selectedTopic: null,
+        notes: [],
+        events: [],
+      },
+      systemActions: [{ title: "user command -> runtime", detail: "topics" }],
+    }
+    const current: UiState = {
+      ...baseline,
+      research: {
+        ...baseline.research!,
+        topics: [{ id: "topic-new", title: "New topic", status: "active" }],
+      },
+    }
+    const olderEffectResult: UiState = {
+      ...baseline,
+      research: {
+        ...baseline.research!,
+        topics: [{ id: "topic-older-result", title: "Older result", status: "paused" }],
+        commandError: "older failure",
+      },
+      systemActions: [
+        ...baseline.systemActions,
+        { title: "research command error", detail: "older failure", status: "failed" },
+      ],
+    }
+
+    const merged = mergeRuntimeEffectState(current, olderEffectResult, baseline.systemActions.length, baseline)
+
+    expect(merged.research?.topics[0]?.id).toBe("topic-new")
+    expect(merged.research?.commandError).toBeUndefined()
+    expect(merged.systemActions.at(-1)).toEqual({
+      title: "research command error",
+      detail: "older failure",
+      status: "failed",
+    })
+  })
 })

@@ -83,6 +83,36 @@ describe("TUI keyboard command model", () => {
     expect(result.effects).toEqual([{ type: "send-command", command: "status" }])
   })
 
+  test("research slash commands route through whitelisted runtime command effects with args", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/notes topic-1 runtime projection",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("notes")
+    expect(result.effects).toEqual([{ type: "send-command", command: "notes", args: ["topic-1", "runtime", "projection"] }])
+  })
+
+  test("slash command arguments are redacted before entering system actions", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/notes topic-1 token=command-secret",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.systemActions.at(-1)?.detail).toBe("notes topic-1 [REDACTED]")
+    expect(JSON.stringify(result.state)).not.toContain("command-secret")
+    expect(result.effects).toEqual([{ type: "send-command", command: "notes", args: ["topic-1", "token=command-secret"] }])
+  })
+
   test("path-like slash messages remain user messages", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -97,8 +127,22 @@ describe("TUI keyboard command model", () => {
     expect(result.effects).toEqual([{ type: "send-user-message", message: "/tmp/repro should be inspected" }])
   })
 
+  test("unknown slash commands remain user messages", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/unknown command",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.submittedMessages).toEqual(["/unknown command"])
+    expect(result.effects).toEqual([{ type: "send-user-message", message: "/unknown command" }])
+  })
+
   test("dot and colon prefixed text remains a user message", () => {
-    for (const message of [".status notes", ":missions"]) {
+    for (const message of [".status notes", ":missions", ".topics", ":research"]) {
       const state: UiState = {
         ...initialState("/tmp/demo"),
         screen: "main",

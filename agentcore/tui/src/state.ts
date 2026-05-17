@@ -106,6 +106,59 @@ export type MissionSummaryState = {
   recent: MissionRecord[]
 }
 
+export type ResearchTopicSummary = {
+  id: string
+  title: string
+  status: string
+  created_at?: string
+  updated_at?: string
+}
+
+export type ResearchNoteSummary = {
+  id: string
+  topic_id: string
+  source_id?: string
+  content: string
+  tags: string[]
+  created_at?: string
+}
+
+export type ResearchEventSummary = {
+  event_id: string
+  event_type: string
+  entity_type: string
+  entity_id: string
+  created_at?: string
+}
+
+export type ResearchTopicSnapshotSummary = {
+  topic: ResearchTopicSummary
+  stats: {
+    source_count: number
+    note_count: number
+    artifact_count: number
+    report_count: number
+    reviewed_source_count: number
+    rejected_source_count: number
+  }
+  latest_event?: ResearchEventSummary
+}
+
+export type ResearchProjectionUiSummary = ResearchProjectionSummary & {
+  last_event_id?: string
+}
+
+export type ResearchRecordsState = {
+  topics: ResearchTopicSummary[]
+  selectedTopic?: ResearchTopicSnapshotSummary | null
+  notes: ResearchNoteSummary[]
+  events: ResearchEventSummary[]
+  projection?: ResearchProjectionUiSummary
+  lastQuery?: string
+  selectedTopicId?: string
+  commandError?: string
+}
+
 export type UiState = {
   screen: Screen
   projectDir: string
@@ -130,6 +183,7 @@ export type UiState = {
   researchProjection?: ResearchProjectionSummary
   missions?: MissionSummaryState
   runtimeCommandError?: string
+  research?: ResearchRecordsState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -203,6 +257,12 @@ export function initialState(projectDir: string): UiState {
       completed_count: 0,
       cancelled_count: 0,
       recent: [],
+    },
+    research: {
+      topics: [],
+      selectedTopic: null,
+      notes: [],
+      events: [],
     },
   }
 }
