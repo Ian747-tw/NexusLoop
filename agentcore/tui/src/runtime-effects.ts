@@ -440,6 +440,8 @@ function applyMissionClaims(state: UiState, value: unknown, missionId: string): 
       selectedClaimId: sameTarget ? previous.selectedClaimId : undefined,
       selectedResultId: sameTarget ? previous.selectedResultId : undefined,
       claims: value.map(readExecutorClaim).filter((claim): claim is ExecutorClaimSummary => claim !== null).slice(0, MISSION_EXECUTION_LIMIT),
+      progress: sameTarget ? previous.progress : [],
+      results: sameTarget ? previous.results : [],
       commandError: state.lastCommand === "claims" ? undefined : state.missionExecution?.commandError,
     },
     header: {
@@ -462,7 +464,9 @@ function applyMissionProgress(state: UiState, value: unknown, missionId: string)
       selectedMission: selectedMissionForTarget(state, selectedMissionId),
       selectedClaimId: sameTarget ? previous.selectedClaimId : undefined,
       selectedResultId: sameTarget ? previous.selectedResultId : undefined,
+      claims: sameTarget ? previous.claims : [],
       progress: value.map(readMissionProgress).filter((item): item is MissionProgressSummary => item !== null).slice(0, MISSION_EXECUTION_LIMIT),
+      results: sameTarget ? previous.results : [],
       commandError: state.lastCommand === "progress" ? undefined : state.missionExecution?.commandError,
     },
     header: {
@@ -485,6 +489,8 @@ function applyMissionResults(state: UiState, value: unknown, missionId: string):
       selectedMission: selectedMissionForTarget(state, selectedMissionId),
       selectedClaimId: sameTarget ? previous.selectedClaimId : undefined,
       selectedResultId: sameTarget ? previous.selectedResultId : undefined,
+      claims: sameTarget ? previous.claims : [],
+      progress: sameTarget ? previous.progress : [],
       results: value.map(readMissionResult).filter((item): item is MissionResultSummary => item !== null).slice(0, MISSION_EXECUTION_LIMIT),
       commandError: state.lastCommand === "results" ? undefined : state.missionExecution?.commandError,
     },

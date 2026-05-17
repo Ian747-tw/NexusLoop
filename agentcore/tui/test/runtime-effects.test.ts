@@ -735,9 +735,9 @@ describe("runtime UI effects", () => {
         },
         selectedClaimId: "claim-a",
         selectedResultId: "result-a",
-        claims: [],
-        progress: [],
-        results: [],
+        claims: [{ claim_id: "claim-a", mission_id: "mission-a", executor_id: "executor-a", status: "active" }],
+        progress: [{ progress_id: "progress-a", mission_id: "mission-a", claim_id: "claim-a", message: "old progress" }],
+        results: [{ result_id: "result-a", mission_id: "mission-a", claim_id: "claim-a", status: "submitted", summary: "old result" }],
       },
     }
 
@@ -747,6 +747,8 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.selectedClaimId).toBeUndefined()
     expect(state.missionExecution?.selectedResultId).toBeUndefined()
     expect(state.header.activeMissionId).toBe("mission-1")
+    expect(state.missionExecution?.progress).toEqual([])
+    expect(state.missionExecution?.results).toEqual([])
 
     state = {
       ...state,
@@ -760,6 +762,9 @@ describe("runtime UI effects", () => {
         },
         selectedClaimId: "claim-a",
         selectedResultId: "result-a",
+        claims: [{ claim_id: "claim-a", mission_id: "mission-a", executor_id: "executor-a", status: "active" }],
+        progress: [{ progress_id: "progress-a", mission_id: "mission-a", claim_id: "claim-a", message: "old progress" }],
+        results: [{ result_id: "result-a", mission_id: "mission-a", claim_id: "claim-a", status: "submitted", summary: "old result" }],
       },
     }
 
@@ -769,6 +774,8 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.selectedClaimId).toBeUndefined()
     expect(state.missionExecution?.selectedResultId).toBeUndefined()
     expect(state.header.activeMissionId).toBe("mission-1")
+    expect(state.missionExecution?.claims).toEqual([])
+    expect(state.missionExecution?.results).toEqual([])
 
     state = {
       ...state,
@@ -782,6 +789,9 @@ describe("runtime UI effects", () => {
         },
         selectedClaimId: "claim-a",
         selectedResultId: "result-a",
+        claims: [{ claim_id: "claim-a", mission_id: "mission-a", executor_id: "executor-a", status: "active" }],
+        progress: [{ progress_id: "progress-a", mission_id: "mission-a", claim_id: "claim-a", message: "old progress" }],
+        results: [{ result_id: "result-a", mission_id: "mission-a", claim_id: "claim-a", status: "submitted", summary: "old result" }],
       },
     }
 
@@ -791,6 +801,8 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.selectedClaimId).toBeUndefined()
     expect(state.missionExecution?.selectedResultId).toBeUndefined()
     expect(state.header.activeMissionId).toBe("mission-1")
+    expect(state.missionExecution?.claims).toEqual([])
+    expect(state.missionExecution?.progress).toEqual([])
   })
 
   test("missing mission command args produce redacted mission execution errors", async () => {
