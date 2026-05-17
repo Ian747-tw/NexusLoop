@@ -428,11 +428,13 @@ function applyMissionDetails(state: UiState, value: unknown, missionId: string):
 
 function applyMissionClaims(state: UiState, value: unknown, missionId: string): UiState {
   if (!Array.isArray(value)) throw new Error("runtime.list_mission_claims returned non-array result")
+  const selectedMissionId = redactText(missionId)
   return {
     ...state,
     missionExecution: {
       ...missionExecutionState(state),
-      selectedMissionId: redactText(missionId),
+      selectedMissionId,
+      selectedMission: selectedMissionForTarget(state, selectedMissionId),
       claims: value.map(readExecutorClaim).filter((claim): claim is ExecutorClaimSummary => claim !== null).slice(0, MISSION_EXECUTION_LIMIT),
       commandError: state.lastCommand === "claims" ? undefined : state.missionExecution?.commandError,
     },
@@ -441,11 +443,13 @@ function applyMissionClaims(state: UiState, value: unknown, missionId: string): 
 
 function applyMissionProgress(state: UiState, value: unknown, missionId: string): UiState {
   if (!Array.isArray(value)) throw new Error("runtime.list_mission_progress returned non-array result")
+  const selectedMissionId = redactText(missionId)
   return {
     ...state,
     missionExecution: {
       ...missionExecutionState(state),
-      selectedMissionId: redactText(missionId),
+      selectedMissionId,
+      selectedMission: selectedMissionForTarget(state, selectedMissionId),
       progress: value.map(readMissionProgress).filter((item): item is MissionProgressSummary => item !== null).slice(0, MISSION_EXECUTION_LIMIT),
       commandError: state.lastCommand === "progress" ? undefined : state.missionExecution?.commandError,
     },
@@ -454,11 +458,13 @@ function applyMissionProgress(state: UiState, value: unknown, missionId: string)
 
 function applyMissionResults(state: UiState, value: unknown, missionId: string): UiState {
   if (!Array.isArray(value)) throw new Error("runtime.list_mission_results returned non-array result")
+  const selectedMissionId = redactText(missionId)
   return {
     ...state,
     missionExecution: {
       ...missionExecutionState(state),
-      selectedMissionId: redactText(missionId),
+      selectedMissionId,
+      selectedMission: selectedMissionForTarget(state, selectedMissionId),
       results: value.map(readMissionResult).filter((item): item is MissionResultSummary => item !== null).slice(0, MISSION_EXECUTION_LIMIT),
       commandError: state.lastCommand === "results" ? undefined : state.missionExecution?.commandError,
     },
@@ -782,6 +788,12 @@ function researchState(state: UiState): ResearchRecordsState {
 
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
+}
+
+function selectedMissionForTarget(state: UiState, selectedMissionId: string): MissionRecord | null {
+  return state.missionExecution?.selectedMission?.mission_id === selectedMissionId
+    ? state.missionExecution.selectedMission
+    : null
 }
 
 function completeMissionEffect(args: string[]): Extract<RuntimeUiEffect, { type: "complete-mission" }> {

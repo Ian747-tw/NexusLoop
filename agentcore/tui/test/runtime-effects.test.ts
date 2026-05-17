@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 import { FakeRuntimeClient, type RuntimeClient } from "../src/runtime"
-import { initialState } from "../src/state"
+import { initialState, type UiState } from "../src/state"
 
 class RecentMissionRuntime implements RuntimeClient {
   async *stream(): AsyncIterable<RuntimeEvent> {}
@@ -691,6 +691,62 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.claims).toHaveLength(1)
     expect(state.missionExecution?.progress).toHaveLength(1)
     expect(state.missionExecution?.results).toHaveLength(1)
+  })
+
+  test("mission list commands clear stale selected mission when target changes", async () => {
+    const runtime = new MissionExecutionRuntime()
+    let state: UiState = {
+      ...initialState("/tmp/demo"),
+      missionExecution: {
+        selectedMissionId: "mission-a",
+        selectedMission: {
+          mission_id: "mission-a",
+          status: "sent",
+          objective: "old mission",
+        },
+        claims: [],
+        progress: [],
+        results: [],
+      },
+    }
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "claims", args: ["mission-1"] })
+    expect(state.missionExecution?.selectedMissionId).toBe("mission-1")
+    expect(state.missionExecution?.selectedMission).toBeNull()
+
+    state = {
+      ...state,
+      missionExecution: {
+        ...state.missionExecution!,
+        selectedMissionId: "mission-a",
+        selectedMission: {
+          mission_id: "mission-a",
+          status: "sent",
+          objective: "old mission",
+        },
+      },
+    }
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "progress", args: ["mission-1"] })
+    expect(state.missionExecution?.selectedMissionId).toBe("mission-1")
+    expect(state.missionExecution?.selectedMission).toBeNull()
+
+    state = {
+      ...state,
+      missionExecution: {
+        ...state.missionExecution!,
+        selectedMissionId: "mission-a",
+        selectedMission: {
+          mission_id: "mission-a",
+          status: "sent",
+          objective: "old mission",
+        },
+      },
+    }
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "results", args: ["mission-1"] })
+    expect(state.missionExecution?.selectedMissionId).toBe("mission-1")
+    expect(state.missionExecution?.selectedMission).toBeNull()
   })
 
   test("missing mission command args produce redacted mission execution errors", async () => {
