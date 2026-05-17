@@ -182,4 +182,10 @@ const runtimeCommands = new Set([
   "fail",
   "cancel-mission",
   "release-claim",
+  "reviews",
+  "review",
+  "request-review",
+  "approve",
+  "reject",
+  "cancel-review",
 ])

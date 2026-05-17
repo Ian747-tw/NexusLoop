@@ -67,6 +67,8 @@ class CountingRuntime implements RuntimeClient {
   async command(name: string): Promise<unknown> {
     this.calls.push(name)
     if (name === "runtime.list_recent_missions") return []
+    if (name === "runtime.review_status") return { pending_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0 }
+    if (name === "runtime.list_review_requests") return []
     return {
       runtimeStatus: "started",
       mode: "active",
@@ -179,6 +181,7 @@ class MissionExecutionRuntime implements RuntimeClient {
   readonly claims = new Map<string, Record<string, unknown>>()
   readonly progress = new Map<string, Record<string, unknown>>()
   readonly results = new Map<string, Record<string, unknown>>()
+  readonly reviews = new Map<string, Record<string, unknown>>()
   private sequence = 0
 
   async *stream(): AsyncIterable<RuntimeEvent> {}
@@ -206,6 +209,7 @@ class MissionExecutionRuntime implements RuntimeClient {
             cancelled_count: [...this.missions.values()].filter((mission) => mission.status === "cancelled").length,
             last_mission_id: missionId,
           },
+          reviews: this.reviewSummary(),
         }
       case "runtime.list_recent_missions":
         return [...this.missions.values()]
@@ -217,6 +221,20 @@ class MissionExecutionRuntime implements RuntimeClient {
         return [...this.progress.values()].filter((item) => item.mission_id === missionId)
       case "runtime.list_mission_results":
         return [...this.results.values()].filter((result) => result.mission_id === missionId)
+      case "runtime.review_status":
+        return this.reviewSummary()
+      case "runtime.list_review_requests":
+        return [...this.reviews.values()].filter((review) => payload.status === undefined || review.status === payload.status)
+      case "runtime.get_review_request":
+        return this.reviews.get(String(payload.reviewId ?? "")) ?? null
+      case "runtime.create_review_request":
+        return this.createReview(payload)
+      case "runtime.approve_review_request":
+        return this.decideReview(String(payload.reviewId ?? ""), "approved", payload)
+      case "runtime.reject_review_request":
+        return this.decideReview(String(payload.reviewId ?? ""), "rejected", payload)
+      case "runtime.cancel_review_request":
+        return this.decideReview(String(payload.reviewId ?? ""), "cancelled", payload)
       case "runtime.claim_mission":
         return this.claimMission(missionId, String(payload.executorId ?? ""))
       case "runtime.record_mission_progress":
@@ -299,6 +317,47 @@ class MissionExecutionRuntime implements RuntimeClient {
     if (!mission) throw new Error(`unknown mission token=mission-secret ${missionId}`)
     Object.assign(mission, patch, { updated_at: "2026-05-16T00:00:00Z" })
     return mission
+  }
+
+  private createReview(payload: Record<string, unknown>): Record<string, unknown> {
+    this.sequence += 1
+    const review = {
+      review_id: `review-${this.sequence}`,
+      mission_id: payload.missionId,
+      request_type: payload.requestType ?? "other",
+      title: payload.title,
+      summary: payload.summary,
+      requested_by: payload.requestedBy,
+      status: "pending",
+      created_at: "2026-05-16T00:00:00Z",
+      updated_at: "2026-05-16T00:00:00Z",
+    }
+    this.reviews.set(review.review_id, review)
+    return review
+  }
+
+  private decideReview(reviewId: string, status: string, payload: Record<string, unknown>): Record<string, unknown> {
+    const review = this.reviews.get(reviewId)
+    if (!review) throw new Error(`unknown review token=review-secret ${reviewId}`)
+    Object.assign(review, {
+      status,
+      updated_at: "2026-05-16T00:00:00Z",
+      decision_at: "2026-05-16T00:00:00Z",
+      decision_by: payload.decidedBy,
+      decision_reason: payload.reason,
+    })
+    return review
+  }
+
+  private reviewSummary(): Record<string, unknown> {
+    const reviews = [...this.reviews.values()]
+    return {
+      pending_count: reviews.filter((review) => review.status === "pending").length,
+      approved_count: reviews.filter((review) => review.status === "approved").length,
+      rejected_count: reviews.filter((review) => review.status === "rejected").length,
+      cancelled_count: reviews.filter((review) => review.status === "cancelled").length,
+      last_review_id: reviews.at(-1)?.review_id,
+    }
   }
 }
 
@@ -633,6 +692,59 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(localCancel)).not.toContain("release-secret")
     expect(JSON.stringify(localCancel)).not.toContain("fail-secret")
     expect(JSON.stringify(localCancel)).not.toContain("cancel-secret")
+  })
+
+  test("review commands load create select and decide review requests", async () => {
+    const runtime = new MissionExecutionRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "request-review", args: ["mission-1", "Approve", "mission", "--", "summary", "token=review-summary-secret"] })
+    const reviewId = state.reviews?.selectedReview?.review_id ?? ""
+    expect(reviewId).toBe("review-1")
+    expect(state.reviews?.pending).toHaveLength(1)
+    expect(JSON.stringify(state)).not.toContain("review-summary-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "review", args: [reviewId] })
+    expect(state.reviews?.selectedReview?.title).toBe("Approve mission")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "approve", args: [reviewId, "ok", "secret=approve-secret"] })
+    expect(state.reviews?.selectedReview?.status).toBe("approved")
+    expect(state.reviews?.summary).toMatchObject({ pending_count: 0, approved_count: 1 })
+    expect(JSON.stringify(state)).not.toContain("approve-secret")
+  })
+
+  test("review reject cancel and missing argument errors stay in review state", async () => {
+    const runtime = new MissionExecutionRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "request-review", args: ["mission-1", "Reject", "me", "--", "summary"] })
+    const rejectId = state.reviews?.selectedReview?.review_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "reject", args: [rejectId, "no"] })
+    expect(state.reviews?.selectedReview?.status).toBe("rejected")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "request-review", args: ["mission-1", "Cancel", "me", "--", "summary"] })
+    const cancelId = state.reviews?.selectedReview?.review_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel-review", args: [cancelId, "operator", "cancelled"] })
+    expect(state.reviews?.selectedReview?.status).toBe("cancelled")
+
+    const beforeMission = state.missionExecution
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "request-review", args: ["mission-1", "missing", "separator"] })
+    expect(state.reviews?.commandError).toContain("-- separator is required")
+    expect(state.missionExecution).toEqual(beforeMission)
+  })
+
+  test("fake runtime client exercises review surface without leaking secrets", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "request-review", args: ["mission-fake", "Title", "token=fake-title-secret", "--", "Summary", "secret=fake-summary-secret"] })
+    const reviewId = state.reviews?.selectedReview?.review_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel-review", args: [reviewId, "secret=fake-reason-secret"] })
+
+    expect(state.reviews?.selectedReview).toMatchObject({ review_id: reviewId, status: "cancelled" })
+    expect(JSON.stringify(state)).not.toContain("fake-title-secret")
+    expect(JSON.stringify(state)).not.toContain("fake-summary-secret")
+    expect(JSON.stringify(state)).not.toContain("fake-reason-secret")
   })
 
   test("release claim refreshes with raw mission id while storing redacted mission state", async () => {

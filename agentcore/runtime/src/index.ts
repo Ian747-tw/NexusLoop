@@ -19,6 +19,7 @@ export type { OpenCodeAdapterConfig, OpenCodeAdapterFactoryOptions, RuntimeOpenC
 export type { OpenCodeProcessEventSource, OpenCodeSpawn, OpenCodeSpawnedProcess } from "./opencode/process-adapter"
 export type { OpenCodeInputEnvelopeType, OpenCodeOutputEnvelopeType, OpenCodeSessionContract, OpenCodeSessionContractInput, OpenCodeSessionContractRules } from "./opencode/session-contract"
 export { MissionRegistry } from "./missions/mission-registry"
+export { ReviewRegistry } from "./missions/review-registry"
 export { MissionToolRouter } from "./missions/mission-tool-router"
 export { MISSION_PROTOCOL_VERSION } from "./missions/mission-types"
 export { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
@@ -41,6 +42,14 @@ export type {
   WorkIntentKind,
   WorkIntentStatus,
 } from "./missions/mission-types"
+export type {
+  ReviewDecision,
+  ReviewRequest,
+  ReviewRequestInput,
+  ReviewRequestType,
+  ReviewStatus,
+  ReviewStatusSummary,
+} from "./missions/review-types"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"

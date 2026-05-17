@@ -1,5 +1,6 @@
 import type { RuntimeEvent, RuntimeResearchProjectionHealth, RuntimeStatus } from "../events/event-types"
 import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult } from "../missions/mission-types"
+import type { ReviewRequest, ReviewRequestInput, ReviewStatusSummary } from "../missions/review-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -24,6 +25,13 @@ export interface RuntimeClient {
   command(name: "runtime.list_mission_claims", payload: { missionId: string }): Promise<ExecutorClaim[]>
   command(name: "runtime.list_mission_progress", payload: { missionId: string }): Promise<MissionProgress[]>
   command(name: "runtime.list_mission_results", payload: { missionId: string }): Promise<MissionResult[]>
+  command(name: "runtime.create_review_request", payload: Omit<ReviewRequestInput, "mission_id" | "claim_id" | "result_id" | "request_type"> & { missionId?: string; claimId?: string; resultId?: string; requestType?: ReviewRequestInput["request_type"] }): Promise<ReviewRequest>
+  command(name: "runtime.get_review_request", payload: { reviewId: string }): Promise<ReviewRequest | null>
+  command(name: "runtime.list_review_requests", payload?: { status?: ReviewRequest["status"]; limit?: number }): Promise<ReviewRequest[]>
+  command(name: "runtime.approve_review_request", payload: { reviewId: string; decidedBy: string; reason?: string }): Promise<ReviewRequest>
+  command(name: "runtime.reject_review_request", payload: { reviewId: string; decidedBy: string; reason?: string }): Promise<ReviewRequest>
+  command(name: "runtime.cancel_review_request", payload: { reviewId: string; decidedBy: string; reason?: string }): Promise<ReviewRequest>
+  command(name: "runtime.review_status"): Promise<ReviewStatusSummary>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -53,6 +61,13 @@ export interface RuntimeCommandEnvelope {
     | "runtime.list_mission_claims"
     | "runtime.list_mission_progress"
     | "runtime.list_mission_results"
+    | "runtime.create_review_request"
+    | "runtime.get_review_request"
+    | "runtime.list_review_requests"
+    | "runtime.approve_review_request"
+    | "runtime.reject_review_request"
+    | "runtime.cancel_review_request"
+    | "runtime.review_status"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

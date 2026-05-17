@@ -32,10 +32,13 @@ class TestRuntimeClient implements RuntimeClient {
         lockHeld: false,
         adapterStatus: { kind: "test", phase: "idle" },
         missions: { pending_count: 0, failed_count: 0, active_claim_count: 0, completed_count: 0, cancelled_count: 0 },
+        reviews: { pending_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0 },
         researchProjection: { mode: "disabled", ok: true, stale: false, pending_count: 0 },
       }
     }
     if (name === "runtime.list_recent_missions") return []
+    if (name === "runtime.review_status") return { pending_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0 }
+    if (name === "runtime.list_review_requests") return []
     if (name === "research.projection_status" || name === "research.rebuild_projection") {
       return { mode: "auto_rebuild", ok: true, stale: false, pending_count: 0, last_event_id: "research-event-1" }
     }

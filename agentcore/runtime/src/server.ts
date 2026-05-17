@@ -10,6 +10,8 @@ import type { ExecutorToolHandlerAdapter, OpenCodeRuntimeAdapter } from "./openc
 import { createOpenCodeAdapter, type OpenCodeAdapterConfig, type OpenCodeAdapterFactoryOptions } from "./opencode/adapter-config"
 import { MissionRegistry } from "./missions/mission-registry"
 import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult, MissionStatusSummary } from "./missions/mission-types"
+import { ReviewRegistry } from "./missions/review-registry"
+import type { ReviewRequest, ReviewRequestInput, ReviewStatus, ReviewStatusSummary } from "./missions/review-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -36,6 +38,7 @@ export interface RuntimeServerOptions {
   openCodeAdapterConfig?: OpenCodeAdapterConfig
   openCodeAdapterFactoryOptions?: Omit<OpenCodeAdapterFactoryOptions, "projectDir">
   missionRegistry?: MissionRegistry
+  reviewRegistry?: ReviewRegistry
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -65,6 +68,7 @@ export class RuntimeServer {
   readonly policyService: PolicyService
   readonly adapter: OpenCodeRuntimeAdapter
   readonly missionRegistry: MissionRegistry
+  readonly reviewRegistry: ReviewRegistry
   private readonly runLock: RunLock
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
@@ -87,6 +91,7 @@ export class RuntimeServer {
     this.adapter = options.adapter ?? (options.openCodeAdapterConfig ? createOpenCodeAdapter(options.openCodeAdapterConfig, { ...options.openCodeAdapterFactoryOptions, projectDir: this.projectDir }) : new FakeOpenCodeAdapter())
     this.registerExecutorToolHandler(this.adapter)
     this.missionRegistry = options.missionRegistry ?? new MissionRegistry({ eventStore: this.eventStore, projectDir: this.projectDir })
+    this.reviewRegistry = options.reviewRegistry ?? new ReviewRegistry({ eventStore: this.eventStore, missionRegistry: this.missionRegistry })
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -278,6 +283,31 @@ export class RuntimeServer {
         return this.listMissionProgress(requiredString(payload.missionId ?? payload.mission_id, "missionId"))
       case "runtime.list_mission_results":
         return this.listMissionResults(requiredString(payload.missionId ?? payload.mission_id, "missionId"))
+      case "runtime.create_review_request":
+        return this.createReviewRequest({
+          mission_id: optionalString(payload.missionId ?? payload.mission_id, "missionId"),
+          claim_id: optionalString(payload.claimId ?? payload.claim_id, "claimId"),
+          result_id: optionalString(payload.resultId ?? payload.result_id, "resultId"),
+          request_type: optionalString(payload.requestType ?? payload.request_type, "requestType") as ReviewRequestInput["request_type"],
+          title: requiredString(payload.title, "title"),
+          summary: requiredString(payload.summary, "summary"),
+          requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+        })
+      case "runtime.get_review_request":
+        return this.getReviewRequest(requiredString(payload.reviewId ?? payload.review_id, "reviewId"))
+      case "runtime.list_review_requests":
+        return this.listReviewRequests({
+          status: optionalString(payload.status, "status") as ReviewStatus | undefined,
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+        })
+      case "runtime.approve_review_request":
+        return this.approveReviewRequest(requiredString(payload.reviewId ?? payload.review_id, "reviewId"), requiredString(payload.decidedBy ?? payload.decided_by, "decidedBy"), optionalString(payload.reason, "reason"))
+      case "runtime.reject_review_request":
+        return this.rejectReviewRequest(requiredString(payload.reviewId ?? payload.review_id, "reviewId"), requiredString(payload.decidedBy ?? payload.decided_by, "decidedBy"), optionalString(payload.reason, "reason"))
+      case "runtime.cancel_review_request":
+        return this.cancelReviewRequest(requiredString(payload.reviewId ?? payload.review_id, "reviewId"), requiredString(payload.decidedBy ?? payload.decided_by, "decidedBy"), optionalString(payload.reason, "reason"))
+      case "runtime.review_status":
+        return this.reviewStatusSummary()
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -300,6 +330,7 @@ export class RuntimeServer {
       adapterStatus,
       executorStreamError: this.executorStreamError ?? undefined,
       missions: await this.missionRegistry.statusSummary(),
+      reviews: await this.reviewRegistry.statusSummary(),
       researchProjection: this.researchProjectionHealth,
       policy,
     })
@@ -408,6 +439,38 @@ export class RuntimeServer {
 
   async missionStatusSummary(): Promise<MissionStatusSummary> {
     return this.missionRegistry.statusSummary()
+  }
+
+  async createReviewRequest(input: ReviewRequestInput): Promise<ReviewRequest> {
+    this.requireReviewWriteRuntime("runtime.create_review_request")
+    return this.reviewRegistry.createReviewRequest(input)
+  }
+
+  async getReviewRequest(reviewId: string): Promise<ReviewRequest | null> {
+    return this.reviewRegistry.getReviewRequest(reviewId)
+  }
+
+  async listReviewRequests(options: { status?: ReviewStatus; limit?: number } = {}): Promise<ReviewRequest[]> {
+    return this.reviewRegistry.listReviewRequests(options)
+  }
+
+  async approveReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
+    this.requireReviewWriteRuntime("runtime.approve_review_request")
+    return this.reviewRegistry.approveReviewRequest(reviewId, decidedBy, reason)
+  }
+
+  async rejectReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
+    this.requireReviewWriteRuntime("runtime.reject_review_request")
+    return this.reviewRegistry.rejectReviewRequest(reviewId, decidedBy, reason)
+  }
+
+  async cancelReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
+    this.requireReviewWriteRuntime("runtime.cancel_review_request")
+    return this.reviewRegistry.cancelReviewRequest(reviewId, decidedBy, reason)
+  }
+
+  async reviewStatusSummary(): Promise<ReviewStatusSummary> {
+    return this.reviewRegistry.statusSummary()
   }
 
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
@@ -665,6 +728,11 @@ export class RuntimeServer {
   private requireMissionWriteRuntime(commandName: string): void {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before mission execution writes")
+  }
+
+  private requireReviewWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before review writes")
   }
 }
 

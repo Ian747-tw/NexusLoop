@@ -63,6 +63,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...researchLines(state))
   out.push("Approval / clarification")
   out.push(...lines([...state.approval.specApprovals, ...state.approval.candidateApprovals, ...state.approval.clarifications]))
+  out.push(...reviewLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -96,6 +97,45 @@ function runtimeLines(state: UiState): string[] {
     else out.push(...state.missions.recent.map((mission) => `    - ${mission.mission_id} [${mission.status}]`))
   }
   if (state.runtimeCommandError) out.push(`  command_error=${redactText(state.runtimeCommandError)}`)
+  return out
+}
+
+function reviewLines(state: UiState): string[] {
+  const reviews = state.reviews
+  const out = ["Reviews / approvals"]
+  if (!reviews) {
+    out.push("  pending=0 approved=0 rejected=0 cancelled=0")
+    return out
+  }
+  if (reviews.summary) {
+    out.push(`  pending=${reviews.summary.pending_count} approved=${reviews.summary.approved_count} rejected=${reviews.summary.rejected_count} cancelled=${reviews.summary.cancelled_count}`)
+    out.push(`  last_review=${reviews.summary.last_review_id ?? "none"}`)
+  } else {
+    out.push(`  pending=${reviews.pending.length}`)
+  }
+  out.push("  pending_reviews")
+  if (reviews.pending.length === 0) out.push("    - empty")
+  else {
+    out.push(...reviews.pending.slice(0, 10).map((review) => {
+      const mission = review.mission_id ?? "none"
+      return `    - ${review.review_id} [${review.status}] ${review.request_type} mission=${mission}: ${preview(redactText(review.title))}`
+    }))
+  }
+  if (reviews.selectedReview) {
+    const review = reviews.selectedReview
+    out.push(`  selected_review=${review.review_id} [${review.status}] ${review.request_type}`)
+    out.push(`  selected_mission=${review.mission_id ?? "none"}`)
+    out.push(`  title=${preview(redactText(review.title))}`)
+    out.push(`  summary=${preview(redactText(review.summary))}`)
+    if (review.decision_by) out.push(`  decision_by=${review.decision_by}`)
+    if (review.decision_reason) out.push(`  decision_reason=${preview(redactText(review.decision_reason))}`)
+  } else {
+    out.push("  selected_review=none")
+  }
+  out.push("  recent_reviews")
+  if (reviews.recent.length === 0) out.push("    - empty")
+  else out.push(...reviews.recent.slice(0, 10).map((review) => `    - ${review.review_id} [${review.status}] ${preview(redactText(review.title))}`))
+  if (reviews.commandError) out.push(`  command_error=${redactText(reviews.commandError)}`)
   return out
 }
 

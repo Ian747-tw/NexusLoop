@@ -11,6 +11,7 @@ import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
 import { MissionRegistry } from "./missions/mission-registry"
+import { ReviewRegistry } from "./missions/review-registry"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { SpecService } from "./spec/spec-service"
@@ -826,6 +827,115 @@ describe("RuntimeServer core", () => {
 
     await expect(statusServer.command("runtime.claim_mission", { missionId: "mission_1", executorId: "executor_1" })).rejects.toThrow("runtime.claim_mission requires active mode")
     await expect(statusServer.command("runtime.cancel_mission", { missionId: "mission_1" })).rejects.toThrow("runtime.cancel_mission requires active mode")
+    await statusServer.shutdown()
+  })
+
+  test("review runtime commands create list decide and hydrate durable redacted records", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let nextReview = 0
+    let nextMs = 0
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const reviewRegistry = new ReviewRegistry({
+      eventStore: server.eventStore,
+      missionRegistry: server.missionRegistry,
+      idFactory: () => `review_${++nextReview}`,
+      now: () => new Date(Date.UTC(2026, 4, 10, 12, 0, 0, nextMs++)),
+    })
+    const reviewServer = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), reviewRegistry })
+
+    await reviewServer.start()
+    const submitted = await reviewServer.submitUserMessage("review mission")
+    const review = await reviewServer.command("runtime.create_review_request", {
+      missionId: submitted.missionId,
+      requestType: "mission_completion",
+      title: "approve token=review-title-secret",
+      summary: "summary api_key=review-summary-secret",
+      requestedBy: "operator password=review-requester-secret",
+    })
+
+    expect(review).toMatchObject({
+      review_id: "review_1",
+      mission_id: submitted.missionId,
+      request_type: "mission_completion",
+      title: "approve [REDACTED]",
+      summary: "summary [REDACTED]",
+      requested_by: "operator [REDACTED]",
+      status: "pending",
+    })
+    await expect(reviewServer.command("runtime.get_review_request", { reviewId: "review_1" })).resolves.toMatchObject({ review_id: "review_1", status: "pending" })
+    await expect(reviewServer.command("runtime.list_review_requests", { status: "pending" })).resolves.toMatchObject([{ review_id: "review_1" }])
+    await expect(reviewServer.command("runtime.review_status")).resolves.toMatchObject({ pending_count: 1, approved_count: 0, last_review_id: "review_1" })
+
+    await expect(reviewServer.command("runtime.approve_review_request", {
+      reviewId: "review_1",
+      decidedBy: "operator token=review-decider-secret",
+      reason: "ok secret=review-reason-secret",
+    })).resolves.toMatchObject({
+      review_id: "review_1",
+      status: "approved",
+      decision_by: "operator [REDACTED]",
+      decision_reason: "ok [REDACTED]",
+    })
+    await expect(reviewServer.command("runtime.review_status")).resolves.toMatchObject({ pending_count: 0, approved_count: 1 })
+
+    const rejected = await reviewServer.command("runtime.create_review_request", {
+      title: "reject",
+      summary: "summary",
+      requestedBy: "operator",
+    }) as { review_id: string }
+    await expect(reviewServer.command("runtime.reject_review_request", {
+      reviewId: rejected.review_id,
+      decidedBy: "operator",
+      reason: "no",
+    })).resolves.toMatchObject({ review_id: rejected.review_id, status: "rejected", decision_reason: "no" })
+
+    const cancelled = await reviewServer.command("runtime.create_review_request", {
+      title: "cancel",
+      summary: "summary",
+      requestedBy: "operator",
+    }) as { review_id: string }
+    await expect(reviewServer.command("runtime.cancel_review_request", {
+      reviewId: cancelled.review_id,
+      decidedBy: "operator",
+    })).resolves.toMatchObject({ review_id: cancelled.review_id, status: "cancelled" })
+
+    const rebuilt = new ReviewRegistry({ eventStore: reviewServer.eventStore, missionRegistry: reviewServer.missionRegistry })
+    await expect(rebuilt.getReviewRequest("review_1")).resolves.toMatchObject({ status: "approved", decision_reason: "ok [REDACTED]" })
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).toContain("review_request_created")
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).toContain("review_request_approved")
+    const serialized = JSON.stringify({ status: await reviewServer.status(), events: await readJsonlEvents(dir) })
+    expect(serialized).not.toContain("review-title-secret")
+    expect(serialized).not.toContain("review-summary-secret")
+    expect(serialized).not.toContain("review-requester-secret")
+    expect(serialized).not.toContain("review-decider-secret")
+    expect(serialized).not.toContain("review-reason-secret")
+    await reviewServer.shutdown()
+  })
+
+  test("review runtime commands enforce write gates and allow read surfaces", async () => {
+    const notStartedDir = await tempProject()
+    await makeProject(notStartedDir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: notStartedDir, adapter: new LongLivedAdapter() })
+
+    await expect(notStarted.command("runtime.create_review_request", {
+      title: "title",
+      summary: "summary",
+      requestedBy: "operator",
+    })).rejects.toThrow("runtime must be started before review writes")
+    await expect(notStarted.command("runtime.review_status")).resolves.toMatchObject({ pending_count: 0 })
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir)
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", adapter: new LongLivedAdapter() })
+    await statusServer.start()
+
+    await expect(statusServer.command("runtime.create_review_request", {
+      title: "title",
+      summary: "summary",
+      requestedBy: "operator",
+    })).rejects.toThrow("runtime.create_review_request requires active mode")
+    await expect(statusServer.command("runtime.list_review_requests")).resolves.toEqual([])
     await statusServer.shutdown()
   })
 
@@ -2430,6 +2540,180 @@ describe("MissionRegistry", () => {
     await expect(rebuilt.listMissionProgress(created.mission.mission_id)).resolves.toMatchObject([{ progress_id: progress.progress_id, message: "working" }])
     await expect(rebuilt.listMissionResults(created.mission.mission_id)).resolves.toMatchObject([{ result_id: result.result_id, status: "submitted" }])
     await expect(rebuilt.statusSummary()).resolves.toMatchObject({ active_claim_count: 0, completed_count: 1, cancelled_count: 0, failed_count: 0 })
+  })
+})
+
+describe("ReviewRegistry", () => {
+  test("uses deterministic hooks, validates mission references, and rebuilds from events", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const missionRegistry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_1`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const mission = await missionRegistry.createUserMessageMission("review target")
+    await missionRegistry.markMissionSent(mission.mission.mission_id)
+    const claim = await missionRegistry.claimMission({ mission_id: mission.mission.mission_id, executor_id: "executor" })
+    const result = await missionRegistry.submitMissionResult({ mission_id: mission.mission.mission_id, claim_id: claim.claim_id, summary: "result" })
+
+    let nextReview = 0
+    let nextMs = 0
+    const registry = new ReviewRegistry({
+      eventStore: store,
+      missionRegistry,
+      idFactory: () => `review_${++nextReview}`,
+      now: () => new Date(Date.UTC(2026, 4, 10, 13, 0, 0, nextMs++)),
+    })
+
+    await expect(registry.createReviewRequest({
+      mission_id: "missing",
+      title: "title",
+      summary: "summary",
+      requested_by: "operator",
+    })).rejects.toThrow("mission not found")
+    const review = await registry.createReviewRequest({
+      mission_id: mission.mission.mission_id,
+      claim_id: claim.claim_id,
+      result_id: result.result_id,
+      request_type: "result_acceptance",
+      title: "Accept result",
+      summary: "Looks good",
+      requested_by: "operator",
+    })
+    await registry.rejectReviewRequest(review.review_id, "operator", "not enough evidence")
+    const rebuilt = new ReviewRegistry({ eventStore: store, missionRegistry })
+
+    await expect(rebuilt.getReviewRequest("review_1")).resolves.toMatchObject({
+      review_id: "review_1",
+      status: "rejected",
+      decision_reason: "not enough evidence",
+    })
+    await expect(rebuilt.statusSummary()).resolves.toMatchObject({ pending_count: 0, rejected_count: 1, last_review_id: "review_1" })
+  })
+
+  test("terminal decisions are idempotent only for matching payloads", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const registry = new ReviewRegistry({
+      eventStore: store,
+      idFactory: () => "review_1",
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+
+    const review = await registry.createReviewRequest({
+      title: "Cancel checkpoint secret=review-terminal-secret",
+      summary: "summary",
+      requested_by: "operator",
+    })
+    await expect(registry.cancelReviewRequest(review.review_id, "operator", "same")).resolves.toMatchObject({ status: "cancelled", decision_reason: "same" })
+    await expect(registry.cancelReviewRequest(review.review_id, "operator", "same")).resolves.toMatchObject({ status: "cancelled" })
+    await expect(registry.approveReviewRequest(review.review_id, "operator", "same")).rejects.toThrow("terminal review decision conflicts")
+    await expect(registry.cancelReviewRequest(review.review_id, "operator", "different")).rejects.toThrow("terminal review decision conflicts")
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("review-terminal-secret")
+  })
+
+  test("malformed review events fail hydration clearly", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await store.append({ kind: "review_request_created", review: { review_id: "review_bad" } })
+    const registry = new ReviewRegistry({ eventStore: store })
+
+    await expect(registry.listReviewRequests()).rejects.toThrow("request_type is invalid")
+  })
+
+  test("created review events must replay as pending", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await store.append({
+      kind: "review_request_created",
+      review: {
+        review_id: "review_bad_status",
+        request_type: "other",
+        title: "title",
+        summary: "summary",
+        requested_by: "operator",
+        status: "approved",
+        created_at: "2026-05-10T12:00:00.000Z",
+        updated_at: "2026-05-10T12:00:00.000Z",
+      },
+    })
+    const registry = new ReviewRegistry({ eventStore: store })
+
+    await expect(registry.listReviewRequests()).rejects.toThrow("review_request_created must start pending")
+  })
+
+  test("hydration rejects conflicting terminal review decisions", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await store.append({
+      kind: "review_request_created",
+      review: {
+        review_id: "review_conflict",
+        request_type: "other",
+        title: "title",
+        summary: "summary",
+        requested_by: "operator",
+        status: "pending",
+        created_at: "2026-05-10T12:00:00.000Z",
+        updated_at: "2026-05-10T12:00:00.000Z",
+      },
+    })
+    await store.append({
+      kind: "review_request_approved",
+      decision: {
+        review_id: "review_conflict",
+        decision: "approved",
+        decided_by: "operator",
+        reason: "ok",
+        decided_at: "2026-05-10T12:00:01.000Z",
+      },
+    })
+    await store.append({
+      kind: "review_request_rejected",
+      decision: {
+        review_id: "review_conflict",
+        decision: "rejected",
+        decided_by: "operator",
+        reason: "no",
+        decided_at: "2026-05-10T12:00:02.000Z",
+      },
+    })
+    const registry = new ReviewRegistry({ eventStore: store })
+
+    await expect(registry.getReviewRequest("review_conflict")).rejects.toThrow("terminal review decision conflicts")
+  })
+
+  test("hydration rejects review decision event kind mismatches", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await store.append({
+      kind: "review_request_created",
+      review: {
+        review_id: "review_kind_mismatch",
+        request_type: "other",
+        title: "title",
+        summary: "summary",
+        requested_by: "operator",
+        status: "pending",
+        created_at: "2026-05-10T12:00:00.000Z",
+        updated_at: "2026-05-10T12:00:00.000Z",
+      },
+    })
+    await store.append({
+      kind: "review_request_approved",
+      decision: {
+        review_id: "review_kind_mismatch",
+        decision: "rejected",
+        decided_by: "operator",
+        reason: "mismatch",
+        decided_at: "2026-05-10T12:00:01.000Z",
+      },
+    })
+    const registry = new ReviewRegistry({ eventStore: store })
+
+    await expect(registry.getReviewRequest("review_kind_mismatch")).rejects.toThrow("review decision event kind conflicts")
   })
 })
 

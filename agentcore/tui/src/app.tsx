@@ -284,9 +284,31 @@ function ApprovalPanel(props: { state: UiState }) {
     ...props.state.approval.candidateApprovals,
     ...props.state.approval.clarifications,
   ]
+  const reviews = () => props.state.reviews
   return (
     <Panel title="Approval / clarification" focus="approval" state={props.state}>
       <For each={items()}>{(item) => <text fg={color.text}>{lineText(item)}</text>}</For>
+      <Show when={reviews()?.summary}>
+        {(summary) => (
+          <text fg={color.text}>
+            reviews: pending={summary().pending_count} approved={summary().approved_count} rejected={summary().rejected_count} cancelled={summary().cancelled_count}
+          </text>
+        )}
+      </Show>
+      <For each={(reviews()?.pending ?? []).slice(0, 5)}>
+        {(review) => <text fg={color.accent}>{review.review_id} [{review.status}] {review.request_type} {review.mission_id ?? "none"} {review.title}</text>}
+      </For>
+      <Show when={reviews()?.selectedReview}>
+        {(review) => (
+          <>
+            <text fg={color.text}>selected: {review().review_id} [{review().status}] {review().title}</text>
+            <text fg={color.muted}>{review().summary}</text>
+          </>
+        )}
+      </Show>
+      <Show when={reviews()?.commandError}>
+        {(value) => <text fg={color.warning}>review error: {value()}</text>}
+      </Show>
     </Panel>
   )
 }
