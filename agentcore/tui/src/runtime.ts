@@ -468,7 +468,8 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private requestProposalReview(proposalId: string, payload: Record<string, unknown>): CommanderProposalSummary {
     const proposal = this.requireProposal(proposalId)
-    if (proposal.status !== "proposed") return proposal
+    if (proposal.status === "review_requested" || proposal.status === "approved") return proposal
+    if (proposal.status !== "proposed") throw new Error(`terminal proposal cannot request review: ${redactText(proposal.proposal_id)}`)
     const review = this.createReviewRequest({
       missionId: proposal.mission_id,
       claimId: proposal.claim_id,
@@ -486,10 +487,15 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private cancelProposal(proposalId: string, reason?: string): CommanderProposalSummary {
     const proposal = this.requireProposal(proposalId)
-    if (proposal.status === "rejected" || proposal.status === "cancelled" || proposal.status === "applied") throw new Error(`terminal proposal cannot cancel: ${redactText(proposal.proposal_id)}`)
+    const safeReason = reason === undefined ? undefined : redactText(reason)
+    if (proposal.status === "cancelled") {
+      if (proposal.failure_reason === safeReason) return proposal
+      throw new Error(`terminal proposal cancellation conflicts with existing payload: ${redactText(proposal.proposal_id)}`)
+    }
+    if (proposal.status === "rejected" || proposal.status === "applied") throw new Error(`terminal proposal cannot cancel: ${redactText(proposal.proposal_id)}`)
     proposal.status = "cancelled"
     proposal.updated_at = new Date(0).toISOString()
-    if (reason) proposal.failure_reason = redactText(reason)
+    proposal.failure_reason = safeReason
     return proposal
   }
 

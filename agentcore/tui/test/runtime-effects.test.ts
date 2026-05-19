@@ -497,6 +497,35 @@ describe("runtime UI effects", () => {
     await expect(runtime.command("runtime.cancel_commander_proposal", { proposalId: proposal.proposal_id, reason: "late" })).rejects.toThrow("terminal proposal cannot cancel")
   })
 
+  test("fake runtime rejects review requests on terminal proposals and keeps matching cancel retry idempotent", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const cancelled = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "Other",
+      summary: "Other",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+
+    await runtime.command("runtime.cancel_commander_proposal", { proposalId: cancelled.proposal_id, reason: "same" })
+    await expect(runtime.command("runtime.cancel_commander_proposal", { proposalId: cancelled.proposal_id, reason: "same" })).resolves.toMatchObject({ status: "cancelled" })
+    await expect(runtime.command("runtime.cancel_commander_proposal", { proposalId: cancelled.proposal_id, reason: "different" })).rejects.toThrow("terminal proposal cancellation conflicts")
+    await expect(runtime.command("runtime.request_proposal_review", { proposalId: cancelled.proposal_id, requestedBy: "operator" })).rejects.toThrow("terminal proposal cannot request review")
+
+    const rejected = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "Other",
+      summary: "Other",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    const reviewed = await runtime.command("runtime.request_proposal_review", {
+      proposalId: rejected.proposal_id,
+      requestedBy: "operator",
+    }) as { review_id: string }
+    await runtime.command("runtime.reject_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "no" })
+
+    await expect(runtime.command("runtime.request_proposal_review", { proposalId: rejected.proposal_id, requestedBy: "operator" })).rejects.toThrow("terminal proposal cannot request review")
+  })
+
   test("fake runtime rejects proposal payload ids that conflict with reviewed targets", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     await runtime.command("runtime.submit_user_message", { message: "first" })
