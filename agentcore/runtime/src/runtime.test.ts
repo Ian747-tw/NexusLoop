@@ -2894,6 +2894,56 @@ describe("ProposalRegistry", () => {
     await expect(proposalRegistry.applyProposal(proposal.proposal_id)).rejects.toThrow("terminal proposal cannot apply")
   })
 
+  test("applied proposal replay clears stale apply failure reason", async () => {
+    const { store, missionRegistry, reviewRegistry } = await proposalFixture()
+    await store.append({
+      kind: "commander_proposal_created",
+      proposal: {
+        proposal_id: "proposal_replay",
+        action_kind: "record_progress",
+        title: "title",
+        summary: "summary",
+        proposed_by: "commander",
+        status: "proposed",
+        action_payload: {},
+        created_at: "2026-05-10T12:00:00.000Z",
+        updated_at: "2026-05-10T12:00:00.000Z",
+      },
+    })
+    await store.append({
+      kind: "commander_proposal_review_requested",
+      proposal_id: "proposal_replay",
+      review_id: "review_replay",
+      requested_at: "2026-05-10T12:00:01.000Z",
+    })
+    await store.append({
+      kind: "commander_proposal_approved",
+      proposal_id: "proposal_replay",
+      review_id: "review_replay",
+      approved_at: "2026-05-10T12:00:02.000Z",
+    })
+    await store.append({
+      kind: "commander_proposal_apply_failed",
+      proposal_id: "proposal_replay",
+      failed_at: "2026-05-10T12:00:03.000Z",
+      failure_reason: "transient failure",
+    })
+    await store.append({
+      kind: "commander_proposal_applied",
+      proposal_id: "proposal_replay",
+      applied_at: "2026-05-10T12:00:04.000Z",
+      application_result: "mission_progress_recorded:progress_replay",
+    })
+
+    const rebuilt = new ProposalRegistry({ eventStore: store, missionRegistry, reviewRegistry })
+    const replayed = await rebuilt.getProposal("proposal_replay")
+    expect(replayed).toMatchObject({
+      status: "applied",
+      application_result: "mission_progress_recorded:progress_replay",
+    })
+    expect(replayed).not.toHaveProperty("failure_reason")
+  })
+
   test("applies supported mission actions through MissionRegistry and rejects unsupported kinds", async () => {
     for (const actionKind of ["submit_result", "complete_mission", "fail_mission", "cancel_mission", "release_claim"] as const) {
       const { proposalRegistry, reviewRegistry, missionRegistry, missionId, claimId } = await proposalFixture()

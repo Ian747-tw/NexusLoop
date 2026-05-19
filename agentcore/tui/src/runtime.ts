@@ -526,6 +526,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     proposal.updated_at = new Date(0).toISOString()
     proposal.applied_at = proposal.updated_at
     proposal.application_result = result
+    proposal.failure_reason = undefined
     return proposal
   }
 

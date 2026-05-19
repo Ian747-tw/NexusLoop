@@ -378,7 +378,8 @@ export class ProposalRegistry {
       throw new Error(`terminal proposal apply conflicts with existing payload: ${proposalId}`)
     }
     if (proposal.status !== "approved") throw new Error(`proposal must be approved before applied event: ${proposalId}`)
-    this.proposals.set(proposalId, redactValue({ ...proposal, status: "applied", updated_at: appliedAt, applied_at: appliedAt, application_result: redactText(applicationResult) }))
+    const { failure_reason: _failureReason, ...appliedProposal } = proposal
+    this.proposals.set(proposalId, redactValue({ ...appliedProposal, status: "applied", updated_at: appliedAt, applied_at: appliedAt, application_result: redactText(applicationResult) }))
   }
 
   private applyFailed(proposalId: string, failedAt: string, failureReason: string): void {
