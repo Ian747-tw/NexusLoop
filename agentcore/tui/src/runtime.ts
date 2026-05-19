@@ -495,6 +495,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private applyProposal(proposalId: string): CommanderProposalSummary {
     const proposal = this.requireProposal(proposalId)
     if (proposal.status === "applied") return proposal
+    if (proposal.status === "rejected" || proposal.status === "cancelled") throw new Error(`terminal proposal cannot apply: ${redactText(proposal.proposal_id)}`)
     const review = proposal.review_id ? this.reviews.find((item) => item.review_id === proposal.review_id) : undefined
     if (!review || review.status !== "approved") throw new Error(`proposal requires an approved linked review before apply: ${redactText(proposal.proposal_id)}`)
     const payload = isRecord(proposal.action_payload) ? proposal.action_payload : {}

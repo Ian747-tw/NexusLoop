@@ -157,9 +157,20 @@ export class ProposalRegistry {
       if (proposal.status === "rejected" || proposal.status === "cancelled") throw new Error(`terminal proposal cannot apply: ${proposal.proposal_id}`)
       const reviewId = cleanRequiredString(proposal.review_id, "review_id")
       const review = await this.reviewRegistry.getReviewRequest(reviewId)
-      if (!review || review.status !== "approved") {
+      if (!review) {
         throw new Error(`proposal requires an approved linked review before apply: ${proposal.proposal_id}`)
       }
+      if (review.status === "rejected" || review.status === "cancelled") {
+        await this.appendAndApply({
+          kind: "commander_proposal_rejected",
+          proposal_id: proposal.proposal_id,
+          review_id: review.review_id,
+          rejected_at: review.decision_at ?? this.isoNow(),
+          reason: review.decision_reason ?? `linked review ${review.status}`,
+        })
+        throw new Error(`proposal linked review is ${review.status}: ${proposal.proposal_id}`)
+      }
+      if (review.status !== "approved") throw new Error(`proposal requires an approved linked review before apply: ${proposal.proposal_id}`)
       if (proposal.status !== "approved") {
         await this.appendAndApply({
           kind: "commander_proposal_approved",

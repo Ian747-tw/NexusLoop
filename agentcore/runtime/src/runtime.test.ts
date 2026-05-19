@@ -2871,6 +2871,29 @@ describe("ProposalRegistry", () => {
     await expect(proposalRegistry.applyProposal(proposal.proposal_id)).resolves.toMatchObject({ status: "applied" })
   })
 
+  test("rejected linked reviews persist terminal rejected proposal state", async () => {
+    const { proposalRegistry, reviewRegistry, missionId, claimId } = await proposalFixture()
+    const proposal = await proposalRegistry.createProposal({
+      mission_id: missionId,
+      claim_id: claimId,
+      action_kind: "record_progress",
+      title: "Progress",
+      summary: "Working",
+      proposed_by: "commander",
+      action_payload: { mission_id: missionId, claim_id: claimId, message: "working" },
+    })
+    const requested = await proposalRegistry.requestReview(proposal.proposal_id, { title: "Review progress", summary: "Approve progress", requested_by: "operator" })
+    await reviewRegistry.rejectReviewRequest(requested.review_id!, "operator", "not approved")
+
+    await expect(proposalRegistry.applyProposal(proposal.proposal_id)).rejects.toThrow("linked review is rejected")
+    await expect(proposalRegistry.getProposal(proposal.proposal_id)).resolves.toMatchObject({
+      status: "rejected",
+      failure_reason: "not approved",
+    })
+    await expect(proposalRegistry.statusSummary()).resolves.toMatchObject({ rejected_count: 1, review_requested_count: 0 })
+    await expect(proposalRegistry.applyProposal(proposal.proposal_id)).rejects.toThrow("terminal proposal cannot apply")
+  })
+
   test("applies supported mission actions through MissionRegistry and rejects unsupported kinds", async () => {
     for (const actionKind of ["submit_result", "complete_mission", "fail_mission", "cancel_mission", "release_claim"] as const) {
       const { proposalRegistry, reviewRegistry, missionRegistry, missionId, claimId } = await proposalFixture()
