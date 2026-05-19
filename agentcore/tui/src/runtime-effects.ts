@@ -242,7 +242,8 @@ export async function applyRuntimeUiEffect(
       }
       case "apply-proposal": {
         const next = applySelectedProposal(state, await runtime.command("runtime.apply_commander_proposal", { proposalId: effect.proposalId }), effect.proposalId)
-        const missionId = next.proposals?.selectedProposal?.mission_id
+        const selectedProposal = next.proposals?.selectedProposal
+        const missionId = selectedProposal?.mission_id ?? missionIdForClaim(next, selectedProposal?.claim_id)
         const refreshed = missionId ? await refreshAfterMissionWrite(next, runtime, missionId) : next
         return await loadProposals(refreshed, runtime, PROPOSAL_LIMIT)
       }
@@ -325,6 +326,11 @@ async function refreshAfterMissionWrite(state: UiState, runtime: RuntimeClient, 
       activeMissionId,
     },
   }
+}
+
+function missionIdForClaim(state: UiState, claimId?: string): string | undefined {
+  if (!claimId) return undefined
+  return state.missionExecution?.claims.find((claim) => claim.claim_id === claimId)?.mission_id
 }
 
 async function loadReviews(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {

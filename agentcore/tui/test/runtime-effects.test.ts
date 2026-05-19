@@ -504,6 +504,36 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.results[0]).toMatchObject({ mission_id: "fake-mission-1", claim_id: claim.claim_id, summary: "summary" })
   })
 
+  test("apply release proposal refreshes mission state from selected claim when proposal has no mission id", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "proposal target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "mission", args: ["fake-mission-1"] })
+    expect(state.missionExecution?.claims[0]).toMatchObject({ claim_id: claim.claim_id, status: "active" })
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "propose-release",
+      args: [claim.claim_id, "Release", "--", "done"],
+    })
+    const proposalId = state.proposals?.selectedProposal?.proposal_id ?? ""
+    expect(state.proposals?.selectedProposal?.mission_id).toBeUndefined()
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "proposal-review",
+      args: [proposalId, "Review", "--", "Summary"],
+    })
+    const reviewId = state.proposals?.selectedProposal?.review_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "approve", args: [reviewId, "ok"] })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-proposal", args: [proposalId] })
+
+    expect(state.proposals?.selectedProposal).toMatchObject({ proposal_id: proposalId, status: "applied" })
+    expect(state.missionExecution?.selectedMissionId).toBe("fake-mission-1")
+    expect(state.missionExecution?.claims[0]).toMatchObject({ claim_id: claim.claim_id, status: "released" })
+  })
+
   test("missing proposal command args produce redacted proposal errors", async () => {
     const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), new FakeRuntimeClient("/tmp/demo", "demo"), {
       type: "send-command",
