@@ -475,6 +475,28 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("cancel-secret")
   })
 
+  test("fake runtime rejects cancelling terminal rejected proposals", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const proposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "Other",
+      summary: "Other",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    const reviewed = await runtime.command("runtime.request_proposal_review", {
+      proposalId: proposal.proposal_id,
+      requestedBy: "operator",
+    }) as { review_id: string }
+
+    await runtime.command("runtime.reject_review_request", {
+      reviewId: reviewed.review_id,
+      decidedBy: "operator",
+      reason: "no",
+    })
+
+    await expect(runtime.command("runtime.cancel_commander_proposal", { proposalId: proposal.proposal_id, reason: "late" })).rejects.toThrow("terminal proposal cannot cancel")
+  })
+
   test("apply proposal fails closed until linked review is approved then mutates mission through runtime", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

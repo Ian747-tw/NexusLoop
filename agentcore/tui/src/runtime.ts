@@ -486,7 +486,7 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private cancelProposal(proposalId: string, reason?: string): CommanderProposalSummary {
     const proposal = this.requireProposal(proposalId)
-    if (proposal.status === "applied") throw new Error(`terminal proposal cannot cancel: ${redactText(proposal.proposal_id)}`)
+    if (proposal.status === "rejected" || proposal.status === "cancelled" || proposal.status === "applied") throw new Error(`terminal proposal cannot cancel: ${redactText(proposal.proposal_id)}`)
     proposal.status = "cancelled"
     proposal.updated_at = new Date(0).toISOString()
     if (reason) proposal.failure_reason = redactText(reason)
