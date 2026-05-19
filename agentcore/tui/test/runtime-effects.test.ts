@@ -497,6 +497,30 @@ describe("runtime UI effects", () => {
     await expect(runtime.command("runtime.cancel_commander_proposal", { proposalId: proposal.proposal_id, reason: "late" })).rejects.toThrow("terminal proposal cannot cancel")
   })
 
+  test("fake runtime rejects proposal payload ids that conflict with reviewed targets", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await runtime.command("runtime.submit_user_message", { message: "first" })
+    const firstClaim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    await runtime.command("runtime.submit_user_message", { message: "second" })
+    const secondClaim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-2", executorId: "executor" }) as { claim_id: string }
+    const proposal = await runtime.command("runtime.create_commander_proposal", {
+      missionId: "fake-mission-1",
+      claimId: firstClaim.claim_id,
+      actionKind: "record_progress",
+      title: "Progress",
+      summary: "Working",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "fake-mission-2", claim_id: secondClaim.claim_id, message: "wrong target" },
+    }) as { proposal_id: string }
+    const reviewed = await runtime.command("runtime.request_proposal_review", {
+      proposalId: proposal.proposal_id,
+      requestedBy: "operator",
+    }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator" })
+
+    await expect(runtime.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })).rejects.toThrow("mission_id conflicts with reviewed proposal target")
+  })
+
   test("apply proposal fails closed until linked review is approved then mutates mission through runtime", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

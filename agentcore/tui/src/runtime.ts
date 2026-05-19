@@ -684,7 +684,9 @@ function requiredActionString(proposal: CommanderProposalSummary, payload: Recor
 
 function optionalActionString(proposal: CommanderProposalSummary, payload: Record<string, unknown>, field: "mission_id" | "claim_id" | "result_id"): string | undefined {
   const topLevel = field === "mission_id" ? proposal.mission_id : field === "claim_id" ? proposal.claim_id : proposal.result_id
-  return optionalString(payload[field]) ?? topLevel
+  const payloadValue = optionalString(payload[field])
+  if (topLevel && payloadValue && payloadValue !== topLevel) throw new Error(`${field} conflicts with reviewed proposal target`)
+  return topLevel ?? payloadValue
 }
 
 function isTerminalMissionStatus(status: string): boolean {

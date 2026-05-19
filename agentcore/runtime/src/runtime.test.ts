@@ -2974,6 +2974,36 @@ describe("ProposalRegistry", () => {
     await expect(missionRegistry.listMissionProgress(missionId)).resolves.toMatchObject([{ claim_id: claimId, message: "working" }])
   })
 
+  test("apply rejects payload ids that conflict with reviewed proposal targets", async () => {
+    const { proposalRegistry, reviewRegistry, missionRegistry, missionId, claimId } = await proposalFixture()
+    const otherMission = await missionRegistry.createUserMessageMission("other proposal target")
+    await missionRegistry.markMissionSent(otherMission.mission.mission_id)
+    const otherClaim = await missionRegistry.claimMission({ mission_id: otherMission.mission.mission_id, executor_id: "executor" })
+    const proposal = await proposalRegistry.createProposal({
+      mission_id: missionId,
+      claim_id: claimId,
+      action_kind: "record_progress",
+      title: "Progress",
+      summary: "Working",
+      proposed_by: "commander",
+      action_payload: {
+        mission_id: otherMission.mission.mission_id,
+        claim_id: otherClaim.claim_id,
+        message: "wrong target",
+      },
+    })
+    const requested = await proposalRegistry.requestReview(proposal.proposal_id, { requested_by: "operator" })
+    await reviewRegistry.approveReviewRequest(requested.review_id!, "operator", "ok")
+    await proposalRegistry.syncReviewDecision(requested.review_id!)
+
+    await expect(proposalRegistry.applyProposal(proposal.proposal_id)).rejects.toThrow("mission_id conflicts with reviewed proposal target")
+    await expect(missionRegistry.listMissionProgress(otherMission.mission.mission_id)).resolves.toEqual([])
+    await expect(proposalRegistry.getProposal(proposal.proposal_id)).resolves.toMatchObject({
+      status: "approved",
+      failure_reason: expect.stringContaining("mission_id conflicts"),
+    })
+  })
+
   test("applied proposal replay clears stale apply failure reason", async () => {
     const { store, missionRegistry, reviewRegistry } = await proposalFixture()
     await store.append({
