@@ -422,9 +422,10 @@ export class FakeRuntimeClient implements RuntimeClient {
     review.decision_reason = safeReason
     for (const proposal of this.proposals.filter((item) => item.review_id === review.review_id)) {
       if (decision === "approved" && proposal.status === "review_requested") proposal.status = "approved"
-      if (decision === "rejected" && proposal.status === "review_requested") proposal.status = "rejected"
+      if ((decision === "rejected" || decision === "cancelled") && proposal.status === "review_requested") proposal.status = "rejected"
       proposal.updated_at = now
       proposal.decision_at = now
+      if (safeReason && proposal.status === "rejected") proposal.failure_reason = safeReason
     }
     return review
   }
@@ -502,22 +503,22 @@ export class FakeRuntimeClient implements RuntimeClient {
     let result: string
     switch (proposal.action_kind) {
       case "record_progress":
-        result = `mission_progress_recorded:${this.recordMissionProgress(requiredString(String(payload.mission_id ?? ""), "mission_id"), requiredString(String(payload.claim_id ?? ""), "claim_id"), requiredString(String(payload.message ?? ""), "message")).progress_id}`
+        result = `mission_progress_recorded:${this.recordMissionProgress(requiredActionString(proposal, payload, "mission_id"), requiredActionString(proposal, payload, "claim_id"), requiredString(String(payload.message ?? ""), "message")).progress_id}`
         break
       case "submit_result":
-        result = `mission_result_submitted:${this.submitMissionResult(requiredString(String(payload.mission_id ?? ""), "mission_id"), requiredString(String(payload.claim_id ?? ""), "claim_id"), requiredString(String(payload.summary ?? ""), "summary")).result_id}`
+        result = `mission_result_submitted:${this.submitMissionResult(requiredActionString(proposal, payload, "mission_id"), requiredActionString(proposal, payload, "claim_id"), requiredString(String(payload.summary ?? ""), "summary")).result_id}`
         break
       case "complete_mission":
-        result = `mission_completed:${this.completeMission(requiredString(String(payload.mission_id ?? ""), "mission_id"), { resultId: optionalString(payload.result_id), summary: optionalString(payload.summary) }).mission_id}`
+        result = `mission_completed:${this.completeMission(requiredActionString(proposal, payload, "mission_id"), { resultId: optionalActionString(proposal, payload, "result_id"), summary: optionalString(payload.summary) }).mission_id}`
         break
       case "fail_mission":
-        result = `mission_failed:${this.failMission(requiredString(String(payload.mission_id ?? ""), "mission_id"), requiredString(String(payload.reason ?? ""), "reason")).mission_id}`
+        result = `mission_failed:${this.failMission(requiredActionString(proposal, payload, "mission_id"), requiredString(String(payload.reason ?? ""), "reason")).mission_id}`
         break
       case "cancel_mission":
-        result = `mission_cancelled:${this.cancelMission(requiredString(String(payload.mission_id ?? ""), "mission_id"), optionalString(payload.reason)).mission_id}`
+        result = `mission_cancelled:${this.cancelMission(requiredActionString(proposal, payload, "mission_id"), optionalString(payload.reason)).mission_id}`
         break
       case "release_claim":
-        result = `mission_claim_released:${this.releaseMissionClaim(requiredString(String(payload.claim_id ?? ""), "claim_id"), optionalString(payload.reason)).claim_id}`
+        result = `mission_claim_released:${this.releaseMissionClaim(requiredActionString(proposal, payload, "claim_id"), optionalString(payload.reason)).claim_id}`
         break
       default:
         throw new Error(`unsupported proposal action kind for apply: ${redactText(proposal.action_kind)}`)
@@ -673,6 +674,17 @@ function optionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const cleaned = value.trim()
   return cleaned ? cleaned : undefined
+}
+
+function requiredActionString(proposal: CommanderProposalSummary, payload: Record<string, unknown>, field: "mission_id" | "claim_id" | "result_id"): string {
+  const value = optionalActionString(proposal, payload, field)
+  if (!value) throw new Error(`${field} is required`)
+  return value
+}
+
+function optionalActionString(proposal: CommanderProposalSummary, payload: Record<string, unknown>, field: "mission_id" | "claim_id" | "result_id"): string | undefined {
+  const topLevel = field === "mission_id" ? proposal.mission_id : field === "claim_id" ? proposal.claim_id : proposal.result_id
+  return optionalString(payload[field]) ?? topLevel
 }
 
 function isTerminalMissionStatus(status: string): boolean {

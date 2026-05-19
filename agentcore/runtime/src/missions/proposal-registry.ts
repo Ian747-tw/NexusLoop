@@ -201,6 +201,41 @@ export class ProposalRegistry {
     })
   }
 
+  async syncReviewDecision(reviewId: string): Promise<CommanderProposal[]> {
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const id = cleanRequiredString(reviewId, "review_id")
+      const review = await this.reviewRegistry.getReviewRequest(id)
+      if (!review || review.status === "pending") return []
+      const changed: CommanderProposal[] = []
+      for (const proposal of [...this.proposals.values()].filter((item) => item.review_id === id)) {
+        if (review.status === "approved") {
+          if (proposal.status === "review_requested") {
+            await this.appendAndApply({
+              kind: "commander_proposal_approved",
+              proposal_id: proposal.proposal_id,
+              review_id: id,
+              approved_at: review.decision_at ?? this.isoNow(),
+            })
+            changed.push(this.requireProposal(proposal.proposal_id))
+          }
+        } else if (review.status === "rejected" || review.status === "cancelled") {
+          if (proposal.status === "review_requested") {
+            await this.appendAndApply({
+              kind: "commander_proposal_rejected",
+              proposal_id: proposal.proposal_id,
+              review_id: id,
+              rejected_at: review.decision_at ?? this.isoNow(),
+              reason: review.decision_reason ?? `linked review ${review.status}`,
+            })
+            changed.push(this.requireProposal(proposal.proposal_id))
+          }
+        }
+      }
+      return redactValue(changed)
+    })
+  }
+
   async statusSummary(): Promise<ProposalStatusSummary> {
     await this.hydrate()
     const proposals = [...this.proposals.values()]
@@ -220,16 +255,16 @@ export class ProposalRegistry {
     switch (proposal.action_kind) {
       case "record_progress": {
         const progress = await this.missionRegistry.recordMissionProgress({
-          mission_id: requiredPayloadString(payload, "mission_id"),
-          claim_id: requiredPayloadString(payload, "claim_id"),
+          mission_id: requiredActionString(proposal, payload, "mission_id"),
+          claim_id: requiredActionString(proposal, payload, "claim_id"),
           message: requiredPayloadString(payload, "message"),
         })
         return `mission_progress_recorded:${progress.progress_id}`
       }
       case "submit_result": {
         const result = await this.missionRegistry.submitMissionResult({
-          mission_id: requiredPayloadString(payload, "mission_id"),
-          claim_id: requiredPayloadString(payload, "claim_id"),
+          mission_id: requiredActionString(proposal, payload, "mission_id"),
+          claim_id: requiredActionString(proposal, payload, "claim_id"),
           summary: requiredPayloadString(payload, "summary"),
           artifacts: optionalPayloadStringArray(payload, "artifacts"),
           research_result_ids: optionalPayloadStringArray(payload, "research_result_ids"),
@@ -237,22 +272,22 @@ export class ProposalRegistry {
         return `mission_result_submitted:${result.result_id}`
       }
       case "complete_mission": {
-        const mission = await this.missionRegistry.completeMission(requiredPayloadString(payload, "mission_id"), {
-          result_id: optionalPayloadString(payload, "result_id"),
+        const mission = await this.missionRegistry.completeMission(requiredActionString(proposal, payload, "mission_id"), {
+          result_id: optionalActionString(proposal, payload, "result_id"),
           summary: optionalPayloadString(payload, "summary"),
         })
         return `mission_completed:${mission.mission_id}`
       }
       case "fail_mission": {
-        const mission = await this.missionRegistry.failMission(requiredPayloadString(payload, "mission_id"), requiredPayloadString(payload, "reason"))
+        const mission = await this.missionRegistry.failMission(requiredActionString(proposal, payload, "mission_id"), requiredPayloadString(payload, "reason"))
         return `mission_failed:${mission.mission_id}`
       }
       case "cancel_mission": {
-        const mission = await this.missionRegistry.cancelMission(requiredPayloadString(payload, "mission_id"), optionalPayloadString(payload, "reason"))
+        const mission = await this.missionRegistry.cancelMission(requiredActionString(proposal, payload, "mission_id"), optionalPayloadString(payload, "reason"))
         return `mission_cancelled:${mission.mission_id}`
       }
       case "release_claim": {
-        const claim = await this.missionRegistry.releaseMissionClaim(requiredPayloadString(payload, "claim_id"), optionalPayloadString(payload, "reason"))
+        const claim = await this.missionRegistry.releaseMissionClaim(requiredActionString(proposal, payload, "claim_id"), optionalPayloadString(payload, "reason"))
         return `mission_claim_released:${claim.claim_id}`
       }
       default:
@@ -454,6 +489,17 @@ function readPayload(value: unknown): Record<string, unknown> {
 
 function requiredPayloadString(payload: Record<string, unknown>, field: string): string {
   return cleanRequiredString(payload[field], field)
+}
+
+function requiredActionString(proposal: CommanderProposal, payload: Record<string, unknown>, field: "mission_id" | "claim_id" | "result_id"): string {
+  const value = optionalActionString(proposal, payload, field)
+  if (!value) throw new Error(`${field} is required`)
+  return value
+}
+
+function optionalActionString(proposal: CommanderProposal, payload: Record<string, unknown>, field: "mission_id" | "claim_id" | "result_id"): string | undefined {
+  const topLevel = field === "mission_id" ? proposal.mission_id : field === "claim_id" ? proposal.claim_id : proposal.result_id
+  return optionalPayloadString(payload, field) ?? topLevel
 }
 
 function optionalPayloadString(payload: Record<string, unknown>, field: string): string | undefined {

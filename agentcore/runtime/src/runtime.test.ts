@@ -975,6 +975,11 @@ describe("RuntimeServer core", () => {
     }) as { review_id: string }
     await expect(server.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })).rejects.toThrow("approved linked review")
     await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      proposal_id: proposal.proposal_id,
+      status: "approved",
+    })
+    await expect(server.command("runtime.proposal_status")).resolves.toMatchObject({ approved_count: 1, applied_count: 0 })
     await expect(server.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
       proposal_id: proposal.proposal_id,
       status: "applied",
@@ -988,6 +993,40 @@ describe("RuntimeServer core", () => {
     expect(serialized).not.toContain("proposal-title-secret")
     expect(serialized).not.toContain("proposal-summary-secret")
     expect(serialized).not.toContain("proposal-payload-secret")
+    await server.shutdown()
+  })
+
+  test("proposal runtime review rejection synchronizes linked proposal state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("proposal rejection mission")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "record",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { message: "progress" },
+    }) as { proposal_id: string }
+    const reviewed = await server.command("runtime.request_proposal_review", {
+      proposalId: proposal.proposal_id,
+      requestedBy: "operator",
+    }) as { review_id: string }
+
+    await server.command("runtime.reject_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "no" })
+
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      proposal_id: proposal.proposal_id,
+      status: "rejected",
+      failure_reason: "no",
+    })
+    await expect(server.command("runtime.proposal_status")).resolves.toMatchObject({ rejected_count: 1, review_requested_count: 0 })
+    await expect(server.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })).rejects.toThrow("terminal proposal cannot apply")
     await server.shutdown()
   })
 
@@ -2892,6 +2931,29 @@ describe("ProposalRegistry", () => {
     })
     await expect(proposalRegistry.statusSummary()).resolves.toMatchObject({ rejected_count: 1, review_requested_count: 0 })
     await expect(proposalRegistry.applyProposal(proposal.proposal_id)).rejects.toThrow("terminal proposal cannot apply")
+  })
+
+  test("review decision sync approves proposals and apply accepts proposal-level ids", async () => {
+    const { proposalRegistry, reviewRegistry, missionRegistry, missionId, claimId } = await proposalFixture()
+    const proposal = await proposalRegistry.createProposal({
+      mission_id: missionId,
+      claim_id: claimId,
+      action_kind: "record_progress",
+      title: "Progress",
+      summary: "Working",
+      proposed_by: "commander",
+      action_payload: { message: "working" },
+    })
+    const requested = await proposalRegistry.requestReview(proposal.proposal_id, { title: "Review progress", summary: "Approve progress", requested_by: "operator" })
+    await reviewRegistry.approveReviewRequest(requested.review_id!, "operator", "ok")
+
+    await expect(proposalRegistry.syncReviewDecision(requested.review_id!)).resolves.toMatchObject([{ proposal_id: proposal.proposal_id, status: "approved" }])
+    await expect(proposalRegistry.getProposal(proposal.proposal_id)).resolves.toMatchObject({ status: "approved" })
+    await expect(proposalRegistry.applyProposal(proposal.proposal_id)).resolves.toMatchObject({
+      status: "applied",
+      application_result: expect.stringContaining("mission_progress_recorded:progress_"),
+    })
+    await expect(missionRegistry.listMissionProgress(missionId)).resolves.toMatchObject([{ claim_id: claimId, message: "working" }])
   })
 
   test("applied proposal replay clears stale apply failure reason", async () => {

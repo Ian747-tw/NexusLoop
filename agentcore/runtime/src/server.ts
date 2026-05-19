@@ -492,17 +492,23 @@ export class RuntimeServer {
 
   async approveReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
     this.requireReviewWriteRuntime("runtime.approve_review_request")
-    return this.reviewRegistry.approveReviewRequest(reviewId, decidedBy, reason)
+    const review = await this.reviewRegistry.approveReviewRequest(reviewId, decidedBy, reason)
+    await this.proposalRegistry.syncReviewDecision(review.review_id)
+    return review
   }
 
   async rejectReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
     this.requireReviewWriteRuntime("runtime.reject_review_request")
-    return this.reviewRegistry.rejectReviewRequest(reviewId, decidedBy, reason)
+    const review = await this.reviewRegistry.rejectReviewRequest(reviewId, decidedBy, reason)
+    await this.proposalRegistry.syncReviewDecision(review.review_id)
+    return review
   }
 
   async cancelReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
     this.requireReviewWriteRuntime("runtime.cancel_review_request")
-    return this.reviewRegistry.cancelReviewRequest(reviewId, decidedBy, reason)
+    const review = await this.reviewRegistry.cancelReviewRequest(reviewId, decidedBy, reason)
+    await this.proposalRegistry.syncReviewDecision(review.review_id)
+    return review
   }
 
   async reviewStatusSummary(): Promise<ReviewStatusSummary> {
