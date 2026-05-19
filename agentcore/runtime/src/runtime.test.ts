@@ -2933,6 +2933,24 @@ describe("ProposalRegistry", () => {
     await expect(proposalRegistry.applyProposal(proposal.proposal_id)).rejects.toThrow("terminal proposal cannot apply")
   })
 
+  test("rejected proposals cannot request another review", async () => {
+    const { proposalRegistry, reviewRegistry, missionId, claimId } = await proposalFixture()
+    const proposal = await proposalRegistry.createProposal({
+      mission_id: missionId,
+      claim_id: claimId,
+      action_kind: "record_progress",
+      title: "Progress",
+      summary: "Working",
+      proposed_by: "commander",
+      action_payload: { mission_id: missionId, claim_id: claimId, message: "working" },
+    })
+    const requested = await proposalRegistry.requestReview(proposal.proposal_id, { requested_by: "operator" })
+    await reviewRegistry.rejectReviewRequest(requested.review_id!, "operator", "no")
+    await proposalRegistry.syncReviewDecision(requested.review_id!)
+
+    await expect(proposalRegistry.requestReview(proposal.proposal_id, { requested_by: "operator" })).rejects.toThrow("terminal proposal cannot request review")
+  })
+
   test("review decision sync approves proposals and apply accepts proposal-level ids", async () => {
     const { proposalRegistry, reviewRegistry, missionRegistry, missionId, claimId } = await proposalFixture()
     const proposal = await proposalRegistry.createProposal({

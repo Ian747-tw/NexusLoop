@@ -92,7 +92,7 @@ export class ProposalRegistry {
     return this.serializeMutation(async () => {
       await this.hydrate()
       const proposal = this.requireProposal(cleanRequiredString(proposalId, "proposal_id"))
-      if (proposal.status === "review_requested" || proposal.status === "approved" || proposal.status === "rejected") return redactValue(proposal)
+      if (proposal.status === "review_requested" || proposal.status === "approved") return redactValue(proposal)
       if (TERMINAL_STATUSES.has(proposal.status)) throw new Error(`terminal proposal cannot request review: ${proposal.proposal_id}`)
       const review = await this.reviewRegistry.createReviewRequest({
         mission_id: proposal.mission_id ?? await this.missionIdForClaim(proposal.claim_id),
