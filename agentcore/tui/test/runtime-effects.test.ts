@@ -69,6 +69,8 @@ class CountingRuntime implements RuntimeClient {
     if (name === "runtime.list_recent_missions") return []
     if (name === "runtime.review_status") return { pending_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0 }
     if (name === "runtime.list_review_requests") return []
+    if (name === "runtime.proposal_status") return { proposed_count: 0, review_requested_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0, applied_count: 0 }
+    if (name === "runtime.list_commander_proposals") return []
     return {
       runtimeStatus: "started",
       mode: "active",
@@ -439,6 +441,78 @@ describe("runtime UI effects", () => {
     await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "missions" })
 
     expect(runtime.calls).toEqual(["runtime.status", "runtime.list_recent_missions"])
+  })
+
+  test("proposal commands create list select review and cancel redacted proposals", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "proposal target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "propose-progress",
+      args: ["fake-mission-1", claim.claim_id, "Title", "token=proposal-title", "--", "message", "token=proposal-secret"],
+    })
+    expect(state.proposals?.summary?.proposed_count).toBe(1)
+    expect(state.proposals?.selectedProposal).toMatchObject({ status: "proposed", action_kind: "record_progress" })
+    expect(JSON.stringify(state)).not.toContain("proposal-secret")
+
+    const proposalId = state.proposals?.selectedProposal?.proposal_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "proposal-review",
+      args: [proposalId, "Review", "title", "--", "Review", "summary"],
+    })
+    expect(state.proposals?.selectedProposal).toMatchObject({ proposal_id: proposalId, status: "review_requested" })
+    expect(state.reviews?.pending[0]?.review_id).toBe(state.proposals?.selectedProposal?.review_id)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "proposal", args: [proposalId] })
+    expect(state.proposals?.selectedProposal?.proposal_id).toBe(proposalId)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel-proposal", args: [proposalId, "reason", "token=cancel-secret"] })
+    expect(state.proposals?.selectedProposal?.status).toBe("cancelled")
+    expect(JSON.stringify(state)).not.toContain("cancel-secret")
+  })
+
+  test("apply proposal fails closed until linked review is approved then mutates mission through runtime", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "proposal target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "propose-result",
+      args: ["fake-mission-1", claim.claim_id, "Result", "proposal", "--", "summary"],
+    })
+    const proposalId = state.proposals?.selectedProposal?.proposal_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "proposal-review",
+      args: [proposalId, "Review", "--", "Summary"],
+    })
+    const reviewId = state.proposals?.selectedProposal?.review_id ?? ""
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-proposal", args: [proposalId] })
+    expect(state.proposals?.commandError).toContain("approved linked review")
+    expect(state.missionExecution?.results).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "approve", args: [reviewId, "ok"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-proposal", args: [proposalId] })
+    expect(state.proposals?.selectedProposal).toMatchObject({ proposal_id: proposalId, status: "applied" })
+    expect(state.missionExecution?.results[0]).toMatchObject({ mission_id: "fake-mission-1", claim_id: claim.claim_id, summary: "summary" })
+  })
+
+  test("missing proposal command args produce redacted proposal errors", async () => {
+    const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), new FakeRuntimeClient("/tmp/demo", "demo"), {
+      type: "send-command",
+      command: "propose-complete",
+      args: ["mission-1", "Title", "token=proposal-secret"],
+    })
+
+    expect(state.proposals?.commandError).toContain("-- separator")
+    expect(JSON.stringify(state)).not.toContain("proposal-secret")
   })
 
   test("research command loads projection, topics, and events", async () => {

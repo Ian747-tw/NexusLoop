@@ -87,6 +87,15 @@ export interface RuntimeStatus {
     cancelled_count: number
     last_review_id?: string
   }
+  proposals?: {
+    proposed_count: number
+    review_requested_count: number
+    approved_count: number
+    rejected_count: number
+    cancelled_count: number
+    applied_count: number
+    last_proposal_id?: string
+  }
   researchProjection: RuntimeResearchProjectionHealth
   policy: Record<string, unknown>
 }

@@ -13,6 +13,9 @@ import type {
   ResearchProjectionSummary,
   ResearchProjectionUiSummary,
   ResearchRecordsState,
+  CommanderProposalSummary,
+  ProposalsState,
+  ProposalStatusSummary,
   ReviewRequestSummary,
   ReviewsState,
   ReviewStatusSummary,
@@ -27,6 +30,7 @@ const RESEARCH_NOTE_LIMIT = 10
 const RESEARCH_EVENT_LIMIT = 10
 const MISSION_EXECUTION_LIMIT = 10
 const REVIEW_LIMIT = 10
+const PROPOSAL_LIMIT = 10
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -59,6 +63,12 @@ export type RuntimeUiEffect =
   | { type: "approve-review"; reviewId: string; reason?: string }
   | { type: "reject-review"; reviewId: string; reason: string }
   | { type: "cancel-review"; reviewId: string; reason?: string }
+  | { type: "load-proposals"; limit?: number }
+  | { type: "load-proposal"; proposalId: string }
+  | { type: "create-proposal"; actionKind: string; missionId?: string; claimId?: string; resultId?: string; title: string; summary: string; actionPayload: Record<string, unknown> }
+  | { type: "request-proposal-review"; proposalId: string; title: string; summary: string }
+  | { type: "apply-proposal"; proposalId: string }
+  | { type: "cancel-proposal"; proposalId: string; reason?: string }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -196,6 +206,54 @@ export async function applyRuntimeUiEffect(
         )
         return await loadReviews(next, runtime, REVIEW_LIMIT)
       }
+      case "load-proposals":
+        return await loadProposals(state, runtime, effect.limit ?? PROPOSAL_LIMIT)
+      case "load-proposal":
+        return applySelectedProposal(state, await runtime.command("runtime.get_commander_proposal", { proposalId: effect.proposalId }), effect.proposalId)
+      case "create-proposal": {
+        const next = applySelectedProposal(
+          state,
+          await runtime.command("runtime.create_commander_proposal", {
+            missionId: effect.missionId,
+            claimId: effect.claimId,
+            resultId: effect.resultId,
+            actionKind: effect.actionKind,
+            title: effect.title,
+            summary: effect.summary,
+            proposedBy: "operator",
+            actionPayload: effect.actionPayload,
+          }),
+          undefined,
+        )
+        return await loadProposals(next, runtime, PROPOSAL_LIMIT)
+      }
+      case "request-proposal-review": {
+        const next = applySelectedProposal(
+          state,
+          await runtime.command("runtime.request_proposal_review", {
+            proposalId: effect.proposalId,
+            title: effect.title,
+            summary: effect.summary,
+            requestedBy: "operator",
+          }),
+          effect.proposalId,
+        )
+        return await refreshProposalAndReviews(next, runtime)
+      }
+      case "apply-proposal": {
+        const next = applySelectedProposal(state, await runtime.command("runtime.apply_commander_proposal", { proposalId: effect.proposalId }), effect.proposalId)
+        const missionId = next.proposals?.selectedProposal?.mission_id
+        const refreshed = missionId ? await refreshAfterMissionWrite(next, runtime, missionId) : next
+        return await loadProposals(refreshed, runtime, PROPOSAL_LIMIT)
+      }
+      case "cancel-proposal": {
+        const next = applySelectedProposal(
+          state,
+          await runtime.command("runtime.cancel_commander_proposal", { proposalId: effect.proposalId, reason: effect.reason }),
+          effect.proposalId,
+        )
+        return await loadProposals(next, runtime, PROPOSAL_LIMIT)
+      }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -209,6 +267,7 @@ export async function applyRuntimeUiEffect(
   } catch (error) {
     if (isMissionExecutionEffect(effect)) return recordMissionExecutionCommandError(state, error)
     if (isReviewEffect(effect)) return recordReviewCommandError(state, error)
+    if (isProposalEffect(effect)) return recordProposalCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -219,6 +278,7 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-runtime-status" })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-recent-missions", limit: 5 })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-reviews", limit: REVIEW_LIMIT })
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-proposals", limit: PROPOSAL_LIMIT })
   return next
 }
 
@@ -281,6 +341,26 @@ async function loadReviews(state: UiState, runtime: RuntimeClient, limit: number
       commandError: state.lastCommand === "reviews" ? undefined : state.reviews?.commandError,
     },
   }
+}
+
+async function loadProposals(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const summary = readProposalSummary(await runtime.command("runtime.proposal_status"))
+  const recent = readProposalList(await runtime.command("runtime.list_commander_proposals", { limit }), "runtime.list_commander_proposals")
+  return {
+    ...state,
+    proposals: {
+      ...proposalsState(state),
+      summary,
+      recent,
+      commandError: state.lastCommand === "proposals" ? undefined : state.proposals?.commandError,
+    },
+  }
+}
+
+async function refreshProposalAndReviews(state: UiState, runtime: RuntimeClient): Promise<UiState> {
+  let next = await loadProposals(state, runtime, PROPOSAL_LIMIT)
+  next = await loadReviews(next, runtime, REVIEW_LIMIT)
+  return next
 }
 
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
@@ -365,6 +445,28 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "reject-review", reviewId: requiredArg(args, 0, "reviewId"), reason: requiredRest(args, 1, "reason") })
     case "cancel-review":
       return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-review", reviewId: requiredArg(args, 0, "reviewId"), reason: optionalRest(args, 1) })
+    case "proposals":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-proposals", limit: PROPOSAL_LIMIT })
+    case "proposal":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-proposal", proposalId: requiredArg(args, 0, "proposalId") })
+    case "proposal-review":
+      return applyRuntimeUiEffect(commandState, runtime, proposalReviewEffect(args))
+    case "apply-proposal":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "apply-proposal", proposalId: requiredArg(args, 0, "proposalId") })
+    case "cancel-proposal":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-proposal", proposalId: requiredArg(args, 0, "proposalId"), reason: optionalRest(args, 1) })
+    case "propose-progress":
+      return applyRuntimeUiEffect(commandState, runtime, proposeProgressEffect(args))
+    case "propose-result":
+      return applyRuntimeUiEffect(commandState, runtime, proposeResultEffect(args))
+    case "propose-complete":
+      return applyRuntimeUiEffect(commandState, runtime, proposeCompleteEffect(args))
+    case "propose-fail":
+      return applyRuntimeUiEffect(commandState, runtime, proposeFailEffect(args))
+    case "propose-cancel":
+      return applyRuntimeUiEffect(commandState, runtime, proposeCancelEffect(args))
+    case "propose-release":
+      return applyRuntimeUiEffect(commandState, runtime, proposeReleaseEffect(args))
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -471,6 +573,34 @@ const reviewEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "cancel-review",
 ])
 
+function isProposalEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return proposalEffectTypes.has(effect.type)
+  return proposalCommands.has(effect.command)
+}
+
+const proposalCommands = new Set([
+  "proposals",
+  "proposal",
+  "proposal-review",
+  "apply-proposal",
+  "cancel-proposal",
+  "propose-progress",
+  "propose-result",
+  "propose-complete",
+  "propose-fail",
+  "propose-cancel",
+  "propose-release",
+])
+
+const proposalEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-proposals",
+  "load-proposal",
+  "create-proposal",
+  "request-proposal-review",
+  "apply-proposal",
+  "cancel-proposal",
+])
+
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   if (!isRecord(value)) throw new Error("runtime.status returned non-object result")
   const runtimeStatus: RuntimeStatusSummary = {
@@ -483,6 +613,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   const researchProjection = readResearchProjection(value.researchProjection)
   const missions = readMissionSummary(value.missions, state.missions?.recent ?? [])
   const reviewSummary = readReviewSummary(value.reviews)
+  const proposalSummary = readProposalSummary(value.proposals)
   return {
     ...state,
     runtimeStatus,
@@ -490,6 +621,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
     researchProjection: researchProjection ?? state.researchProjection,
     missions: missions ?? state.missions,
     reviews: reviewSummary ? { ...reviewsState(state), summary: reviewSummary } : state.reviews,
+    proposals: proposalSummary ? { ...proposalsState(state), summary: proposalSummary } : state.proposals,
     runtimeCommandError: undefined,
     header: {
       ...state.header,
@@ -540,6 +672,24 @@ function applySelectedReview(state: UiState, value: unknown, reviewId: string | 
     },
     systemActions: selectedReviewId
       ? [...state.systemActions, { title: "review selected", detail: `review_id=${selectedReviewId}`, status: review?.status }].slice(-12)
+      : state.systemActions,
+  }
+}
+
+function applySelectedProposal(state: UiState, value: unknown, proposalId: string | undefined): UiState {
+  const proposal = readProposal(value)
+  if (!proposal && value !== null) throw new Error("runtime.get_commander_proposal returned invalid proposal")
+  const selectedProposalId = proposal?.proposal_id ?? (proposalId ? redactText(proposalId) : undefined)
+  return {
+    ...state,
+    proposals: {
+      ...proposalsState(state),
+      selectedProposal: proposal,
+      recent: proposal ? [proposal, ...proposalsState(state).recent.filter((item) => item.proposal_id !== proposal.proposal_id)].slice(0, PROPOSAL_LIMIT) : proposalsState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedProposalId
+      ? [...state.systemActions, { title: "proposal selected", detail: `proposal_id=${selectedProposalId}`, status: proposal?.status }].slice(-12)
       : state.systemActions,
   }
 }
@@ -815,6 +965,18 @@ function recordReviewCommandError(state: UiState, error: unknown): UiState {
   }
 }
 
+function recordProposalCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    proposals: {
+      ...proposalsState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "proposal command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -862,6 +1024,19 @@ function readReviewSummary(value: unknown): ReviewStatusSummary | undefined {
   }
 }
 
+function readProposalSummary(value: unknown): ProposalStatusSummary | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    proposed_count: readNumber(value.proposed_count, 0),
+    review_requested_count: readNumber(value.review_requested_count, 0),
+    approved_count: readNumber(value.approved_count, 0),
+    rejected_count: readNumber(value.rejected_count, 0),
+    cancelled_count: readNumber(value.cancelled_count, 0),
+    applied_count: readNumber(value.applied_count, 0),
+    last_proposal_id: typeof value.last_proposal_id === "string" ? redactText(value.last_proposal_id) : undefined,
+  }
+}
+
 function readReviewList(value: unknown, commandName: string): ReviewRequestSummary[] {
   if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
   return value.map(readReview).filter((review): review is ReviewRequestSummary => review !== null).slice(0, REVIEW_LIMIT)
@@ -884,6 +1059,34 @@ function readReview(value: unknown): ReviewRequestSummary | null {
     decision_at: typeof value.decision_at === "string" ? redactText(value.decision_at) : undefined,
     decision_by: typeof value.decision_by === "string" ? redactText(value.decision_by) : undefined,
     decision_reason: typeof value.decision_reason === "string" ? preview(redactText(value.decision_reason)) : undefined,
+  }
+}
+
+function readProposalList(value: unknown, commandName: string): CommanderProposalSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readProposal).filter((proposal): proposal is CommanderProposalSummary => proposal !== null).slice(0, PROPOSAL_LIMIT)
+}
+
+function readProposal(value: unknown): CommanderProposalSummary | null {
+  if (!isRecord(value) || typeof value.proposal_id !== "string" || typeof value.status !== "string") return null
+  return {
+    proposal_id: redactText(value.proposal_id),
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    claim_id: typeof value.claim_id === "string" ? redactText(value.claim_id) : undefined,
+    result_id: typeof value.result_id === "string" ? redactText(value.result_id) : undefined,
+    review_id: typeof value.review_id === "string" ? redactText(value.review_id) : undefined,
+    action_kind: readString(value.action_kind, "other"),
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    proposed_by: readString(value.proposed_by, "unknown"),
+    status: readString(value.status, "unknown"),
+    action_payload: isRecord(value.action_payload) ? redactUnknown(value.action_payload) as Record<string, unknown> : undefined,
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : undefined,
+    updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : undefined,
+    decision_at: typeof value.decision_at === "string" ? redactText(value.decision_at) : undefined,
+    applied_at: typeof value.applied_at === "string" ? redactText(value.applied_at) : undefined,
+    application_result: typeof value.application_result === "string" ? redactText(value.application_result) : undefined,
+    failure_reason: typeof value.failure_reason === "string" ? preview(redactText(value.failure_reason)) : undefined,
   }
 }
 
@@ -1014,6 +1217,10 @@ function reviewsState(state: UiState): ReviewsState {
   return state.reviews ?? { pending: [], recent: [] }
 }
 
+function proposalsState(state: UiState): ProposalsState {
+  return state.proposals ?? { recent: [] }
+}
+
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
 }
@@ -1048,6 +1255,85 @@ function requestReviewEffect(args: string[]): Extract<RuntimeUiEffect, { type: "
   if (!title) throw new Error("title is required")
   if (!summary) throw new Error("summary is required")
   return { type: "create-review-request", missionId, title, summary }
+}
+
+function proposalReviewEffect(args: string[]): Extract<RuntimeUiEffect, { type: "request-proposal-review" }> {
+  const proposalId = requiredArg(args, 0, "proposalId")
+  const separator = args.indexOf("--")
+  if (separator < 2) throw new Error("-- separator is required between proposal review title and summary")
+  const title = args.slice(1, separator).join(" ").trim()
+  const summary = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!summary) throw new Error("summary is required")
+  return { type: "request-proposal-review", proposalId, title, summary }
+}
+
+function proposeProgressEffect(args: string[]): Extract<RuntimeUiEffect, { type: "create-proposal" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const claimId = requiredArg(args, 1, "claimId")
+  const separator = args.indexOf("--")
+  if (separator < 3) throw new Error("-- separator is required between proposal title and message")
+  const title = args.slice(2, separator).join(" ").trim()
+  const message = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!message) throw new Error("message is required")
+  return { type: "create-proposal", actionKind: "record_progress", missionId, claimId, title, summary: message, actionPayload: { mission_id: missionId, claim_id: claimId, message } }
+}
+
+function proposeResultEffect(args: string[]): Extract<RuntimeUiEffect, { type: "create-proposal" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const claimId = requiredArg(args, 1, "claimId")
+  const separator = args.indexOf("--")
+  if (separator < 3) throw new Error("-- separator is required between proposal title and summary")
+  const title = args.slice(2, separator).join(" ").trim()
+  const summary = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!summary) throw new Error("summary is required")
+  return { type: "create-proposal", actionKind: "submit_result", missionId, claimId, title, summary, actionPayload: { mission_id: missionId, claim_id: claimId, summary } }
+}
+
+function proposeCompleteEffect(args: string[]): Extract<RuntimeUiEffect, { type: "create-proposal" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const separator = args.indexOf("--")
+  if (separator < 2) throw new Error("-- separator is required between proposal title and summary")
+  const title = args.slice(1, separator).join(" ").trim()
+  const summary = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!summary) throw new Error("summary is required")
+  return { type: "create-proposal", actionKind: "complete_mission", missionId, title, summary, actionPayload: { mission_id: missionId, summary } }
+}
+
+function proposeFailEffect(args: string[]): Extract<RuntimeUiEffect, { type: "create-proposal" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const separator = args.indexOf("--")
+  if (separator < 2) throw new Error("-- separator is required between proposal title and reason")
+  const title = args.slice(1, separator).join(" ").trim()
+  const reason = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!reason) throw new Error("reason is required")
+  return { type: "create-proposal", actionKind: "fail_mission", missionId, title, summary: reason, actionPayload: { mission_id: missionId, reason } }
+}
+
+function proposeCancelEffect(args: string[]): Extract<RuntimeUiEffect, { type: "create-proposal" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const separator = args.indexOf("--")
+  if (separator < 2) throw new Error("-- separator is required between proposal title and reason")
+  const title = args.slice(1, separator).join(" ").trim()
+  const reason = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!reason) throw new Error("reason is required")
+  return { type: "create-proposal", actionKind: "cancel_mission", missionId, title, summary: reason, actionPayload: { mission_id: missionId, reason } }
+}
+
+function proposeReleaseEffect(args: string[]): Extract<RuntimeUiEffect, { type: "create-proposal" }> {
+  const claimId = requiredArg(args, 0, "claimId")
+  const separator = args.indexOf("--")
+  if (separator < 2) throw new Error("-- separator is required between proposal title and reason")
+  const title = args.slice(1, separator).join(" ").trim()
+  const reason = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!reason) throw new Error("reason is required")
+  return { type: "create-proposal", actionKind: "release_claim", claimId, title, summary: reason, actionPayload: { claim_id: claimId, reason } }
 }
 
 function requiredArg(args: string[], index: number, field: string): string {

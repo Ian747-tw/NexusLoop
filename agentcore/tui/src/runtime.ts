@@ -1,8 +1,8 @@
 import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
-import { redactText } from "./redaction"
-import type { ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ReviewRequestSummary } from "./state"
+import { redactText, redactUnknown } from "./redaction"
+import type { CommanderProposalSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -27,6 +27,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly progress: MissionProgressSummary[] = []
   private readonly results: MissionResultSummary[] = []
   private readonly reviews: ReviewRequestSummary[] = []
+  private readonly proposals: CommanderProposalSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -124,6 +125,7 @@ export class FakeRuntimeClient implements RuntimeClient {
           adapterStatus: { kind: "fake", phase: "idle" },
           missions: this.missionSummary(),
           reviews: this.reviewSummary(),
+          proposals: this.proposalSummary(),
           researchProjection: { mode: "disabled", ok: true, stale: false, reason: "disabled", pending_count: 0 },
         }
       case "runtime.list_recent_missions":
@@ -172,6 +174,20 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.decideReview(String(payload.reviewId ?? payload.review_id ?? ""), "cancelled", String(payload.decidedBy ?? payload.decided_by ?? ""), optionalString(payload.reason))
       case "runtime.review_status":
         return this.reviewSummary()
+      case "runtime.create_commander_proposal":
+        return this.createProposal(payload)
+      case "runtime.get_commander_proposal":
+        return this.getProposal(String(payload.proposalId ?? payload.proposal_id ?? ""))
+      case "runtime.list_commander_proposals":
+        return this.listProposals(optionalString(payload.status), readLimit(payload.limit, 20))
+      case "runtime.request_proposal_review":
+        return this.requestProposalReview(String(payload.proposalId ?? payload.proposal_id ?? ""), payload)
+      case "runtime.cancel_commander_proposal":
+        return this.cancelProposal(String(payload.proposalId ?? payload.proposal_id ?? ""), optionalString(payload.reason))
+      case "runtime.apply_commander_proposal":
+        return this.applyProposal(String(payload.proposalId ?? payload.proposal_id ?? ""))
+      case "runtime.proposal_status":
+        return this.proposalSummary()
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -404,7 +420,119 @@ export class FakeRuntimeClient implements RuntimeClient {
     review.decision_at = now
     review.decision_by = by
     review.decision_reason = safeReason
+    for (const proposal of this.proposals.filter((item) => item.review_id === review.review_id)) {
+      if (decision === "approved" && proposal.status === "review_requested") proposal.status = "approved"
+      if (decision === "rejected" && proposal.status === "review_requested") proposal.status = "rejected"
+      proposal.updated_at = now
+      proposal.decision_at = now
+    }
     return review
+  }
+
+  private createProposal(payload: Record<string, unknown>): CommanderProposalSummary {
+    const actionKind = requiredString(String(payload.actionKind ?? payload.action_kind ?? ""), "actionKind")
+    const actionPayload = isRecord(payload.actionPayload) ? payload.actionPayload : isRecord(payload.action_payload) ? payload.action_payload : {}
+    const missionId = optionalString(payload.missionId) ?? optionalString(payload.mission_id) ?? optionalString(actionPayload.mission_id)
+    const claimId = optionalString(payload.claimId) ?? optionalString(payload.claim_id) ?? optionalString(actionPayload.claim_id)
+    const resultId = optionalString(payload.resultId) ?? optionalString(payload.result_id) ?? optionalString(actionPayload.result_id)
+    if (missionId) this.ensureMission(missionId)
+    this.sequence += 1
+    const now = new Date(0).toISOString()
+    const proposal: CommanderProposalSummary = {
+      proposal_id: `fake-proposal-${this.sequence}`,
+      mission_id: missionId ? redactText(missionId) : undefined,
+      claim_id: claimId ? redactText(claimId) : undefined,
+      result_id: resultId ? redactText(resultId) : undefined,
+      action_kind: redactText(actionKind),
+      title: redactText(requiredString(String(payload.title ?? ""), "title")),
+      summary: redactText(requiredString(String(payload.summary ?? ""), "summary")),
+      proposed_by: redactText(requiredString(String(payload.proposedBy ?? payload.proposed_by ?? ""), "proposedBy")),
+      status: "proposed",
+      action_payload: redactUnknown(actionPayload) as Record<string, unknown>,
+      created_at: now,
+      updated_at: now,
+    }
+    this.proposals.unshift(proposal)
+    return proposal
+  }
+
+  private getProposal(proposalId: string): CommanderProposalSummary | null {
+    const id = requiredString(proposalId, "proposalId")
+    return this.proposals.find((proposal) => proposal.proposal_id === id) ?? null
+  }
+
+  private listProposals(status: string | undefined, limit: number): CommanderProposalSummary[] {
+    return this.proposals.filter((proposal) => status === undefined || proposal.status === status).slice(0, limit)
+  }
+
+  private requestProposalReview(proposalId: string, payload: Record<string, unknown>): CommanderProposalSummary {
+    const proposal = this.requireProposal(proposalId)
+    if (proposal.status !== "proposed") return proposal
+    const review = this.createReviewRequest({
+      missionId: proposal.mission_id,
+      claimId: proposal.claim_id,
+      resultId: proposal.result_id,
+      requestType: reviewTypeForProposal(proposal.action_kind),
+      title: payload.title ?? proposal.title,
+      summary: payload.summary ?? proposal.summary,
+      requestedBy: payload.requestedBy ?? payload.requested_by ?? "operator",
+    })
+    proposal.review_id = review.review_id
+    proposal.status = "review_requested"
+    proposal.updated_at = new Date(0).toISOString()
+    return proposal
+  }
+
+  private cancelProposal(proposalId: string, reason?: string): CommanderProposalSummary {
+    const proposal = this.requireProposal(proposalId)
+    if (proposal.status === "applied") throw new Error(`terminal proposal cannot cancel: ${redactText(proposal.proposal_id)}`)
+    proposal.status = "cancelled"
+    proposal.updated_at = new Date(0).toISOString()
+    if (reason) proposal.failure_reason = redactText(reason)
+    return proposal
+  }
+
+  private applyProposal(proposalId: string): CommanderProposalSummary {
+    const proposal = this.requireProposal(proposalId)
+    if (proposal.status === "applied") return proposal
+    const review = proposal.review_id ? this.reviews.find((item) => item.review_id === proposal.review_id) : undefined
+    if (!review || review.status !== "approved") throw new Error(`proposal requires an approved linked review before apply: ${redactText(proposal.proposal_id)}`)
+    const payload = isRecord(proposal.action_payload) ? proposal.action_payload : {}
+    let result: string
+    switch (proposal.action_kind) {
+      case "record_progress":
+        result = `mission_progress_recorded:${this.recordMissionProgress(requiredString(String(payload.mission_id ?? ""), "mission_id"), requiredString(String(payload.claim_id ?? ""), "claim_id"), requiredString(String(payload.message ?? ""), "message")).progress_id}`
+        break
+      case "submit_result":
+        result = `mission_result_submitted:${this.submitMissionResult(requiredString(String(payload.mission_id ?? ""), "mission_id"), requiredString(String(payload.claim_id ?? ""), "claim_id"), requiredString(String(payload.summary ?? ""), "summary")).result_id}`
+        break
+      case "complete_mission":
+        result = `mission_completed:${this.completeMission(requiredString(String(payload.mission_id ?? ""), "mission_id"), { resultId: optionalString(payload.result_id), summary: optionalString(payload.summary) }).mission_id}`
+        break
+      case "fail_mission":
+        result = `mission_failed:${this.failMission(requiredString(String(payload.mission_id ?? ""), "mission_id"), requiredString(String(payload.reason ?? ""), "reason")).mission_id}`
+        break
+      case "cancel_mission":
+        result = `mission_cancelled:${this.cancelMission(requiredString(String(payload.mission_id ?? ""), "mission_id"), optionalString(payload.reason)).mission_id}`
+        break
+      case "release_claim":
+        result = `mission_claim_released:${this.releaseMissionClaim(requiredString(String(payload.claim_id ?? ""), "claim_id"), optionalString(payload.reason)).claim_id}`
+        break
+      default:
+        throw new Error(`unsupported proposal action kind for apply: ${redactText(proposal.action_kind)}`)
+    }
+    proposal.status = "applied"
+    proposal.updated_at = new Date(0).toISOString()
+    proposal.applied_at = proposal.updated_at
+    proposal.application_result = result
+    return proposal
+  }
+
+  private requireProposal(proposalId: string): CommanderProposalSummary {
+    const id = requiredString(proposalId, "proposalId")
+    const proposal = this.proposals.find((item) => item.proposal_id === id)
+    if (!proposal) throw new Error(`commander proposal not found: ${redactText(id)}`)
+    return proposal
   }
 
   private requireClaim(claimId: string, missionId?: string): ExecutorClaimSummary {
@@ -432,6 +560,18 @@ export class FakeRuntimeClient implements RuntimeClient {
       rejected_count: this.reviews.filter((review) => review.status === "rejected").length,
       cancelled_count: this.reviews.filter((review) => review.status === "cancelled").length,
       last_review_id: this.reviews[0]?.review_id,
+    }
+  }
+
+  private proposalSummary() {
+    return {
+      proposed_count: this.proposals.filter((proposal) => proposal.status === "proposed").length,
+      review_requested_count: this.proposals.filter((proposal) => proposal.status === "review_requested").length,
+      approved_count: this.proposals.filter((proposal) => proposal.status === "approved").length,
+      rejected_count: this.proposals.filter((proposal) => proposal.status === "rejected").length,
+      cancelled_count: this.proposals.filter((proposal) => proposal.status === "cancelled").length,
+      applied_count: this.proposals.filter((proposal) => proposal.status === "applied").length,
+      last_proposal_id: this.proposals[0]?.proposal_id,
     }
   }
 
@@ -535,4 +675,21 @@ function optionalString(value: unknown): string | undefined {
 
 function isTerminalMissionStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "cancelled"
+}
+
+function reviewTypeForProposal(actionKind: string): string {
+  switch (actionKind) {
+    case "complete_mission":
+      return "mission_completion"
+    case "fail_mission":
+      return "mission_failure"
+    case "cancel_mission":
+      return "mission_cancellation"
+    case "release_claim":
+      return "claim_release"
+    case "submit_result":
+      return "result_acceptance"
+    default:
+      return "operator_checkpoint"
+  }
 }

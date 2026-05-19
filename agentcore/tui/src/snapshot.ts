@@ -64,6 +64,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push("Approval / clarification")
   out.push(...lines([...state.approval.specApprovals, ...state.approval.candidateApprovals, ...state.approval.clarifications]))
   out.push(...reviewLines(state))
+  out.push(...proposalLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -136,6 +137,43 @@ function reviewLines(state: UiState): string[] {
   if (reviews.recent.length === 0) out.push("    - empty")
   else out.push(...reviews.recent.slice(0, 10).map((review) => `    - ${review.review_id} [${review.status}] ${preview(redactText(review.title))}`))
   if (reviews.commandError) out.push(`  command_error=${redactText(reviews.commandError)}`)
+  return out
+}
+
+function proposalLines(state: UiState): string[] {
+  const proposals = state.proposals
+  const out = ["Commander proposals"]
+  if (!proposals) {
+    out.push("  proposed=0 review_requested=0 approved=0 rejected=0 cancelled=0 applied=0")
+    return out
+  }
+  if (proposals.summary) {
+    out.push(`  proposed=${proposals.summary.proposed_count} review_requested=${proposals.summary.review_requested_count} approved=${proposals.summary.approved_count} rejected=${proposals.summary.rejected_count} cancelled=${proposals.summary.cancelled_count} applied=${proposals.summary.applied_count}`)
+    out.push(`  last_proposal=${proposals.summary.last_proposal_id ?? "none"}`)
+  } else {
+    out.push(`  recent=${proposals.recent.length}`)
+  }
+  out.push("  recent_proposals")
+  if (proposals.recent.length === 0) out.push("    - empty")
+  else {
+    out.push(...proposals.recent.slice(0, 10).map((proposal) => {
+      const mission = proposal.mission_id ?? "none"
+      return `    - ${proposal.proposal_id} [${proposal.status}] ${proposal.action_kind} mission=${mission}: ${preview(redactText(proposal.title))}`
+    }))
+  }
+  if (proposals.selectedProposal) {
+    const proposal = proposals.selectedProposal
+    out.push(`  selected_proposal=${proposal.proposal_id} [${proposal.status}] ${proposal.action_kind}`)
+    out.push(`  selected_mission=${proposal.mission_id ?? "none"}`)
+    out.push(`  linked_review=${proposal.review_id ?? "none"}`)
+    out.push(`  title=${preview(redactText(proposal.title))}`)
+    out.push(`  summary=${preview(redactText(proposal.summary))}`)
+    if (proposal.application_result) out.push(`  application_result=${preview(redactText(proposal.application_result))}`)
+    if (proposal.failure_reason) out.push(`  failure_reason=${preview(redactText(proposal.failure_reason))}`)
+  } else {
+    out.push("  selected_proposal=none")
+  }
+  if (proposals.commandError) out.push(`  command_error=${redactText(proposals.commandError)}`)
   return out
 }
 

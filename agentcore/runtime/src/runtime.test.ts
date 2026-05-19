@@ -12,6 +12,7 @@ import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
 import { MissionRegistry } from "./missions/mission-registry"
 import { ReviewRegistry } from "./missions/review-registry"
+import { ProposalRegistry } from "./missions/proposal-registry"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { SpecService } from "./spec/spec-service"
@@ -936,6 +937,85 @@ describe("RuntimeServer core", () => {
       requestedBy: "operator",
     })).rejects.toThrow("runtime.create_review_request requires active mode")
     await expect(statusServer.command("runtime.list_review_requests")).resolves.toEqual([])
+    await statusServer.shutdown()
+  })
+
+  test("proposal runtime commands create review approve and apply through mission authority", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("proposal runtime mission")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "record token=proposal-title-secret",
+      summary: "summary token=proposal-summary-secret",
+      proposedBy: "commander",
+      actionPayload: {
+        mission_id: submitted.missionId,
+        claim_id: claim.claim_id,
+        message: "progress token=proposal-payload-secret",
+      },
+    }) as { proposal_id: string }
+
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      proposal_id: proposal.proposal_id,
+      status: "proposed",
+      title: "record [REDACTED]",
+    })
+    const reviewed = await server.command("runtime.request_proposal_review", {
+      proposalId: proposal.proposal_id,
+      title: "review",
+      summary: "approve",
+      requestedBy: "operator",
+    }) as { review_id: string }
+    await expect(server.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })).rejects.toThrow("approved linked review")
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+    await expect(server.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      proposal_id: proposal.proposal_id,
+      status: "applied",
+      application_result: expect.stringContaining("mission_progress_recorded"),
+    })
+    await expect(server.command("runtime.list_mission_progress", { missionId: submitted.missionId })).resolves.toMatchObject([
+      { claim_id: claim.claim_id, message: "progress [REDACTED]" },
+    ])
+    await expect(server.command("runtime.proposal_status")).resolves.toMatchObject({ applied_count: 1, last_proposal_id: proposal.proposal_id })
+    const serialized = JSON.stringify({ status: await server.status(), events: await readJsonlEvents(dir) })
+    expect(serialized).not.toContain("proposal-title-secret")
+    expect(serialized).not.toContain("proposal-summary-secret")
+    expect(serialized).not.toContain("proposal-payload-secret")
+    await server.shutdown()
+  })
+
+  test("proposal runtime commands enforce write gates and allow read surfaces", async () => {
+    const notStartedDir = await tempProject()
+    await makeProject(notStartedDir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: notStartedDir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await expect(notStarted.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "title",
+      summary: "summary",
+      proposedBy: "operator",
+    })).rejects.toThrow("runtime must be started before proposal writes")
+    await expect(notStarted.command("runtime.proposal_status")).resolves.toMatchObject({ proposed_count: 0 })
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir)
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await statusServer.start()
+
+    await expect(statusServer.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "title",
+      summary: "summary",
+      proposedBy: "operator",
+    })).rejects.toThrow("runtime.create_commander_proposal requires active mode")
+    await expect(statusServer.command("runtime.list_commander_proposals")).resolves.toEqual([])
     await statusServer.shutdown()
   })
 
@@ -2714,6 +2794,142 @@ describe("ReviewRegistry", () => {
     const registry = new ReviewRegistry({ eventStore: store })
 
     await expect(registry.getReviewRequest("review_kind_mismatch")).rejects.toThrow("review decision event kind conflicts")
+  })
+})
+
+describe("ProposalRegistry", () => {
+  async function proposalFixture() {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let next = 0
+    const missionRegistry = new MissionRegistry({
+      eventStore: store,
+      projectDir: dir,
+      idFactory: (prefix) => `${prefix}_${++next}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const mission = await missionRegistry.createUserMessageMission("proposal target")
+    await missionRegistry.markMissionSent(mission.mission.mission_id)
+    const claim = await missionRegistry.claimMission({ mission_id: mission.mission.mission_id, executor_id: "executor" })
+    const reviewRegistry = new ReviewRegistry({
+      eventStore: store,
+      missionRegistry,
+      idFactory: () => `review_${++next}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    const proposalRegistry = new ProposalRegistry({
+      eventStore: store,
+      missionRegistry,
+      reviewRegistry,
+      idFactory: () => `proposal_${++next}`,
+      now: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    return { dir, store, missionRegistry, reviewRegistry, proposalRegistry, missionId: mission.mission.mission_id, claimId: claim.claim_id }
+  }
+
+  test("creates durable proposals and rebuilds summaries from events", async () => {
+    const { dir, store, missionRegistry, reviewRegistry, proposalRegistry, missionId, claimId } = await proposalFixture()
+    const proposal = await proposalRegistry.createProposal({
+      mission_id: missionId,
+      claim_id: claimId,
+      action_kind: "record_progress",
+      title: "Record secret=proposal-title",
+      summary: "Progress secret=proposal-summary",
+      proposed_by: "commander",
+      action_payload: { mission_id: missionId, claim_id: claimId, message: "working secret=payload" },
+    })
+
+    expect(proposal).toMatchObject({ status: "proposed", title: "Record [REDACTED]", action_payload: { message: "working [REDACTED]" } })
+    await expect(proposalRegistry.listProposals()).resolves.toMatchObject([{ proposal_id: proposal.proposal_id, status: "proposed" }])
+    await expect(proposalRegistry.statusSummary()).resolves.toMatchObject({ proposed_count: 1, last_proposal_id: proposal.proposal_id })
+    const rebuilt = new ProposalRegistry({ eventStore: store, missionRegistry, reviewRegistry })
+    await expect(rebuilt.getProposal(proposal.proposal_id)).resolves.toMatchObject({ proposal_id: proposal.proposal_id, summary: "Progress [REDACTED]" })
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("proposal-title")
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("proposal-summary")
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("secret=payload")
+  })
+
+  test("links review requests and requires approved review before apply", async () => {
+    const { proposalRegistry, reviewRegistry, missionId, claimId } = await proposalFixture()
+    const proposal = await proposalRegistry.createProposal({
+      mission_id: missionId,
+      claim_id: claimId,
+      action_kind: "record_progress",
+      title: "Progress",
+      summary: "Working",
+      proposed_by: "commander",
+      action_payload: { mission_id: missionId, claim_id: claimId, message: "working" },
+    })
+    const requested = await proposalRegistry.requestReview(proposal.proposal_id, { title: "Review progress", summary: "Approve progress", requested_by: "operator" })
+    expect(requested).toMatchObject({ status: "review_requested" })
+    await expect(proposalRegistry.applyProposal(proposal.proposal_id)).rejects.toThrow("approved linked review")
+    await reviewRegistry.approveReviewRequest(requested.review_id!, "operator", "ok")
+    await expect(proposalRegistry.applyProposal(proposal.proposal_id)).resolves.toMatchObject({
+      status: "applied",
+      application_result: expect.stringContaining("mission_progress_recorded:progress_"),
+    })
+    await expect(proposalRegistry.applyProposal(proposal.proposal_id)).resolves.toMatchObject({ status: "applied" })
+  })
+
+  test("applies supported mission actions through MissionRegistry and rejects unsupported kinds", async () => {
+    for (const actionKind of ["submit_result", "complete_mission", "fail_mission", "cancel_mission", "release_claim"] as const) {
+      const { proposalRegistry, reviewRegistry, missionRegistry, missionId, claimId } = await proposalFixture()
+      const result = actionKind === "complete_mission"
+        ? await missionRegistry.submitMissionResult({ mission_id: missionId, claim_id: claimId, summary: "done" })
+        : undefined
+      const payload = actionKind === "submit_result"
+        ? { mission_id: missionId, claim_id: claimId, summary: "result" }
+        : actionKind === "complete_mission"
+          ? { mission_id: missionId, result_id: result!.result_id, summary: "complete" }
+          : actionKind === "fail_mission"
+            ? { mission_id: missionId, reason: "failed" }
+            : actionKind === "cancel_mission"
+              ? { mission_id: missionId, reason: "cancelled" }
+              : { claim_id: claimId, reason: "release" }
+      const proposal = await proposalRegistry.createProposal({
+        mission_id: actionKind === "release_claim" ? undefined : missionId,
+        claim_id: actionKind === "release_claim" ? claimId : undefined,
+        result_id: result?.result_id,
+        action_kind: actionKind,
+        title: actionKind,
+        summary: actionKind,
+        proposed_by: "commander",
+        action_payload: payload,
+      })
+      const requested = await proposalRegistry.requestReview(proposal.proposal_id, { requested_by: "operator" })
+      await reviewRegistry.approveReviewRequest(requested.review_id!, "operator", "ok")
+      await expect(proposalRegistry.applyProposal(proposal.proposal_id)).resolves.toMatchObject({ status: "applied" })
+    }
+
+    const { proposalRegistry, reviewRegistry, missionId } = await proposalFixture()
+    const unsupported = await proposalRegistry.createProposal({
+      mission_id: missionId,
+      action_kind: "other",
+      title: "Other",
+      summary: "Other",
+      proposed_by: "commander",
+      action_payload: { mission_id: missionId },
+    })
+    const requested = await proposalRegistry.requestReview(unsupported.proposal_id, { requested_by: "operator" })
+    await reviewRegistry.approveReviewRequest(requested.review_id!, "operator", "ok")
+    await expect(proposalRegistry.applyProposal(unsupported.proposal_id)).rejects.toThrow("unsupported proposal action kind")
+    await expect(proposalRegistry.getProposal(unsupported.proposal_id)).resolves.toMatchObject({ status: "approved", failure_reason: expect.stringContaining("unsupported") })
+  })
+
+  test("cancelled proposals are terminal and idempotent only for matching reason", async () => {
+    const { proposalRegistry, missionId } = await proposalFixture()
+    const proposal = await proposalRegistry.createProposal({
+      mission_id: missionId,
+      action_kind: "cancel_mission",
+      title: "Cancel",
+      summary: "Cancel",
+      proposed_by: "commander",
+      action_payload: { mission_id: missionId, reason: "no longer needed" },
+    })
+    await expect(proposalRegistry.cancelProposal(proposal.proposal_id, "same")).resolves.toMatchObject({ status: "cancelled", failure_reason: "same" })
+    await expect(proposalRegistry.cancelProposal(proposal.proposal_id, "same")).resolves.toMatchObject({ status: "cancelled" })
+    await expect(proposalRegistry.cancelProposal(proposal.proposal_id, "different")).rejects.toThrow("terminal proposal cancellation conflicts")
+    await expect(proposalRegistry.applyProposal(proposal.proposal_id)).rejects.toThrow("terminal proposal cannot apply")
   })
 })
 

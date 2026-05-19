@@ -350,6 +350,42 @@ describe("TUI runtime client factory", () => {
     await client.runtime.shutdown()
   })
 
+  test("real runtime client path exercises proposal create review approve and apply with fake adapter", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    const submitted = await client.command("runtime.submit_user_message", { message: "proposal mission" }) as { missionId: string }
+    const claim = await client.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "tester" }) as { claim_id: string }
+    const proposal = await client.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "Record progress",
+      summary: "working",
+      proposedBy: "tester",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "working" },
+    }) as { proposal_id: string }
+    const reviewed = await client.command("runtime.request_proposal_review", {
+      proposalId: proposal.proposal_id,
+      title: "Review progress",
+      summary: "approve progress",
+      requestedBy: "tester",
+    }) as { review_id: string }
+
+    await expect(client.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })).rejects.toThrow("approved linked review")
+    await client.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "tester", reason: "ok" })
+    await expect(client.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      proposal_id: proposal.proposal_id,
+      status: "applied",
+    })
+
+    await client.runtime.shutdown()
+  })
+
   test("secret-looking env values do not leak through runtime status or event snapshots", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
