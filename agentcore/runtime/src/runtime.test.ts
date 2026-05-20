@@ -1150,6 +1150,131 @@ describe("RuntimeServer core", () => {
     await bundleServer.shutdown()
   })
 
+  test("commander playbook runtime commands list get draft proposals bundles and reviews without applying", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await expect(server.command("runtime.list_commander_playbooks")).resolves.toMatchObject([
+      { playbook_id: "complete-from-result", generated_action_kinds: ["complete_mission"], creates_bundle: false },
+      { playbook_id: "submit-result-and-complete", generated_action_kinds: ["submit_result", "complete_mission"], creates_bundle: true },
+      { playbook_id: "record-progress", generated_action_kinds: ["record_progress"] },
+      { playbook_id: "fail-mission", generated_action_kinds: ["fail_mission"] },
+      { playbook_id: "cancel-mission", generated_action_kinds: ["cancel_mission"] },
+      { playbook_id: "release-claim", generated_action_kinds: ["release_claim"] },
+    ])
+    await expect(server.command("runtime.get_commander_playbook", { playbookId: "fail-mission" })).resolves.toMatchObject({ playbook_id: "fail-mission" })
+    await expect(server.command("runtime.get_commander_playbook", { playbookId: "missing-playbook" })).rejects.toThrow("unknown commander playbook")
+    await expect(server.command("runtime.draft_commander_playbook", {
+      playbookId: "missing-playbook",
+      proposedBy: "operator",
+      fields: {},
+    })).rejects.toThrow("runtime must be started before commander playbook writes")
+
+    await server.start()
+    const submitted = await server.submitUserMessage("playbook mission")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const result = await server.command("runtime.submit_mission_result", { missionId: submitted.missionId, claimId: claim.claim_id, summary: "result" }) as { result_id: string }
+
+    await expect(server.command("runtime.draft_commander_playbook", {
+      playbookId: "missing-playbook",
+      proposedBy: "operator",
+      fields: {},
+    })).rejects.toThrow("unknown commander playbook")
+    await expect(server.command("runtime.draft_commander_playbook", {
+      playbookId: "complete-from-result",
+      proposedBy: "operator",
+      fields: { mission_id: submitted.missionId, result_id: result.result_id, title: "Complete" },
+    })).rejects.toThrow("summary is required")
+
+    const completeDraft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "complete-from-result",
+      proposedBy: "operator token=playbook-operator-secret",
+      fields: {
+        mission_id: submitted.missionId,
+        result_id: result.result_id,
+        title: "Complete token=playbook-title-secret",
+        summary: "Done token=playbook-summary-secret",
+      },
+    }) as { proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    expect(completeDraft.proposal_ids).toHaveLength(1)
+    expect(completeDraft.bundle_id).toBeUndefined()
+    expect(completeDraft.review_ids).toBeUndefined()
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: completeDraft.proposal_ids[0] })).resolves.toMatchObject({
+      action_kind: "complete_mission",
+      status: "proposed",
+      mission_id: submitted.missionId,
+      result_id: result.result_id,
+    })
+
+    const bundledDraft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "submit-result-and-complete",
+      proposedBy: "operator",
+      requestedBy: "operator",
+      requestReviews: true,
+      fields: {
+        mission_id: submitted.missionId,
+        claim_id: claim.claim_id,
+        title: "Submit and complete",
+        result_summary: "fresh result",
+        completion_summary: "complete after result",
+      },
+    }) as { proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    expect(bundledDraft.proposal_ids).toHaveLength(2)
+    expect(bundledDraft.bundle_id).toBeTruthy()
+    expect(bundledDraft.review_ids).toHaveLength(2)
+    await expect(server.command("runtime.list_commander_proposals", { limit: 2 })).resolves.toMatchObject([
+      { proposal_id: bundledDraft.proposal_ids[1], action_kind: "complete_mission", status: "review_requested" },
+      { proposal_id: bundledDraft.proposal_ids[0], action_kind: "submit_result", status: "review_requested" },
+    ])
+    await expect(server.command("runtime.get_proposal_bundle", { bundleId: bundledDraft.bundle_id })).resolves.toMatchObject({
+      proposal_ids: bundledDraft.proposal_ids,
+      status: "review_requested",
+    })
+
+    for (const [playbookId, actionKind, fields] of [
+      ["fail-mission", "fail_mission", { mission_id: submitted.missionId, reason: "bad", title: "Fail" }],
+      ["cancel-mission", "cancel_mission", { mission_id: submitted.missionId, reason: "stop", title: "Cancel" }],
+      ["release-claim", "release_claim", { claim_id: claim.claim_id, reason: "done", title: "Release" }],
+      ["record-progress", "record_progress", { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "progress", title: "Progress" }],
+    ] as const) {
+      const draft = await server.command("runtime.draft_commander_playbook", { playbookId, proposedBy: "operator", fields }) as { proposal_ids: string[]; review_ids?: string[] }
+      expect(draft.review_ids).toBeUndefined()
+      await expect(server.command("runtime.get_commander_proposal", { proposalId: draft.proposal_ids[0] })).resolves.toMatchObject({ action_kind: actionKind, status: "proposed" })
+    }
+
+    await expect(server.command("runtime.get_mission", { missionId: submitted.missionId })).resolves.toMatchObject({ status: "running" })
+    const serialized = JSON.stringify({ status: await server.status(), events: await readJsonlEvents(dir) })
+    expect(serialized).not.toContain("playbook-operator-secret")
+    expect(serialized).not.toContain("playbook-title-secret")
+    expect(serialized).not.toContain("playbook-summary-secret")
+    await server.shutdown()
+  })
+
+  test("commander playbook draft enforces active started runtime gates while read commands stay available", async () => {
+    const notStartedDir = await tempProject()
+    await makeProject(notStartedDir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: notStartedDir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await expect(notStarted.command("runtime.list_commander_playbooks")).resolves.toHaveLength(6)
+    await expect(notStarted.command("runtime.draft_commander_playbook", {
+      playbookId: "fail-mission",
+      proposedBy: "operator",
+      fields: { mission_id: "mission-1", reason: "reason", title: "title" },
+    })).rejects.toThrow("runtime must be started before commander playbook writes")
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir, { approvedSpec: true })
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await statusServer.start()
+    await expect(statusServer.command("runtime.get_commander_playbook", { playbookId: "cancel-mission" })).resolves.toMatchObject({ playbook_id: "cancel-mission" })
+    await expect(statusServer.command("runtime.draft_commander_playbook", {
+      playbookId: "fail-mission",
+      proposedBy: "operator",
+      fields: { mission_id: "mission-1", reason: "reason", title: "title" },
+    })).rejects.toThrow("runtime.draft_commander_playbook requires active mode")
+    await statusServer.shutdown()
+  })
+
   test("proposal bundle cancellation and partial apply rules are explicit", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

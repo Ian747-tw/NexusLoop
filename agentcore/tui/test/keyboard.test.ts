@@ -166,6 +166,23 @@ describe("TUI keyboard command model", () => {
     ])
   })
 
+  test("playbook slash commands route through whitelisted runtime command effects with args", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/draft-result-complete mission-1 claim-1 Title -- result summary || completion summary",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("draft-result-complete")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "draft-result-complete", args: ["mission-1", "claim-1", "Title", "--", "result", "summary", "||", "completion", "summary"] },
+    ])
+  })
+
   test("slash command arguments are redacted before entering system actions", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -225,7 +242,7 @@ describe("TUI keyboard command model", () => {
   })
 
   test("dot and colon prefixed text remains a user message", () => {
-    for (const message of [".status notes", ":missions", ".topics", ":research", ".mission", ":claim", ".complete", ":complete", ".reviews", ":approve", ".proposals", ":apply-proposal", ".bundles", ":apply-bundle", "/path"]) {
+    for (const message of [".status notes", ":missions", ".topics", ":research", ".mission", ":claim", ".complete", ":complete", ".reviews", ":approve", ".proposals", ":apply-proposal", ".bundles", ":apply-bundle", ".playbooks", ":draft-fail", "/tmp/repro", "/path"]) {
       const state: UiState = {
         ...initialState("/tmp/demo"),
         screen: "main",

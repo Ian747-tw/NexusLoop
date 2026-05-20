@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 import { FakeRuntimeClient, type RuntimeClient } from "../src/runtime"
+import { layoutSnapshot } from "../src/snapshot"
 import { initialState, type UiState } from "../src/state"
 
 class RecentMissionRuntime implements RuntimeClient {
@@ -618,6 +619,106 @@ describe("runtime UI effects", () => {
 
     expect(state.proposals?.commandError).toContain("-- separator")
     expect(JSON.stringify(state)).not.toContain("proposal-secret")
+  })
+
+  test("playbook commands list select draft and render catalog and draft results", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "playbook target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    const result = await runtime.command("runtime.submit_mission_result", { missionId: "fake-mission-1", claimId: claim.claim_id, summary: "done" }) as { result_id: string }
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "playbooks" })
+    expect(state.commanderPlaybooks?.catalog.map((playbook) => playbook.playbook_id)).toContain("complete-from-result")
+    expect(layoutSnapshot(state)).toContain("Commander playbooks")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "playbook", args: ["complete-from-result"] })
+    expect(state.commanderPlaybooks?.selectedPlaybook).toMatchObject({ playbook_id: "complete-from-result", generated_action_kinds: ["complete_mission"] })
+    expect(layoutSnapshot(state)).toContain("selected_playbook=complete-from-result")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "playbook", args: ["record-progress"] })
+    expect(state.commanderPlaybooks?.selectedPlaybook?.required_fields).toContainEqual({
+      name: "message",
+      label: "Message",
+      required: true,
+      field_type: "text",
+    })
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "draft-complete",
+      args: ["fake-mission-1", result.result_id, "Complete", "title", "--", "summary"],
+    })
+
+    expect(state.commanderPlaybooks?.lastDraft).toMatchObject({ playbook_id: "complete-from-result", proposal_ids: [expect.stringMatching(/^fake-proposal-/)] })
+    expect(state.proposals?.recent[0]).toMatchObject({ action_kind: "complete_mission", status: "proposed" })
+    expect(layoutSnapshot(state)).toContain("last_draft=complete-from-result")
+  })
+
+  test("playbook draft-result-complete creates ordered proposals plus bundle", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "playbook bundle target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "draft-result-complete",
+      args: ["fake-mission-1", claim.claim_id, "Bundle", "title", "--", "result", "summary", "||", "completion", "summary"],
+    })
+
+    const draft = state.commanderPlaybooks?.lastDraft
+    expect(draft?.proposal_ids).toHaveLength(2)
+    expect(draft?.bundle_id).toBeTruthy()
+    expect(state.proposals?.recent.slice(0, 2)).toMatchObject([
+      { proposal_id: draft?.proposal_ids[1], action_kind: "complete_mission", status: "proposed" },
+      { proposal_id: draft?.proposal_ids[0], action_kind: "submit_result", status: "proposed" },
+    ])
+    expect(state.proposalBundles?.recent[0]).toMatchObject({ bundle_id: draft?.bundle_id, proposal_ids: draft?.proposal_ids })
+  })
+
+  test("playbook draft fail cancel release create expected proposal action kinds", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "playbook target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+
+    for (const [command, args, actionKind] of [
+      ["draft-fail", ["fake-mission-1", "Fail", "title", "--", "reason"], "fail_mission"],
+      ["draft-cancel", ["fake-mission-1", "Cancel", "title", "--", "reason"], "cancel_mission"],
+      ["draft-release", [claim.claim_id, "Release", "title", "--", "reason"], "release_claim"],
+    ] as const) {
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command, args: [...args] })
+      expect(state.proposals?.recent[0]).toMatchObject({ action_kind: actionKind, status: "proposed" })
+    }
+  })
+
+  test("missing playbook args produce redacted command errors", async () => {
+    const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), new FakeRuntimeClient("/tmp/demo", "demo"), {
+      type: "send-command",
+      command: "draft-fail",
+      args: ["mission-1", "Title", "token=playbook-secret"],
+    })
+
+    expect(state.commanderPlaybooks?.commandError).toContain("-- separator")
+    expect(JSON.stringify(state)).not.toContain("playbook-secret")
+  })
+
+  test("secret-looking playbook titles summaries and reasons do not leak into TUI state or snapshot", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await runtime.command("runtime.submit_user_message", { message: "playbook target" })
+    const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, {
+      type: "send-command",
+      command: "draft-fail",
+      args: ["fake-mission-1", "Title", "token=playbook-title-secret", "--", "reason", "token=playbook-reason-secret"],
+    })
+
+    const rendered = layoutSnapshot(state)
+    expect(JSON.stringify(state)).not.toContain("playbook-title-secret")
+    expect(JSON.stringify(state)).not.toContain("playbook-reason-secret")
+    expect(rendered).not.toContain("playbook-title-secret")
+    expect(rendered).not.toContain("playbook-reason-secret")
+    expect(rendered).toContain("[REDACTED]")
   })
 
   test("proposal bundle commands create list select readiness review cancel and redact state", async () => {

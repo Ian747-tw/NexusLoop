@@ -345,6 +345,31 @@ describe("TUI launch boundary", () => {
     expect(snapshot).not.toContain("completion-secret")
   })
 
+  test("default fake headless snapshot renders playbooks and draft result", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/playbooks" },
+      { type: "submit" },
+      { type: "insert", text: "/draft-fail mission-1 Fail title -- reason token=playbook-secret" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Commander playbooks")
+    expect(snapshot).toContain("complete-from-result")
+    expect(snapshot).toContain("last_draft=fail-mission")
+    expect(snapshot).toContain("fail_mission")
+    expect(snapshot).not.toContain("playbook-secret")
+  })
+
   test("default fake headless release resets running mission and allows reclaim", async () => {
     const dir = await tempProject()
     const output: string[] = []

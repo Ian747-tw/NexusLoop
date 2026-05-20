@@ -14,6 +14,9 @@ import type {
   ResearchProjectionUiSummary,
   ResearchRecordsState,
   CommanderProposalSummary,
+  CommanderPlaybookDraftSummary,
+  CommanderPlaybooksState,
+  CommanderPlaybookSummary,
   CommanderProposalBundleSummary,
   ProposalBundleReadinessSummary,
   ProposalBundlesState,
@@ -36,6 +39,7 @@ const MISSION_EXECUTION_LIMIT = 10
 const REVIEW_LIMIT = 10
 const PROPOSAL_LIMIT = 10
 const PROPOSAL_BUNDLE_LIMIT = 10
+const PLAYBOOK_LIMIT = 10
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -82,6 +86,9 @@ export type RuntimeUiEffect =
   | { type: "request-proposal-bundle-reviews"; bundleId: string }
   | { type: "apply-proposal-bundle"; bundleId: string }
   | { type: "cancel-proposal-bundle"; bundleId: string; reason?: string }
+  | { type: "load-playbooks"; limit?: number }
+  | { type: "load-playbook"; playbookId: string }
+  | { type: "draft-playbook"; playbookId: string; fields: Record<string, string>; bundleTitle?: string; bundleSummary?: string; createBundle?: boolean; requestReviews?: boolean }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -323,6 +330,26 @@ export async function applyRuntimeUiEffect(
         )
         return await loadProposalBundleReadiness(await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT), runtime, effect.bundleId)
       }
+      case "load-playbooks":
+        return applyPlaybookCatalog(state, await runtime.command("runtime.list_commander_playbooks"), effect.limit ?? PLAYBOOK_LIMIT)
+      case "load-playbook":
+        return applySelectedPlaybook(state, await runtime.command("runtime.get_commander_playbook", { playbookId: effect.playbookId }), effect.playbookId)
+      case "draft-playbook": {
+        const drafted = applyPlaybookDraft(
+          state,
+          await runtime.command("runtime.draft_commander_playbook", {
+            playbookId: effect.playbookId,
+            fields: effect.fields,
+            proposedBy: "operator",
+            requestedBy: "operator",
+            bundleTitle: effect.bundleTitle,
+            bundleSummary: effect.bundleSummary,
+            createBundle: effect.createBundle,
+            requestReviews: effect.requestReviews,
+          }),
+        )
+        return await refreshAfterPlaybookDraft(drafted, runtime)
+      }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -338,6 +365,7 @@ export async function applyRuntimeUiEffect(
     if (isReviewEffect(effect)) return recordReviewCommandError(state, error)
     if (isProposalEffect(effect)) return recordProposalCommandError(state, error)
     if (isProposalBundleEffect(effect)) return recordProposalBundleCommandError(state, error)
+    if (isPlaybookEffect(effect)) return recordPlaybookCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -350,6 +378,7 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-reviews", limit: REVIEW_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-proposals", limit: PROPOSAL_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-proposal-bundles", limit: PROPOSAL_BUNDLE_LIMIT })
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-playbooks", limit: PLAYBOOK_LIMIT })
   return next
 }
 
@@ -485,6 +514,13 @@ async function refreshProposalAndReviews(state: UiState, runtime: RuntimeClient)
   return next
 }
 
+async function refreshAfterPlaybookDraft(state: UiState, runtime: RuntimeClient): Promise<UiState> {
+  let next = await loadProposals(state, runtime, PROPOSAL_LIMIT)
+  next = await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT)
+  next = await loadReviews(next, runtime, REVIEW_LIMIT)
+  return next
+}
+
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
   const commandState = { ...state, lastCommand: command }
   switch (command) {
@@ -605,6 +641,22 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "apply-proposal-bundle", bundleId: requiredArg(args, 0, "bundleId") })
     case "cancel-bundle":
       return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-proposal-bundle", bundleId: requiredArg(args, 0, "bundleId"), reason: optionalRest(args, 1) })
+    case "playbooks":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-playbooks", limit: PLAYBOOK_LIMIT })
+    case "playbook":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-playbook", playbookId: requiredArg(args, 0, "playbookId") })
+    case "draft-complete":
+      return applyRuntimeUiEffect(commandState, runtime, draftCompleteEffect(args))
+    case "draft-result-complete":
+      return applyRuntimeUiEffect(commandState, runtime, draftResultCompleteEffect(args))
+    case "draft-progress":
+      return applyRuntimeUiEffect(commandState, runtime, draftProgressEffect(args))
+    case "draft-fail":
+      return applyRuntimeUiEffect(commandState, runtime, draftFailEffect(args))
+    case "draft-cancel":
+      return applyRuntimeUiEffect(commandState, runtime, draftCancelEffect(args))
+    case "draft-release":
+      return applyRuntimeUiEffect(commandState, runtime, draftReleaseEffect(args))
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -766,6 +818,28 @@ const proposalBundleEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "cancel-proposal-bundle",
 ])
 
+function isPlaybookEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return playbookEffectTypes.has(effect.type)
+  return playbookCommands.has(effect.command)
+}
+
+const playbookCommands = new Set([
+  "playbooks",
+  "playbook",
+  "draft-complete",
+  "draft-result-complete",
+  "draft-progress",
+  "draft-fail",
+  "draft-cancel",
+  "draft-release",
+])
+
+const playbookEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-playbooks",
+  "load-playbook",
+  "draft-playbook",
+])
+
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   if (!isRecord(value)) throw new Error("runtime.status returned non-object result")
   const runtimeStatus: RuntimeStatusSummary = {
@@ -876,6 +950,54 @@ function applySelectedProposalBundle(state: UiState, value: unknown, bundleId: s
     systemActions: selectedBundleId
       ? [...state.systemActions, { title: "proposal bundle selected", detail: `bundle_id=${selectedBundleId}`, status: bundle?.status }].slice(-12)
       : state.systemActions,
+  }
+}
+
+function applyPlaybookCatalog(state: UiState, value: unknown, limit: number): UiState {
+  if (!Array.isArray(value)) throw new Error("runtime.list_commander_playbooks returned non-array result")
+  return {
+    ...state,
+    commanderPlaybooks: {
+      ...commanderPlaybooksState(state),
+      catalog: value.map(readPlaybook).filter((playbook): playbook is CommanderPlaybookSummary => playbook !== null).slice(0, limit),
+      commandError: state.lastCommand === "playbooks" ? undefined : state.commanderPlaybooks?.commandError,
+    },
+  }
+}
+
+function applySelectedPlaybook(state: UiState, value: unknown, playbookId: string): UiState {
+  const playbook = readPlaybook(value)
+  if (!playbook && value !== null) throw new Error("runtime.get_commander_playbook returned invalid playbook")
+  const selectedPlaybookId = playbook?.playbook_id ?? redactText(playbookId)
+  return {
+    ...state,
+    commanderPlaybooks: {
+      ...commanderPlaybooksState(state),
+      selectedPlaybook: playbook,
+      catalog: playbook ? [playbook, ...commanderPlaybooksState(state).catalog.filter((item) => item.playbook_id !== playbook.playbook_id)].slice(0, PLAYBOOK_LIMIT) : commanderPlaybooksState(state).catalog,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "playbook selected", detail: `playbook_id=${selectedPlaybookId}` }].slice(-12),
+  }
+}
+
+function applyPlaybookDraft(state: UiState, value: unknown): UiState {
+  const draft = readPlaybookDraft(value)
+  return {
+    ...state,
+    commanderPlaybooks: {
+      ...commanderPlaybooksState(state),
+      lastDraft: draft,
+      commandError: undefined,
+    },
+    systemActions: [
+      ...state.systemActions,
+      {
+        title: "playbook drafted",
+        detail: `playbook_id=${draft.playbook_id} proposals=${draft.proposal_ids.join(",") || "none"} bundle=${draft.bundle_id ?? "none"}`,
+        status: "proposed",
+      },
+    ].slice(-12),
   }
 }
 
@@ -1174,6 +1296,18 @@ function recordProposalBundleCommandError(state: UiState, error: unknown): UiSta
   }
 }
 
+function recordPlaybookCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderPlaybooks: {
+      ...commanderPlaybooksState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "playbook command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -1344,6 +1478,45 @@ function readProposalBundleReadiness(value: unknown): ProposalBundleReadinessSum
   }
 }
 
+function readPlaybook(value: unknown): CommanderPlaybookSummary | null {
+  if (!isRecord(value) || typeof value.playbook_id !== "string") return null
+  const fields = Array.isArray(value.required_fields)
+    ? value.required_fields.map(readPlaybookField).filter((field): field is CommanderPlaybookSummary["required_fields"][number] => field !== null).slice(0, 20)
+    : []
+  const actionKinds = Array.isArray(value.generated_action_kinds)
+    ? value.generated_action_kinds.filter((item): item is string => typeof item === "string").map(redactText).slice(0, 20)
+    : []
+  return {
+    playbook_id: redactText(value.playbook_id),
+    title: preview(readString(value.title, "")),
+    description: preview(readString(value.description, "")),
+    required_fields: fields,
+    generated_action_kinds: actionKinds,
+    creates_bundle: readBoolean(value.creates_bundle),
+  }
+}
+
+function readPlaybookField(value: unknown): CommanderPlaybookSummary["required_fields"][number] | null {
+  if (!isRecord(value) || typeof value.name !== "string") return null
+  return {
+    name: redactText(value.name),
+    label: preview(readString(value.label, value.name)),
+    required: readBoolean(value.required),
+    field_type: readString(value.field_type, "text"),
+  }
+}
+
+function readPlaybookDraft(value: unknown): CommanderPlaybookDraftSummary {
+  if (!isRecord(value) || typeof value.playbook_id !== "string" || typeof value.created_at !== "string") throw new Error("runtime.draft_commander_playbook returned invalid draft result")
+  return {
+    playbook_id: redactText(value.playbook_id),
+    proposal_ids: Array.isArray(value.proposal_ids) ? value.proposal_ids.filter((item): item is string => typeof item === "string").map(redactText).slice(0, 20) : [],
+    bundle_id: typeof value.bundle_id === "string" ? redactText(value.bundle_id) : undefined,
+    review_ids: Array.isArray(value.review_ids) ? value.review_ids.filter((item): item is string => typeof item === "string").map(redactText).slice(0, 20) : undefined,
+    created_at: redactText(value.created_at),
+  }
+}
+
 function readMissionRecord(value: unknown): MissionRecord | null {
   if (!isRecord(value) || typeof value.mission_id !== "string" || typeof value.status !== "string") return null
   return {
@@ -1479,6 +1652,10 @@ function proposalBundlesState(state: UiState): ProposalBundlesState {
   return state.proposalBundles ?? { recent: [] }
 }
 
+function commanderPlaybooksState(state: UiState): CommanderPlaybooksState {
+  return state.commanderPlaybooks ?? { catalog: [], selectedPlaybook: null, lastDraft: null }
+}
+
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
 }
@@ -1602,6 +1779,80 @@ function createProposalBundleEffect(args: string[]): Extract<RuntimeUiEffect, { 
   if (!title) throw new Error("title is required")
   if (!summary) throw new Error("summary is required")
   return { type: "create-proposal-bundle", title, summary }
+}
+
+function draftCompleteEffect(args: string[]): Extract<RuntimeUiEffect, { type: "draft-playbook" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const resultId = requiredArg(args, 1, "resultId")
+  const separator = args.indexOf("--")
+  if (separator < 3) throw new Error("-- separator is required between draft title and summary")
+  const title = args.slice(2, separator).join(" ").trim()
+  const summary = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!summary) throw new Error("summary is required")
+  return { type: "draft-playbook", playbookId: "complete-from-result", fields: { mission_id: missionId, result_id: resultId, title, summary } }
+}
+
+function draftResultCompleteEffect(args: string[]): Extract<RuntimeUiEffect, { type: "draft-playbook" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const claimId = requiredArg(args, 1, "claimId")
+  const separator = args.indexOf("--")
+  if (separator < 3) throw new Error("-- separator is required between draft title and summaries")
+  const title = args.slice(2, separator).join(" ").trim()
+  const summaryText = args.slice(separator + 1).join(" ").trim()
+  const parts = summaryText.split(/\s+\|\|\s+/)
+  const resultSummary = (parts[0] ?? "").trim()
+  const completionSummary = parts.slice(1).join(" || ").trim()
+  if (!title) throw new Error("title is required")
+  if (!resultSummary) throw new Error("result_summary is required")
+  if (!completionSummary) throw new Error("completion_summary is required")
+  return {
+    type: "draft-playbook",
+    playbookId: "submit-result-and-complete",
+    fields: { mission_id: missionId, claim_id: claimId, title, result_summary: resultSummary, completion_summary: completionSummary },
+  }
+}
+
+function draftProgressEffect(args: string[]): Extract<RuntimeUiEffect, { type: "draft-playbook" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const claimId = requiredArg(args, 1, "claimId")
+  const separator = args.indexOf("--")
+  if (separator < 3) throw new Error("-- separator is required between draft title and message")
+  const title = args.slice(2, separator).join(" ").trim()
+  const message = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!message) throw new Error("message is required")
+  return { type: "draft-playbook", playbookId: "record-progress", fields: { mission_id: missionId, claim_id: claimId, title, message } }
+}
+
+function draftFailEffect(args: string[]): Extract<RuntimeUiEffect, { type: "draft-playbook" }> {
+  return draftReasonPlaybookEffect(args, "fail-mission")
+}
+
+function draftCancelEffect(args: string[]): Extract<RuntimeUiEffect, { type: "draft-playbook" }> {
+  return draftReasonPlaybookEffect(args, "cancel-mission")
+}
+
+function draftReleaseEffect(args: string[]): Extract<RuntimeUiEffect, { type: "draft-playbook" }> {
+  const claimId = requiredArg(args, 0, "claimId")
+  const separator = args.indexOf("--")
+  if (separator < 2) throw new Error("-- separator is required between draft title and reason")
+  const title = args.slice(1, separator).join(" ").trim()
+  const reason = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!reason) throw new Error("reason is required")
+  return { type: "draft-playbook", playbookId: "release-claim", fields: { claim_id: claimId, title, reason } }
+}
+
+function draftReasonPlaybookEffect(args: string[], playbookId: "fail-mission" | "cancel-mission"): Extract<RuntimeUiEffect, { type: "draft-playbook" }> {
+  const missionId = requiredArg(args, 0, "missionId")
+  const separator = args.indexOf("--")
+  if (separator < 2) throw new Error("-- separator is required between draft title and reason")
+  const title = args.slice(1, separator).join(" ").trim()
+  const reason = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!reason) throw new Error("reason is required")
+  return { type: "draft-playbook", playbookId, fields: { mission_id: missionId, title, reason } }
 }
 
 function requiredArg(args: string[], index: number, field: string): string {
