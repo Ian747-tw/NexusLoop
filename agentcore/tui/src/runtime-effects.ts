@@ -275,16 +275,19 @@ export async function applyRuntimeUiEffect(
         return await loadProposalBundleReadiness(next, runtime, effect.bundleId)
       }
       case "create-proposal-bundle": {
+        const created = await runtime.command("runtime.create_proposal_bundle", {
+          title: effect.title,
+          summary: effect.summary,
+          createdBy: "operator",
+        })
         const next = applySelectedProposalBundle(
           state,
-          await runtime.command("runtime.create_proposal_bundle", {
-            title: effect.title,
-            summary: effect.summary,
-            createdBy: "operator",
-          }),
+          created,
           undefined,
         )
-        return await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT)
+        const refreshed = await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT)
+        const selectedBundleId = next.proposalBundles?.selectedBundle?.bundle_id
+        return selectedBundleId ? await loadProposalBundleReadiness(refreshed, runtime, selectedBundleId) : refreshed
       }
       case "add-proposal-to-bundle": {
         const next = applySelectedProposalBundle(

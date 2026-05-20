@@ -371,7 +371,9 @@ export class ProposalBundleRegistry {
   private applyBundleStatus(bundleId: string, status: CommanderProposalBundleStatus, updatedAt: string, extra: Partial<CommanderProposalBundle> = {}): void {
     const bundle = this.requireBundle(bundleId)
     if (bundle.status === "cancelled") throw new Error(`cancelled proposal bundle cannot change status: ${bundleId}`)
-    this.bundles.set(bundleId, redactValue({ ...bundle, ...extra, status, updated_at: updatedAt }))
+    const next = redactValue({ ...bundle, ...extra, status, updated_at: updatedAt })
+    if (status === "applied") delete next.failure_reason
+    this.bundles.set(bundleId, next)
   }
 
   private applyCancelled(bundleId: string, cancelledAt: string, reason?: string): void {

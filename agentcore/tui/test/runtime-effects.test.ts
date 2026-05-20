@@ -660,6 +660,29 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("bundle-cancel-secret")
   })
 
+  test("create bundle refreshes readiness for the newly selected bundle", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "bundle readiness target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "propose-progress",
+      args: ["fake-mission-1", claim.claim_id, "Progress", "--", "message"],
+    })
+    const proposalId = state.proposals?.selectedProposal?.proposal_id ?? ""
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "create-bundle", args: ["First", "--", "Summary"] })
+    const firstBundleId = state.proposalBundles?.selectedBundle?.bundle_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "bundle-add", args: [firstBundleId, proposalId] })
+    expect(state.proposalBundles?.readiness).toMatchObject({ bundle_id: firstBundleId, proposal_count: 1 })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "create-bundle", args: ["Second", "--", "Summary"] })
+    const secondBundleId = state.proposalBundles?.selectedBundle?.bundle_id ?? ""
+    expect(secondBundleId).not.toBe(firstBundleId)
+    expect(state.proposalBundles?.readiness).toMatchObject({ bundle_id: secondBundleId, proposal_count: 0, ready_to_apply: false })
+  })
+
   test("apply bundle fails closed until included proposal is approved then applies mission state", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

@@ -1183,9 +1183,11 @@ describe("RuntimeServer core", () => {
     await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator" })
 
     await expect(server.command("runtime.apply_proposal_bundle", { bundleId: bundle.bundle_id })).rejects.toThrow("not ready to apply")
-    await expect(server.command("runtime.apply_proposal_bundle", { bundleId: bundle.bundle_id, allowPartial: true })).resolves.toMatchObject({
+    const partialApply = await server.command("runtime.apply_proposal_bundle", { bundleId: bundle.bundle_id, allowPartial: true }) as Record<string, unknown>
+    expect(partialApply).toMatchObject({
       status: "partially_applied",
     })
+    expect(partialApply).not.toHaveProperty("failure_reason")
     await expect(server.command("runtime.get_commander_proposal", { proposalId: approvedCandidate.proposal_id })).resolves.toMatchObject({ status: "applied" })
     await expect(server.command("runtime.get_commander_proposal", { proposalId: blockedCandidate.proposal_id })).resolves.toMatchObject({ status: "proposed" })
 
