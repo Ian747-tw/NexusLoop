@@ -318,7 +318,7 @@ export async function applyRuntimeUiEffect(
           await runtime.command("runtime.cancel_proposal_bundle", { bundleId: effect.bundleId, reason: effect.reason }),
           effect.bundleId,
         )
-        return await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT)
+        return await loadProposalBundleReadiness(await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT), runtime, effect.bundleId)
       }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)

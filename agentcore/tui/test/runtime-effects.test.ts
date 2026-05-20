@@ -655,6 +655,7 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel-bundle", args: [bundleId, "reason", "token=bundle-cancel-secret"] })
     expect(state.proposalBundles?.selectedBundle?.status).toBe("cancelled")
+    expect(state.proposalBundles?.readiness?.blockers).toContain(`bundle ${bundleId} is cancelled`)
     expect(state.proposals?.recent.find((proposal) => proposal.proposal_id === proposalId)?.status).toBe("review_requested")
     expect(JSON.stringify(state)).not.toContain("bundle-cancel-secret")
   })

@@ -177,6 +177,9 @@ export class ProposalBundleRegistry {
           const applied = await this.proposalRegistry.applyProposal(proposal.proposal_id)
           appliedProposalIds.push(applied.proposal_id)
         }
+        if (allowPartial && appliedProposalIds.length === 0 && skippedProposalIds.length > 0) {
+          throw new Error("partial proposal bundle apply did not apply any proposals")
+        }
         await this.appendAndApply({
           kind: "commander_proposal_bundle_applied",
           bundle_id: bundle.bundle_id,

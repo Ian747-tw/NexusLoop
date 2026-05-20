@@ -1189,6 +1189,10 @@ describe("RuntimeServer core", () => {
     await expect(server.command("runtime.get_commander_proposal", { proposalId: approvedCandidate.proposal_id })).resolves.toMatchObject({ status: "applied" })
     await expect(server.command("runtime.get_commander_proposal", { proposalId: blockedCandidate.proposal_id })).resolves.toMatchObject({ status: "proposed" })
 
+    const noOp = await server.command("runtime.create_proposal_bundle", { title: "noop", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: noOp.bundle_id, proposalId: blockedCandidate.proposal_id })
+    await expect(server.command("runtime.apply_proposal_bundle", { bundleId: noOp.bundle_id, allowPartial: true })).rejects.toThrow("did not apply any proposals")
+
     const cancellable = await server.command("runtime.create_proposal_bundle", { title: "cancel token=cancel-title-secret", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
     await server.command("runtime.add_proposal_to_bundle", { bundleId: cancellable.bundle_id, proposalId: blockedCandidate.proposal_id })
     await expect(server.command("runtime.cancel_proposal_bundle", { bundleId: cancellable.bundle_id, reason: "reason token=cancel-reason-secret" })).resolves.toMatchObject({
