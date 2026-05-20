@@ -672,12 +672,13 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private cancelProposalBundle(bundleId: string, reason?: string): CommanderProposalBundleSummary {
     const bundle = this.requireProposalBundle(bundleId)
+    const projected = this.projectProposalBundle(bundle)
     const safeReason = reason === undefined ? undefined : redactText(reason)
-    if (bundle.status === "cancelled") {
+    if (projected.status === "cancelled") {
       if (bundle.cancellation_reason === safeReason) return bundle
       throw new Error(`terminal proposal bundle cancellation conflicts with existing payload: ${redactText(bundle.bundle_id)}`)
     }
-    if (bundle.status === "applied") throw new Error(`applied proposal bundle cannot cancel: ${redactText(bundle.bundle_id)}`)
+    if (projected.status === "applied") throw new Error(`applied proposal bundle cannot cancel: ${redactText(bundle.bundle_id)}`)
     bundle.status = "cancelled"
     bundle.updated_at = new Date(0).toISOString()
     bundle.cancelled_at = bundle.updated_at

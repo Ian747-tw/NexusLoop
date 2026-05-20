@@ -704,6 +704,28 @@ describe("runtime UI effects", () => {
     await expect(runtime.command("runtime.apply_proposal_bundle", { bundleId: blocked.bundle_id, allowPartial: true })).rejects.toThrow("did not apply any proposals")
   })
 
+  test("fake runtime rejects cancelling bundles projected as applied", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await runtime.command("runtime.submit_user_message", { message: "bundle projected apply target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    const proposal = await runtime.command("runtime.create_commander_proposal", {
+      missionId: "fake-mission-1",
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "Progress",
+      summary: "Summary",
+      proposedBy: "commander",
+      actionPayload: { mission_id: "fake-mission-1", claim_id: claim.claim_id, message: "external" },
+    }) as { proposal_id: string }
+    const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "Bundle", summary: "Summary", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: proposal.proposal_id })
+    const reviewed = await runtime.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator" })
+    await runtime.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })
+
+    await expect(runtime.command("runtime.cancel_proposal_bundle", { bundleId: bundle.bundle_id, reason: "late" })).rejects.toThrow("applied proposal bundle cannot cancel")
+  })
+
   test("apply bundle fails closed until included proposal is approved then applies mission state", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")
