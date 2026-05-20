@@ -633,19 +633,38 @@ export class FakeRuntimeClient implements RuntimeClient {
     const bundle = this.requireProposalBundle(bundleId)
     this.requireMutableProposalBundle(bundle)
     const readiness = this.proposalBundleReadiness(bundle.bundle_id)
+    if (readiness.proposal_count === 0) {
+      bundle.status = "partially_applied"
+      bundle.failure_reason = "proposal bundle has no proposals to apply"
+      throw new Error(bundle.failure_reason)
+    }
     if (!allowPartial && !readiness.ready_to_apply) {
       bundle.status = "partially_applied"
       bundle.failure_reason = readiness.blockers.join("; ") || "bundle is not ready to apply"
       throw new Error(`proposal bundle is not ready to apply: ${bundle.failure_reason}`)
     }
+    let appliedCount = 0
+    let skippedCount = 0
     for (const proposalId of bundle.proposal_ids) {
       const proposal = this.requireProposal(proposalId)
-      if (proposal.status === "applied") continue
+      if (proposal.status === "applied") {
+        skippedCount += 1
+        continue
+      }
       if (proposal.status !== "approved") {
-        if (allowPartial) continue
+        if (allowPartial) {
+          skippedCount += 1
+          continue
+        }
         throw new Error(`proposal is not approved: ${redactText(proposal.proposal_id)}`)
       }
       this.applyProposal(proposal.proposal_id)
+      appliedCount += 1
+    }
+    if (allowPartial && appliedCount === 0 && skippedCount > 0) {
+      bundle.status = "partially_applied"
+      bundle.failure_reason = "partial proposal bundle apply did not apply any proposals"
+      throw new Error(`proposal bundle apply failed: ${bundle.failure_reason}`)
     }
     bundle.updated_at = new Date(0).toISOString()
     return this.projectProposalBundle(bundle)

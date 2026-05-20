@@ -154,6 +154,7 @@ describe("TUI runtime event reducer", () => {
     const snapshot = layoutSnapshot(state)
 
     expect(snapshot).toContain("Proposal bundles")
+    expect(snapshot).toContain("partially_approved=1")
     expect(snapshot).toContain("bundle-2 [partially_approved] proposals=2")
     expect(snapshot).toContain("readiness=blocked proposals=2")
     expect(snapshot).not.toContain("bundle-snapshot-secret")

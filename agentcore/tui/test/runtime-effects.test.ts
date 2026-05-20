@@ -683,6 +683,27 @@ describe("runtime UI effects", () => {
     expect(state.proposalBundles?.readiness).toMatchObject({ bundle_id: secondBundleId, proposal_count: 0, ready_to_apply: false })
   })
 
+  test("fake runtime rejects empty and no-op partial bundle applies", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const empty = await runtime.command("runtime.create_proposal_bundle", { title: "Empty", summary: "Summary", createdBy: "operator" }) as { bundle_id: string }
+    await expect(runtime.command("runtime.apply_proposal_bundle", { bundleId: empty.bundle_id, allowPartial: true })).rejects.toThrow("has no proposals to apply")
+
+    await runtime.command("runtime.submit_user_message", { message: "bundle no-op target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    const proposal = await runtime.command("runtime.create_commander_proposal", {
+      missionId: "fake-mission-1",
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "Blocked",
+      summary: "Summary",
+      proposedBy: "commander",
+      actionPayload: { mission_id: "fake-mission-1", claim_id: claim.claim_id, message: "blocked" },
+    }) as { proposal_id: string }
+    const blocked = await runtime.command("runtime.create_proposal_bundle", { title: "Blocked", summary: "Summary", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: blocked.bundle_id, proposalId: proposal.proposal_id })
+    await expect(runtime.command("runtime.apply_proposal_bundle", { bundleId: blocked.bundle_id, allowPartial: true })).rejects.toThrow("did not apply any proposals")
+  })
+
   test("apply bundle fails closed until included proposal is approved then applies mission state", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

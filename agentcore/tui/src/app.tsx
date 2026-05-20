@@ -335,7 +335,7 @@ function ApprovalPanel(props: { state: UiState }) {
       <Show when={bundles()?.summary}>
         {(summary) => (
           <text fg={color.text}>
-            bundles: open={summary().open_count} review={summary().review_requested_count} approved={summary().approved_count} partial={summary().partially_applied_count} applied={summary().applied_count}
+            bundles: open={summary().open_count} review={summary().review_requested_count} approved={summary().approved_count} partial={summary().partially_approved_count + summary().partially_applied_count} applied={summary().applied_count}
           </text>
         )}
       </Show>
