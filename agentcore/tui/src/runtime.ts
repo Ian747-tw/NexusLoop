@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderProposalSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ReviewRequestSummary } from "./state"
+import type { CommanderProposalBundleSummary, CommanderProposalSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -28,6 +28,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly results: MissionResultSummary[] = []
   private readonly reviews: ReviewRequestSummary[] = []
   private readonly proposals: CommanderProposalSummary[] = []
+  private readonly proposalBundles: CommanderProposalBundleSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -126,6 +127,7 @@ export class FakeRuntimeClient implements RuntimeClient {
           missions: this.missionSummary(),
           reviews: this.reviewSummary(),
           proposals: this.proposalSummary(),
+          proposalBundles: this.proposalBundleSummary(),
           researchProjection: { mode: "disabled", ok: true, stale: false, reason: "disabled", pending_count: 0 },
         }
       case "runtime.list_recent_missions":
@@ -188,6 +190,24 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.applyProposal(String(payload.proposalId ?? payload.proposal_id ?? ""))
       case "runtime.proposal_status":
         return this.proposalSummary()
+      case "runtime.create_proposal_bundle":
+        return this.createProposalBundle(payload)
+      case "runtime.get_proposal_bundle":
+        return this.getProposalBundle(String(payload.bundleId ?? payload.bundle_id ?? ""))
+      case "runtime.list_proposal_bundles":
+        return this.listProposalBundles(optionalString(payload.status), readLimit(payload.limit, 20))
+      case "runtime.add_proposal_to_bundle":
+        return this.addProposalToBundle(String(payload.bundleId ?? payload.bundle_id ?? ""), String(payload.proposalId ?? payload.proposal_id ?? ""))
+      case "runtime.proposal_bundle_readiness":
+        return this.proposalBundleReadiness(String(payload.bundleId ?? payload.bundle_id ?? ""))
+      case "runtime.request_proposal_bundle_reviews":
+        return this.requestProposalBundleReviews(String(payload.bundleId ?? payload.bundle_id ?? ""), String(payload.requestedBy ?? payload.requested_by ?? "operator"))
+      case "runtime.apply_proposal_bundle":
+        return this.applyProposalBundle(String(payload.bundleId ?? payload.bundle_id ?? ""), payload.allowPartial === true || payload.allow_partial === true)
+      case "runtime.cancel_proposal_bundle":
+        return this.cancelProposalBundle(String(payload.bundleId ?? payload.bundle_id ?? ""), optionalString(payload.reason))
+      case "runtime.proposal_bundle_status":
+        return this.proposalBundleSummary()
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -537,6 +557,159 @@ export class FakeRuntimeClient implements RuntimeClient {
     return proposal
   }
 
+  private createProposalBundle(payload: Record<string, unknown>): CommanderProposalBundleSummary {
+    this.sequence += 1
+    const now = new Date(0).toISOString()
+    const bundle: CommanderProposalBundleSummary = {
+      bundle_id: `fake-bundle-${this.sequence}`,
+      title: redactText(requiredString(String(payload.title ?? ""), "title")),
+      summary: redactText(requiredString(String(payload.summary ?? ""), "summary")),
+      created_by: redactText(requiredString(String(payload.createdBy ?? payload.created_by ?? ""), "createdBy")),
+      status: "open",
+      proposal_ids: [],
+      created_at: now,
+      updated_at: now,
+    }
+    this.proposalBundles.unshift(bundle)
+    return this.projectProposalBundle(bundle)
+  }
+
+  private getProposalBundle(bundleId: string): CommanderProposalBundleSummary | null {
+    const id = requiredString(bundleId, "bundleId")
+    const bundle = this.proposalBundles.find((item) => item.bundle_id === id)
+    return bundle ? this.projectProposalBundle(bundle) : null
+  }
+
+  private listProposalBundles(status: string | undefined, limit: number): CommanderProposalBundleSummary[] {
+    return this.proposalBundles.map((bundle) => this.projectProposalBundle(bundle)).filter((bundle) => status === undefined || bundle.status === status).slice(0, limit)
+  }
+
+  private addProposalToBundle(bundleId: string, proposalId: string): CommanderProposalBundleSummary {
+    const bundle = this.requireProposalBundle(bundleId)
+    this.requireMutableProposalBundle(bundle)
+    const proposal = this.requireProposal(proposalId)
+    if (!bundle.proposal_ids.includes(proposal.proposal_id)) bundle.proposal_ids.push(proposal.proposal_id)
+    bundle.updated_at = new Date(0).toISOString()
+    return this.projectProposalBundle(bundle)
+  }
+
+  private proposalBundleReadiness(bundleId: string): ProposalBundleReadinessSummary {
+    const bundle = this.requireProposalBundle(bundleId)
+    const blockers: string[] = []
+    const proposals = bundle.proposal_ids.map((proposalId) => this.proposals.find((proposal) => proposal.proposal_id === proposalId))
+    for (const [index, proposal] of proposals.entries()) {
+      if (!proposal) blockers.push(`missing proposal: ${bundle.proposal_ids[index]}`)
+      else if (proposal.status !== "approved" && proposal.status !== "applied") blockers.push(`proposal ${proposal.proposal_id} status is ${proposal.status}`)
+    }
+    if (bundle.status === "cancelled") blockers.push(`bundle ${bundle.bundle_id} is cancelled`)
+    return {
+      bundle_id: bundle.bundle_id,
+      proposal_count: bundle.proposal_ids.length,
+      proposed_count: proposals.filter((proposal) => proposal?.status === "proposed").length,
+      review_requested_count: proposals.filter((proposal) => proposal?.status === "review_requested").length,
+      approved_count: proposals.filter((proposal) => proposal?.status === "approved").length,
+      rejected_count: proposals.filter((proposal) => proposal?.status === "rejected").length,
+      cancelled_count: proposals.filter((proposal) => proposal?.status === "cancelled").length,
+      applied_count: proposals.filter((proposal) => proposal?.status === "applied").length,
+      blocked_count: blockers.length,
+      ready_to_apply: bundle.status !== "cancelled" && bundle.proposal_ids.length > 0 && blockers.length === 0,
+      blockers: blockers.map(redactText),
+    }
+  }
+
+  private requestProposalBundleReviews(bundleId: string, requestedBy: string): CommanderProposalBundleSummary {
+    const bundle = this.requireProposalBundle(bundleId)
+    this.requireMutableProposalBundle(bundle)
+    for (const proposalId of bundle.proposal_ids) {
+      const proposal = this.requireProposal(proposalId)
+      if (proposal.status === "proposed") this.requestProposalReview(proposal.proposal_id, { requestedBy })
+    }
+    bundle.status = "review_requested"
+    bundle.updated_at = new Date(0).toISOString()
+    return this.projectProposalBundle(bundle)
+  }
+
+  private applyProposalBundle(bundleId: string, allowPartial: boolean): CommanderProposalBundleSummary {
+    const bundle = this.requireProposalBundle(bundleId)
+    this.requireMutableProposalBundle(bundle)
+    const readiness = this.proposalBundleReadiness(bundle.bundle_id)
+    if (readiness.proposal_count === 0) {
+      bundle.status = "partially_applied"
+      bundle.failure_reason = "proposal bundle has no proposals to apply"
+      throw new Error(bundle.failure_reason)
+    }
+    if (!allowPartial && !readiness.ready_to_apply) {
+      bundle.status = "partially_applied"
+      bundle.failure_reason = readiness.blockers.join("; ") || "bundle is not ready to apply"
+      throw new Error(`proposal bundle is not ready to apply: ${bundle.failure_reason}`)
+    }
+    let appliedCount = 0
+    let skippedCount = 0
+    for (const proposalId of bundle.proposal_ids) {
+      const proposal = this.requireProposal(proposalId)
+      if (proposal.status === "applied") {
+        skippedCount += 1
+        continue
+      }
+      if (proposal.status !== "approved") {
+        if (allowPartial) {
+          skippedCount += 1
+          continue
+        }
+        throw new Error(`proposal is not approved: ${redactText(proposal.proposal_id)}`)
+      }
+      this.applyProposal(proposal.proposal_id)
+      appliedCount += 1
+    }
+    if (allowPartial && appliedCount === 0 && skippedCount > 0) {
+      bundle.status = "partially_applied"
+      bundle.failure_reason = "partial proposal bundle apply did not apply any proposals"
+      throw new Error(`proposal bundle apply failed: ${bundle.failure_reason}`)
+    }
+    bundle.updated_at = new Date(0).toISOString()
+    return this.projectProposalBundle(bundle)
+  }
+
+  private cancelProposalBundle(bundleId: string, reason?: string): CommanderProposalBundleSummary {
+    const bundle = this.requireProposalBundle(bundleId)
+    const projected = this.projectProposalBundle(bundle)
+    const safeReason = reason === undefined ? undefined : redactText(reason)
+    if (projected.status === "cancelled") {
+      if (bundle.cancellation_reason === safeReason) return bundle
+      throw new Error(`terminal proposal bundle cancellation conflicts with existing payload: ${redactText(bundle.bundle_id)}`)
+    }
+    if (projected.status === "applied") throw new Error(`applied proposal bundle cannot cancel: ${redactText(bundle.bundle_id)}`)
+    bundle.status = "cancelled"
+    bundle.updated_at = new Date(0).toISOString()
+    bundle.cancelled_at = bundle.updated_at
+    bundle.cancellation_reason = safeReason
+    return bundle
+  }
+
+  private projectProposalBundle(bundle: CommanderProposalBundleSummary): CommanderProposalBundleSummary {
+    if (bundle.status === "cancelled") return bundle
+    const readiness = this.proposalBundleReadiness(bundle.bundle_id)
+    let status = "open"
+    if (readiness.proposal_count > 0 && readiness.applied_count === readiness.proposal_count) status = "applied"
+    else if (readiness.applied_count > 0) status = "partially_applied"
+    else if (readiness.proposal_count > 0 && readiness.approved_count === readiness.proposal_count) status = "approved"
+    else if (readiness.approved_count > 0) status = "partially_approved"
+    else if (readiness.review_requested_count > 0) status = "review_requested"
+    return { ...bundle, status }
+  }
+
+  private requireProposalBundle(bundleId: string): CommanderProposalBundleSummary {
+    const id = requiredString(bundleId, "bundleId")
+    const bundle = this.proposalBundles.find((item) => item.bundle_id === id)
+    if (!bundle) throw new Error(`commander proposal bundle not found: ${redactText(id)}`)
+    return bundle
+  }
+
+  private requireMutableProposalBundle(bundle: CommanderProposalBundleSummary): void {
+    const projected = this.projectProposalBundle(bundle)
+    if (projected.status === "cancelled" || projected.status === "applied") throw new Error(`terminal proposal bundle cannot be changed: ${redactText(bundle.bundle_id)}`)
+  }
+
   private requireProposal(proposalId: string): CommanderProposalSummary {
     const id = requiredString(proposalId, "proposalId")
     const proposal = this.proposals.find((item) => item.proposal_id === id)
@@ -581,6 +754,20 @@ export class FakeRuntimeClient implements RuntimeClient {
       cancelled_count: this.proposals.filter((proposal) => proposal.status === "cancelled").length,
       applied_count: this.proposals.filter((proposal) => proposal.status === "applied").length,
       last_proposal_id: this.proposals[0]?.proposal_id,
+    }
+  }
+
+  private proposalBundleSummary() {
+    const projected = this.proposalBundles.map((bundle) => this.projectProposalBundle(bundle))
+    return {
+      open_count: projected.filter((bundle) => bundle.status === "open").length,
+      review_requested_count: projected.filter((bundle) => bundle.status === "review_requested").length,
+      approved_count: projected.filter((bundle) => bundle.status === "approved").length,
+      partially_approved_count: projected.filter((bundle) => bundle.status === "partially_approved").length,
+      applied_count: projected.filter((bundle) => bundle.status === "applied").length,
+      partially_applied_count: projected.filter((bundle) => bundle.status === "partially_applied").length,
+      cancelled_count: projected.filter((bundle) => bundle.status === "cancelled").length,
+      last_bundle_id: this.proposalBundles[0]?.bundle_id,
     }
   }
 

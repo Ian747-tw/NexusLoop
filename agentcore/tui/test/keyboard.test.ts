@@ -149,6 +149,23 @@ describe("TUI keyboard command model", () => {
     ])
   })
 
+  test("proposal bundle slash commands route through whitelisted runtime command effects with args", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/create-bundle Bundle title -- Bundle summary",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("create-bundle")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "create-bundle", args: ["Bundle", "title", "--", "Bundle", "summary"] },
+    ])
+  })
+
   test("slash command arguments are redacted before entering system actions", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -208,7 +225,7 @@ describe("TUI keyboard command model", () => {
   })
 
   test("dot and colon prefixed text remains a user message", () => {
-    for (const message of [".status notes", ":missions", ".topics", ":research", ".mission", ":claim", ".complete", ":complete", ".reviews", ":approve", ".proposals", ":apply-proposal", "/path"]) {
+    for (const message of [".status notes", ":missions", ".topics", ":research", ".mission", ":claim", ".complete", ":complete", ".reviews", ":approve", ".proposals", ":apply-proposal", ".bundles", ":apply-bundle", "/path"]) {
       const state: UiState = {
         ...initialState("/tmp/demo"),
         screen: "main",

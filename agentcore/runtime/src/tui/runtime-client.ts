@@ -2,6 +2,7 @@ import type { RuntimeEvent, RuntimeResearchProjectionHealth, RuntimeStatus } fro
 import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult } from "../missions/mission-types"
 import type { ReviewRequest, ReviewRequestInput, ReviewStatusSummary } from "../missions/review-types"
 import type { CommanderProposal, CommanderProposalInput, ProposalStatusSummary } from "../missions/proposal-types"
+import type { CommanderProposalBundle, CommanderProposalBundleInput, CommanderProposalBundleReadiness, CommanderProposalBundleStatus, CommanderProposalBundleSummary } from "../missions/proposal-bundle-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -40,6 +41,15 @@ export interface RuntimeClient {
   command(name: "runtime.cancel_commander_proposal", payload: { proposalId: string; reason?: string }): Promise<CommanderProposal>
   command(name: "runtime.apply_commander_proposal", payload: { proposalId: string }): Promise<CommanderProposal>
   command(name: "runtime.proposal_status"): Promise<ProposalStatusSummary>
+  command(name: "runtime.create_proposal_bundle", payload: Omit<CommanderProposalBundleInput, "created_by"> & { createdBy: string }): Promise<CommanderProposalBundle>
+  command(name: "runtime.get_proposal_bundle", payload: { bundleId: string }): Promise<CommanderProposalBundle | null>
+  command(name: "runtime.list_proposal_bundles", payload?: { status?: CommanderProposalBundleStatus; limit?: number }): Promise<CommanderProposalBundle[]>
+  command(name: "runtime.add_proposal_to_bundle", payload: { bundleId: string; proposalId: string }): Promise<CommanderProposalBundle>
+  command(name: "runtime.proposal_bundle_readiness", payload: { bundleId: string }): Promise<CommanderProposalBundleReadiness>
+  command(name: "runtime.request_proposal_bundle_reviews", payload: { bundleId: string; requestedBy: string }): Promise<CommanderProposalBundle>
+  command(name: "runtime.apply_proposal_bundle", payload: { bundleId: string; allowPartial?: boolean }): Promise<CommanderProposalBundle>
+  command(name: "runtime.cancel_proposal_bundle", payload: { bundleId: string; reason?: string }): Promise<CommanderProposalBundle>
+  command(name: "runtime.proposal_bundle_status"): Promise<CommanderProposalBundleSummary>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -83,6 +93,15 @@ export interface RuntimeCommandEnvelope {
     | "runtime.cancel_commander_proposal"
     | "runtime.apply_commander_proposal"
     | "runtime.proposal_status"
+    | "runtime.create_proposal_bundle"
+    | "runtime.get_proposal_bundle"
+    | "runtime.list_proposal_bundles"
+    | "runtime.add_proposal_to_bundle"
+    | "runtime.proposal_bundle_readiness"
+    | "runtime.request_proposal_bundle_reviews"
+    | "runtime.apply_proposal_bundle"
+    | "runtime.cancel_proposal_bundle"
+    | "runtime.proposal_bundle_status"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

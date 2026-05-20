@@ -13,6 +13,7 @@ import type { RuntimeEvent } from "./events/event-types"
 import { MissionRegistry } from "./missions/mission-registry"
 import { ReviewRegistry } from "./missions/review-registry"
 import { ProposalRegistry } from "./missions/proposal-registry"
+import { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { SpecService } from "./spec/spec-service"
@@ -1055,6 +1056,206 @@ describe("RuntimeServer core", () => {
       proposedBy: "operator",
     })).rejects.toThrow("runtime.create_commander_proposal requires active mode")
     await expect(statusServer.command("runtime.list_commander_proposals")).resolves.toEqual([])
+    await statusServer.shutdown()
+  })
+
+  test("proposal bundle runtime commands persist ordered redacted bundles and hydrate readiness", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const bundleServer = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await bundleServer.start()
+    const submitted = await bundleServer.submitUserMessage("bundle mission")
+    const claim = await bundleServer.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const first = await bundleServer.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "first",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "first progress" },
+    }) as { proposal_id: string }
+    const second = await bundleServer.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "second",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "second progress" },
+    }) as { proposal_id: string }
+    const bundle = await bundleServer.command("runtime.create_proposal_bundle", {
+      title: "bundle token=bundle-title-secret",
+      summary: "summary token=bundle-summary-secret",
+      createdBy: "operator token=bundle-owner-secret",
+    }) as { bundle_id: string }
+
+    const bundleId = String((bundle as Record<string, unknown>).bundle_id ?? "")
+    expect(bundleId).toBeTruthy()
+    expect(bundle).toMatchObject({ status: "open", title: "bundle [REDACTED]", proposal_ids: [] })
+    await bundleServer.command("runtime.add_proposal_to_bundle", { bundleId, proposalId: first.proposal_id })
+    await bundleServer.command("runtime.add_proposal_to_bundle", { bundleId, proposalId: first.proposal_id })
+    await expect(bundleServer.command("runtime.add_proposal_to_bundle", { bundleId, proposalId: second.proposal_id })).resolves.toMatchObject({
+      bundle_id: bundleId,
+      proposal_ids: [first.proposal_id, second.proposal_id],
+    })
+    await expect(bundleServer.command("runtime.add_proposal_to_bundle", { bundleId, proposalId: "missing-proposal" })).rejects.toThrow("commander proposal not found")
+    await expect(bundleServer.command("runtime.proposal_bundle_readiness", { bundleId })).resolves.toMatchObject({
+      proposal_count: 2,
+      proposed_count: 2,
+      ready_to_apply: false,
+      blocked_count: 2,
+    })
+    await expect(bundleServer.command("runtime.request_proposal_bundle_reviews", { bundleId, requestedBy: "operator" })).resolves.toMatchObject({
+      bundle_id: bundleId,
+      status: "review_requested",
+    })
+    await expect(bundleServer.command("runtime.request_proposal_bundle_reviews", { bundleId, requestedBy: "operator" })).resolves.toMatchObject({
+      bundle_id: bundleId,
+      status: "review_requested",
+    })
+    await expect(bundleServer.command("runtime.apply_proposal_bundle", { bundleId })).rejects.toThrow("not ready to apply")
+    const reviews = await bundleServer.command("runtime.list_review_requests", { limit: 10 }) as Array<{ review_id: string }>
+    expect(reviews).toHaveLength(2)
+    for (const review of reviews) await bundleServer.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "ok" })
+    await expect(bundleServer.command("runtime.proposal_bundle_readiness", { bundleId })).resolves.toMatchObject({
+      approved_count: 2,
+      ready_to_apply: true,
+      blocked_count: 0,
+    })
+    await expect(bundleServer.command("runtime.apply_proposal_bundle", { bundleId })).resolves.toMatchObject({
+      bundle_id: bundleId,
+      status: "applied",
+      proposal_ids: [first.proposal_id, second.proposal_id],
+    })
+    await expect(bundleServer.command("runtime.add_proposal_to_bundle", { bundleId, proposalId: first.proposal_id })).rejects.toThrow("terminal proposal bundle")
+    await expect(bundleServer.command("runtime.list_mission_progress", { missionId: submitted.missionId })).resolves.toMatchObject([
+      { message: "first progress" },
+      { message: "second progress" },
+    ])
+
+    const rebuilt = new ProposalBundleRegistry({ eventStore: bundleServer.eventStore, proposalRegistry: bundleServer.proposalRegistry })
+    await expect(rebuilt.getBundle(bundleId)).resolves.toMatchObject({ status: "applied", proposal_ids: [first.proposal_id, second.proposal_id] })
+    expect(await readEventKinds(dir)).toEqual(expect.arrayContaining([
+      "commander_proposal_bundle_created",
+      "commander_proposal_bundle_proposal_added",
+      "commander_proposal_bundle_review_requested",
+      "commander_proposal_bundle_applied",
+    ]))
+    const serialized = JSON.stringify({ status: await bundleServer.status(), events: await readJsonlEvents(dir) })
+    expect(serialized).not.toContain("bundle-title-secret")
+    expect(serialized).not.toContain("bundle-summary-secret")
+    expect(serialized).not.toContain("bundle-owner-secret")
+    await bundleServer.shutdown()
+  })
+
+  test("proposal bundle cancellation and partial apply rules are explicit", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("bundle partial mission")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const approvedCandidate = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "approved",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "approved progress" },
+    }) as { proposal_id: string }
+    const blockedCandidate = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "blocked",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "blocked progress" },
+    }) as { proposal_id: string }
+    const bundle = await server.command("runtime.create_proposal_bundle", { title: "partial", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: approvedCandidate.proposal_id })
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blockedCandidate.proposal_id })
+    const reviewed = await server.command("runtime.request_proposal_review", { proposalId: approvedCandidate.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator" })
+
+    await expect(server.command("runtime.apply_proposal_bundle", { bundleId: bundle.bundle_id })).rejects.toThrow("not ready to apply")
+    const partialApply = await server.command("runtime.apply_proposal_bundle", { bundleId: bundle.bundle_id, allowPartial: true }) as Record<string, unknown>
+    expect(partialApply).toMatchObject({
+      status: "partially_applied",
+    })
+    expect(partialApply).not.toHaveProperty("failure_reason")
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: approvedCandidate.proposal_id })).resolves.toMatchObject({ status: "applied" })
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: blockedCandidate.proposal_id })).resolves.toMatchObject({ status: "proposed" })
+
+    const noOp = await server.command("runtime.create_proposal_bundle", { title: "noop", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: noOp.bundle_id, proposalId: blockedCandidate.proposal_id })
+    await expect(server.command("runtime.apply_proposal_bundle", { bundleId: noOp.bundle_id, allowPartial: true })).rejects.toThrow("did not apply any proposals")
+    const empty = await server.command("runtime.create_proposal_bundle", { title: "empty", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
+    await expect(server.command("runtime.apply_proposal_bundle", { bundleId: empty.bundle_id, allowPartial: true })).rejects.toThrow("has no proposals to apply")
+
+    const cancellable = await server.command("runtime.create_proposal_bundle", { title: "cancel token=cancel-title-secret", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: cancellable.bundle_id, proposalId: blockedCandidate.proposal_id })
+    await expect(server.command("runtime.cancel_proposal_bundle", { bundleId: cancellable.bundle_id, reason: "reason token=cancel-reason-secret" })).resolves.toMatchObject({
+      status: "cancelled",
+      cancellation_reason: "reason [REDACTED]",
+    })
+    await expect(server.command("runtime.cancel_proposal_bundle", { bundleId: cancellable.bundle_id, reason: "reason token=cancel-reason-secret" })).resolves.toMatchObject({ status: "cancelled" })
+    await expect(server.command("runtime.add_proposal_to_bundle", { bundleId: cancellable.bundle_id, proposalId: approvedCandidate.proposal_id })).rejects.toThrow("terminal proposal bundle")
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: blockedCandidate.proposal_id })).resolves.toMatchObject({ status: "proposed" })
+
+    const externallyApplied = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "external",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "external progress" },
+    }) as { proposal_id: string }
+    const externalBundle = await server.command("runtime.create_proposal_bundle", { title: "external", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: externalBundle.bundle_id, proposalId: externallyApplied.proposal_id })
+    const externalReview = await server.command("runtime.request_proposal_review", { proposalId: externallyApplied.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: externalReview.review_id, decidedBy: "operator" })
+    await server.command("runtime.apply_commander_proposal", { proposalId: externallyApplied.proposal_id })
+    await expect(server.command("runtime.cancel_proposal_bundle", { bundleId: externalBundle.bundle_id, reason: "late" })).rejects.toThrow("applied proposal bundle cannot cancel")
+
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toEqual(expect.arrayContaining([
+      "commander_proposal_bundle_apply_failed",
+      "commander_proposal_bundle_cancelled",
+    ]))
+    expect(JSON.stringify(events)).not.toContain("cancel-title-secret")
+    expect(JSON.stringify(events)).not.toContain("cancel-reason-secret")
+    await server.shutdown()
+  })
+
+  test("proposal bundle runtime commands enforce write gates and allow read surfaces", async () => {
+    const notStartedDir = await tempProject()
+    await makeProject(notStartedDir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: notStartedDir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await expect(notStarted.command("runtime.create_proposal_bundle", {
+      title: "title",
+      summary: "summary",
+      createdBy: "operator",
+    })).rejects.toThrow("runtime must be started before proposal bundle writes")
+    await expect(notStarted.command("runtime.proposal_bundle_status")).resolves.toMatchObject({ open_count: 0 })
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir)
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await statusServer.start()
+
+    await expect(statusServer.command("runtime.create_proposal_bundle", {
+      title: "title",
+      summary: "summary",
+      createdBy: "operator",
+    })).rejects.toThrow("runtime.create_proposal_bundle requires active mode")
+    await expect(statusServer.command("runtime.list_proposal_bundles")).resolves.toEqual([])
     await statusServer.shutdown()
   })
 

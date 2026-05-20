@@ -105,6 +105,62 @@ describe("TUI runtime event reducer", () => {
     expect(snapshot).not.toContain("snapshot-secret")
   })
 
+  test("layout snapshot renders bounded proposal bundle state", () => {
+    const state = {
+      ...initialState("/tmp/demo"),
+      proposalBundles: {
+        summary: {
+          open_count: 1,
+          review_requested_count: 0,
+          approved_count: 0,
+          partially_approved_count: 1,
+          applied_count: 0,
+          partially_applied_count: 0,
+          cancelled_count: 0,
+          last_bundle_id: "bundle-2",
+        },
+        recent: [{
+          bundle_id: "bundle-2",
+          title: "Bundle title",
+          summary: "summary",
+          created_by: "operator",
+          status: "partially_approved",
+          proposal_ids: ["proposal-1", "proposal-2"],
+        }],
+        selectedBundle: {
+          bundle_id: "bundle-2",
+          title: "Bundle title",
+          summary: "summary secret=bundle-snapshot-secret",
+          created_by: "operator",
+          status: "partially_approved",
+          proposal_ids: ["proposal-1", "proposal-2"],
+        },
+        readiness: {
+          bundle_id: "bundle-2",
+          proposal_count: 2,
+          proposed_count: 1,
+          review_requested_count: 0,
+          approved_count: 1,
+          rejected_count: 0,
+          cancelled_count: 0,
+          applied_count: 0,
+          blocked_count: 1,
+          ready_to_apply: false,
+          blockers: ["proposal proposal-1 status is proposed secret=bundle-blocker-secret"],
+        },
+      },
+    }
+
+    const snapshot = layoutSnapshot(state)
+
+    expect(snapshot).toContain("Proposal bundles")
+    expect(snapshot).toContain("partially_approved=1")
+    expect(snapshot).toContain("bundle-2 [partially_approved] proposals=2")
+    expect(snapshot).toContain("readiness=blocked proposals=2")
+    expect(snapshot).not.toContain("bundle-snapshot-secret")
+    expect(snapshot).not.toContain("bundle-blocker-secret")
+  })
+
   test("provider and spec onboarding state never stores API keys", () => {
     let state = initialState("/tmp/demo")
     state = reduceRuntimeEvent(state, {

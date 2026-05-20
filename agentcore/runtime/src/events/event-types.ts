@@ -96,6 +96,16 @@ export interface RuntimeStatus {
     applied_count: number
     last_proposal_id?: string
   }
+  proposalBundles?: {
+    open_count: number
+    review_requested_count: number
+    approved_count: number
+    partially_approved_count: number
+    applied_count: number
+    partially_applied_count: number
+    cancelled_count: number
+    last_bundle_id?: string
+  }
   researchProjection: RuntimeResearchProjectionHealth
   policy: Record<string, unknown>
 }

@@ -286,6 +286,7 @@ function ApprovalPanel(props: { state: UiState }) {
   ]
   const reviews = () => props.state.reviews
   const proposals = () => props.state.proposals
+  const bundles = () => props.state.proposalBundles
   return (
     <Panel title="Approval / clarification" focus="approval" state={props.state}>
       <For each={items()}>{(item) => <text fg={color.text}>{lineText(item)}</text>}</For>
@@ -330,6 +331,34 @@ function ApprovalPanel(props: { state: UiState }) {
       </Show>
       <Show when={proposals()?.commandError}>
         {(value) => <text fg={color.warning}>proposal error: {value()}</text>}
+      </Show>
+      <Show when={bundles()?.summary}>
+        {(summary) => (
+          <text fg={color.text}>
+            bundles: open={summary().open_count} review={summary().review_requested_count} approved={summary().approved_count} partial={summary().partially_approved_count + summary().partially_applied_count} applied={summary().applied_count}
+          </text>
+        )}
+      </Show>
+      <For each={(bundles()?.recent ?? []).slice(0, 5)}>
+        {(bundle) => <text fg={color.accent}>{bundle.bundle_id} [{bundle.status}] proposals={bundle.proposal_ids.length} {bundle.title}</text>}
+      </For>
+      <Show when={bundles()?.selectedBundle}>
+        {(bundle) => (
+          <>
+            <text fg={color.text}>bundle: {bundle().bundle_id} [{bundle().status}] proposals={bundle().proposal_ids.length}</text>
+            <text fg={color.muted}>{bundle().summary}</text>
+          </>
+        )}
+      </Show>
+      <Show when={bundles()?.readiness}>
+        {(readiness) => (
+          <text fg={readiness().ready_to_apply ? color.accent : color.warning}>
+            readiness: {readiness().ready_to_apply ? "ready" : "blocked"} approved={readiness().approved_count} applied={readiness().applied_count} blocked={readiness().blocked_count}
+          </text>
+        )}
+      </Show>
+      <Show when={bundles()?.commandError}>
+        {(value) => <text fg={color.warning}>bundle error: {value()}</text>}
       </Show>
     </Panel>
   )

@@ -65,6 +65,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...lines([...state.approval.specApprovals, ...state.approval.candidateApprovals, ...state.approval.clarifications]))
   out.push(...reviewLines(state))
   out.push(...proposalLines(state))
+  out.push(...proposalBundleLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -174,6 +175,48 @@ function proposalLines(state: UiState): string[] {
     out.push("  selected_proposal=none")
   }
   if (proposals.commandError) out.push(`  command_error=${redactText(proposals.commandError)}`)
+  return out
+}
+
+function proposalBundleLines(state: UiState): string[] {
+  const bundles = state.proposalBundles
+  const out = ["Proposal bundles"]
+  if (!bundles) {
+    out.push("  open=0 review_requested=0 partially_approved=0 approved=0 partially_applied=0 applied=0 cancelled=0")
+    return out
+  }
+  if (bundles.summary) {
+    out.push(`  open=${bundles.summary.open_count} review_requested=${bundles.summary.review_requested_count} partially_approved=${bundles.summary.partially_approved_count} approved=${bundles.summary.approved_count} partially_applied=${bundles.summary.partially_applied_count} applied=${bundles.summary.applied_count} cancelled=${bundles.summary.cancelled_count}`)
+    out.push(`  last_bundle=${bundles.summary.last_bundle_id ?? "none"}`)
+  } else {
+    out.push(`  recent=${bundles.recent.length}`)
+  }
+  out.push("  recent_bundles")
+  if (bundles.recent.length === 0) out.push("    - empty")
+  else {
+    out.push(...bundles.recent.slice(0, 10).map((bundle) => {
+      return `    - ${bundle.bundle_id} [${bundle.status}] proposals=${bundle.proposal_ids.length}: ${preview(redactText(bundle.title))}`
+    }))
+  }
+  if (bundles.selectedBundle) {
+    const bundle = bundles.selectedBundle
+    out.push(`  selected_bundle=${bundle.bundle_id} [${bundle.status}] proposals=${bundle.proposal_ids.length}`)
+    out.push(`  title=${preview(redactText(bundle.title))}`)
+    out.push(`  summary=${preview(redactText(bundle.summary))}`)
+    if (bundle.cancellation_reason) out.push(`  cancellation_reason=${preview(redactText(bundle.cancellation_reason))}`)
+    if (bundle.failure_reason) out.push(`  failure_reason=${preview(redactText(bundle.failure_reason))}`)
+  } else {
+    out.push("  selected_bundle=none")
+  }
+  if (bundles.readiness) {
+    const readiness = bundles.readiness
+    out.push(`  readiness=${readiness.ready_to_apply ? "ready" : "blocked"} proposals=${readiness.proposal_count} proposed=${readiness.proposed_count} review_requested=${readiness.review_requested_count} approved=${readiness.approved_count} applied=${readiness.applied_count} rejected=${readiness.rejected_count} cancelled=${readiness.cancelled_count} blocked=${readiness.blocked_count}`)
+    if (readiness.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...readiness.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  }
+  if (bundles.commandError) out.push(`  command_error=${redactText(bundles.commandError)}`)
   return out
 }
 

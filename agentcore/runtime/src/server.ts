@@ -14,6 +14,8 @@ import { ReviewRegistry } from "./missions/review-registry"
 import type { ReviewRequest, ReviewRequestInput, ReviewStatus, ReviewStatusSummary } from "./missions/review-types"
 import { ProposalRegistry } from "./missions/proposal-registry"
 import type { CommanderProposal, CommanderProposalInput, ProposalStatus, ProposalStatusSummary } from "./missions/proposal-types"
+import { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
+import type { CommanderProposalBundle, CommanderProposalBundleInput, CommanderProposalBundleReadiness, CommanderProposalBundleStatus, CommanderProposalBundleSummary } from "./missions/proposal-bundle-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -42,6 +44,7 @@ export interface RuntimeServerOptions {
   missionRegistry?: MissionRegistry
   reviewRegistry?: ReviewRegistry
   proposalRegistry?: ProposalRegistry
+  proposalBundleRegistry?: ProposalBundleRegistry
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -73,6 +76,7 @@ export class RuntimeServer {
   readonly missionRegistry: MissionRegistry
   readonly reviewRegistry: ReviewRegistry
   readonly proposalRegistry: ProposalRegistry
+  readonly proposalBundleRegistry: ProposalBundleRegistry
   private readonly runLock: RunLock
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
@@ -97,6 +101,7 @@ export class RuntimeServer {
     this.missionRegistry = options.missionRegistry ?? new MissionRegistry({ eventStore: this.eventStore, projectDir: this.projectDir })
     this.reviewRegistry = options.reviewRegistry ?? new ReviewRegistry({ eventStore: this.eventStore, missionRegistry: this.missionRegistry })
     this.proposalRegistry = options.proposalRegistry ?? new ProposalRegistry({ eventStore: this.eventStore, missionRegistry: this.missionRegistry, reviewRegistry: this.reviewRegistry })
+    this.proposalBundleRegistry = options.proposalBundleRegistry ?? new ProposalBundleRegistry({ eventStore: this.eventStore, proposalRegistry: this.proposalRegistry })
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -343,6 +348,31 @@ export class RuntimeServer {
         return this.applyCommanderProposal(requiredString(payload.proposalId ?? payload.proposal_id, "proposalId"))
       case "runtime.proposal_status":
         return this.proposalStatusSummary()
+      case "runtime.create_proposal_bundle":
+        return this.createProposalBundle({
+          title: requiredString(payload.title, "title"),
+          summary: requiredString(payload.summary, "summary"),
+          created_by: requiredString(payload.createdBy ?? payload.created_by, "createdBy"),
+        })
+      case "runtime.get_proposal_bundle":
+        return this.getProposalBundle(requiredString(payload.bundleId ?? payload.bundle_id, "bundleId"))
+      case "runtime.list_proposal_bundles":
+        return this.listProposalBundles({
+          status: optionalString(payload.status, "status") as CommanderProposalBundleStatus | undefined,
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+        })
+      case "runtime.add_proposal_to_bundle":
+        return this.addProposalToBundle(requiredString(payload.bundleId ?? payload.bundle_id, "bundleId"), requiredString(payload.proposalId ?? payload.proposal_id, "proposalId"))
+      case "runtime.proposal_bundle_readiness":
+        return this.proposalBundleReadiness(requiredString(payload.bundleId ?? payload.bundle_id, "bundleId"))
+      case "runtime.request_proposal_bundle_reviews":
+        return this.requestProposalBundleReviews(requiredString(payload.bundleId ?? payload.bundle_id, "bundleId"), requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"))
+      case "runtime.apply_proposal_bundle":
+        return this.applyProposalBundle(requiredString(payload.bundleId ?? payload.bundle_id, "bundleId"), { allowPartial: optionalBoolean(payload.allowPartial ?? payload.allow_partial, "allowPartial") })
+      case "runtime.cancel_proposal_bundle":
+        return this.cancelProposalBundle(requiredString(payload.bundleId ?? payload.bundle_id, "bundleId"), optionalString(payload.reason, "reason"))
+      case "runtime.proposal_bundle_status":
+        return this.proposalBundleStatusSummary()
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -367,6 +397,7 @@ export class RuntimeServer {
       missions: await this.missionRegistry.statusSummary(),
       reviews: await this.reviewRegistry.statusSummary(),
       proposals: await this.proposalRegistry.statusSummary(),
+      proposalBundles: await this.proposalBundleRegistry.statusSummary(),
       researchProjection: this.researchProjectionHealth,
       policy,
     })
@@ -545,6 +576,47 @@ export class RuntimeServer {
 
   async proposalStatusSummary(): Promise<ProposalStatusSummary> {
     return this.proposalRegistry.statusSummary()
+  }
+
+  async createProposalBundle(input: CommanderProposalBundleInput): Promise<CommanderProposalBundle> {
+    this.requireProposalBundleWriteRuntime("runtime.create_proposal_bundle")
+    return this.proposalBundleRegistry.createBundle(input)
+  }
+
+  async getProposalBundle(bundleId: string): Promise<CommanderProposalBundle | null> {
+    return this.proposalBundleRegistry.getBundle(bundleId)
+  }
+
+  async listProposalBundles(options: { status?: CommanderProposalBundleStatus; limit?: number } = {}): Promise<CommanderProposalBundle[]> {
+    return this.proposalBundleRegistry.listBundles(options)
+  }
+
+  async addProposalToBundle(bundleId: string, proposalId: string): Promise<CommanderProposalBundle> {
+    this.requireProposalBundleWriteRuntime("runtime.add_proposal_to_bundle")
+    return this.proposalBundleRegistry.addProposal(bundleId, proposalId)
+  }
+
+  async proposalBundleReadiness(bundleId: string): Promise<CommanderProposalBundleReadiness> {
+    return this.proposalBundleRegistry.readiness(bundleId)
+  }
+
+  async requestProposalBundleReviews(bundleId: string, requestedBy: string): Promise<CommanderProposalBundle> {
+    this.requireProposalBundleWriteRuntime("runtime.request_proposal_bundle_reviews")
+    return this.proposalBundleRegistry.requestReviews(bundleId, { requested_by: requestedBy })
+  }
+
+  async applyProposalBundle(bundleId: string, options: { allowPartial?: boolean } = {}): Promise<CommanderProposalBundle> {
+    this.requireProposalBundleWriteRuntime("runtime.apply_proposal_bundle")
+    return this.proposalBundleRegistry.applyBundle(bundleId, options)
+  }
+
+  async cancelProposalBundle(bundleId: string, reason?: string): Promise<CommanderProposalBundle> {
+    this.requireProposalBundleWriteRuntime("runtime.cancel_proposal_bundle")
+    return this.proposalBundleRegistry.cancelBundle(bundleId, reason)
+  }
+
+  async proposalBundleStatusSummary(): Promise<CommanderProposalBundleSummary> {
+    return this.proposalBundleRegistry.statusSummary()
   }
 
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
@@ -813,6 +885,11 @@ export class RuntimeServer {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before proposal writes")
   }
+
+  private requireProposalBundleWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before proposal bundle writes")
+  }
 }
 
 type ResearchProjectionRuntimeEventType = Extract<RuntimeEvent, { type: `ResearchProjection${string}` }>["type"]
@@ -846,6 +923,12 @@ function optionalPositiveInteger(value: unknown, field: string, max = 1000): num
   if (!Number.isInteger(value) || Number(value) < 1) throw new Error(`${field} must be a positive integer`)
   if (Number(value) > max) throw new Error(`${field} must be no greater than ${max}`)
   return Number(value)
+}
+
+function optionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "boolean") throw new Error(`${field} must be a boolean`)
+  return value
 }
 
 function optionalStringArray(value: unknown, field: string): string[] | undefined {

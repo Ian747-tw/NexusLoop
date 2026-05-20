@@ -386,6 +386,50 @@ describe("TUI runtime client factory", () => {
     await client.runtime.shutdown()
   })
 
+  test("real runtime client path exercises proposal bundle create add review approve and apply with fake adapter", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    const submitted = await client.command("runtime.submit_user_message", { message: "proposal bundle mission" }) as { missionId: string }
+    const claim = await client.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "tester" }) as { claim_id: string }
+    const proposal = await client.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "Record bundled progress",
+      summary: "working",
+      proposedBy: "tester",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "bundled progress" },
+    }) as { proposal_id: string }
+    const bundle = await client.command("runtime.create_proposal_bundle", {
+      title: "Bundle progress",
+      summary: "Apply progress proposal",
+      createdBy: "tester",
+    }) as { bundle_id: string }
+    await expect(client.command("runtime.add_proposal_to_bundle", {
+      bundleId: bundle.bundle_id,
+      proposalId: proposal.proposal_id,
+    })).resolves.toMatchObject({ bundle_id: bundle.bundle_id, proposal_ids: [proposal.proposal_id] })
+    await expect(client.command("runtime.apply_proposal_bundle", { bundleId: bundle.bundle_id })).rejects.toThrow("not ready to apply")
+    await expect(client.command("runtime.request_proposal_bundle_reviews", {
+      bundleId: bundle.bundle_id,
+      requestedBy: "tester",
+    })).resolves.toMatchObject({ bundle_id: bundle.bundle_id, status: "review_requested" })
+    const reviews = await client.command("runtime.list_review_requests", { status: "pending" }) as Array<{ review_id: string }>
+    expect(reviews).toHaveLength(1)
+    await client.command("runtime.approve_review_request", { reviewId: reviews[0].review_id, decidedBy: "tester", reason: "ok" })
+    await expect(client.command("runtime.apply_proposal_bundle", { bundleId: bundle.bundle_id })).resolves.toMatchObject({
+      bundle_id: bundle.bundle_id,
+      status: "applied",
+    })
+
+    await client.runtime.shutdown()
+  })
+
   test("secret-looking env values do not leak through runtime status or event snapshots", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)

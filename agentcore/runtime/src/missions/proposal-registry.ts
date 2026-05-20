@@ -377,7 +377,7 @@ export class ProposalRegistry {
         this.applyFailed(readEventString(event.proposal_id, "proposal_id"), readEventString(event.failed_at, "failed_at"), readEventString(event.failure_reason, "failure_reason"))
         break
       default:
-        if (typeof event.kind === "string" && event.kind.startsWith("commander_proposal_")) {
+        if (typeof event.kind === "string" && event.kind.startsWith("commander_proposal_") && !event.kind.startsWith("commander_proposal_bundle_")) {
           throw new Error(`unsupported commander proposal event: ${event.kind}`)
         }
     }
