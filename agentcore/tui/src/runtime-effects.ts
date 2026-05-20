@@ -8,6 +8,10 @@ import type {
   MissionProgressSummary,
   MissionResultSummary,
   MissionSummaryState,
+  CommanderWorkbenchDraftSummary,
+  CommanderWorkbenchReadinessSummary,
+  CommanderWorkbenchState,
+  CommanderWorkbenchStatusSummary,
   ResearchEventSummary,
   ResearchNoteSummary,
   ResearchProjectionSummary,
@@ -40,6 +44,7 @@ const REVIEW_LIMIT = 10
 const PROPOSAL_LIMIT = 10
 const PROPOSAL_BUNDLE_LIMIT = 10
 const PLAYBOOK_LIMIT = 10
+const WORKBENCH_DRAFT_LIMIT = 10
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -89,6 +94,11 @@ export type RuntimeUiEffect =
   | { type: "load-playbooks"; limit?: number }
   | { type: "load-playbook"; playbookId: string }
   | { type: "draft-playbook"; playbookId: string; fields: Record<string, string>; bundleTitle?: string; bundleSummary?: string; createBundle?: boolean; requestReviews?: boolean }
+  | { type: "load-playbook-drafts"; limit?: number }
+  | { type: "load-playbook-draft"; draftId: string }
+  | { type: "load-playbook-draft-readiness"; draftId: string }
+  | { type: "request-playbook-draft-reviews"; draftId: string }
+  | { type: "cancel-playbook-draft"; draftId: string; reason?: string }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -350,6 +360,36 @@ export async function applyRuntimeUiEffect(
         )
         return await refreshAfterPlaybookDraft(drafted, runtime)
       }
+      case "load-playbook-drafts":
+        return await loadPlaybookDrafts(state, runtime, effect.limit ?? WORKBENCH_DRAFT_LIMIT)
+      case "load-playbook-draft": {
+        const next = applySelectedWorkbenchDraft(
+          state,
+          await runtime.command("runtime.get_commander_playbook_draft", { draftId: effect.draftId }),
+          effect.draftId,
+        )
+        return await loadPlaybookDraftReadiness(next, runtime, effect.draftId)
+      }
+      case "load-playbook-draft-readiness":
+        return await loadPlaybookDraftReadiness(state, runtime, effect.draftId)
+      case "request-playbook-draft-reviews": {
+        const next = applySelectedWorkbenchDraft(
+          state,
+          await runtime.command("runtime.request_commander_playbook_draft_reviews", { draftId: effect.draftId, requestedBy: "operator" }),
+          effect.draftId,
+        )
+        let refreshed = await loadPlaybookDraftReadiness(await loadPlaybookDrafts(next, runtime, WORKBENCH_DRAFT_LIMIT), runtime, effect.draftId)
+        refreshed = await loadProposals(refreshed, runtime, PROPOSAL_LIMIT)
+        return await loadReviews(refreshed, runtime, REVIEW_LIMIT)
+      }
+      case "cancel-playbook-draft": {
+        const next = applySelectedWorkbenchDraft(
+          state,
+          await runtime.command("runtime.cancel_commander_playbook_draft", { draftId: effect.draftId, reason: effect.reason }),
+          effect.draftId,
+        )
+        return await loadPlaybookDraftReadiness(await loadPlaybookDrafts(next, runtime, WORKBENCH_DRAFT_LIMIT), runtime, effect.draftId)
+      }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -366,6 +406,7 @@ export async function applyRuntimeUiEffect(
     if (isProposalEffect(effect)) return recordProposalCommandError(state, error)
     if (isProposalBundleEffect(effect)) return recordProposalBundleCommandError(state, error)
     if (isPlaybookEffect(effect)) return recordPlaybookCommandError(state, error)
+    if (isWorkbenchEffect(effect)) return recordWorkbenchCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -379,6 +420,7 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-proposals", limit: PROPOSAL_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-proposal-bundles", limit: PROPOSAL_BUNDLE_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-playbooks", limit: PLAYBOOK_LIMIT })
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-playbook-drafts", limit: WORKBENCH_DRAFT_LIMIT })
   return next
 }
 
@@ -489,6 +531,33 @@ async function loadProposalBundleReadiness(state: UiState, runtime: RuntimeClien
   }
 }
 
+async function loadPlaybookDrafts(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const summary = readWorkbenchSummary(await runtime.command("runtime.commander_playbook_draft_status"))
+  const drafts = readWorkbenchDraftList(await runtime.command("runtime.list_commander_playbook_drafts", { limit }), "runtime.list_commander_playbook_drafts")
+  return {
+    ...state,
+    commanderWorkbench: {
+      ...commanderWorkbenchState(state),
+      summary,
+      drafts,
+      commandError: state.lastCommand === "drafts" || state.lastCommand === "workbench" ? undefined : state.commanderWorkbench?.commandError,
+    },
+  }
+}
+
+async function loadPlaybookDraftReadiness(state: UiState, runtime: RuntimeClient, draftId: string): Promise<UiState> {
+  const readiness = readWorkbenchReadiness(await runtime.command("runtime.commander_playbook_draft_readiness", { draftId }))
+  return {
+    ...state,
+    commanderWorkbench: {
+      ...commanderWorkbenchState(state),
+      readiness,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "playbook draft readiness", detail: `draft_id=${redactText(draftId)}`, status: readiness.ready_to_apply ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
 async function refreshProposalBundlesProposalsAndReviews(state: UiState, runtime: RuntimeClient, bundleId: string): Promise<UiState> {
   let next = await loadProposalBundles(state, runtime, PROPOSAL_BUNDLE_LIMIT)
   next = await loadProposalBundleReadiness(next, runtime, bundleId)
@@ -518,6 +587,7 @@ async function refreshAfterPlaybookDraft(state: UiState, runtime: RuntimeClient)
   let next = await loadProposals(state, runtime, PROPOSAL_LIMIT)
   next = await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT)
   next = await loadReviews(next, runtime, REVIEW_LIMIT)
+  next = await loadPlaybookDrafts(next, runtime, WORKBENCH_DRAFT_LIMIT)
   return next
 }
 
@@ -657,6 +727,17 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, draftCancelEffect(args))
     case "draft-release":
       return applyRuntimeUiEffect(commandState, runtime, draftReleaseEffect(args))
+    case "drafts":
+    case "workbench":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-playbook-drafts", limit: WORKBENCH_DRAFT_LIMIT })
+    case "draft":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-playbook-draft", draftId: requiredArg(args, 0, "draftId") })
+    case "draft-ready":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-playbook-draft-readiness", draftId: requiredArg(args, 0, "draftId") })
+    case "draft-review":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "request-playbook-draft-reviews", draftId: requiredArg(args, 0, "draftId") })
+    case "cancel-draft":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-playbook-draft", draftId: requiredArg(args, 0, "draftId"), reason: optionalRest(args, 1) })
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -823,6 +904,11 @@ function isPlaybookEffect(effect: RuntimeUiEffect): boolean {
   return playbookCommands.has(effect.command)
 }
 
+function isWorkbenchEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return workbenchEffectTypes.has(effect.type)
+  return workbenchCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -840,6 +926,23 @@ const playbookEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "draft-playbook",
 ])
 
+const workbenchCommands = new Set([
+  "drafts",
+  "workbench",
+  "draft",
+  "draft-ready",
+  "draft-review",
+  "cancel-draft",
+])
+
+const workbenchEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-playbook-drafts",
+  "load-playbook-draft",
+  "load-playbook-draft-readiness",
+  "request-playbook-draft-reviews",
+  "cancel-playbook-draft",
+])
+
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   if (!isRecord(value)) throw new Error("runtime.status returned non-object result")
   const runtimeStatus: RuntimeStatusSummary = {
@@ -854,6 +957,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   const reviewSummary = readReviewSummary(value.reviews)
   const proposalSummary = readProposalSummary(value.proposals)
   const proposalBundleSummary = readProposalBundleSummary(value.proposalBundles)
+  const workbenchSummary = readWorkbenchSummary(value.playbookDrafts)
   return {
     ...state,
     runtimeStatus,
@@ -863,6 +967,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
     reviews: reviewSummary ? { ...reviewsState(state), summary: reviewSummary } : state.reviews,
     proposals: proposalSummary ? { ...proposalsState(state), summary: proposalSummary } : state.proposals,
     proposalBundles: proposalBundleSummary ? { ...proposalBundlesState(state), summary: proposalBundleSummary } : state.proposalBundles,
+    commanderWorkbench: workbenchSummary ? { ...commanderWorkbenchState(state), summary: workbenchSummary } : state.commanderWorkbench,
     runtimeCommandError: undefined,
     header: {
       ...state.header,
@@ -994,10 +1099,26 @@ function applyPlaybookDraft(state: UiState, value: unknown): UiState {
       ...state.systemActions,
       {
         title: "playbook drafted",
-        detail: `playbook_id=${draft.playbook_id} proposals=${draft.proposal_ids.join(",") || "none"} bundle=${draft.bundle_id ?? "none"}`,
+        detail: `draft_id=${draft.draft_id ?? "none"} playbook_id=${draft.playbook_id} proposals=${draft.proposal_ids.join(",") || "none"} bundle=${draft.bundle_id ?? "none"}`,
         status: "proposed",
       },
     ].slice(-12),
+  }
+}
+
+function applySelectedWorkbenchDraft(state: UiState, value: unknown, draftId: string): UiState {
+  const draft = readWorkbenchDraft(value)
+  if (!draft && value !== null) throw new Error("runtime.get_commander_playbook_draft returned invalid draft")
+  const selectedDraftId = draft?.draft_id ?? redactText(draftId)
+  return {
+    ...state,
+    commanderWorkbench: {
+      ...commanderWorkbenchState(state),
+      selectedDraft: draft,
+      drafts: draft ? [draft, ...commanderWorkbenchState(state).drafts.filter((item) => item.draft_id !== draft.draft_id)].slice(0, WORKBENCH_DRAFT_LIMIT) : commanderWorkbenchState(state).drafts,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "playbook draft selected", detail: `draft_id=${selectedDraftId}`, status: draft?.status }].slice(-12),
   }
 }
 
@@ -1308,6 +1429,18 @@ function recordPlaybookCommandError(state: UiState, error: unknown): UiState {
   }
 }
 
+function recordWorkbenchCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderWorkbench: {
+      ...commanderWorkbenchState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "workbench command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -1379,6 +1512,17 @@ function readProposalBundleSummary(value: unknown): ProposalBundleStatusSummary 
     partially_applied_count: readNumber(value.partially_applied_count, 0),
     cancelled_count: readNumber(value.cancelled_count, 0),
     last_bundle_id: typeof value.last_bundle_id === "string" ? redactText(value.last_bundle_id) : undefined,
+  }
+}
+
+function readWorkbenchSummary(value: unknown): CommanderWorkbenchStatusSummary | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    drafted_count: readNumber(value.drafted_count, 0),
+    review_requested_count: readNumber(value.review_requested_count, 0),
+    partially_review_requested_count: readNumber(value.partially_review_requested_count, 0),
+    cancelled_count: readNumber(value.cancelled_count, 0),
+    last_draft_id: typeof value.last_draft_id === "string" ? redactText(value.last_draft_id) : undefined,
   }
 }
 
@@ -1509,11 +1653,58 @@ function readPlaybookField(value: unknown): CommanderPlaybookSummary["required_f
 function readPlaybookDraft(value: unknown): CommanderPlaybookDraftSummary {
   if (!isRecord(value) || typeof value.playbook_id !== "string" || typeof value.created_at !== "string") throw new Error("runtime.draft_commander_playbook returned invalid draft result")
   return {
+    draft_id: typeof value.draft_id === "string" ? redactText(value.draft_id) : undefined,
     playbook_id: redactText(value.playbook_id),
     proposal_ids: Array.isArray(value.proposal_ids) ? value.proposal_ids.filter((item): item is string => typeof item === "string").map(redactText).slice(0, 20) : [],
     bundle_id: typeof value.bundle_id === "string" ? redactText(value.bundle_id) : undefined,
     review_ids: Array.isArray(value.review_ids) ? value.review_ids.filter((item): item is string => typeof item === "string").map(redactText).slice(0, 20) : undefined,
     created_at: redactText(value.created_at),
+  }
+}
+
+function readWorkbenchDraftList(value: unknown, commandName: string): CommanderWorkbenchDraftSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWorkbenchDraft).filter((draft): draft is CommanderWorkbenchDraftSummary => draft !== null).slice(0, WORKBENCH_DRAFT_LIMIT)
+}
+
+function readWorkbenchDraft(value: unknown): CommanderWorkbenchDraftSummary | null {
+  if (!isRecord(value) || typeof value.draft_id !== "string" || typeof value.status !== "string") return null
+  const fieldValues: Record<string, string> = {}
+  if (isRecord(value.field_values)) {
+    for (const [key, raw] of Object.entries(value.field_values)) {
+      if (typeof raw === "string") fieldValues[redactText(key)] = preview(redactText(raw))
+    }
+  }
+  return {
+    draft_id: redactText(value.draft_id),
+    playbook_id: readString(value.playbook_id, "unknown"),
+    status: readString(value.status, "unknown"),
+    proposed_by: readString(value.proposed_by, "unknown"),
+    field_values: fieldValues,
+    proposal_ids: Array.isArray(value.proposal_ids) ? value.proposal_ids.filter((item): item is string => typeof item === "string").map(redactText).slice(0, 20) : [],
+    bundle_id: typeof value.bundle_id === "string" ? redactText(value.bundle_id) : undefined,
+    review_ids: Array.isArray(value.review_ids) ? value.review_ids.filter((item): item is string => typeof item === "string").map(redactText).slice(0, 20) : undefined,
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+    updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : "",
+    cancelled_at: typeof value.cancelled_at === "string" ? redactText(value.cancelled_at) : undefined,
+    cancellation_reason: typeof value.cancellation_reason === "string" ? preview(redactText(value.cancellation_reason)) : undefined,
+  }
+}
+
+function readWorkbenchReadiness(value: unknown): CommanderWorkbenchReadinessSummary {
+  if (!isRecord(value) || typeof value.draft_id !== "string") throw new Error("runtime.commander_playbook_draft_readiness returned invalid readiness")
+  return {
+    draft_id: redactText(value.draft_id),
+    proposal_count: readNumber(value.proposal_count, 0),
+    bundle_id: typeof value.bundle_id === "string" ? redactText(value.bundle_id) : undefined,
+    review_count: readNumber(value.review_count, 0),
+    missing_review_count: readNumber(value.missing_review_count, 0),
+    approved_review_count: readNumber(value.approved_review_count, 0),
+    rejected_review_count: readNumber(value.rejected_review_count, 0),
+    cancelled_review_count: readNumber(value.cancelled_review_count, 0),
+    applied_proposal_count: readNumber(value.applied_proposal_count, 0),
+    blockers: Array.isArray(value.blockers) ? value.blockers.filter((item): item is string => typeof item === "string").map((item) => preview(redactText(item))).slice(0, 10) : [],
+    ready_to_apply: readBoolean(value.ready_to_apply),
   }
 }
 
@@ -1654,6 +1845,10 @@ function proposalBundlesState(state: UiState): ProposalBundlesState {
 
 function commanderPlaybooksState(state: UiState): CommanderPlaybooksState {
   return state.commanderPlaybooks ?? { catalog: [], selectedPlaybook: null, lastDraft: null }
+}
+
+function commanderWorkbenchState(state: UiState): CommanderWorkbenchState {
+  return state.commanderWorkbench ?? { drafts: [], selectedDraft: null, readiness: null }
 }
 
 function missionExecutionState(state: UiState): MissionExecutionState {

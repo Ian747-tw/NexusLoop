@@ -287,6 +287,7 @@ export type CommanderPlaybookSummary = {
 }
 
 export type CommanderPlaybookDraftSummary = {
+  draft_id?: string
   playbook_id: string
   proposal_ids: string[]
   bundle_id?: string
@@ -298,6 +299,51 @@ export type CommanderPlaybooksState = {
   catalog: CommanderPlaybookSummary[]
   selectedPlaybook?: CommanderPlaybookSummary | null
   lastDraft?: CommanderPlaybookDraftSummary | null
+  commandError?: string
+}
+
+export type CommanderWorkbenchDraftSummary = {
+  draft_id: string
+  playbook_id: string
+  status: string
+  proposed_by: string
+  field_values: Record<string, string>
+  proposal_ids: string[]
+  bundle_id?: string
+  review_ids?: string[]
+  created_at: string
+  updated_at: string
+  cancelled_at?: string
+  cancellation_reason?: string
+}
+
+export type CommanderWorkbenchStatusSummary = {
+  drafted_count: number
+  review_requested_count: number
+  partially_review_requested_count: number
+  cancelled_count: number
+  last_draft_id?: string
+}
+
+export type CommanderWorkbenchReadinessSummary = {
+  draft_id: string
+  proposal_count: number
+  bundle_id?: string
+  review_count: number
+  missing_review_count: number
+  approved_review_count: number
+  rejected_review_count: number
+  cancelled_review_count: number
+  applied_proposal_count: number
+  blockers: string[]
+  ready_to_apply: boolean
+}
+
+export type CommanderWorkbenchState = {
+  drafts: CommanderWorkbenchDraftSummary[]
+  selectedDraft?: CommanderWorkbenchDraftSummary | null
+  readiness?: CommanderWorkbenchReadinessSummary | null
+  summary?: CommanderWorkbenchStatusSummary
   commandError?: string
 }
 
@@ -384,6 +430,7 @@ export type UiState = {
   proposals?: ProposalsState
   proposalBundles?: ProposalBundlesState
   commanderPlaybooks?: CommanderPlaybooksState
+  commanderWorkbench?: CommanderWorkbenchState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -483,6 +530,11 @@ export function initialState(projectDir: string): UiState {
       catalog: [],
       selectedPlaybook: null,
       lastDraft: null,
+    },
+    commanderWorkbench: {
+      drafts: [],
+      selectedDraft: null,
+      readiness: null,
     },
   }
 }

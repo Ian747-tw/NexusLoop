@@ -452,12 +452,18 @@ describe("TUI runtime client factory", () => {
         title: "Record progress",
         message: "working",
       },
-    }) as { proposal_ids: string[] }
+    }) as { draft_id: string; proposal_ids: string[] }
 
+    expect(draft.draft_id).toBeTruthy()
     expect(draft.proposal_ids).toHaveLength(1)
     await expect(client.command("runtime.get_commander_proposal", { proposalId: draft.proposal_ids[0] })).resolves.toMatchObject({
       action_kind: "record_progress",
       status: "proposed",
+    })
+    await expect(client.command("runtime.request_commander_playbook_draft_reviews", { draftId: draft.draft_id, requestedBy: "tester" })).resolves.toMatchObject({
+      draft_id: draft.draft_id,
+      status: "review_requested",
+      review_ids: [expect.any(String)],
     })
 
     await client.runtime.shutdown()

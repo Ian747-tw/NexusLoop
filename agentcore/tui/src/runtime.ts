@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
+import type { CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -30,6 +30,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly proposals: CommanderProposalSummary[] = []
   private readonly proposalBundles: CommanderProposalBundleSummary[] = []
   private readonly playbooks: CommanderPlaybookSummary[] = fakeCommanderPlaybooks()
+  private readonly playbookDrafts: CommanderWorkbenchDraftSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -129,6 +130,7 @@ export class FakeRuntimeClient implements RuntimeClient {
           reviews: this.reviewSummary(),
           proposals: this.proposalSummary(),
           proposalBundles: this.proposalBundleSummary(),
+          playbookDrafts: this.playbookDraftSummary(),
           researchProjection: { mode: "disabled", ok: true, stale: false, reason: "disabled", pending_count: 0 },
         }
       case "runtime.list_recent_missions":
@@ -215,6 +217,18 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getCommanderPlaybook(String(payload.playbookId ?? payload.playbook_id ?? ""))
       case "runtime.draft_commander_playbook":
         return this.draftCommanderPlaybook(payload)
+      case "runtime.get_commander_playbook_draft":
+        return this.getCommanderPlaybookDraft(String(payload.draftId ?? payload.draft_id ?? ""))
+      case "runtime.list_commander_playbook_drafts":
+        return this.listCommanderPlaybookDrafts(optionalString(payload.status), readLimit(payload.limit, 20))
+      case "runtime.commander_playbook_draft_status":
+        return this.playbookDraftSummary()
+      case "runtime.commander_playbook_draft_readiness":
+        return this.commanderPlaybookDraftReadiness(String(payload.draftId ?? payload.draft_id ?? ""))
+      case "runtime.request_commander_playbook_draft_reviews":
+        return this.requestCommanderPlaybookDraftReviews(String(payload.draftId ?? payload.draft_id ?? ""), String(payload.requestedBy ?? payload.requested_by ?? "operator"))
+      case "runtime.cancel_commander_playbook_draft":
+        return this.cancelCommanderPlaybookDraft(String(payload.draftId ?? payload.draft_id ?? ""), optionalString(payload.reason))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -727,13 +741,128 @@ export class FakeRuntimeClient implements RuntimeClient {
       else for (const proposal of created) this.requestProposalReview(proposal.proposal_id, { requestedBy })
       reviewIds = created.map((proposal) => this.requireProposal(proposal.proposal_id).review_id).filter((reviewId): reviewId is string => typeof reviewId === "string")
     }
+    this.sequence += 1
+    const draftId = `fake-draft-${this.sequence}`
+    const createdAt = new Date(0).toISOString()
+    const draft: CommanderWorkbenchDraftSummary = {
+      draft_id: draftId,
+      playbook_id: playbook.playbook_id,
+      status: reviewStatusForDraft(created.length, reviewIds?.length ?? 0),
+      proposed_by: redactText(proposedBy),
+      field_values: fields,
+      proposal_ids: created.map((proposal) => proposal.proposal_id),
+      bundle_id: bundleId,
+      review_ids: reviewIds,
+      created_at: createdAt,
+      updated_at: createdAt,
+    }
+    this.playbookDrafts.unshift(draft)
     return {
+      draft_id: draftId,
       playbook_id: playbook.playbook_id,
       proposal_ids: created.map((proposal) => proposal.proposal_id),
       bundle_id: bundleId,
       review_ids: reviewIds,
-      created_at: new Date(0).toISOString(),
+      created_at: createdAt,
     }
+  }
+
+  private getCommanderPlaybookDraft(draftId: string): CommanderWorkbenchDraftSummary | null {
+    const id = requiredString(draftId, "draftId")
+    return this.playbookDrafts.find((draft) => draft.draft_id === id) ?? null
+  }
+
+  private listCommanderPlaybookDrafts(status: string | undefined, limit: number): CommanderWorkbenchDraftSummary[] {
+    return this.playbookDrafts.filter((draft) => status === undefined || draft.status === status).slice(0, limit)
+  }
+
+  private playbookDraftSummary(): CommanderWorkbenchStatusSummary {
+    return {
+      drafted_count: this.playbookDrafts.filter((draft) => draft.status === "drafted").length,
+      review_requested_count: this.playbookDrafts.filter((draft) => draft.status === "review_requested").length,
+      partially_review_requested_count: this.playbookDrafts.filter((draft) => draft.status === "partially_review_requested").length,
+      cancelled_count: this.playbookDrafts.filter((draft) => draft.status === "cancelled").length,
+      last_draft_id: this.playbookDrafts[0]?.draft_id,
+    }
+  }
+
+  private commanderPlaybookDraftReadiness(draftId: string): CommanderWorkbenchReadinessSummary {
+    const draft = this.requireCommanderPlaybookDraft(draftId)
+    const blockers: string[] = []
+    let approved = 0
+    let rejected = 0
+    let cancelled = 0
+    let applied = 0
+    const reviewIds: string[] = []
+    for (const proposalId of draft.proposal_ids) {
+      const proposal = this.requireProposal(proposalId)
+      if (proposal.status === "applied") applied += 1
+      if (proposal.review_id) reviewIds.push(proposal.review_id)
+      else blockers.push(`proposal ${proposal.proposal_id} has no linked review`)
+      if (proposal.status !== "approved" && proposal.status !== "applied") blockers.push(`proposal ${proposal.proposal_id} status is ${proposal.status}`)
+    }
+    for (const reviewId of reviewIds) {
+      const review = this.reviews.find((item) => item.review_id === reviewId)
+      if (!review) blockers.push(`missing review: ${reviewId}`)
+      else if (review.status === "approved") approved += 1
+      else if (review.status === "rejected") rejected += 1
+      else if (review.status === "cancelled") cancelled += 1
+      else blockers.push(`review ${review.review_id} status is ${review.status}`)
+    }
+    if (draft.status === "cancelled") blockers.push(`draft ${draft.draft_id} is cancelled`)
+    return {
+      draft_id: draft.draft_id,
+      proposal_count: draft.proposal_ids.length,
+      bundle_id: draft.bundle_id,
+      review_count: reviewIds.length,
+      missing_review_count: Math.max(0, draft.proposal_ids.length - reviewIds.length),
+      approved_review_count: approved,
+      rejected_review_count: rejected,
+      cancelled_review_count: cancelled,
+      applied_proposal_count: applied,
+      blockers: blockers.map(redactText),
+      ready_to_apply: draft.status !== "cancelled" && draft.proposal_ids.length > 0 && blockers.length === 0,
+    }
+  }
+
+  private requestCommanderPlaybookDraftReviews(draftId: string, requestedBy: string): CommanderWorkbenchDraftSummary {
+    const draft = this.requireCommanderPlaybookDraft(draftId)
+    if (draft.status === "cancelled") throw new Error(`cancelled playbook draft cannot request reviews: ${redactText(draft.draft_id)}`)
+    const existingReviewIds = draft.proposal_ids.map((proposalId) => this.requireProposal(proposalId).review_id).filter((reviewId): reviewId is string => typeof reviewId === "string")
+    const hasMissingReviews = existingReviewIds.length < draft.proposal_ids.length
+    if (draft.bundle_id && hasMissingReviews) this.requestProposalBundleReviews(draft.bundle_id, requestedBy)
+    else {
+      for (const proposalId of draft.proposal_ids) {
+        const proposal = this.requireProposal(proposalId)
+        if (!proposal.review_id) this.requestProposalReview(proposal.proposal_id, { requestedBy })
+      }
+    }
+    const reviewIds = draft.proposal_ids.map((proposalId) => this.requireProposal(proposalId).review_id).filter((reviewId): reviewId is string => typeof reviewId === "string")
+    draft.review_ids = reviewIds
+    draft.status = reviewStatusForDraft(draft.proposal_ids.length, reviewIds.length)
+    draft.updated_at = new Date(0).toISOString()
+    return draft
+  }
+
+  private cancelCommanderPlaybookDraft(draftId: string, reason?: string): CommanderWorkbenchDraftSummary {
+    const draft = this.requireCommanderPlaybookDraft(draftId)
+    const safeReason = reason === undefined ? undefined : redactText(reason)
+    if (draft.status === "cancelled") {
+      if (draft.cancellation_reason === safeReason) return draft
+      throw new Error(`terminal playbook draft cancellation conflicts with existing payload: ${redactText(draft.draft_id)}`)
+    }
+    draft.status = "cancelled"
+    draft.updated_at = new Date(0).toISOString()
+    draft.cancelled_at = draft.updated_at
+    draft.cancellation_reason = safeReason
+    return draft
+  }
+
+  private requireCommanderPlaybookDraft(draftId: string): CommanderWorkbenchDraftSummary {
+    const id = requiredString(draftId, "draftId")
+    const draft = this.playbookDrafts.find((item) => item.draft_id === id)
+    if (!draft) throw new Error(`commander playbook draft not found: ${redactText(id)}`)
+    return draft
   }
 
   private projectProposalBundle(bundle: CommanderProposalBundleSummary): CommanderProposalBundleSummary {
@@ -917,6 +1046,12 @@ function optionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const cleaned = value.trim()
   return cleaned ? cleaned : undefined
+}
+
+function reviewStatusForDraft(proposalCount: number, reviewCount: number): string {
+  if (reviewCount <= 0) return "drafted"
+  if (reviewCount >= proposalCount) return "review_requested"
+  return "partially_review_requested"
 }
 
 function requiredActionString(proposal: CommanderProposalSummary, payload: Record<string, unknown>, field: "mission_id" | "claim_id" | "result_id"): string {

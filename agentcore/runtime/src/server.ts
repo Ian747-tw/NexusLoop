@@ -18,6 +18,8 @@ import { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
 import type { CommanderProposalBundle, CommanderProposalBundleInput, CommanderProposalBundleReadiness, CommanderProposalBundleStatus, CommanderProposalBundleSummary } from "./missions/proposal-bundle-types"
 import { draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 import type { CommanderPlaybook, CommanderPlaybookDraftInput, CommanderPlaybookDraftResult } from "./missions/commander-playbook-types"
+import { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-draft-registry"
+import type { CommanderPlaybookDraft, CommanderPlaybookDraftReadiness, CommanderPlaybookDraftStatus, CommanderPlaybookDraftSummary } from "./missions/commander-playbook-draft-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -47,6 +49,7 @@ export interface RuntimeServerOptions {
   reviewRegistry?: ReviewRegistry
   proposalRegistry?: ProposalRegistry
   proposalBundleRegistry?: ProposalBundleRegistry
+  commanderPlaybookDraftRegistry?: CommanderPlaybookDraftRegistry
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -79,6 +82,7 @@ export class RuntimeServer {
   readonly reviewRegistry: ReviewRegistry
   readonly proposalRegistry: ProposalRegistry
   readonly proposalBundleRegistry: ProposalBundleRegistry
+  readonly commanderPlaybookDraftRegistry: CommanderPlaybookDraftRegistry
   private readonly runLock: RunLock
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
@@ -104,6 +108,7 @@ export class RuntimeServer {
     this.reviewRegistry = options.reviewRegistry ?? new ReviewRegistry({ eventStore: this.eventStore, missionRegistry: this.missionRegistry })
     this.proposalRegistry = options.proposalRegistry ?? new ProposalRegistry({ eventStore: this.eventStore, missionRegistry: this.missionRegistry, reviewRegistry: this.reviewRegistry })
     this.proposalBundleRegistry = options.proposalBundleRegistry ?? new ProposalBundleRegistry({ eventStore: this.eventStore, proposalRegistry: this.proposalRegistry })
+    this.commanderPlaybookDraftRegistry = options.commanderPlaybookDraftRegistry ?? new CommanderPlaybookDraftRegistry({ eventStore: this.eventStore, proposalRegistry: this.proposalRegistry, proposalBundleRegistry: this.proposalBundleRegistry, reviewRegistry: this.reviewRegistry })
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -381,6 +386,21 @@ export class RuntimeServer {
         return this.getCommanderPlaybook(requiredString(payload.playbookId ?? payload.playbook_id, "playbookId"))
       case "runtime.draft_commander_playbook":
         return this.draftCommanderPlaybook(readCommanderPlaybookDraftInput(payload))
+      case "runtime.get_commander_playbook_draft":
+        return this.getCommanderPlaybookDraft(requiredString(payload.draftId ?? payload.draft_id, "draftId"))
+      case "runtime.list_commander_playbook_drafts":
+        return this.listCommanderPlaybookDrafts({
+          status: optionalString(payload.status, "status") as CommanderPlaybookDraftStatus | undefined,
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+        })
+      case "runtime.commander_playbook_draft_status":
+        return this.commanderPlaybookDraftStatusSummary()
+      case "runtime.commander_playbook_draft_readiness":
+        return this.commanderPlaybookDraftReadiness(requiredString(payload.draftId ?? payload.draft_id, "draftId"))
+      case "runtime.request_commander_playbook_draft_reviews":
+        return this.requestCommanderPlaybookDraftReviews(requiredString(payload.draftId ?? payload.draft_id, "draftId"), requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"))
+      case "runtime.cancel_commander_playbook_draft":
+        return this.cancelCommanderPlaybookDraft(requiredString(payload.draftId ?? payload.draft_id, "draftId"), optionalString(payload.reason, "reason"))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -406,6 +426,7 @@ export class RuntimeServer {
       reviews: await this.reviewRegistry.statusSummary(),
       proposals: await this.proposalRegistry.statusSummary(),
       proposalBundles: await this.proposalBundleRegistry.statusSummary(),
+      playbookDrafts: await this.commanderPlaybookDraftRegistry.statusSummary(),
       researchProjection: this.researchProjectionHealth,
       policy,
     })
@@ -639,10 +660,46 @@ export class RuntimeServer {
 
   async draftCommanderPlaybook(input: CommanderPlaybookDraftInput): Promise<CommanderPlaybookDraftResult> {
     this.requireCommanderPlaybookWriteRuntime("runtime.draft_commander_playbook")
-    return draftCommanderPlaybook(input, {
+    const result = await draftCommanderPlaybook(input, {
       proposalRegistry: this.proposalRegistry,
       proposalBundleRegistry: this.proposalBundleRegistry,
     })
+    const draft = await this.commanderPlaybookDraftRegistry.createDraft({
+      playbook_id: result.playbook_id,
+      proposed_by: input.proposed_by ?? input.requested_by ?? "",
+      field_values: input.fields,
+      proposal_ids: result.proposal_ids,
+      bundle_id: result.bundle_id,
+      review_ids: result.review_ids,
+      created_at: result.created_at,
+    })
+    return redactValue({ ...result, draft_id: draft.draft_id })
+  }
+
+  async getCommanderPlaybookDraft(draftId: string): Promise<CommanderPlaybookDraft | null> {
+    return this.commanderPlaybookDraftRegistry.getDraft(draftId)
+  }
+
+  async listCommanderPlaybookDrafts(options: { status?: CommanderPlaybookDraftStatus; limit?: number } = {}): Promise<CommanderPlaybookDraft[]> {
+    return this.commanderPlaybookDraftRegistry.listDrafts(options)
+  }
+
+  async commanderPlaybookDraftStatusSummary(): Promise<CommanderPlaybookDraftSummary> {
+    return this.commanderPlaybookDraftRegistry.statusSummary()
+  }
+
+  async commanderPlaybookDraftReadiness(draftId: string): Promise<CommanderPlaybookDraftReadiness> {
+    return this.commanderPlaybookDraftRegistry.readiness(draftId)
+  }
+
+  async requestCommanderPlaybookDraftReviews(draftId: string, requestedBy: string): Promise<CommanderPlaybookDraft> {
+    this.requireCommanderPlaybookWriteRuntime("runtime.request_commander_playbook_draft_reviews")
+    return this.commanderPlaybookDraftRegistry.requestReviews(draftId, { requested_by: requestedBy })
+  }
+
+  async cancelCommanderPlaybookDraft(draftId: string, reason?: string): Promise<CommanderPlaybookDraft> {
+    this.requireCommanderPlaybookWriteRuntime("runtime.cancel_commander_playbook_draft")
+    return this.commanderPlaybookDraftRegistry.cancelDraft(draftId, reason)
   }
 
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
