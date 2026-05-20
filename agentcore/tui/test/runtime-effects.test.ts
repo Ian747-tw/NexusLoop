@@ -620,6 +620,84 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("proposal-secret")
   })
 
+  test("proposal bundle commands create list select readiness review cancel and redact state", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "bundle target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "propose-progress",
+      args: ["fake-mission-1", claim.claim_id, "Progress", "--", "message"],
+    })
+    const proposalId = state.proposals?.selectedProposal?.proposal_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "create-bundle",
+      args: ["Bundle", "token=bundle-title-secret", "--", "Summary", "secret=bundle-summary-secret"],
+    })
+    const bundleId = state.proposalBundles?.selectedBundle?.bundle_id ?? ""
+    expect(state.proposalBundles?.summary?.open_count).toBe(1)
+    expect(JSON.stringify(state)).not.toContain("bundle-title-secret")
+    expect(JSON.stringify(state)).not.toContain("bundle-summary-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "bundle-add", args: [bundleId, proposalId] })
+    expect(state.proposalBundles?.selectedBundle).toMatchObject({ bundle_id: bundleId, proposal_ids: [proposalId] })
+    expect(state.proposalBundles?.readiness).toMatchObject({ proposed_count: 1, ready_to_apply: false })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "bundle-review", args: [bundleId] })
+    expect(state.proposalBundles?.selectedBundle?.status).toBe("review_requested")
+    expect(state.reviews?.pending).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "bundle", args: [bundleId] })
+    expect(state.proposalBundles?.selectedBundle?.bundle_id).toBe(bundleId)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel-bundle", args: [bundleId, "reason", "token=bundle-cancel-secret"] })
+    expect(state.proposalBundles?.selectedBundle?.status).toBe("cancelled")
+    expect(state.proposals?.recent.find((proposal) => proposal.proposal_id === proposalId)?.status).toBe("review_requested")
+    expect(JSON.stringify(state)).not.toContain("bundle-cancel-secret")
+  })
+
+  test("apply bundle fails closed until included proposal is approved then applies mission state", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "bundle apply target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "propose-result",
+      args: ["fake-mission-1", claim.claim_id, "Result", "--", "summary"],
+    })
+    const proposalId = state.proposals?.selectedProposal?.proposal_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "create-bundle", args: ["Apply", "bundle", "--", "Summary"] })
+    const bundleId = state.proposalBundles?.selectedBundle?.bundle_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "bundle-add", args: [bundleId, proposalId] })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-bundle", args: [bundleId] })
+    expect(state.proposalBundles?.commandError).toContain("not ready to apply")
+    expect(state.missionExecution?.results).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "bundle-review", args: [bundleId] })
+    const reviewId = state.proposals?.recent.find((proposal) => proposal.proposal_id === proposalId)?.review_id ?? state.reviews?.pending[0]?.review_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "approve", args: [reviewId, "ok"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-bundle", args: [bundleId] })
+
+    expect(state.proposalBundles?.selectedBundle).toMatchObject({ bundle_id: bundleId, status: "applied" })
+    expect(state.missionExecution?.results[0]).toMatchObject({ mission_id: "fake-mission-1", claim_id: claim.claim_id, summary: "summary" })
+  })
+
+  test("missing bundle command args produce redacted bundle errors", async () => {
+    const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), new FakeRuntimeClient("/tmp/demo", "demo"), {
+      type: "send-command",
+      command: "create-bundle",
+      args: ["Title", "token=bundle-secret"],
+    })
+
+    expect(state.proposalBundles?.commandError).toContain("-- separator")
+    expect(JSON.stringify(state)).not.toContain("bundle-secret")
+  })
+
   test("research command loads projection, topics, and events", async () => {
     const runtime = new ResearchRuntime()
     const state = initialState("/tmp/demo")

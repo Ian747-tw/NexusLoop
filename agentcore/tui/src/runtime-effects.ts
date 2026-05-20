@@ -14,6 +14,10 @@ import type {
   ResearchProjectionUiSummary,
   ResearchRecordsState,
   CommanderProposalSummary,
+  CommanderProposalBundleSummary,
+  ProposalBundleReadinessSummary,
+  ProposalBundlesState,
+  ProposalBundleStatusSummary,
   ProposalsState,
   ProposalStatusSummary,
   ReviewRequestSummary,
@@ -31,6 +35,7 @@ const RESEARCH_EVENT_LIMIT = 10
 const MISSION_EXECUTION_LIMIT = 10
 const REVIEW_LIMIT = 10
 const PROPOSAL_LIMIT = 10
+const PROPOSAL_BUNDLE_LIMIT = 10
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -69,6 +74,14 @@ export type RuntimeUiEffect =
   | { type: "request-proposal-review"; proposalId: string; title: string; summary: string }
   | { type: "apply-proposal"; proposalId: string }
   | { type: "cancel-proposal"; proposalId: string; reason?: string }
+  | { type: "load-proposal-bundles"; limit?: number }
+  | { type: "load-proposal-bundle"; bundleId: string }
+  | { type: "create-proposal-bundle"; title: string; summary: string }
+  | { type: "add-proposal-to-bundle"; bundleId: string; proposalId: string }
+  | { type: "load-proposal-bundle-readiness"; bundleId: string }
+  | { type: "request-proposal-bundle-reviews"; bundleId: string }
+  | { type: "apply-proposal-bundle"; bundleId: string }
+  | { type: "cancel-proposal-bundle"; bundleId: string; reason?: string }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -255,6 +268,58 @@ export async function applyRuntimeUiEffect(
         )
         return await loadProposals(next, runtime, PROPOSAL_LIMIT)
       }
+      case "load-proposal-bundles":
+        return await loadProposalBundles(state, runtime, effect.limit ?? PROPOSAL_BUNDLE_LIMIT)
+      case "load-proposal-bundle": {
+        const next = applySelectedProposalBundle(state, await runtime.command("runtime.get_proposal_bundle", { bundleId: effect.bundleId }), effect.bundleId)
+        return await loadProposalBundleReadiness(next, runtime, effect.bundleId)
+      }
+      case "create-proposal-bundle": {
+        const next = applySelectedProposalBundle(
+          state,
+          await runtime.command("runtime.create_proposal_bundle", {
+            title: effect.title,
+            summary: effect.summary,
+            createdBy: "operator",
+          }),
+          undefined,
+        )
+        return await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT)
+      }
+      case "add-proposal-to-bundle": {
+        const next = applySelectedProposalBundle(
+          state,
+          await runtime.command("runtime.add_proposal_to_bundle", { bundleId: effect.bundleId, proposalId: effect.proposalId }),
+          effect.bundleId,
+        )
+        return await loadProposalBundleReadiness(next, runtime, effect.bundleId)
+      }
+      case "load-proposal-bundle-readiness":
+        return await loadProposalBundleReadiness(state, runtime, effect.bundleId)
+      case "request-proposal-bundle-reviews": {
+        const next = applySelectedProposalBundle(
+          state,
+          await runtime.command("runtime.request_proposal_bundle_reviews", { bundleId: effect.bundleId, requestedBy: "operator" }),
+          effect.bundleId,
+        )
+        return await refreshProposalBundlesProposalsAndReviews(next, runtime, effect.bundleId)
+      }
+      case "apply-proposal-bundle": {
+        const next = applySelectedProposalBundle(
+          state,
+          await runtime.command("runtime.apply_proposal_bundle", { bundleId: effect.bundleId }),
+          effect.bundleId,
+        )
+        return await refreshAfterBundleWrite(next, runtime, effect.bundleId)
+      }
+      case "cancel-proposal-bundle": {
+        const next = applySelectedProposalBundle(
+          state,
+          await runtime.command("runtime.cancel_proposal_bundle", { bundleId: effect.bundleId, reason: effect.reason }),
+          effect.bundleId,
+        )
+        return await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT)
+      }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -269,6 +334,7 @@ export async function applyRuntimeUiEffect(
     if (isMissionExecutionEffect(effect)) return recordMissionExecutionCommandError(state, error)
     if (isReviewEffect(effect)) return recordReviewCommandError(state, error)
     if (isProposalEffect(effect)) return recordProposalCommandError(state, error)
+    if (isProposalBundleEffect(effect)) return recordProposalBundleCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -280,6 +346,7 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-recent-missions", limit: 5 })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-reviews", limit: REVIEW_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-proposals", limit: PROPOSAL_LIMIT })
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-proposal-bundles", limit: PROPOSAL_BUNDLE_LIMIT })
   return next
 }
 
@@ -361,6 +428,52 @@ async function loadProposals(state: UiState, runtime: RuntimeClient, limit: numb
       commandError: state.lastCommand === "proposals" ? undefined : state.proposals?.commandError,
     },
   }
+}
+
+async function loadProposalBundles(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const summary = readProposalBundleSummary(await runtime.command("runtime.proposal_bundle_status"))
+  const recent = readProposalBundleList(await runtime.command("runtime.list_proposal_bundles", { limit }), "runtime.list_proposal_bundles")
+  return {
+    ...state,
+    proposalBundles: {
+      ...proposalBundlesState(state),
+      summary,
+      recent,
+      commandError: state.lastCommand === "bundles" ? undefined : state.proposalBundles?.commandError,
+    },
+  }
+}
+
+async function loadProposalBundleReadiness(state: UiState, runtime: RuntimeClient, bundleId: string): Promise<UiState> {
+  const readiness = readProposalBundleReadiness(await runtime.command("runtime.proposal_bundle_readiness", { bundleId }))
+  return {
+    ...state,
+    proposalBundles: {
+      ...proposalBundlesState(state),
+      readiness,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "proposal bundle readiness", detail: `bundle_id=${redactText(bundleId)}`, status: readiness.ready_to_apply ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+async function refreshProposalBundlesProposalsAndReviews(state: UiState, runtime: RuntimeClient, bundleId: string): Promise<UiState> {
+  let next = await loadProposalBundles(state, runtime, PROPOSAL_BUNDLE_LIMIT)
+  next = await loadProposalBundleReadiness(next, runtime, bundleId)
+  next = await loadProposals(next, runtime, PROPOSAL_LIMIT)
+  next = await loadReviews(next, runtime, REVIEW_LIMIT)
+  return next
+}
+
+async function refreshAfterBundleWrite(state: UiState, runtime: RuntimeClient, bundleId: string): Promise<UiState> {
+  let next = await refreshProposalBundlesProposalsAndReviews(state, runtime, bundleId)
+  const selectedBundle = next.proposalBundles?.selectedBundle
+  const missionId = selectedBundle?.proposal_ids
+    .map((proposalId) => next.proposals?.recent.find((proposal) => proposal.proposal_id === proposalId)?.mission_id)
+    .find((candidate): candidate is string => typeof candidate === "string")
+  if (missionId) next = await loadMissionExecutionRecords(next, runtime, missionId)
+  next = await refreshRuntimeRecordsOrRecordError(next, runtime)
+  return next
 }
 
 async function refreshProposalAndReviews(state: UiState, runtime: RuntimeClient): Promise<UiState> {
@@ -473,6 +586,22 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, proposeCancelEffect(args))
     case "propose-release":
       return applyRuntimeUiEffect(commandState, runtime, proposeReleaseEffect(args))
+    case "bundles":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-proposal-bundles", limit: PROPOSAL_BUNDLE_LIMIT })
+    case "bundle":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-proposal-bundle", bundleId: requiredArg(args, 0, "bundleId") })
+    case "create-bundle":
+      return applyRuntimeUiEffect(commandState, runtime, createProposalBundleEffect(args))
+    case "bundle-add":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "add-proposal-to-bundle", bundleId: requiredArg(args, 0, "bundleId"), proposalId: requiredArg(args, 1, "proposalId") })
+    case "bundle-review":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "request-proposal-bundle-reviews", bundleId: requiredArg(args, 0, "bundleId") })
+    case "bundle-ready":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-proposal-bundle-readiness", bundleId: requiredArg(args, 0, "bundleId") })
+    case "apply-bundle":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "apply-proposal-bundle", bundleId: requiredArg(args, 0, "bundleId") })
+    case "cancel-bundle":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-proposal-bundle", bundleId: requiredArg(args, 0, "bundleId"), reason: optionalRest(args, 1) })
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -584,6 +713,11 @@ function isProposalEffect(effect: RuntimeUiEffect): boolean {
   return proposalCommands.has(effect.command)
 }
 
+function isProposalBundleEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return proposalBundleEffectTypes.has(effect.type)
+  return proposalBundleCommands.has(effect.command)
+}
+
 const proposalCommands = new Set([
   "proposals",
   "proposal",
@@ -607,6 +741,28 @@ const proposalEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "cancel-proposal",
 ])
 
+const proposalBundleCommands = new Set([
+  "bundles",
+  "bundle",
+  "create-bundle",
+  "bundle-add",
+  "bundle-review",
+  "bundle-ready",
+  "apply-bundle",
+  "cancel-bundle",
+])
+
+const proposalBundleEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-proposal-bundles",
+  "load-proposal-bundle",
+  "create-proposal-bundle",
+  "add-proposal-to-bundle",
+  "load-proposal-bundle-readiness",
+  "request-proposal-bundle-reviews",
+  "apply-proposal-bundle",
+  "cancel-proposal-bundle",
+])
+
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   if (!isRecord(value)) throw new Error("runtime.status returned non-object result")
   const runtimeStatus: RuntimeStatusSummary = {
@@ -620,6 +776,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   const missions = readMissionSummary(value.missions, state.missions?.recent ?? [])
   const reviewSummary = readReviewSummary(value.reviews)
   const proposalSummary = readProposalSummary(value.proposals)
+  const proposalBundleSummary = readProposalBundleSummary(value.proposalBundles)
   return {
     ...state,
     runtimeStatus,
@@ -628,6 +785,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
     missions: missions ?? state.missions,
     reviews: reviewSummary ? { ...reviewsState(state), summary: reviewSummary } : state.reviews,
     proposals: proposalSummary ? { ...proposalsState(state), summary: proposalSummary } : state.proposals,
+    proposalBundles: proposalBundleSummary ? { ...proposalBundlesState(state), summary: proposalBundleSummary } : state.proposalBundles,
     runtimeCommandError: undefined,
     header: {
       ...state.header,
@@ -696,6 +854,24 @@ function applySelectedProposal(state: UiState, value: unknown, proposalId: strin
     },
     systemActions: selectedProposalId
       ? [...state.systemActions, { title: "proposal selected", detail: `proposal_id=${selectedProposalId}`, status: proposal?.status }].slice(-12)
+      : state.systemActions,
+  }
+}
+
+function applySelectedProposalBundle(state: UiState, value: unknown, bundleId: string | undefined): UiState {
+  const bundle = readProposalBundle(value)
+  if (!bundle && value !== null) throw new Error("runtime.get_proposal_bundle returned invalid proposal bundle")
+  const selectedBundleId = bundle?.bundle_id ?? (bundleId ? redactText(bundleId) : undefined)
+  return {
+    ...state,
+    proposalBundles: {
+      ...proposalBundlesState(state),
+      selectedBundle: bundle,
+      recent: bundle ? [bundle, ...proposalBundlesState(state).recent.filter((item) => item.bundle_id !== bundle.bundle_id)].slice(0, PROPOSAL_BUNDLE_LIMIT) : proposalBundlesState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedBundleId
+      ? [...state.systemActions, { title: "proposal bundle selected", detail: `bundle_id=${selectedBundleId}`, status: bundle?.status }].slice(-12)
       : state.systemActions,
   }
 }
@@ -983,6 +1159,18 @@ function recordProposalCommandError(state: UiState, error: unknown): UiState {
   }
 }
 
+function recordProposalBundleCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    proposalBundles: {
+      ...proposalBundlesState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "proposal bundle command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -1043,6 +1231,20 @@ function readProposalSummary(value: unknown): ProposalStatusSummary | undefined 
   }
 }
 
+function readProposalBundleSummary(value: unknown): ProposalBundleStatusSummary | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    open_count: readNumber(value.open_count, 0),
+    review_requested_count: readNumber(value.review_requested_count, 0),
+    approved_count: readNumber(value.approved_count, 0),
+    partially_approved_count: readNumber(value.partially_approved_count, 0),
+    applied_count: readNumber(value.applied_count, 0),
+    partially_applied_count: readNumber(value.partially_applied_count, 0),
+    cancelled_count: readNumber(value.cancelled_count, 0),
+    last_bundle_id: typeof value.last_bundle_id === "string" ? redactText(value.last_bundle_id) : undefined,
+  }
+}
+
 function readReviewList(value: unknown, commandName: string): ReviewRequestSummary[] {
   if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
   return value.map(readReview).filter((review): review is ReviewRequestSummary => review !== null).slice(0, REVIEW_LIMIT)
@@ -1093,6 +1295,49 @@ function readProposal(value: unknown): CommanderProposalSummary | null {
     applied_at: typeof value.applied_at === "string" ? redactText(value.applied_at) : undefined,
     application_result: typeof value.application_result === "string" ? redactText(value.application_result) : undefined,
     failure_reason: typeof value.failure_reason === "string" ? preview(redactText(value.failure_reason)) : undefined,
+  }
+}
+
+function readProposalBundleList(value: unknown, commandName: string): CommanderProposalBundleSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readProposalBundle).filter((bundle): bundle is CommanderProposalBundleSummary => bundle !== null).slice(0, PROPOSAL_BUNDLE_LIMIT)
+}
+
+function readProposalBundle(value: unknown): CommanderProposalBundleSummary | null {
+  if (!isRecord(value) || typeof value.bundle_id !== "string" || typeof value.status !== "string") return null
+  const proposalIds = Array.isArray(value.proposal_ids)
+    ? value.proposal_ids.filter((item): item is string => typeof item === "string").map(redactText).slice(0, 100)
+    : []
+  return {
+    bundle_id: redactText(value.bundle_id),
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    created_by: readString(value.created_by, "unknown"),
+    status: readString(value.status, "unknown"),
+    proposal_ids: proposalIds,
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : undefined,
+    updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : undefined,
+    cancelled_at: typeof value.cancelled_at === "string" ? redactText(value.cancelled_at) : undefined,
+    cancellation_reason: typeof value.cancellation_reason === "string" ? preview(redactText(value.cancellation_reason)) : undefined,
+    applied_at: typeof value.applied_at === "string" ? redactText(value.applied_at) : undefined,
+    failure_reason: typeof value.failure_reason === "string" ? preview(redactText(value.failure_reason)) : undefined,
+  }
+}
+
+function readProposalBundleReadiness(value: unknown): ProposalBundleReadinessSummary {
+  if (!isRecord(value) || typeof value.bundle_id !== "string") throw new Error("runtime.proposal_bundle_readiness returned invalid readiness")
+  return {
+    bundle_id: redactText(value.bundle_id),
+    proposal_count: readNumber(value.proposal_count, 0),
+    proposed_count: readNumber(value.proposed_count, 0),
+    review_requested_count: readNumber(value.review_requested_count, 0),
+    approved_count: readNumber(value.approved_count, 0),
+    rejected_count: readNumber(value.rejected_count, 0),
+    cancelled_count: readNumber(value.cancelled_count, 0),
+    applied_count: readNumber(value.applied_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    ready_to_apply: readBoolean(value.ready_to_apply),
+    blockers: Array.isArray(value.blockers) ? value.blockers.filter((item): item is string => typeof item === "string").map((item) => preview(redactText(item))).slice(0, 10) : [],
   }
 }
 
@@ -1227,6 +1472,10 @@ function proposalsState(state: UiState): ProposalsState {
   return state.proposals ?? { recent: [] }
 }
 
+function proposalBundlesState(state: UiState): ProposalBundlesState {
+  return state.proposalBundles ?? { recent: [] }
+}
+
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
 }
@@ -1340,6 +1589,16 @@ function proposeReleaseEffect(args: string[]): Extract<RuntimeUiEffect, { type: 
   if (!title) throw new Error("title is required")
   if (!reason) throw new Error("reason is required")
   return { type: "create-proposal", actionKind: "release_claim", claimId, title, summary: reason, actionPayload: { claim_id: claimId, reason } }
+}
+
+function createProposalBundleEffect(args: string[]): Extract<RuntimeUiEffect, { type: "create-proposal-bundle" }> {
+  const separator = args.indexOf("--")
+  if (separator < 1) throw new Error("-- separator is required between bundle title and summary")
+  const title = args.slice(0, separator).join(" ").trim()
+  const summary = args.slice(separator + 1).join(" ").trim()
+  if (!title) throw new Error("title is required")
+  if (!summary) throw new Error("summary is required")
+  return { type: "create-proposal-bundle", title, summary }
 }
 
 function requiredArg(args: string[], index: number, field: string): string {

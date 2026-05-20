@@ -222,6 +222,54 @@ export type ProposalsState = {
   commandError?: string
 }
 
+export type CommanderProposalBundleSummary = {
+  bundle_id: string
+  title: string
+  summary: string
+  created_by: string
+  status: string
+  proposal_ids: string[]
+  created_at?: string
+  updated_at?: string
+  cancelled_at?: string
+  cancellation_reason?: string
+  applied_at?: string
+  failure_reason?: string
+}
+
+export type ProposalBundleStatusSummary = {
+  open_count: number
+  review_requested_count: number
+  approved_count: number
+  partially_approved_count: number
+  applied_count: number
+  partially_applied_count: number
+  cancelled_count: number
+  last_bundle_id?: string
+}
+
+export type ProposalBundleReadinessSummary = {
+  bundle_id: string
+  proposal_count: number
+  proposed_count: number
+  review_requested_count: number
+  approved_count: number
+  rejected_count: number
+  cancelled_count: number
+  applied_count: number
+  blocked_count: number
+  ready_to_apply: boolean
+  blockers: string[]
+}
+
+export type ProposalBundlesState = {
+  recent: CommanderProposalBundleSummary[]
+  selectedBundle?: CommanderProposalBundleSummary | null
+  readiness?: ProposalBundleReadinessSummary | null
+  summary?: ProposalBundleStatusSummary
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -303,6 +351,7 @@ export type UiState = {
   research?: ResearchRecordsState
   reviews?: ReviewsState
   proposals?: ProposalsState
+  proposalBundles?: ProposalBundlesState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -393,6 +442,9 @@ export function initialState(projectDir: string): UiState {
       recent: [],
     },
     proposals: {
+      recent: [],
+    },
+    proposalBundles: {
       recent: [],
     },
   }

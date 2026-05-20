@@ -199,4 +199,12 @@ const runtimeCommands = new Set([
   "propose-fail",
   "propose-cancel",
   "propose-release",
+  "bundles",
+  "bundle",
+  "create-bundle",
+  "bundle-add",
+  "bundle-review",
+  "bundle-ready",
+  "apply-bundle",
+  "cancel-bundle",
 ])

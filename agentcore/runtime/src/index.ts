@@ -21,6 +21,7 @@ export type { OpenCodeInputEnvelopeType, OpenCodeOutputEnvelopeType, OpenCodeSes
 export { MissionRegistry } from "./missions/mission-registry"
 export { ReviewRegistry } from "./missions/review-registry"
 export { ProposalRegistry } from "./missions/proposal-registry"
+export { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
 export { MissionToolRouter } from "./missions/mission-tool-router"
 export { MISSION_PROTOCOL_VERSION } from "./missions/mission-types"
 export { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
@@ -58,6 +59,13 @@ export type {
   ProposalStatus,
   ProposalStatusSummary,
 } from "./missions/proposal-types"
+export type {
+  CommanderProposalBundle,
+  CommanderProposalBundleInput,
+  CommanderProposalBundleReadiness,
+  CommanderProposalBundleStatus,
+  CommanderProposalBundleSummary,
+} from "./missions/proposal-bundle-types"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"
