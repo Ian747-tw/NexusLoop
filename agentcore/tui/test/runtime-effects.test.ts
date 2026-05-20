@@ -636,6 +636,14 @@ describe("runtime UI effects", () => {
     expect(state.commanderPlaybooks?.selectedPlaybook).toMatchObject({ playbook_id: "complete-from-result", generated_action_kinds: ["complete_mission"] })
     expect(layoutSnapshot(state)).toContain("selected_playbook=complete-from-result")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "playbook", args: ["record-progress"] })
+    expect(state.commanderPlaybooks?.selectedPlaybook?.required_fields).toContainEqual({
+      name: "message",
+      label: "Message",
+      required: true,
+      field_type: "text",
+    })
+
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
       command: "draft-complete",

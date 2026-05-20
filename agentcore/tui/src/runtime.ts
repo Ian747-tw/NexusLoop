@@ -1011,7 +1011,7 @@ function playbookFields(names: string[]): CommanderPlaybookSummary["required_fie
     name,
     label: name.split("_").map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(" "),
     required: true,
-    field_type: name.endsWith("_id") ? name : name === "reason" ? "reason" : name === "title" ? "title" : "summary",
+    field_type: name.endsWith("_id") ? name : name === "reason" ? "reason" : name === "title" ? "title" : name === "message" ? "text" : "summary",
   }))
 }
 
