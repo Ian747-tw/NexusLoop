@@ -207,4 +207,12 @@ const runtimeCommands = new Set([
   "bundle-ready",
   "apply-bundle",
   "cancel-bundle",
+  "playbooks",
+  "playbook",
+  "draft-complete",
+  "draft-result-complete",
+  "draft-progress",
+  "draft-fail",
+  "draft-cancel",
+  "draft-release",
 ])

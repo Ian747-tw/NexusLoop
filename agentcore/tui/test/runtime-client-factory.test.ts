@@ -430,6 +430,39 @@ describe("TUI runtime client factory", () => {
     await client.runtime.shutdown()
   })
 
+  test("real runtime client path exercises commander playbook draft with fake adapter", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    await expect(client.command("runtime.list_commander_playbooks")).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ playbook_id: "record-progress" }),
+    ]))
+    const submitted = await client.command("runtime.submit_user_message", { message: "playbook mission" }) as { missionId: string }
+    const claim = await client.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "tester" }) as { claim_id: string }
+    const draft = await client.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      proposedBy: "tester",
+      fields: {
+        mission_id: submitted.missionId,
+        claim_id: claim.claim_id,
+        title: "Record progress",
+        message: "working",
+      },
+    }) as { proposal_ids: string[] }
+
+    expect(draft.proposal_ids).toHaveLength(1)
+    await expect(client.command("runtime.get_commander_proposal", { proposalId: draft.proposal_ids[0] })).resolves.toMatchObject({
+      action_kind: "record_progress",
+      status: "proposed",
+    })
+
+    await client.runtime.shutdown()
+  })
+
   test("secret-looking env values do not leak through runtime status or event snapshots", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)

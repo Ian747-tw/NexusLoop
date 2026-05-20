@@ -270,6 +270,37 @@ export type ProposalBundlesState = {
   commandError?: string
 }
 
+export type CommanderPlaybookFieldSummary = {
+  name: string
+  label: string
+  required: boolean
+  field_type: string
+}
+
+export type CommanderPlaybookSummary = {
+  playbook_id: string
+  title: string
+  description: string
+  required_fields: CommanderPlaybookFieldSummary[]
+  generated_action_kinds: string[]
+  creates_bundle: boolean
+}
+
+export type CommanderPlaybookDraftSummary = {
+  playbook_id: string
+  proposal_ids: string[]
+  bundle_id?: string
+  review_ids?: string[]
+  created_at: string
+}
+
+export type CommanderPlaybooksState = {
+  catalog: CommanderPlaybookSummary[]
+  selectedPlaybook?: CommanderPlaybookSummary | null
+  lastDraft?: CommanderPlaybookDraftSummary | null
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -352,6 +383,7 @@ export type UiState = {
   reviews?: ReviewsState
   proposals?: ProposalsState
   proposalBundles?: ProposalBundlesState
+  commanderPlaybooks?: CommanderPlaybooksState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -446,6 +478,11 @@ export function initialState(projectDir: string): UiState {
     },
     proposalBundles: {
       recent: [],
+    },
+    commanderPlaybooks: {
+      catalog: [],
+      selectedPlaybook: null,
+      lastDraft: null,
     },
   }
 }

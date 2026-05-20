@@ -16,11 +16,13 @@ import { ProposalRegistry } from "./missions/proposal-registry"
 import type { CommanderProposal, CommanderProposalInput, ProposalStatus, ProposalStatusSummary } from "./missions/proposal-types"
 import { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
 import type { CommanderProposalBundle, CommanderProposalBundleInput, CommanderProposalBundleReadiness, CommanderProposalBundleStatus, CommanderProposalBundleSummary } from "./missions/proposal-bundle-types"
+import { draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
+import type { CommanderPlaybook, CommanderPlaybookDraftInput, CommanderPlaybookDraftResult } from "./missions/commander-playbook-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
 import { SpecService, type SpecSummary } from "./spec/spec-service"
-import { redactValue } from "./security/redaction"
+import { redactText, redactValue } from "./security/redaction"
 import {
   ResearchDb,
   type ListResearchEventsOptions,
@@ -373,6 +375,12 @@ export class RuntimeServer {
         return this.cancelProposalBundle(requiredString(payload.bundleId ?? payload.bundle_id, "bundleId"), optionalString(payload.reason, "reason"))
       case "runtime.proposal_bundle_status":
         return this.proposalBundleStatusSummary()
+      case "runtime.list_commander_playbooks":
+        return this.listCommanderPlaybooks()
+      case "runtime.get_commander_playbook":
+        return this.getCommanderPlaybook(requiredString(payload.playbookId ?? payload.playbook_id, "playbookId"))
+      case "runtime.draft_commander_playbook":
+        return this.draftCommanderPlaybook(readCommanderPlaybookDraftInput(payload))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -617,6 +625,24 @@ export class RuntimeServer {
 
   async proposalBundleStatusSummary(): Promise<CommanderProposalBundleSummary> {
     return this.proposalBundleRegistry.statusSummary()
+  }
+
+  listCommanderPlaybooks(): CommanderPlaybook[] {
+    return listCommanderPlaybooks()
+  }
+
+  getCommanderPlaybook(playbookId: string): CommanderPlaybook | null {
+    const playbook = getCommanderPlaybook(playbookId)
+    if (!playbook) throw new Error(`unknown commander playbook: ${redactText(playbookId)}`)
+    return playbook
+  }
+
+  async draftCommanderPlaybook(input: CommanderPlaybookDraftInput): Promise<CommanderPlaybookDraftResult> {
+    this.requireCommanderPlaybookWriteRuntime("runtime.draft_commander_playbook")
+    return draftCommanderPlaybook(input, {
+      proposalRegistry: this.proposalRegistry,
+      proposalBundleRegistry: this.proposalBundleRegistry,
+    })
   }
 
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
@@ -890,6 +916,11 @@ export class RuntimeServer {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before proposal bundle writes")
   }
+
+  private requireCommanderPlaybookWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before commander playbook writes")
+  }
 }
 
 type ResearchProjectionRuntimeEventType = Extract<RuntimeEvent, { type: `ResearchProjection${string}` }>["type"]
@@ -941,6 +972,26 @@ function optionalRecord(value: unknown, field: string): Record<string, unknown> 
   if (value === undefined) return undefined
   if (!isRecord(value)) throw new Error(`${field} must be an object`)
   return value
+}
+
+function readCommanderPlaybookDraftInput(payload: Record<string, unknown>): CommanderPlaybookDraftInput {
+  return {
+    playbook_id: requiredString(payload.playbookId ?? payload.playbook_id, "playbookId"),
+    requested_by: optionalString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+    proposed_by: optionalString(payload.proposedBy ?? payload.proposed_by, "proposedBy"),
+    fields: stringRecord(payload.fields, "fields"),
+    bundle_title: optionalString(payload.bundleTitle ?? payload.bundle_title, "bundleTitle"),
+    bundle_summary: optionalString(payload.bundleSummary ?? payload.bundle_summary, "bundleSummary"),
+    create_bundle: optionalBoolean(payload.createBundle ?? payload.create_bundle, "createBundle"),
+    request_reviews: optionalBoolean(payload.requestReviews ?? payload.request_reviews, "requestReviews"),
+  }
+}
+
+function stringRecord(value: unknown, field: string): Record<string, string> {
+  if (!isRecord(value)) throw new Error(`${field} must be an object`)
+  const out: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(value)) out[requiredString(key, `${field} key`)] = requiredString(raw, key)
+  return out
 }
 
 function readResearchEventsOptions(value: unknown): ListResearchEventsOptions | undefined {

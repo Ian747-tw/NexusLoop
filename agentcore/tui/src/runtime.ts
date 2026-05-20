@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderProposalBundleSummary, CommanderProposalSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
+import type { CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -29,6 +29,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly reviews: ReviewRequestSummary[] = []
   private readonly proposals: CommanderProposalSummary[] = []
   private readonly proposalBundles: CommanderProposalBundleSummary[] = []
+  private readonly playbooks: CommanderPlaybookSummary[] = fakeCommanderPlaybooks()
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -208,6 +209,12 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.cancelProposalBundle(String(payload.bundleId ?? payload.bundle_id ?? ""), optionalString(payload.reason))
       case "runtime.proposal_bundle_status":
         return this.proposalBundleSummary()
+      case "runtime.list_commander_playbooks":
+        return this.playbooks
+      case "runtime.get_commander_playbook":
+        return this.getCommanderPlaybook(String(payload.playbookId ?? payload.playbook_id ?? ""))
+      case "runtime.draft_commander_playbook":
+        return this.draftCommanderPlaybook(payload)
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -686,6 +693,49 @@ export class FakeRuntimeClient implements RuntimeClient {
     return bundle
   }
 
+  private getCommanderPlaybook(playbookId: string): CommanderPlaybookSummary | null {
+    const id = requiredString(playbookId, "playbookId")
+    const playbook = this.playbooks.find((item) => item.playbook_id === id)
+    if (!playbook) throw new Error(`unknown commander playbook: ${redactText(id)}`)
+    return playbook
+  }
+
+  private draftCommanderPlaybook(payload: Record<string, unknown>): CommanderPlaybookDraftSummary {
+    const playbookId = requiredString(String(payload.playbookId ?? payload.playbook_id ?? ""), "playbookId")
+    const playbook = this.playbooks.find((item) => item.playbook_id === playbookId)
+    if (!playbook) throw new Error(`unknown commander playbook: ${redactText(playbookId)}`)
+    const fields = readStringFields(payload.fields)
+    for (const field of playbook.required_fields.filter((item) => item.required)) requiredString(String(fields[field.name] ?? ""), field.name)
+    const proposedBy = String(payload.proposedBy ?? payload.proposed_by ?? payload.requestedBy ?? payload.requested_by ?? "operator")
+    const requestedBy = String(payload.requestedBy ?? payload.requested_by ?? proposedBy)
+    const created: CommanderProposalSummary[] = []
+    for (const proposalPayload of proposalPayloadsForPlaybook(playbook.playbook_id, fields, proposedBy)) created.push(this.createProposal(proposalPayload))
+    const shouldBundle = payload.createBundle === true || payload.create_bundle === true || created.length > 1
+    let bundleId: string | undefined
+    if (shouldBundle) {
+      const bundle = this.createProposalBundle({
+        title: payload.bundleTitle ?? payload.bundle_title ?? fields.title ?? playbook.title,
+        summary: payload.bundleSummary ?? payload.bundle_summary ?? fields.completion_summary ?? fields.summary ?? fields.reason ?? playbook.description,
+        createdBy: proposedBy,
+      })
+      bundleId = bundle.bundle_id
+      for (const proposal of created) this.addProposalToBundle(bundle.bundle_id, proposal.proposal_id)
+    }
+    let reviewIds: string[] | undefined
+    if (payload.requestReviews === true || payload.request_reviews === true) {
+      if (bundleId) this.requestProposalBundleReviews(bundleId, requestedBy)
+      else for (const proposal of created) this.requestProposalReview(proposal.proposal_id, { requestedBy })
+      reviewIds = created.map((proposal) => this.requireProposal(proposal.proposal_id).review_id).filter((reviewId): reviewId is string => typeof reviewId === "string")
+    }
+    return {
+      playbook_id: playbook.playbook_id,
+      proposal_ids: created.map((proposal) => proposal.proposal_id),
+      bundle_id: bundleId,
+      review_ids: reviewIds,
+      created_at: new Date(0).toISOString(),
+    }
+  }
+
   private projectProposalBundle(bundle: CommanderProposalBundleSummary): CommanderProposalBundleSummary {
     if (bundle.status === "cancelled") return bundle
     const readiness = this.proposalBundleReadiness(bundle.bundle_id)
@@ -900,5 +950,148 @@ function reviewTypeForProposal(actionKind: string): string {
       return "result_acceptance"
     default:
       return "operator_checkpoint"
+  }
+}
+
+function fakeCommanderPlaybooks(): CommanderPlaybookSummary[] {
+  return [
+    {
+      playbook_id: "complete-from-result",
+      title: "Complete mission from result",
+      description: "Drafts a complete_mission proposal that references an existing mission result.",
+      required_fields: playbookFields(["mission_id", "result_id", "title", "summary"]),
+      generated_action_kinds: ["complete_mission"],
+      creates_bundle: false,
+    },
+    {
+      playbook_id: "submit-result-and-complete",
+      title: "Submit result and complete mission",
+      description: "Drafts submit_result and complete_mission proposals as an ordered bundle.",
+      required_fields: playbookFields(["mission_id", "claim_id", "result_summary", "completion_summary", "title"]),
+      generated_action_kinds: ["submit_result", "complete_mission"],
+      creates_bundle: true,
+    },
+    {
+      playbook_id: "record-progress",
+      title: "Record mission progress",
+      description: "Drafts a record_progress proposal for an active mission claim.",
+      required_fields: playbookFields(["mission_id", "claim_id", "message", "title"]),
+      generated_action_kinds: ["record_progress"],
+      creates_bundle: false,
+    },
+    {
+      playbook_id: "fail-mission",
+      title: "Fail mission",
+      description: "Drafts a fail_mission proposal with an explicit reason.",
+      required_fields: playbookFields(["mission_id", "reason", "title"]),
+      generated_action_kinds: ["fail_mission"],
+      creates_bundle: false,
+    },
+    {
+      playbook_id: "cancel-mission",
+      title: "Cancel mission",
+      description: "Drafts a cancel_mission proposal with an explicit reason.",
+      required_fields: playbookFields(["mission_id", "reason", "title"]),
+      generated_action_kinds: ["cancel_mission"],
+      creates_bundle: false,
+    },
+    {
+      playbook_id: "release-claim",
+      title: "Release claim",
+      description: "Drafts a release_claim proposal with an explicit reason.",
+      required_fields: playbookFields(["claim_id", "reason", "title"]),
+      generated_action_kinds: ["release_claim"],
+      creates_bundle: false,
+    },
+  ]
+}
+
+function playbookFields(names: string[]): CommanderPlaybookSummary["required_fields"] {
+  return names.map((name) => ({
+    name,
+    label: name.split("_").map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(" "),
+    required: true,
+    field_type: name.endsWith("_id") ? name : name === "reason" ? "reason" : name === "title" ? "title" : "summary",
+  }))
+}
+
+function readStringFields(value: unknown): Record<string, string> {
+  if (!isRecord(value)) throw new Error("fields must be an object")
+  const out: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(value)) out[requiredString(key, "field name")] = requiredString(String(raw ?? ""), key)
+  return out
+}
+
+function proposalPayloadsForPlaybook(playbookId: string, fields: Record<string, string>, proposedBy: string): Record<string, unknown>[] {
+  switch (playbookId) {
+    case "complete-from-result":
+      return [{
+        missionId: fields.mission_id,
+        resultId: fields.result_id,
+        actionKind: "complete_mission",
+        title: fields.title,
+        summary: fields.summary,
+        proposedBy,
+        actionPayload: { mission_id: fields.mission_id, result_id: fields.result_id, summary: fields.summary },
+      }]
+    case "submit-result-and-complete":
+      return [
+        {
+          missionId: fields.mission_id,
+          claimId: fields.claim_id,
+          actionKind: "submit_result",
+          title: fields.title,
+          summary: fields.result_summary,
+          proposedBy,
+          actionPayload: { mission_id: fields.mission_id, claim_id: fields.claim_id, summary: fields.result_summary },
+        },
+        {
+          missionId: fields.mission_id,
+          actionKind: "complete_mission",
+          title: fields.title,
+          summary: fields.completion_summary,
+          proposedBy,
+          actionPayload: { mission_id: fields.mission_id, summary: fields.completion_summary },
+        },
+      ]
+    case "record-progress":
+      return [{
+        missionId: fields.mission_id,
+        claimId: fields.claim_id,
+        actionKind: "record_progress",
+        title: fields.title,
+        summary: fields.message,
+        proposedBy,
+        actionPayload: { mission_id: fields.mission_id, claim_id: fields.claim_id, message: fields.message },
+      }]
+    case "fail-mission":
+      return [{
+        missionId: fields.mission_id,
+        actionKind: "fail_mission",
+        title: fields.title,
+        summary: fields.reason,
+        proposedBy,
+        actionPayload: { mission_id: fields.mission_id, reason: fields.reason },
+      }]
+    case "cancel-mission":
+      return [{
+        missionId: fields.mission_id,
+        actionKind: "cancel_mission",
+        title: fields.title,
+        summary: fields.reason,
+        proposedBy,
+        actionPayload: { mission_id: fields.mission_id, reason: fields.reason },
+      }]
+    case "release-claim":
+      return [{
+        claimId: fields.claim_id,
+        actionKind: "release_claim",
+        title: fields.title,
+        summary: fields.reason,
+        proposedBy,
+        actionPayload: { claim_id: fields.claim_id, reason: fields.reason },
+      }]
+    default:
+      throw new Error(`unknown commander playbook: ${redactText(playbookId)}`)
   }
 }

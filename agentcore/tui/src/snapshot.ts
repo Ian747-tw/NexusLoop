@@ -66,6 +66,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...reviewLines(state))
   out.push(...proposalLines(state))
   out.push(...proposalBundleLines(state))
+  out.push(...playbookLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -217,6 +218,45 @@ function proposalBundleLines(state: UiState): string[] {
     }
   }
   if (bundles.commandError) out.push(`  command_error=${redactText(bundles.commandError)}`)
+  return out
+}
+
+function playbookLines(state: UiState): string[] {
+  const playbooks = state.commanderPlaybooks
+  const out = ["Commander playbooks"]
+  if (!playbooks) {
+    out.push("  catalog=0")
+    return out
+  }
+  out.push(`  catalog=${playbooks.catalog.length}`)
+  out.push("  catalog_rows")
+  if (playbooks.catalog.length === 0) out.push("    - empty")
+  else {
+    out.push(...playbooks.catalog.slice(0, 10).map((playbook) => {
+      return `    - ${playbook.playbook_id}: ${preview(redactText(playbook.title))} actions=${playbook.generated_action_kinds.join(",") || "none"}`
+    }))
+  }
+  if (playbooks.selectedPlaybook) {
+    const selected = playbooks.selectedPlaybook
+    out.push(`  selected_playbook=${selected.playbook_id}`)
+    out.push(`  title=${preview(redactText(selected.title))}`)
+    out.push(`  description=${preview(redactText(selected.description))}`)
+    out.push(`  fields=${selected.required_fields.map((field) => `${field.name}:${field.field_type}${field.required ? "*" : ""}`).join(", ") || "none"}`)
+    out.push(`  actions=${selected.generated_action_kinds.join(",") || "none"}`)
+    out.push(`  creates_bundle=${selected.creates_bundle}`)
+  } else {
+    out.push("  selected_playbook=none")
+  }
+  if (playbooks.lastDraft) {
+    const draft = playbooks.lastDraft
+    out.push(`  last_draft=${draft.playbook_id}`)
+    out.push(`  proposals=${draft.proposal_ids.join(",") || "none"}`)
+    out.push(`  bundle=${draft.bundle_id ?? "none"}`)
+    out.push(`  reviews=${draft.review_ids?.join(",") || "none"}`)
+  } else {
+    out.push("  last_draft=none")
+  }
+  if (playbooks.commandError) out.push(`  command_error=${redactText(playbooks.commandError)}`)
   return out
 }
 
