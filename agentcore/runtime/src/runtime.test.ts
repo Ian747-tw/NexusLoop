@@ -1192,6 +1192,8 @@ describe("RuntimeServer core", () => {
     const noOp = await server.command("runtime.create_proposal_bundle", { title: "noop", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
     await server.command("runtime.add_proposal_to_bundle", { bundleId: noOp.bundle_id, proposalId: blockedCandidate.proposal_id })
     await expect(server.command("runtime.apply_proposal_bundle", { bundleId: noOp.bundle_id, allowPartial: true })).rejects.toThrow("did not apply any proposals")
+    const empty = await server.command("runtime.create_proposal_bundle", { title: "empty", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
+    await expect(server.command("runtime.apply_proposal_bundle", { bundleId: empty.bundle_id, allowPartial: true })).rejects.toThrow("has no proposals to apply")
 
     const cancellable = await server.command("runtime.create_proposal_bundle", { title: "cancel token=cancel-title-secret", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
     await server.command("runtime.add_proposal_to_bundle", { bundleId: cancellable.bundle_id, proposalId: blockedCandidate.proposal_id })
@@ -1202,6 +1204,22 @@ describe("RuntimeServer core", () => {
     await expect(server.command("runtime.cancel_proposal_bundle", { bundleId: cancellable.bundle_id, reason: "reason token=cancel-reason-secret" })).resolves.toMatchObject({ status: "cancelled" })
     await expect(server.command("runtime.add_proposal_to_bundle", { bundleId: cancellable.bundle_id, proposalId: approvedCandidate.proposal_id })).rejects.toThrow("terminal proposal bundle")
     await expect(server.command("runtime.get_commander_proposal", { proposalId: blockedCandidate.proposal_id })).resolves.toMatchObject({ status: "proposed" })
+
+    const externallyApplied = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "external",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "external progress" },
+    }) as { proposal_id: string }
+    const externalBundle = await server.command("runtime.create_proposal_bundle", { title: "external", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: externalBundle.bundle_id, proposalId: externallyApplied.proposal_id })
+    const externalReview = await server.command("runtime.request_proposal_review", { proposalId: externallyApplied.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: externalReview.review_id, decidedBy: "operator" })
+    await server.command("runtime.apply_commander_proposal", { proposalId: externallyApplied.proposal_id })
+    await expect(server.command("runtime.cancel_proposal_bundle", { bundleId: externalBundle.bundle_id, reason: "late" })).rejects.toThrow("applied proposal bundle cannot cancel")
 
     const events = await readJsonlEvents(dir)
     expect(events.map((event) => event.kind)).toEqual(expect.arrayContaining([

@@ -145,6 +145,16 @@ export class ProposalBundleRegistry {
       await this.requireBundleMutable(bundle.bundle_id)
       const readiness = await this.computeReadiness(bundle.bundle_id)
       const allowPartial = options.allowPartial === true
+      if (readiness.proposal_count === 0) {
+        await this.appendAndApply({
+          kind: "commander_proposal_bundle_apply_failed",
+          bundle_id: bundle.bundle_id,
+          failed_at: this.isoNow(),
+          failure_reason: "proposal bundle has no proposals to apply",
+          blocked_proposal_ids: [],
+        })
+        throw new Error("proposal bundle has no proposals to apply")
+      }
       if (!allowPartial && !readiness.ready_to_apply) {
         const reason = readiness.blockers.join("; ") || "bundle is not ready to apply"
         await this.appendAndApply({
@@ -207,9 +217,10 @@ export class ProposalBundleRegistry {
     return this.serializeMutation(async () => {
       await this.hydrate()
       const bundle = this.requireBundle(cleanRequiredString(bundleId, "bundle_id"))
+      const projected = await this.projectBundle(bundle.bundle_id)
       const safeReason = reason === undefined ? undefined : redactText(cleanRequiredString(reason, "reason"))
-      if (bundle.status === "cancelled") return redactValue(this.idempotentCancelled(bundle, safeReason))
-      if (bundle.status === "applied") throw new Error(`applied proposal bundle cannot cancel: ${bundle.bundle_id}`)
+      if (projected.status === "cancelled") return redactValue(this.idempotentCancelled(bundle, safeReason))
+      if (projected.status === "applied") throw new Error(`applied proposal bundle cannot cancel: ${bundle.bundle_id}`)
       await this.appendAndApply({
         kind: "commander_proposal_bundle_cancelled",
         bundle_id: bundle.bundle_id,
