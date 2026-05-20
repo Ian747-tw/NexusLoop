@@ -650,9 +650,9 @@ describe("runtime UI effects", () => {
       args: ["fake-mission-1", result.result_id, "Complete", "title", "--", "summary"],
     })
 
-    expect(state.commanderPlaybooks?.lastDraft).toMatchObject({ playbook_id: "complete-from-result", proposal_ids: [expect.stringMatching(/^fake-proposal-/)] })
+    expect(state.commanderPlaybooks?.lastDraft).toMatchObject({ draft_id: expect.stringMatching(/^fake-draft-/), playbook_id: "complete-from-result", proposal_ids: [expect.stringMatching(/^fake-proposal-/)] })
     expect(state.proposals?.recent[0]).toMatchObject({ action_kind: "complete_mission", status: "proposed" })
-    expect(layoutSnapshot(state)).toContain("last_draft=complete-from-result")
+    expect(layoutSnapshot(state)).toContain("playbook=complete-from-result")
   })
 
   test("playbook draft-result-complete creates ordered proposals plus bundle", async () => {
@@ -675,6 +675,41 @@ describe("runtime UI effects", () => {
       { proposal_id: draft?.proposal_ids[0], action_kind: "submit_result", status: "proposed" },
     ])
     expect(state.proposalBundles?.recent[0]).toMatchObject({ bundle_id: draft?.bundle_id, proposal_ids: draft?.proposal_ids })
+  })
+
+  test("commander workbench lists selects readies reviews and cancels playbook drafts", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "workbench target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    const result = await runtime.command("runtime.submit_mission_result", { missionId: "fake-mission-1", claimId: claim.claim_id, summary: "done" }) as { result_id: string }
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "draft-complete",
+      args: ["fake-mission-1", result.result_id, "Complete", "--", "summary"],
+    })
+    const draftId = state.commanderPlaybooks?.lastDraft?.draft_id ?? ""
+    expect(state.commanderWorkbench?.drafts[0]).toMatchObject({ draft_id: draftId, status: "drafted", proposal_ids: state.commanderPlaybooks?.lastDraft?.proposal_ids })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "drafts" })
+    expect(state.commanderWorkbench?.summary).toMatchObject({ drafted_count: 1 })
+    expect(layoutSnapshot(state)).toContain("Commander workbench")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "draft", args: [draftId] })
+    expect(state.commanderWorkbench?.selectedDraft).toMatchObject({ draft_id: draftId })
+    expect(state.commanderWorkbench?.readiness).toMatchObject({ draft_id: draftId, missing_review_count: 1, ready_to_apply: false })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "draft-review", args: [draftId] })
+    expect(state.commanderWorkbench?.selectedDraft?.review_ids).toHaveLength(1)
+    expect(state.commanderWorkbench?.selectedDraft?.status).toBe("review_requested")
+    expect(state.reviews?.recent[0]).toMatchObject({ status: "pending" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel-draft", args: [draftId, "reason", "token=workbench-cancel-secret"] })
+    expect(state.commanderWorkbench?.selectedDraft).toMatchObject({ draft_id: draftId, status: "cancelled" })
+    expect(state.proposals?.recent[0]).not.toMatchObject({ status: "cancelled" })
+    expect(JSON.stringify(state)).not.toContain("workbench-cancel-secret")
+    expect(layoutSnapshot(state)).not.toContain("workbench-cancel-secret")
   })
 
   test("playbook draft fail cancel release create expected proposal action kinds", async () => {

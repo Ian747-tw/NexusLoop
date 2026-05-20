@@ -215,4 +215,10 @@ const runtimeCommands = new Set([
   "draft-fail",
   "draft-cancel",
   "draft-release",
+  "drafts",
+  "workbench",
+  "draft",
+  "draft-ready",
+  "draft-review",
+  "cancel-draft",
 ])

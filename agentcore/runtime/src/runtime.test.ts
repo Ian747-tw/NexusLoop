@@ -14,6 +14,7 @@ import { MissionRegistry } from "./missions/mission-registry"
 import { ReviewRegistry } from "./missions/review-registry"
 import { ProposalRegistry } from "./missions/proposal-registry"
 import { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
+import { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-draft-registry"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { SpecService } from "./spec/spec-service"
@@ -1196,7 +1197,8 @@ describe("RuntimeServer core", () => {
         title: "Complete token=playbook-title-secret",
         summary: "Done token=playbook-summary-secret",
       },
-    }) as { proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    }) as { draft_id: string; proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    expect(completeDraft.draft_id).toBeTruthy()
     expect(completeDraft.proposal_ids).toHaveLength(1)
     expect(completeDraft.bundle_id).toBeUndefined()
     expect(completeDraft.review_ids).toBeUndefined()
@@ -1219,7 +1221,8 @@ describe("RuntimeServer core", () => {
         result_summary: "fresh result",
         completion_summary: "complete after result",
       },
-    }) as { proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    }) as { draft_id: string; proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    expect(bundledDraft.draft_id).toBeTruthy()
     expect(bundledDraft.proposal_ids).toHaveLength(2)
     expect(bundledDraft.bundle_id).toBeTruthy()
     expect(bundledDraft.review_ids).toHaveLength(2)
@@ -1238,7 +1241,8 @@ describe("RuntimeServer core", () => {
       ["release-claim", "release_claim", { claim_id: claim.claim_id, reason: "done", title: "Release" }],
       ["record-progress", "record_progress", { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "progress", title: "Progress" }],
     ] as const) {
-      const draft = await server.command("runtime.draft_commander_playbook", { playbookId, proposedBy: "operator", fields }) as { proposal_ids: string[]; review_ids?: string[] }
+      const draft = await server.command("runtime.draft_commander_playbook", { playbookId, proposedBy: "operator", fields }) as { draft_id: string; proposal_ids: string[]; review_ids?: string[] }
+      expect(draft.draft_id).toBeTruthy()
       expect(draft.review_ids).toBeUndefined()
       await expect(server.command("runtime.get_commander_proposal", { proposalId: draft.proposal_ids[0] })).resolves.toMatchObject({ action_kind: actionKind, status: "proposed" })
     }
@@ -1273,6 +1277,109 @@ describe("RuntimeServer core", () => {
       fields: { mission_id: "mission-1", reason: "reason", title: "title" },
     })).rejects.toThrow("runtime.draft_commander_playbook requires active mode")
     await statusServer.shutdown()
+  })
+
+  test("commander playbook draft history lists readiness review requests cancellation and redaction", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await expect(server.command("runtime.list_commander_playbook_drafts")).resolves.toEqual([])
+    await expect(server.command("runtime.commander_playbook_draft_status")).resolves.toMatchObject({ drafted_count: 0 })
+    await expect(server.command("runtime.request_commander_playbook_draft_reviews", { draftId: "missing", requestedBy: "operator" })).rejects.toThrow("runtime must be started before commander playbook writes")
+
+    await server.start()
+    const submitted = await server.submitUserMessage("workbench mission")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const result = await server.command("runtime.submit_mission_result", { missionId: submitted.missionId, claimId: claim.claim_id, summary: "result" }) as { result_id: string }
+
+    await expect(server.command("runtime.draft_commander_playbook", {
+      playbookId: "complete-from-result",
+      proposedBy: "operator",
+      fields: { mission_id: submitted.missionId, result_id: "missing-result", title: "bad", summary: "bad" },
+    })).rejects.toThrow("mission result does not belong to mission")
+    await expect(server.command("runtime.list_commander_playbook_drafts")).resolves.toHaveLength(0)
+
+    const completeDraft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "complete-from-result",
+      proposedBy: "operator token=history-operator-secret",
+      fields: {
+        mission_id: submitted.missionId,
+        result_id: result.result_id,
+        title: "Complete token=history-title-secret",
+        summary: "Done token=history-summary-secret",
+      },
+    }) as { draft_id: string; proposal_ids: string[] }
+    await expect(server.command("runtime.get_commander_playbook_draft", { draftId: completeDraft.draft_id })).resolves.toMatchObject({
+      draft_id: completeDraft.draft_id,
+      status: "drafted",
+      proposal_ids: completeDraft.proposal_ids,
+    })
+    await expect(server.command("runtime.commander_playbook_draft_readiness", { draftId: completeDraft.draft_id })).resolves.toMatchObject({
+      draft_id: completeDraft.draft_id,
+      proposal_count: 1,
+      review_count: 0,
+      missing_review_count: 1,
+      ready_to_apply: false,
+    })
+
+    const reviewed = await server.command("runtime.request_commander_playbook_draft_reviews", { draftId: completeDraft.draft_id, requestedBy: "operator" }) as { review_ids?: string[] }
+    expect(reviewed.review_ids).toHaveLength(1)
+    await expect(server.command("runtime.request_commander_playbook_draft_reviews", { draftId: completeDraft.draft_id, requestedBy: "operator" })).resolves.toMatchObject({
+      review_ids: reviewed.review_ids,
+    })
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_ids?.[0], decidedBy: "operator", reason: "ok" })
+    await expect(server.command("runtime.commander_playbook_draft_readiness", { draftId: completeDraft.draft_id })).resolves.toMatchObject({
+      review_count: 1,
+      approved_review_count: 1,
+      ready_to_apply: true,
+    })
+
+    const bundledDraft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "submit-result-and-complete",
+      proposedBy: "operator",
+      fields: {
+        mission_id: submitted.missionId,
+        claim_id: claim.claim_id,
+        title: "Submit and complete",
+        result_summary: "fresh result",
+        completion_summary: "complete after result",
+      },
+    }) as { draft_id: string; proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    expect(bundledDraft.bundle_id).toBeTruthy()
+    expect(bundledDraft.review_ids).toBeUndefined()
+    const bundledReviewed = await server.command("runtime.request_commander_playbook_draft_reviews", { draftId: bundledDraft.draft_id, requestedBy: "operator" }) as { review_ids?: string[] }
+    expect(bundledReviewed.review_ids).toHaveLength(2)
+    await expect(server.command("runtime.get_proposal_bundle", { bundleId: bundledDraft.bundle_id })).resolves.toMatchObject({ status: "review_requested" })
+
+    const cancelled = await server.command("runtime.cancel_commander_playbook_draft", { draftId: bundledDraft.draft_id, reason: "reason token=history-cancel-secret" }) as { status: string; cancellation_reason?: string }
+    expect(cancelled.status).toBe("cancelled")
+    await expect(server.command("runtime.cancel_commander_playbook_draft", { draftId: bundledDraft.draft_id, reason: "reason token=history-cancel-secret" })).resolves.toMatchObject({ status: "cancelled" })
+    await expect(server.command("runtime.cancel_commander_playbook_draft", { draftId: bundledDraft.draft_id, reason: "different" })).rejects.toThrow("terminal playbook draft cancellation conflicts")
+    await expect(server.command("runtime.get_proposal_bundle", { bundleId: bundledDraft.bundle_id })).resolves.not.toMatchObject({ status: "cancelled" })
+    await expect(server.command("runtime.commander_playbook_draft_status")).resolves.toMatchObject({
+      review_requested_count: 1,
+      cancelled_count: 1,
+      last_draft_id: bundledDraft.draft_id,
+    })
+    const rebuilt = new CommanderPlaybookDraftRegistry({
+      eventStore: server.eventStore,
+      proposalRegistry: server.proposalRegistry,
+      proposalBundleRegistry: server.proposalBundleRegistry,
+      reviewRegistry: server.reviewRegistry,
+    })
+    await expect(rebuilt.getDraft(completeDraft.draft_id)).resolves.toMatchObject({ draft_id: completeDraft.draft_id, proposal_ids: completeDraft.proposal_ids })
+
+    const serialized = JSON.stringify({ status: await server.status(), events: await readJsonlEvents(dir) })
+    expect(serialized).not.toContain("history-operator-secret")
+    expect(serialized).not.toContain("history-title-secret")
+    expect(serialized).not.toContain("history-summary-secret")
+    expect(serialized).not.toContain("history-cancel-secret")
+    expect(await readEventKinds(dir)).toEqual(expect.arrayContaining([
+      "commander_playbook_draft_created",
+      "commander_playbook_draft_reviews_requested",
+      "commander_playbook_draft_cancelled",
+    ]))
+    await server.shutdown()
   })
 
   test("proposal bundle cancellation and partial apply rules are explicit", async () => {

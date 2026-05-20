@@ -67,6 +67,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...proposalLines(state))
   out.push(...proposalBundleLines(state))
   out.push(...playbookLines(state))
+  out.push(...workbenchLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -249,7 +250,8 @@ function playbookLines(state: UiState): string[] {
   }
   if (playbooks.lastDraft) {
     const draft = playbooks.lastDraft
-    out.push(`  last_draft=${draft.playbook_id}`)
+    out.push(`  last_draft=${draft.draft_id ?? draft.playbook_id}`)
+    out.push(`  playbook=${draft.playbook_id}`)
     out.push(`  proposals=${draft.proposal_ids.join(",") || "none"}`)
     out.push(`  bundle=${draft.bundle_id ?? "none"}`)
     out.push(`  reviews=${draft.review_ids?.join(",") || "none"}`)
@@ -257,6 +259,47 @@ function playbookLines(state: UiState): string[] {
     out.push("  last_draft=none")
   }
   if (playbooks.commandError) out.push(`  command_error=${redactText(playbooks.commandError)}`)
+  return out
+}
+
+function workbenchLines(state: UiState): string[] {
+  const workbench = state.commanderWorkbench
+  const out = ["Commander workbench"]
+  if (!workbench) {
+    out.push("  drafts=0")
+    return out
+  }
+  if (workbench.summary) {
+    const summary = workbench.summary
+    out.push(`  summary drafted=${summary.drafted_count} review_requested=${summary.review_requested_count} partial=${summary.partially_review_requested_count} cancelled=${summary.cancelled_count} last=${summary.last_draft_id ?? "none"}`)
+  }
+  out.push(`  drafts=${workbench.drafts.length}`)
+  out.push("  draft_rows")
+  if (workbench.drafts.length === 0) out.push("    - empty")
+  else {
+    out.push(...workbench.drafts.slice(0, 10).map((draft) => {
+      return `    - ${draft.draft_id}: ${draft.status} playbook=${draft.playbook_id} proposals=${draft.proposal_ids.length} bundle=${draft.bundle_id ?? "none"}`
+    }))
+  }
+  if (workbench.selectedDraft) {
+    const draft = workbench.selectedDraft
+    out.push(`  selected_draft=${draft.draft_id} [${draft.status}] playbook=${draft.playbook_id}`)
+    out.push(`  proposals=${draft.proposal_ids.join(",") || "none"}`)
+    out.push(`  bundle=${draft.bundle_id ?? "none"}`)
+    out.push(`  reviews=${draft.review_ids?.join(",") || "none"}`)
+    if (draft.cancellation_reason) out.push(`  cancellation_reason=${preview(redactText(draft.cancellation_reason))}`)
+  } else {
+    out.push("  selected_draft=none")
+  }
+  if (workbench.readiness) {
+    const readiness = workbench.readiness
+    out.push(`  readiness=${readiness.ready_to_apply ? "ready" : "blocked"} proposals=${readiness.proposal_count} reviews=${readiness.review_count} missing_reviews=${readiness.missing_review_count} approved_reviews=${readiness.approved_review_count} rejected_reviews=${readiness.rejected_review_count} cancelled_reviews=${readiness.cancelled_review_count} applied=${readiness.applied_proposal_count}`)
+    if (readiness.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...readiness.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  }
+  if (workbench.commandError) out.push(`  command_error=${redactText(workbench.commandError)}`)
   return out
 }
 

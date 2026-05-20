@@ -106,6 +106,13 @@ export interface RuntimeStatus {
     cancelled_count: number
     last_bundle_id?: string
   }
+  playbookDrafts?: {
+    drafted_count: number
+    review_requested_count: number
+    partially_review_requested_count: number
+    cancelled_count: number
+    last_draft_id?: string
+  }
   researchProjection: RuntimeResearchProjectionHealth
   policy: Record<string, unknown>
 }

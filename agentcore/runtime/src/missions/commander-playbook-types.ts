@@ -37,6 +37,7 @@ export interface CommanderPlaybookDraftInput {
 }
 
 export interface CommanderPlaybookDraftResult {
+  draft_id?: string
   playbook_id: string
   proposal_ids: string[]
   bundle_id?: string
