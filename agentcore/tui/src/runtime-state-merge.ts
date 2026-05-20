@@ -11,6 +11,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     baseline === undefined || stableEqual(current.missionExecution, baseline.missionExecution)
   const canUpdateResearch = baseline === undefined || stableEqual(current.research, baseline.research)
   const canUpdateReviews = baseline === undefined || stableEqual(current.reviews, baseline.reviews)
+  const canUpdateProposals = baseline === undefined || stableEqual(current.proposals, baseline.proposals)
   const canUpdateRuntimeCommandError =
     baseline === undefined ||
     (stableEqual(current.runtimeCommandError, baseline.runtimeCommandError) &&
@@ -37,6 +38,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     missionExecution: mergedMissionExecution,
     research: canUpdateResearch ? next.research : current.research,
     reviews: canUpdateReviews ? next.reviews : current.reviews,
+    proposals: canUpdateProposals ? next.proposals : current.proposals,
     runtimeCommandError: canUpdateRuntimeCommandError ? next.runtimeCommandError : current.runtimeCommandError,
     lastCommand: canUpdateLastCommand ? next.lastCommand : current.lastCommand,
     header: {

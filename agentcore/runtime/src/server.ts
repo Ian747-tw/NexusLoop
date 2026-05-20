@@ -12,6 +12,8 @@ import { MissionRegistry } from "./missions/mission-registry"
 import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult, MissionStatusSummary } from "./missions/mission-types"
 import { ReviewRegistry } from "./missions/review-registry"
 import type { ReviewRequest, ReviewRequestInput, ReviewStatus, ReviewStatusSummary } from "./missions/review-types"
+import { ProposalRegistry } from "./missions/proposal-registry"
+import type { CommanderProposal, CommanderProposalInput, ProposalStatus, ProposalStatusSummary } from "./missions/proposal-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -39,6 +41,7 @@ export interface RuntimeServerOptions {
   openCodeAdapterFactoryOptions?: Omit<OpenCodeAdapterFactoryOptions, "projectDir">
   missionRegistry?: MissionRegistry
   reviewRegistry?: ReviewRegistry
+  proposalRegistry?: ProposalRegistry
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -69,6 +72,7 @@ export class RuntimeServer {
   readonly adapter: OpenCodeRuntimeAdapter
   readonly missionRegistry: MissionRegistry
   readonly reviewRegistry: ReviewRegistry
+  readonly proposalRegistry: ProposalRegistry
   private readonly runLock: RunLock
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
@@ -92,6 +96,7 @@ export class RuntimeServer {
     this.registerExecutorToolHandler(this.adapter)
     this.missionRegistry = options.missionRegistry ?? new MissionRegistry({ eventStore: this.eventStore, projectDir: this.projectDir })
     this.reviewRegistry = options.reviewRegistry ?? new ReviewRegistry({ eventStore: this.eventStore, missionRegistry: this.missionRegistry })
+    this.proposalRegistry = options.proposalRegistry ?? new ProposalRegistry({ eventStore: this.eventStore, missionRegistry: this.missionRegistry, reviewRegistry: this.reviewRegistry })
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -308,6 +313,36 @@ export class RuntimeServer {
         return this.cancelReviewRequest(requiredString(payload.reviewId ?? payload.review_id, "reviewId"), requiredString(payload.decidedBy ?? payload.decided_by, "decidedBy"), optionalString(payload.reason, "reason"))
       case "runtime.review_status":
         return this.reviewStatusSummary()
+      case "runtime.create_commander_proposal":
+        return this.createCommanderProposal({
+          mission_id: optionalString(payload.missionId ?? payload.mission_id, "missionId"),
+          claim_id: optionalString(payload.claimId ?? payload.claim_id, "claimId"),
+          result_id: optionalString(payload.resultId ?? payload.result_id, "resultId"),
+          action_kind: requiredString(payload.actionKind ?? payload.action_kind, "actionKind") as CommanderProposalInput["action_kind"],
+          title: requiredString(payload.title, "title"),
+          summary: requiredString(payload.summary, "summary"),
+          proposed_by: requiredString(payload.proposedBy ?? payload.proposed_by, "proposedBy"),
+          action_payload: optionalRecord(payload.actionPayload ?? payload.action_payload, "actionPayload"),
+        })
+      case "runtime.get_commander_proposal":
+        return this.getCommanderProposal(requiredString(payload.proposalId ?? payload.proposal_id, "proposalId"))
+      case "runtime.list_commander_proposals":
+        return this.listCommanderProposals({
+          status: optionalString(payload.status, "status") as ProposalStatus | undefined,
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+        })
+      case "runtime.request_proposal_review":
+        return this.requestProposalReview(requiredString(payload.proposalId ?? payload.proposal_id, "proposalId"), {
+          title: optionalString(payload.title, "title"),
+          summary: optionalString(payload.summary, "summary"),
+          requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+        })
+      case "runtime.cancel_commander_proposal":
+        return this.cancelCommanderProposal(requiredString(payload.proposalId ?? payload.proposal_id, "proposalId"), optionalString(payload.reason, "reason"))
+      case "runtime.apply_commander_proposal":
+        return this.applyCommanderProposal(requiredString(payload.proposalId ?? payload.proposal_id, "proposalId"))
+      case "runtime.proposal_status":
+        return this.proposalStatusSummary()
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -331,6 +366,7 @@ export class RuntimeServer {
       executorStreamError: this.executorStreamError ?? undefined,
       missions: await this.missionRegistry.statusSummary(),
       reviews: await this.reviewRegistry.statusSummary(),
+      proposals: await this.proposalRegistry.statusSummary(),
       researchProjection: this.researchProjectionHealth,
       policy,
     })
@@ -456,21 +492,59 @@ export class RuntimeServer {
 
   async approveReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
     this.requireReviewWriteRuntime("runtime.approve_review_request")
-    return this.reviewRegistry.approveReviewRequest(reviewId, decidedBy, reason)
+    const review = await this.reviewRegistry.approveReviewRequest(reviewId, decidedBy, reason)
+    await this.proposalRegistry.syncReviewDecision(review.review_id)
+    return review
   }
 
   async rejectReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
     this.requireReviewWriteRuntime("runtime.reject_review_request")
-    return this.reviewRegistry.rejectReviewRequest(reviewId, decidedBy, reason)
+    const review = await this.reviewRegistry.rejectReviewRequest(reviewId, decidedBy, reason)
+    await this.proposalRegistry.syncReviewDecision(review.review_id)
+    return review
   }
 
   async cancelReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
     this.requireReviewWriteRuntime("runtime.cancel_review_request")
-    return this.reviewRegistry.cancelReviewRequest(reviewId, decidedBy, reason)
+    const review = await this.reviewRegistry.cancelReviewRequest(reviewId, decidedBy, reason)
+    await this.proposalRegistry.syncReviewDecision(review.review_id)
+    return review
   }
 
   async reviewStatusSummary(): Promise<ReviewStatusSummary> {
     return this.reviewRegistry.statusSummary()
+  }
+
+  async createCommanderProposal(input: CommanderProposalInput): Promise<CommanderProposal> {
+    this.requireProposalWriteRuntime("runtime.create_commander_proposal")
+    return this.proposalRegistry.createProposal(input)
+  }
+
+  async getCommanderProposal(proposalId: string): Promise<CommanderProposal | null> {
+    return this.proposalRegistry.getProposal(proposalId)
+  }
+
+  async listCommanderProposals(options: { status?: ProposalStatus; limit?: number } = {}): Promise<CommanderProposal[]> {
+    return this.proposalRegistry.listProposals(options)
+  }
+
+  async requestProposalReview(proposalId: string, input: { title?: string; summary?: string; requested_by: string }): Promise<CommanderProposal> {
+    this.requireProposalWriteRuntime("runtime.request_proposal_review")
+    return this.proposalRegistry.requestReview(proposalId, input)
+  }
+
+  async cancelCommanderProposal(proposalId: string, reason?: string): Promise<CommanderProposal> {
+    this.requireProposalWriteRuntime("runtime.cancel_commander_proposal")
+    return this.proposalRegistry.cancelProposal(proposalId, reason)
+  }
+
+  async applyCommanderProposal(proposalId: string): Promise<CommanderProposal> {
+    this.requireProposalWriteRuntime("runtime.apply_commander_proposal")
+    return this.proposalRegistry.applyProposal(proposalId)
+  }
+
+  async proposalStatusSummary(): Promise<ProposalStatusSummary> {
+    return this.proposalRegistry.statusSummary()
   }
 
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
@@ -734,6 +808,11 @@ export class RuntimeServer {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before review writes")
   }
+
+  private requireProposalWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before proposal writes")
+  }
 }
 
 type ResearchProjectionRuntimeEventType = Extract<RuntimeEvent, { type: `ResearchProjection${string}` }>["type"]
@@ -773,6 +852,12 @@ function optionalStringArray(value: unknown, field: string): string[] | undefine
   if (value === undefined) return undefined
   if (!Array.isArray(value)) throw new Error(`${field} must be an array`)
   return value.map((item, index) => requiredString(item, `${field}[${index}]`))
+}
+
+function optionalRecord(value: unknown, field: string): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) throw new Error(`${field} must be an object`)
+  return value
 }
 
 function readResearchEventsOptions(value: unknown): ListResearchEventsOptions | undefined {

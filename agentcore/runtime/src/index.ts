@@ -20,6 +20,7 @@ export type { OpenCodeProcessEventSource, OpenCodeSpawn, OpenCodeSpawnedProcess 
 export type { OpenCodeInputEnvelopeType, OpenCodeOutputEnvelopeType, OpenCodeSessionContract, OpenCodeSessionContractInput, OpenCodeSessionContractRules } from "./opencode/session-contract"
 export { MissionRegistry } from "./missions/mission-registry"
 export { ReviewRegistry } from "./missions/review-registry"
+export { ProposalRegistry } from "./missions/proposal-registry"
 export { MissionToolRouter } from "./missions/mission-tool-router"
 export { MISSION_PROTOCOL_VERSION } from "./missions/mission-types"
 export { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
@@ -50,6 +51,13 @@ export type {
   ReviewStatus,
   ReviewStatusSummary,
 } from "./missions/review-types"
+export type {
+  CommanderProposal,
+  CommanderProposalInput,
+  ProposalActionKind,
+  ProposalStatus,
+  ProposalStatusSummary,
+} from "./missions/proposal-types"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"

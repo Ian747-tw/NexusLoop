@@ -285,6 +285,7 @@ function ApprovalPanel(props: { state: UiState }) {
     ...props.state.approval.clarifications,
   ]
   const reviews = () => props.state.reviews
+  const proposals = () => props.state.proposals
   return (
     <Panel title="Approval / clarification" focus="approval" state={props.state}>
       <For each={items()}>{(item) => <text fg={color.text}>{lineText(item)}</text>}</For>
@@ -308,6 +309,27 @@ function ApprovalPanel(props: { state: UiState }) {
       </Show>
       <Show when={reviews()?.commandError}>
         {(value) => <text fg={color.warning}>review error: {value()}</text>}
+      </Show>
+      <Show when={proposals()?.summary}>
+        {(summary) => (
+          <text fg={color.text}>
+            proposals: proposed={summary().proposed_count} review={summary().review_requested_count} approved={summary().approved_count} applied={summary().applied_count}
+          </text>
+        )}
+      </Show>
+      <For each={(proposals()?.recent ?? []).slice(0, 5)}>
+        {(proposal) => <text fg={color.accent}>{proposal.proposal_id} [{proposal.status}] {proposal.action_kind} {proposal.mission_id ?? "none"} {proposal.title}</text>}
+      </For>
+      <Show when={proposals()?.selectedProposal}>
+        {(proposal) => (
+          <>
+            <text fg={color.text}>proposal: {proposal().proposal_id} [{proposal().status}] {proposal().action_kind}</text>
+            <text fg={color.muted}>review={proposal().review_id ?? "none"} {proposal().summary}</text>
+          </>
+        )}
+      </Show>
+      <Show when={proposals()?.commandError}>
+        {(value) => <text fg={color.warning}>proposal error: {value()}</text>}
       </Show>
     </Panel>
   )

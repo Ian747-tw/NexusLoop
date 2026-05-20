@@ -185,6 +185,43 @@ export type ReviewsState = {
   commandError?: string
 }
 
+export type CommanderProposalSummary = {
+  proposal_id: string
+  mission_id?: string
+  claim_id?: string
+  result_id?: string
+  review_id?: string
+  action_kind: string
+  title: string
+  summary: string
+  proposed_by: string
+  status: string
+  action_payload?: Record<string, unknown>
+  created_at?: string
+  updated_at?: string
+  decision_at?: string
+  applied_at?: string
+  application_result?: string
+  failure_reason?: string
+}
+
+export type ProposalStatusSummary = {
+  proposed_count: number
+  review_requested_count: number
+  approved_count: number
+  rejected_count: number
+  cancelled_count: number
+  applied_count: number
+  last_proposal_id?: string
+}
+
+export type ProposalsState = {
+  recent: CommanderProposalSummary[]
+  selectedProposal?: CommanderProposalSummary | null
+  summary?: ProposalStatusSummary
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -265,6 +302,7 @@ export type UiState = {
   runtimeCommandError?: string
   research?: ResearchRecordsState
   reviews?: ReviewsState
+  proposals?: ProposalsState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -352,6 +390,9 @@ export function initialState(projectDir: string): UiState {
     },
     reviews: {
       pending: [],
+      recent: [],
+    },
+    proposals: {
       recent: [],
     },
   }
