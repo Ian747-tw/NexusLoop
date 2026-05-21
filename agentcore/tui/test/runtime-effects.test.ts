@@ -1019,6 +1019,17 @@ describe("runtime UI effects", () => {
     const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "Mixed", summary: "Mixed", createdBy: "operator" }) as { bundle_id: string }
     await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: firstProposal.proposal_id })
     await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: secondProposal.proposal_id })
+    for (let index = 0; index < 25; index += 1) {
+      await runtime.command("runtime.create_commander_proposal", {
+        missionId: "fake-mission-1",
+        claimId: firstClaim.claim_id,
+        actionKind: "record_progress",
+        title: `Filler ${index}`,
+        summary: "Filler",
+        proposedBy: "operator",
+        actionPayload: { mission_id: "fake-mission-1", claim_id: firstClaim.claim_id, message: `filler ${index}` },
+      })
+    }
 
     let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "mission", args: ["fake-mission-2"] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-target", args: ["bundle", bundle.bundle_id] })

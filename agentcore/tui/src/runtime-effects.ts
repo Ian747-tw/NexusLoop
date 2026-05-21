@@ -492,11 +492,17 @@ function missionIdForClaim(state: UiState, claimId?: string): string | undefined
   return state.missionExecution?.claims.find((claim) => claim.claim_id === claimId)?.mission_id
 }
 
-function missionIdsForProposalIds(state: UiState, proposalIds: string[]): string[] {
-  return [...new Set(proposalIds
-    .map((proposalId) => state.proposals?.recent.find((proposal) => proposal.proposal_id === proposalId))
-    .map((proposal) => proposal?.mission_id ?? missionIdForClaim(state, proposal?.claim_id))
-    .filter((candidate): candidate is string => typeof candidate === "string"))]
+async function missionIdsForProposalIds(state: UiState, runtime: RuntimeClient, proposalIds: string[]): Promise<string[]> {
+  const missionIds: string[] = []
+  for (const proposalId of proposalIds) {
+    let proposal = state.proposals?.recent.find((item) => item.proposal_id === proposalId)
+    if (!proposal) {
+      proposal = readProposal(await runtime.command("runtime.get_commander_proposal", { proposalId })) ?? undefined
+    }
+    const missionId = proposal?.mission_id ?? missionIdForClaim(state, proposal?.claim_id)
+    if (missionId && !missionIds.includes(missionId)) missionIds.push(missionId)
+  }
+  return missionIds
 }
 
 async function loadReviews(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
@@ -630,7 +636,7 @@ async function refreshAfterCommanderApply(state: UiState, runtime: RuntimeClient
     ...(next.commanderApply?.lastResult?.applied_proposal_ids ?? []),
     ...(next.commanderApply?.lastResult?.skipped_proposal_ids ?? []),
   ]
-  const affectedMissionIds = missionIdsForProposalIds(next, targetProposalIds)
+  const affectedMissionIds = await missionIdsForProposalIds(next, runtime, targetProposalIds)
   const selectedMissionId = next.missionExecution?.selectedMissionId
   const missionId = selectedMissionId && affectedMissionIds.includes(selectedMissionId)
     ? selectedMissionId
