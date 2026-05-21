@@ -1385,6 +1385,7 @@ function auditEventMatchesAny(event: CommanderAuditEventSummary, related: Set<st
 }
 
 function auditKeyToType(key: string): string | undefined {
+  if (key === "intent_id") return "runtime"
   if (key.endsWith("_id")) return key.slice(0, -3)
   return undefined
 }
