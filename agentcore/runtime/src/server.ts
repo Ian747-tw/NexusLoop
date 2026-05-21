@@ -24,6 +24,8 @@ import { CommanderApplyService } from "./missions/commander-apply-service"
 import type { CommanderApplyOptions, CommanderApplyPreview, CommanderApplyResult, CommanderApplyTargetType } from "./missions/commander-apply-types"
 import { CommanderAuditService } from "./missions/commander-audit-service"
 import type { CommanderAuditEventKind, CommanderAuditTimeline, CommanderAuthorityChain } from "./missions/commander-audit-types"
+import { CommanderQueueService, readCommanderQueueKind, readCommanderQueueLimit, readCommanderQueueStaleAfterMs } from "./missions/commander-queue-service"
+import type { CommanderQueueKind, CommanderQueueResult, CommanderQueueSummary } from "./missions/commander-queue-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -57,6 +59,7 @@ export interface RuntimeServerOptions {
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
+  commanderQueueNow?: () => Date
 }
 
 export interface RuntimeResearchDbReader {
@@ -90,6 +93,7 @@ export class RuntimeServer {
   private readonly runLock: RunLock
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
+  private readonly commanderQueueNow?: () => Date
   private readonly ownsResearchDb: boolean
   private researchDb: RuntimeResearchDbProjection | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
@@ -117,6 +121,7 @@ export class RuntimeServer {
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
     this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir))
+    this.commanderQueueNow = options.commanderQueueNow
     this.researchProjectionHealth = {
       mode: this.researchProjectionMode,
       ok: this.researchProjectionMode === "disabled",
@@ -423,6 +428,15 @@ export class RuntimeServer {
         })
       case "runtime.commander_authority_chain":
         return this.commanderAuthorityChain(requiredString(payload.targetType ?? payload.target_type, "targetType"), requiredString(payload.targetId ?? payload.target_id, "targetId"))
+      case "runtime.commander_queue_summary":
+        return this.commanderQueueSummary({
+          staleAfterMs: readCommanderQueueStaleAfterMs(payload.staleAfterMs ?? payload.stale_after_ms),
+        })
+      case "runtime.commander_queue":
+        return this.commanderQueue(readCommanderQueueKind(payload.queue), {
+          limit: readCommanderQueueLimit(payload.limit ?? 20),
+          staleAfterMs: readCommanderQueueStaleAfterMs(payload.staleAfterMs ?? payload.stale_after_ms),
+        })
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -741,6 +755,14 @@ export class RuntimeServer {
     return this.commanderAuditService().authorityChain(targetType, targetId)
   }
 
+  async commanderQueueSummary(options: { staleAfterMs?: number } = {}): Promise<CommanderQueueSummary> {
+    return this.commanderQueueService().summary(options)
+  }
+
+  async commanderQueue(queue: CommanderQueueKind, options: { limit?: number; staleAfterMs?: number } = {}): Promise<CommanderQueueResult> {
+    return this.commanderQueueService().queue(queue, options)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1028,11 +1050,23 @@ export class RuntimeServer {
       proposalRegistry: this.proposalRegistry,
       proposalBundleRegistry: this.proposalBundleRegistry,
       commanderPlaybookDraftRegistry: this.commanderPlaybookDraftRegistry,
+      now: this.commanderQueueNow,
     })
   }
 
   private commanderAuditService(): CommanderAuditService {
     return new CommanderAuditService(this.eventStore)
+  }
+
+  private commanderQueueService(): CommanderQueueService {
+    return new CommanderQueueService({
+      reviewRegistry: this.reviewRegistry,
+      proposalRegistry: this.proposalRegistry,
+      proposalBundleRegistry: this.proposalBundleRegistry,
+      commanderPlaybookDraftRegistry: this.commanderPlaybookDraftRegistry,
+      applyService: this.commanderApplyService(),
+      now: this.commanderQueueNow,
+    })
   }
 }
 

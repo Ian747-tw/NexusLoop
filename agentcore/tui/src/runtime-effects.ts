@@ -14,6 +14,10 @@ import type {
   CommanderAuditEventSummary,
   CommanderAuditState,
   CommanderAuthorityChainSummary,
+  CommanderQueueItemSummary,
+  CommanderQueueKind,
+  CommanderQueuesState,
+  CommanderQueueSummary,
   CommanderWorkbenchDraftSummary,
   CommanderWorkbenchReadinessSummary,
   CommanderWorkbenchState,
@@ -52,6 +56,7 @@ const PROPOSAL_BUNDLE_LIMIT = 10
 const PLAYBOOK_LIMIT = 10
 const WORKBENCH_DRAFT_LIMIT = 10
 const AUDIT_LIMIT = 20
+const QUEUE_LIMIT = 20
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -110,6 +115,8 @@ export type RuntimeUiEffect =
   | { type: "commander-apply-target"; targetType: "proposal" | "bundle" | "draft"; targetId: string; allowPartial?: boolean }
   | { type: "load-commander-audit"; limit?: number; category?: string }
   | { type: "load-commander-authority-chain"; targetType: string; targetId: string }
+  | { type: "load-commander-queues"; queue?: CommanderQueueKind; limit?: number; staleAfterMs?: number }
+  | { type: "load-commander-queue"; queue: CommanderQueueKind; limit?: number; staleAfterMs?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -425,6 +432,10 @@ export async function applyRuntimeUiEffect(
           effect.targetType,
           effect.targetId,
         )
+      case "load-commander-queues":
+        return await loadCommanderQueues(state, runtime, effect.queue ?? "needs_review", effect.limit ?? QUEUE_LIMIT, effect.staleAfterMs)
+      case "load-commander-queue":
+        return await loadCommanderQueue(state, runtime, effect.queue, effect.limit ?? QUEUE_LIMIT, effect.staleAfterMs)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -444,6 +455,7 @@ export async function applyRuntimeUiEffect(
     if (isWorkbenchEffect(effect)) return recordWorkbenchCommandError(state, error)
     if (isCommanderApplyEffect(effect)) return recordCommanderApplyCommandError(state, error)
     if (isCommanderAuditEffect(effect)) return recordCommanderAuditCommandError(state, error)
+    if (isCommanderQueueEffect(effect)) return recordCommanderQueueCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -663,6 +675,35 @@ async function refreshAfterCommanderApply(state: UiState, runtime: RuntimeClient
   return missionId ? await refreshAfterMissionWrite(next, runtime, missionId) : next
 }
 
+async function loadCommanderQueues(state: UiState, runtime: RuntimeClient, queue: CommanderQueueKind, limit: number, staleAfterMs?: number): Promise<UiState> {
+  const summary = readCommanderQueueSummary(await runtime.command("runtime.commander_queue_summary", staleAfterMs === undefined ? {} : { staleAfterMs }))
+  const next = {
+    ...state,
+    commanderQueues: {
+      ...commanderQueuesState(state),
+      summary,
+      commandError: undefined,
+    },
+  }
+  return await loadCommanderQueue(next, runtime, queue, limit, staleAfterMs)
+}
+
+async function loadCommanderQueue(state: UiState, runtime: RuntimeClient, queue: CommanderQueueKind, limit: number, staleAfterMs?: number): Promise<UiState> {
+  const result = readCommanderQueueResult(await runtime.command("runtime.commander_queue", { queue, limit, ...(staleAfterMs === undefined ? {} : { staleAfterMs }) }))
+  return {
+    ...state,
+    commanderQueues: {
+      ...commanderQueuesState(state),
+      selectedQueue: result.queue,
+      items: result.items.slice(0, limit),
+      totalConsidered: result.total_considered,
+      limit: result.limit,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander queue loaded", detail: `queue=${result.queue} items=${result.items.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
   const commandState = { ...state, lastCommand: command }
   switch (command) {
@@ -822,6 +863,26 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
         : applyRuntimeUiEffect(commandState, runtime, auditChainEffect(args))
     case "audit-kind":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-audit", limit: AUDIT_LIMIT, category: requiredArg(args, 0, "category") })
+    case "queues":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "needs_review", limit: QUEUE_LIMIT })
+    case "queue":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queue", queue: requiredQueueKindArg(args, 0), limit: QUEUE_LIMIT })
+    case "queue-review":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "needs_review", limit: QUEUE_LIMIT })
+    case "queue-apply":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "ready_to_apply", limit: QUEUE_LIMIT })
+    case "queue-blocked":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "blocked", limit: QUEUE_LIMIT })
+    case "queue-failed":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "failed_apply", limit: QUEUE_LIMIT })
+    case "queue-applied":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "recently_applied", limit: QUEUE_LIMIT })
+    case "queue-drafts":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "drafts_needing_review", limit: QUEUE_LIMIT })
+    case "queue-bundles":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "bundles_needing_review", limit: QUEUE_LIMIT })
+    case "queue-stale":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "stale_open", limit: QUEUE_LIMIT })
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -1003,6 +1064,11 @@ function isCommanderAuditEffect(effect: RuntimeUiEffect): boolean {
   return commanderAuditCommands.has(effect.command)
 }
 
+function isCommanderQueueEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return commanderQueueEffectTypes.has(effect.type)
+  return commanderQueueCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -1056,6 +1122,24 @@ const commanderAuditCommands = new Set([
 const commanderAuditEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-commander-audit",
   "load-commander-authority-chain",
+])
+
+const commanderQueueCommands = new Set([
+  "queues",
+  "queue",
+  "queue-review",
+  "queue-apply",
+  "queue-blocked",
+  "queue-failed",
+  "queue-applied",
+  "queue-drafts",
+  "queue-bundles",
+  "queue-stale",
+])
+
+const commanderQueueEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-commander-queues",
+  "load-commander-queue",
 ])
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
@@ -1634,6 +1718,18 @@ function recordCommanderAuditCommandError(state: UiState, error: unknown): UiSta
   }
 }
 
+function recordCommanderQueueCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderQueues: {
+      ...commanderQueuesState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "commander queue command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -1965,6 +2061,49 @@ function readCommanderAuditEvent(value: unknown): CommanderAuditEventSummary | n
   }
 }
 
+function readCommanderQueueSummary(value: unknown): CommanderQueueSummary {
+  if (!isRecord(value)) throw new Error("runtime.commander_queue_summary returned invalid summary")
+  return {
+    needs_review_count: readNumber(value.needs_review_count, 0),
+    ready_to_apply_count: readNumber(value.ready_to_apply_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    failed_apply_count: readNumber(value.failed_apply_count, 0),
+    recently_applied_count: readNumber(value.recently_applied_count, 0),
+    drafts_needing_review_count: readNumber(value.drafts_needing_review_count, 0),
+    bundles_needing_review_count: readNumber(value.bundles_needing_review_count, 0),
+    stale_open_count: readNumber(value.stale_open_count, 0),
+    last_updated_at: typeof value.last_updated_at === "string" ? redactText(value.last_updated_at) : undefined,
+  }
+}
+
+function readCommanderQueueResult(value: unknown): { queue: CommanderQueueKind; items: CommanderQueueItemSummary[]; total_considered: number; limit: number } {
+  if (!isRecord(value) || typeof value.queue !== "string" || !Array.isArray(value.items)) throw new Error("runtime.commander_queue returned invalid result")
+  const queue = readQueueKind(value.queue)
+  return {
+    queue,
+    items: value.items.map(readCommanderQueueItem).filter((item): item is CommanderQueueItemSummary => item !== null).slice(0, QUEUE_LIMIT),
+    total_considered: readNumber(value.total_considered, 0),
+    limit: readNumber(value.limit, QUEUE_LIMIT),
+  }
+}
+
+function readCommanderQueueItem(value: unknown): CommanderQueueItemSummary | null {
+  if (!isRecord(value) || typeof value.queue !== "string" || typeof value.target_id !== "string" || typeof value.target_type !== "string") return null
+  return {
+    queue: readQueueKind(value.queue),
+    target_type: readString(value.target_type, "unknown"),
+    target_id: redactText(value.target_id),
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    status: readString(value.status, "unknown"),
+    priority: typeof value.priority === "string" ? redactText(value.priority) : undefined,
+    related_ids: readRelatedIds(value.related_ids),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : undefined,
+    updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : undefined,
+  }
+}
+
 function readRelatedIds(value: unknown): Record<string, string[]> {
   if (!isRecord(value)) return {}
   const out: Record<string, string[]> = {}
@@ -1974,6 +2113,18 @@ function readRelatedIds(value: unknown): Record<string, string[]> {
 
 function readStringList(value: unknown, limit: number): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map(redactText).slice(0, limit) : []
+}
+
+function readQueueKind(value: string): CommanderQueueKind {
+  if (value === "needs_review" ||
+    value === "ready_to_apply" ||
+    value === "blocked" ||
+    value === "failed_apply" ||
+    value === "recently_applied" ||
+    value === "drafts_needing_review" ||
+    value === "bundles_needing_review" ||
+    value === "stale_open") return value
+  throw new Error("commander queue kind is invalid")
 }
 
 function readMissionRecord(value: unknown): MissionRecord | null {
@@ -2125,6 +2276,10 @@ function commanderApplyState(state: UiState): CommanderApplyState {
 
 function commanderAuditState(state: UiState): CommanderAuditState {
   return state.commanderAudit ?? { timeline: [], selectedChain: null }
+}
+
+function commanderQueuesState(state: UiState): CommanderQueuesState {
+  return state.commanderQueues ?? { selectedQueue: "needs_review", items: [] }
 }
 
 function missionExecutionState(state: UiState): MissionExecutionState {
@@ -2348,6 +2503,10 @@ function auditChainEffect(args: string[]): Extract<RuntimeUiEffect, { type: "loa
     targetType: requiredArg(args, 0, "targetType"),
     targetId: requiredArg(args, 1, "targetId"),
   }
+}
+
+function requiredQueueKindArg(args: string[], index: number): CommanderQueueKind {
+  return readQueueKind(requiredArg(args, index, "queue"))
 }
 
 function requiredArg(args: string[], index: number, field: string): string {

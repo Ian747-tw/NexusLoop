@@ -228,6 +228,21 @@ describe("TUI keyboard command model", () => {
     expect(result.effects).toEqual([{ type: "send-command", command: "audit", args: ["proposal", "proposal-1"] }])
   })
 
+  test("queue slash commands route through whitelisted runtime command effects with args", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/queue needs_review",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("queue")
+    expect(result.effects).toEqual([{ type: "send-command", command: "queue", args: ["needs_review"] }])
+  })
+
   test("slash command arguments are redacted before entering system actions", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -287,7 +302,7 @@ describe("TUI keyboard command model", () => {
   })
 
   test("dot and colon prefixed text remains a user message", () => {
-    for (const message of [".status notes", ":missions", ".topics", ":research", ".mission", ":claim", ".complete", ":complete", ".reviews", ":approve", ".proposals", ":apply-proposal", ".bundles", ":apply-bundle", ".playbooks", ":draft-fail", ".drafts", ":draft-review", ".apply-target", ":apply-preview", ".audit", ":audit", "/tmp/repro", "/path"]) {
+    for (const message of [".status notes", ":missions", ".topics", ":research", ".mission", ":claim", ".complete", ":complete", ".reviews", ":approve", ".proposals", ":apply-proposal", ".bundles", ":apply-bundle", ".playbooks", ":draft-fail", ".drafts", ":draft-review", ".apply-target", ":apply-preview", ".audit", ":audit", ".queue", ":queues", "/tmp/repro", "/path"]) {
       const state: UiState = {
         ...initialState("/tmp/demo"),
         screen: "main",

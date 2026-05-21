@@ -5864,4 +5864,108 @@ describe("ProcessOpenCodeAdapter", () => {
     processes[1]?.emitExit(0, null)
     await shutdown
   })
+
+  test("commander operator queue commands project read-only review apply failure stale and redacted state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderQueueNow: () => new Date("2026-05-25T00:00:00.000Z"),
+    })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("queue mission")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const pendingReview = await server.command("runtime.create_review_request", {
+      missionId: submitted.missionId,
+      title: "review token=queue-review-secret",
+      summary: "summary api_key=queue-review-summary-secret",
+      requestedBy: "operator",
+    }) as { review_id: string }
+    const blocked = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "blocked token=queue-blocked-secret",
+      summary: "missing review",
+      proposedBy: "operator",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "blocked" },
+    }) as { proposal_id: string }
+    const ready = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "ready",
+      summary: "ready",
+      proposedBy: "operator",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "ready" },
+    }) as { proposal_id: string }
+    const readyReview = await server.command("runtime.request_proposal_review", { proposalId: ready.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: readyReview.review_id, decidedBy: "operator" })
+    const failed = await server.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "failed",
+      summary: "failed",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    const failedReview = await server.command("runtime.request_proposal_review", { proposalId: failed.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: failedReview.review_id, decidedBy: "operator" })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: failed.proposal_id })).rejects.toThrow("proposal apply failed")
+    const bundle = await server.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
+    const draft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      proposedBy: "operator",
+      fields: { mission_id: submitted.missionId, claim_id: claim.claim_id, title: "draft", message: "draft" },
+    }) as { draft_id: string }
+
+    await expect(server.command("runtime.commander_queue_summary")).resolves.toMatchObject({
+      needs_review_count: 1,
+      ready_to_apply_count: 2,
+      blocked_count: expect.any(Number),
+      failed_apply_count: 1,
+      drafts_needing_review_count: 1,
+      bundles_needing_review_count: 1,
+      stale_open_count: expect.any(Number),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", limit: 20 })).resolves.toMatchObject({
+      queue: "needs_review",
+      items: [expect.objectContaining({ target_type: "review", target_id: pendingReview.review_id, status: "pending" })],
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "ready_to_apply", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: ready.proposal_id, status: "approved" })]),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "blocked", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: blocked.proposal_id, blockers: expect.arrayContaining([expect.stringContaining("no linked review")]) })]),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "failed_apply", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: failed.proposal_id })]),
+    })
+    await server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id })
+    await expect(server.command("runtime.commander_queue", { queue: "recently_applied", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: ready.proposal_id, status: "applied" })]),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "drafts_needing_review", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "draft", target_id: draft.draft_id })]),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "bundles_needing_review", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "bundle", target_id: bundle.bundle_id })]),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "stale_open", limit: 1, staleAfterMs: 1 })).resolves.toMatchObject({ limit: 1, total_considered: expect.any(Number) })
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", limit: 1000 })).resolves.toMatchObject({ limit: 100 })
+    await expect(server.command("runtime.commander_queue", { queue: "unknown", limit: 20 })).rejects.toThrow("commander queue kind is invalid")
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", limit: 0 })).rejects.toThrow("commander queue limit must be a positive integer")
+    await expect(server.command("runtime.commander_queue_summary", { staleAfterMs: 0 })).rejects.toThrow("staleAfterMs")
+    const serialized = JSON.stringify(await server.command("runtime.commander_queue", { queue: "blocked", limit: 20 }))
+    expect(serialized).not.toContain("queue-blocked-secret")
+    expect(serialized).not.toContain("queue-review-secret")
+    expect(serialized).not.toContain("queue-review-summary-secret")
+
+    await server.shutdown()
+
+    const reader = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    await expect(reader.command("runtime.commander_queue", { queue: "ready_to_apply", limit: 20 })).resolves.toMatchObject({ queue: "ready_to_apply" })
+  })
 })

@@ -25,6 +25,7 @@ export { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
 export { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-draft-registry"
 export { CommanderApplyService } from "./missions/commander-apply-service"
 export { CommanderAuditService } from "./missions/commander-audit-service"
+export { CommanderQueueService, COMMANDER_QUEUE_KINDS } from "./missions/commander-queue-service"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"
 export { MISSION_PROTOCOL_VERSION } from "./missions/mission-types"
@@ -99,6 +100,15 @@ export type {
   CommanderAuditTimelineOptions,
   CommanderAuthorityChain,
 } from "./missions/commander-audit-types"
+export type {
+  CommanderQueueItem,
+  CommanderQueueKind,
+  CommanderQueueOptions,
+  CommanderQueuePriority,
+  CommanderQueueResult,
+  CommanderQueueSummary,
+  CommanderQueueTargetType,
+} from "./missions/commander-queue-types"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"

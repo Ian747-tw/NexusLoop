@@ -408,6 +408,51 @@ export type CommanderAuditState = {
   lastTargetId?: string
 }
 
+export type CommanderQueueKind =
+  | "needs_review"
+  | "ready_to_apply"
+  | "blocked"
+  | "failed_apply"
+  | "recently_applied"
+  | "drafts_needing_review"
+  | "bundles_needing_review"
+  | "stale_open"
+
+export type CommanderQueueItemSummary = {
+  queue: CommanderQueueKind
+  target_type: string
+  target_id: string
+  title: string
+  summary: string
+  status: string
+  priority?: string
+  related_ids: Record<string, string[]>
+  blockers?: string[]
+  created_at?: string
+  updated_at?: string
+}
+
+export type CommanderQueueSummary = {
+  needs_review_count: number
+  ready_to_apply_count: number
+  blocked_count: number
+  failed_apply_count: number
+  recently_applied_count: number
+  drafts_needing_review_count: number
+  bundles_needing_review_count: number
+  stale_open_count: number
+  last_updated_at?: string
+}
+
+export type CommanderQueuesState = {
+  summary?: CommanderQueueSummary
+  selectedQueue?: CommanderQueueKind
+  items: CommanderQueueItemSummary[]
+  totalConsidered?: number
+  limit?: number
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -494,6 +539,7 @@ export type UiState = {
   commanderWorkbench?: CommanderWorkbenchState
   commanderApply?: CommanderApplyState
   commanderAudit?: CommanderAuditState
+  commanderQueues?: CommanderQueuesState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -606,6 +652,10 @@ export function initialState(projectDir: string): UiState {
     commanderAudit: {
       timeline: [],
       selectedChain: null,
+    },
+    commanderQueues: {
+      selectedQueue: "needs_review",
+      items: [],
     },
   }
 }

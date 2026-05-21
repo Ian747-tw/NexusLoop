@@ -1700,4 +1700,62 @@ describe("runtime UI effects", () => {
     expect(next.research).toEqual(state.research)
     expect(next.missionExecution?.commandError).toBe("claim failed [REDACTED]")
   })
+
+  test("queue slash commands load summary rows blockers applied stale and redact state", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "mission-1", executorId: "executor" }) as { claim_id: string }
+    await runtime.command("runtime.create_review_request", {
+      title: "review token=queue-review-secret",
+      summary: "summary api_key=queue-summary-secret",
+      requestedBy: "operator",
+    })
+    const blocked = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "record_progress",
+      title: "blocked token=queue-blocked-secret",
+      summary: "blocked",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "mission-1", claim_id: claim.claim_id, message: "blocked" },
+    }) as { proposal_id: string }
+    const ready = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "record_progress",
+      title: "ready",
+      summary: "ready",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "mission-1", claim_id: claim.claim_id, message: "ready" },
+    }) as { proposal_id: string }
+    const review = await runtime.command("runtime.request_proposal_review", { proposalId: ready.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator" })
+    const failed = await runtime.command("runtime.create_commander_proposal", { actionKind: "other", title: "failed", summary: "failed", proposedBy: "operator" }) as { proposal_id: string }
+    const failedReview = await runtime.command("runtime.request_proposal_review", { proposalId: failed.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: failedReview.review_id, decidedBy: "operator" })
+    await expect(runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: failed.proposal_id })).rejects.toThrow()
+    const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
+    await runtime.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      fields: { mission_id: "mission-1", claim_id: claim.claim_id, title: "draft", message: "draft" },
+      proposedBy: "operator",
+    })
+
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "queues" })
+    expect(state.commanderQueues?.summary?.needs_review_count).toBeGreaterThan(0)
+    expect(state.commanderQueues?.selectedQueue).toBe("needs_review")
+    expect(layoutSnapshot(state)).toContain("Commander queues")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue-apply" })
+    expect(state.commanderQueues?.selectedQueue).toBe("ready_to_apply")
+    expect(state.commanderQueues?.items).toEqual(expect.arrayContaining([expect.objectContaining({ target_id: ready.proposal_id })]))
+
+    for (const command of ["queue-blocked", "queue-failed", "queue-applied", "queue-drafts", "queue-bundles", "queue-stale"] as const) {
+      if (command === "queue-applied") await runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command })
+      expect(state.commanderQueues?.selectedQueue).toBeDefined()
+    }
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue", args: ["invalid"] })
+    expect(state.commanderQueues?.commandError).toBe("commander queue kind is invalid")
+    expect(JSON.stringify(state)).not.toContain("queue-review-secret")
+    expect(JSON.stringify(state)).not.toContain("queue-summary-secret")
+    expect(JSON.stringify(state)).not.toContain("queue-blocked-secret")
+  })
 })

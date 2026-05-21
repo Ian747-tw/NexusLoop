@@ -285,6 +285,30 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("event topic_created topic/fake-topic-1")
   })
 
+  test("default fake headless snapshot renders commander queues", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/request-review mission-demo Queue title -- Queue summary" },
+      { type: "submit" },
+      { type: "insert", text: "/queues" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Commander queues")
+    expect(snapshot).toContain("summary needs_review=1")
+    expect(snapshot).toContain("selected=needs_review")
+    expect(snapshot).toContain("review:fake-review-1 [pending]")
+  })
+
   test("real headless runtime client loads projection and topics through research command", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
@@ -310,6 +334,33 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("Research records")
     expect(snapshot).toContain("projection=ok stale=false pending=0")
     expect(snapshot).toContain("topics=0")
+  })
+
+  test("real headless runtime client renders empty commander queue surface", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/queue-apply" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: {
+        NXL_TUI_HEADLESS: "1",
+        NXL_TUI_KEYS: JSON.stringify(keys),
+        NXL_RUNTIME_CLIENT: "real",
+        NXL_OPENCODE_ADAPTER: "fake",
+      },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Commander queues")
+    expect(snapshot).toContain("selected=ready_to_apply")
+    expect(snapshot).toContain("rows")
   })
 
   test("default fake headless snapshot renders mission execution controls", async () => {

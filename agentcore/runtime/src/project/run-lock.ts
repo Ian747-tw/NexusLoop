@@ -75,6 +75,16 @@ export class RunLock {
     const stalePath = `${this.lockPath}.${this.token}.stale`
     try {
       await rename(this.lockPath, stalePath)
+      const moved = await readFile(stalePath, "utf8")
+      if (moved !== candidate.raw) {
+        try {
+          await rename(stalePath, this.lockPath)
+        } catch (restoreError) {
+          if ((restoreError as NodeJS.ErrnoException).code !== "EEXIST") throw restoreError
+          await rm(stalePath, { force: true })
+        }
+        return false
+      }
       await rm(stalePath, { force: true })
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
