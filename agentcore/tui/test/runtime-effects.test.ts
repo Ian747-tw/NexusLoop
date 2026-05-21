@@ -1081,6 +1081,10 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["mission", "fake-mission-1"] })
     expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("mission_created")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["runtime", "fake-intent-1"] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "runtime", target_id: "fake-intent-1" })
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("mission_created")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["bundle"] })
     expect(state.commanderAudit?.commandError).toContain("targetId is required")
     expect(JSON.stringify(state)).not.toContain("audit-secret")

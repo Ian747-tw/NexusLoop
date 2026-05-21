@@ -1302,6 +1302,7 @@ function fakeAuditEvent(
 function auditEventMatches(event: CommanderAuditEventSummary, targetType: string, targetId: string): boolean {
   return event.target_type === targetType && event.target_id === targetId
     || event.related_ids[`${targetType}_id`]?.includes(targetId) === true
+    || targetType === "runtime" && event.related_ids.intent_id?.includes(targetId) === true
 }
 
 function auditEventMatchesAny(event: CommanderAuditEventSummary, related: Set<string>): boolean {
