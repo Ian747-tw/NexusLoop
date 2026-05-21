@@ -145,7 +145,18 @@ export class CommanderApplyService {
   private async previewDraft(draftId: string): Promise<CommanderApplyPreview> {
     const draft = await this.commanderPlaybookDraftRegistry.getDraft(draftId)
     if (!draft) throw new Error(`commander playbook draft not found: ${draftId}`)
-    if (draft.bundle_id) return this.previewBundle(draft.bundle_id, "draft_bundle", draft.draft_id)
+    const cancelledBlocker = draft.status === "cancelled" ? `draft ${draft.draft_id} is cancelled` : undefined
+    if (draft.bundle_id) {
+      const preview = await this.previewBundle(draft.bundle_id, "draft_bundle", draft.draft_id)
+      if (!cancelledBlocker) return preview
+      return {
+        ...preview,
+        ready_to_apply: false,
+        blocked_count: preview.blocked_count + 1,
+        blockers: [...preview.blockers, redactText(cancelledBlocker)],
+        would_apply: [],
+      }
+    }
     const proposals = await this.proposalsById(draft.proposal_ids)
     const blockers: string[] = []
     for (const proposalId of draft.proposal_ids) {
@@ -156,7 +167,7 @@ export class CommanderApplyService {
       }
       blockers.push(...blockersForProposal(proposal))
     }
-    if (draft.status === "cancelled") blockers.push(`draft ${draft.draft_id} is cancelled`)
+    if (cancelledBlocker) blockers.push(cancelledBlocker)
     return {
       target_type: "draft",
       target_id: draft.draft_id,
@@ -168,7 +179,7 @@ export class CommanderApplyService {
       blocked_count: blockers.length,
       blockers: blockers.map(redactText),
       apply_mode: "draft_proposals",
-      would_apply: draft.proposal_ids.filter((proposalId) => proposals.get(proposalId)?.status === "approved"),
+      would_apply: cancelledBlocker ? [] : draft.proposal_ids.filter((proposalId) => proposals.get(proposalId)?.status === "approved"),
       would_skip: draft.proposal_ids.filter((proposalId) => proposals.get(proposalId)?.status === "applied"),
     }
   }

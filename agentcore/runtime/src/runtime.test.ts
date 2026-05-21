@@ -1476,6 +1476,33 @@ describe("RuntimeServer core", () => {
       applied: true,
       applied_proposal_ids: draft.proposal_ids,
     })
+
+    const bundledDraft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "submit-result-and-complete",
+      proposedBy: "operator",
+      requestedBy: "operator",
+      requestReviews: true,
+      fields: {
+        mission_id: submitted.missionId,
+        claim_id: claim.claim_id,
+        title: "Cancelled bundle draft",
+        result_summary: "cancelled draft result",
+        completion_summary: "cancelled draft completion",
+      },
+    }) as { draft_id: string; proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    for (const reviewId of bundledDraft.review_ids ?? []) {
+      await server.command("runtime.approve_review_request", { reviewId, decidedBy: "operator", reason: "ok" })
+    }
+    await server.command("runtime.cancel_commander_playbook_draft", { draftId: bundledDraft.draft_id, reason: "operator cancelled" })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "draft", targetId: bundledDraft.draft_id })).resolves.toMatchObject({
+      ready_to_apply: false,
+      apply_mode: "draft_bundle",
+      would_apply: [],
+      blockers: [`draft ${bundledDraft.draft_id} is cancelled`],
+    })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "draft", targetId: bundledDraft.draft_id })).rejects.toThrow("commander apply target is not ready")
+    await expect(server.command("runtime.apply_commander_target", { targetType: "draft", targetId: bundledDraft.draft_id, allowPartial: true })).rejects.toThrow("partial commander apply did not have any approved proposals")
+
     const serialized = JSON.stringify({ events: await readJsonlEvents(dir), preview: await server.command("runtime.commander_apply_preview", { targetType: "proposal", targetId: blocked.proposal_id }) })
     expect(serialized).not.toContain("apply-blocked-secret")
     await server.shutdown()
