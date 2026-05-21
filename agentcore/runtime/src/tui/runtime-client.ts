@@ -6,6 +6,7 @@ import type { CommanderProposalBundle, CommanderProposalBundleInput, CommanderPr
 import type { CommanderPlaybook, CommanderPlaybookDraftInput, CommanderPlaybookDraftResult } from "../missions/commander-playbook-types"
 import type { CommanderPlaybookDraft, CommanderPlaybookDraftReadiness, CommanderPlaybookDraftStatus, CommanderPlaybookDraftSummary } from "../missions/commander-playbook-draft-types"
 import type { CommanderApplyPreview, CommanderApplyResult, CommanderApplyTargetType } from "../missions/commander-apply-types"
+import type { CommanderAuditEventKind, CommanderAuditTimeline, CommanderAuthorityChain } from "../missions/commander-audit-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -72,6 +73,8 @@ export interface RuntimeClient {
   command(name: "runtime.cancel_commander_playbook_draft", payload: { draftId: string; reason?: string }): Promise<CommanderPlaybookDraft>
   command(name: "runtime.commander_apply_preview", payload: { targetType: CommanderApplyTargetType; targetId: string }): Promise<CommanderApplyPreview>
   command(name: "runtime.apply_commander_target", payload: { targetType: CommanderApplyTargetType; targetId: string; allowPartial?: boolean; dryRun?: boolean }): Promise<CommanderApplyResult>
+  command(name: "runtime.commander_audit_timeline", payload?: { limit?: number; category?: CommanderAuditEventKind; targetType?: string; targetId?: string; afterEventId?: string; beforeEventId?: string }): Promise<CommanderAuditTimeline>
+  command(name: "runtime.commander_authority_chain", payload: { targetType: string; targetId: string }): Promise<CommanderAuthorityChain>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -135,6 +138,8 @@ export interface RuntimeCommandEnvelope {
     | "runtime.cancel_commander_playbook_draft"
     | "runtime.commander_apply_preview"
     | "runtime.apply_commander_target"
+    | "runtime.commander_audit_timeline"
+    | "runtime.commander_authority_chain"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

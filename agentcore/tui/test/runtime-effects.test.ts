@@ -1039,6 +1039,74 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.progress[0]).toMatchObject({ mission_id: "fake-mission-2", message: "second progress" })
   })
 
+  test("commander audit commands load timelines chains filters and redact state", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "audit target token=audit-secret" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "draft-progress",
+      args: ["fake-mission-1", claim.claim_id, "Audit", "--", "message token=audit-secret"],
+    })
+    const draftId = state.commanderPlaybooks?.lastDraft?.draft_id ?? ""
+    const proposalId = state.commanderPlaybooks?.lastDraft?.proposal_ids[0] ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "draft-review", args: [draftId] })
+    const reviewId = state.commanderWorkbench?.selectedDraft?.review_ids?.[0] ?? ""
+    const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "Audit bundle", summary: "Audit", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: [] })
+    expect(state.commanderAudit?.timeline.length).toBeGreaterThan(0)
+    expect(layoutSnapshot(state)).toContain("Commander audit")
+    const firstPage = await runtime.command("runtime.commander_audit_timeline", { limit: 2 }) as { events: Array<{ event_id?: string; event_index: number }>; next_before_event_id?: string }
+    const secondPage = await runtime.command("runtime.commander_audit_timeline", { limit: 2, beforeEventId: firstPage.next_before_event_id }) as { events: Array<{ event_id?: string; event_index: number }> }
+    expect(secondPage.events.every((event) => event.event_index < firstPage.events.at(-1)!.event_index)).toBe(true)
+    expect(secondPage.events.map((event) => event.event_id).some((eventId) => firstPage.events.map((event) => event.event_id).includes(eventId))).toBe(false)
+    const proposalAuditBefore = await runtime.command("runtime.commander_audit_timeline", { targetType: "proposal", targetId: proposalId, limit: 1 }) as { events: Array<{ event_id?: string }> }
+    const newActivity = await runtime.command("runtime.submit_user_message", { message: "new audit activity" }) as { missionId: string }
+    const proposalAuditAfter = await runtime.command("runtime.commander_audit_timeline", { targetType: "proposal", targetId: proposalId, limit: 1 }) as { events: Array<{ event_id?: string }> }
+    expect(proposalAuditAfter.events[0]?.event_id).toBe(proposalAuditBefore.events[0]?.event_id)
+    const newestAfterActivity = await runtime.command("runtime.commander_audit_timeline", { limit: 1 }) as { events: Array<{ kind: string; target_id?: string }> }
+    expect(newestAfterActivity.events[0]).toMatchObject({ kind: "mission_created", target_id: newActivity.missionId })
+    await expect(runtime.command("runtime.commander_audit_timeline", { category: "invalid" })).rejects.toThrow("category is invalid")
+    await expect(runtime.command("runtime.commander_audit_timeline", { limit: 0 })).rejects.toThrow("audit limit must be a positive integer")
+    await expect(runtime.command("runtime.commander_audit_timeline", { beforeEventId: "missing-event" })).rejects.toThrow("audit event cursor not found")
+    await expect(runtime.command("runtime.commander_audit_timeline", { targetType: "proposal" })).rejects.toThrow("targetId is required")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit-kind", args: ["proposal"] })
+    expect(state.commanderAudit?.timeline.every((event) => event.category === "proposal")).toBe(true)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["proposal", proposalId] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "proposal", target_id: proposalId })
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("commander_proposal_created")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["bundle", bundle.bundle_id] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "bundle", target_id: bundle.bundle_id })
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("commander_proposal_bundle_created")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["draft", draftId] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "draft", target_id: draftId })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["review", reviewId] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "review", target_id: reviewId })
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("review_request_created")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["mission", "fake-mission-1"] })
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("mission_created")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["runtime", "fake-intent-1"] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "runtime", target_id: "fake-intent-1" })
+    expect(state.commanderAudit?.selectedChain?.related_ids.runtime_id).toContain("fake-intent-1")
+    expect(state.commanderAudit?.selectedChain?.related_ids.intent_id).toBeUndefined()
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("mission_created")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["bundle"] })
+    expect(state.commanderAudit?.commandError).toContain("targetId is required")
+    expect(JSON.stringify(state)).not.toContain("audit-secret")
+    expect(layoutSnapshot(state)).not.toContain("audit-secret")
+  })
+
   test("missing bundle command args produce redacted bundle errors", async () => {
     const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), new FakeRuntimeClient("/tmp/demo", "demo"), {
       type: "send-command",

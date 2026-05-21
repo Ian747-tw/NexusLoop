@@ -224,4 +224,6 @@ const runtimeCommands = new Set([
   "apply-preview",
   "apply-target",
   "apply-partial",
+  "audit",
+  "audit-kind",
 ])

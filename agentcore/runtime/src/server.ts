@@ -22,6 +22,8 @@ import { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-dr
 import type { CommanderPlaybookDraft, CommanderPlaybookDraftReadiness, CommanderPlaybookDraftStatus, CommanderPlaybookDraftSummary } from "./missions/commander-playbook-draft-types"
 import { CommanderApplyService } from "./missions/commander-apply-service"
 import type { CommanderApplyOptions, CommanderApplyPreview, CommanderApplyResult, CommanderApplyTargetType } from "./missions/commander-apply-types"
+import { CommanderAuditService } from "./missions/commander-audit-service"
+import type { CommanderAuditEventKind, CommanderAuditTimeline, CommanderAuthorityChain } from "./missions/commander-audit-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -317,7 +319,7 @@ export class RuntimeServer {
       case "runtime.list_review_requests":
         return this.listReviewRequests({
           status: optionalString(payload.status, "status") as ReviewStatus | undefined,
-          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          limit: optionalPositiveInteger(payload.limit, "limit", 1000),
         })
       case "runtime.approve_review_request":
         return this.approveReviewRequest(requiredString(payload.reviewId ?? payload.review_id, "reviewId"), requiredString(payload.decidedBy ?? payload.decided_by, "decidedBy"), optionalString(payload.reason, "reason"))
@@ -343,7 +345,7 @@ export class RuntimeServer {
       case "runtime.list_commander_proposals":
         return this.listCommanderProposals({
           status: optionalString(payload.status, "status") as ProposalStatus | undefined,
-          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          limit: optionalPositiveInteger(payload.limit, "limit", 1000),
         })
       case "runtime.request_proposal_review":
         return this.requestProposalReview(requiredString(payload.proposalId ?? payload.proposal_id, "proposalId"), {
@@ -410,6 +412,17 @@ export class RuntimeServer {
           allow_partial: optionalBoolean(payload.allowPartial ?? payload.allow_partial, "allowPartial"),
           dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
         })
+      case "runtime.commander_audit_timeline":
+        return this.commanderAuditTimeline({
+          limit: optionalPositiveInteger(payload.limit, "limit", 1000),
+          category: optionalString(payload.category, "category") as CommanderAuditEventKind | undefined,
+          target_type: optionalString(payload.targetType ?? payload.target_type, "targetType"),
+          target_id: optionalString(payload.targetId ?? payload.target_id, "targetId"),
+          after_event_id: optionalString(payload.afterEventId ?? payload.after_event_id, "afterEventId"),
+          before_event_id: optionalString(payload.beforeEventId ?? payload.before_event_id, "beforeEventId"),
+        })
+      case "runtime.commander_authority_chain":
+        return this.commanderAuthorityChain(requiredString(payload.targetType ?? payload.target_type, "targetType"), requiredString(payload.targetId ?? payload.target_id, "targetId"))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -720,6 +733,14 @@ export class RuntimeServer {
     return this.commanderApplyService().apply(target, options)
   }
 
+  async commanderAuditTimeline(options: Parameters<CommanderAuditService["timeline"]>[0] = {}): Promise<CommanderAuditTimeline> {
+    return this.commanderAuditService().timeline(options)
+  }
+
+  async commanderAuthorityChain(targetType: string, targetId: string): Promise<CommanderAuthorityChain> {
+    return this.commanderAuditService().authorityChain(targetType, targetId)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1008,6 +1029,10 @@ export class RuntimeServer {
       proposalBundleRegistry: this.proposalBundleRegistry,
       commanderPlaybookDraftRegistry: this.commanderPlaybookDraftRegistry,
     })
+  }
+
+  private commanderAuditService(): CommanderAuditService {
+    return new CommanderAuditService(this.eventStore)
   }
 }
 

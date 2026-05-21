@@ -379,6 +379,35 @@ export type CommanderApplyState = {
   commandError?: string
 }
 
+export type CommanderAuditEventSummary = {
+  event_id?: string
+  event_index: number
+  kind: string
+  category: string
+  target_type?: string
+  target_id?: string
+  related_ids: Record<string, string[]>
+  created_at?: string
+  title: string
+  summary: string
+}
+
+export type CommanderAuthorityChainSummary = {
+  target_type: string
+  target_id: string
+  related_ids: Record<string, string[]>
+  events: CommanderAuditEventSummary[]
+  missing_links: string[]
+}
+
+export type CommanderAuditState = {
+  timeline: CommanderAuditEventSummary[]
+  selectedChain?: CommanderAuthorityChainSummary | null
+  commandError?: string
+  lastTargetType?: string
+  lastTargetId?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -464,6 +493,7 @@ export type UiState = {
   commanderPlaybooks?: CommanderPlaybooksState
   commanderWorkbench?: CommanderWorkbenchState
   commanderApply?: CommanderApplyState
+  commanderAudit?: CommanderAuditState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -572,6 +602,10 @@ export function initialState(projectDir: string): UiState {
     commanderApply: {
       preview: null,
       lastResult: null,
+    },
+    commanderAudit: {
+      timeline: [],
+      selectedChain: null,
     },
   }
 }

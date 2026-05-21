@@ -11,6 +11,9 @@ import type {
   CommanderApplyPreviewSummary,
   CommanderApplyResultSummary,
   CommanderApplyState,
+  CommanderAuditEventSummary,
+  CommanderAuditState,
+  CommanderAuthorityChainSummary,
   CommanderWorkbenchDraftSummary,
   CommanderWorkbenchReadinessSummary,
   CommanderWorkbenchState,
@@ -48,6 +51,7 @@ const PROPOSAL_LIMIT = 10
 const PROPOSAL_BUNDLE_LIMIT = 10
 const PLAYBOOK_LIMIT = 10
 const WORKBENCH_DRAFT_LIMIT = 10
+const AUDIT_LIMIT = 20
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -104,6 +108,8 @@ export type RuntimeUiEffect =
   | { type: "cancel-playbook-draft"; draftId: string; reason?: string }
   | { type: "commander-apply-preview"; targetType: "proposal" | "bundle" | "draft"; targetId: string }
   | { type: "commander-apply-target"; targetType: "proposal" | "bundle" | "draft"; targetId: string; allowPartial?: boolean }
+  | { type: "load-commander-audit"; limit?: number; category?: string }
+  | { type: "load-commander-authority-chain"; targetType: string; targetId: string }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -407,6 +413,18 @@ export async function applyRuntimeUiEffect(
         )
         return await refreshAfterCommanderApply(next, runtime, effect.targetType, effect.targetId)
       }
+      case "load-commander-audit":
+        return applyCommanderAuditTimeline(
+          state,
+          await runtime.command("runtime.commander_audit_timeline", { limit: effect.limit ?? AUDIT_LIMIT, category: effect.category as never }),
+        )
+      case "load-commander-authority-chain":
+        return applyCommanderAuthorityChain(
+          state,
+          await runtime.command("runtime.commander_authority_chain", { targetType: effect.targetType, targetId: effect.targetId }),
+          effect.targetType,
+          effect.targetId,
+        )
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -425,6 +443,7 @@ export async function applyRuntimeUiEffect(
     if (isPlaybookEffect(effect)) return recordPlaybookCommandError(state, error)
     if (isWorkbenchEffect(effect)) return recordWorkbenchCommandError(state, error)
     if (isCommanderApplyEffect(effect)) return recordCommanderApplyCommandError(state, error)
+    if (isCommanderAuditEffect(effect)) return recordCommanderAuditCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -797,6 +816,12 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, commanderApplyEffect(args, true))
     case "apply-partial":
       return applyRuntimeUiEffect(commandState, runtime, commanderApplyPartialEffect(args))
+    case "audit":
+      return args.length === 0
+        ? applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-audit", limit: AUDIT_LIMIT })
+        : applyRuntimeUiEffect(commandState, runtime, auditChainEffect(args))
+    case "audit-kind":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-audit", limit: AUDIT_LIMIT, category: requiredArg(args, 0, "category") })
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -973,6 +998,11 @@ function isCommanderApplyEffect(effect: RuntimeUiEffect): boolean {
   return commanderApplyCommands.has(effect.command)
 }
 
+function isCommanderAuditEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return commanderAuditEffectTypes.has(effect.type)
+  return commanderAuditCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -1016,6 +1046,16 @@ const commanderApplyCommands = new Set([
 const commanderApplyEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "commander-apply-preview",
   "commander-apply-target",
+])
+
+const commanderAuditCommands = new Set([
+  "audit",
+  "audit-kind",
+])
+
+const commanderAuditEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-commander-audit",
+  "load-commander-authority-chain",
 ])
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
@@ -1220,6 +1260,34 @@ function applyCommanderApplyResult(state: UiState, value: unknown): UiState {
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "commander apply result", detail: `${result.target_type}:${result.target_id}`, status: result.applied ? "applied" : "skipped" }].slice(-12),
+  }
+}
+
+function applyCommanderAuditTimeline(state: UiState, value: unknown): UiState {
+  const timeline = readCommanderAuditTimeline(value)
+  return {
+    ...state,
+    commanderAudit: {
+      ...commanderAuditState(state),
+      timeline,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander audit timeline", detail: `events=${timeline.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyCommanderAuthorityChain(state: UiState, value: unknown, targetType: string, targetId: string): UiState {
+  const chain = readCommanderAuthorityChain(value)
+  return {
+    ...state,
+    commanderAudit: {
+      ...commanderAuditState(state),
+      selectedChain: chain,
+      lastTargetType: redactText(targetType),
+      lastTargetId: redactText(targetId),
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander authority chain", detail: `${chain.target_type}:${chain.target_id}`, status: chain.events.length > 0 ? "loaded" : "empty" }].slice(-12),
   }
 }
 
@@ -1554,6 +1622,18 @@ function recordCommanderApplyCommandError(state: UiState, error: unknown): UiSta
   }
 }
 
+function recordCommanderAuditCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderAudit: {
+      ...commanderAuditState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "commander audit command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -1853,6 +1933,45 @@ function readCommanderApplyResult(value: unknown): CommanderApplyResultSummary {
   }
 }
 
+function readCommanderAuditTimeline(value: unknown): CommanderAuditEventSummary[] {
+  if (!isRecord(value) || !Array.isArray(value.events)) throw new Error("runtime.commander_audit_timeline returned invalid timeline")
+  return value.events.map(readCommanderAuditEvent).filter((event): event is CommanderAuditEventSummary => event !== null).slice(0, AUDIT_LIMIT)
+}
+
+function readCommanderAuthorityChain(value: unknown): CommanderAuthorityChainSummary {
+  if (!isRecord(value) || typeof value.target_type !== "string" || typeof value.target_id !== "string" || !Array.isArray(value.events)) throw new Error("runtime.commander_authority_chain returned invalid chain")
+  return {
+    target_type: readString(value.target_type, "unknown"),
+    target_id: redactText(value.target_id),
+    related_ids: readRelatedIds(value.related_ids),
+    events: value.events.map(readCommanderAuditEvent).filter((event): event is CommanderAuditEventSummary => event !== null).slice(0, 20),
+    missing_links: readStringList(value.missing_links, 10).map(preview),
+  }
+}
+
+function readCommanderAuditEvent(value: unknown): CommanderAuditEventSummary | null {
+  if (!isRecord(value) || typeof value.kind !== "string") return null
+  return {
+    event_id: typeof value.event_id === "string" ? redactText(value.event_id) : undefined,
+    event_index: readNumber(value.event_index, 0),
+    kind: readString(value.kind, "unknown"),
+    category: readString(value.category, "other"),
+    target_type: typeof value.target_type === "string" ? redactText(value.target_type) : undefined,
+    target_id: typeof value.target_id === "string" ? redactText(value.target_id) : undefined,
+    related_ids: readRelatedIds(value.related_ids),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : undefined,
+    title: preview(readString(value.title, value.kind)),
+    summary: preview(readString(value.summary, "")),
+  }
+}
+
+function readRelatedIds(value: unknown): Record<string, string[]> {
+  if (!isRecord(value)) return {}
+  const out: Record<string, string[]> = {}
+  for (const [key, raw] of Object.entries(value)) out[redactText(key)] = readStringList(raw, 20)
+  return out
+}
+
 function readStringList(value: unknown, limit: number): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map(redactText).slice(0, limit) : []
 }
@@ -2002,6 +2121,10 @@ function commanderWorkbenchState(state: UiState): CommanderWorkbenchState {
 
 function commanderApplyState(state: UiState): CommanderApplyState {
   return state.commanderApply ?? { preview: null, lastResult: null }
+}
+
+function commanderAuditState(state: UiState): CommanderAuditState {
+  return state.commanderAudit ?? { timeline: [], selectedChain: null }
 }
 
 function missionExecutionState(state: UiState): MissionExecutionState {
@@ -2217,6 +2340,14 @@ function commanderApplyPartialEffect(args: string[]): Extract<RuntimeUiEffect, {
   if (effect.type !== "commander-apply-target") throw new Error("apply target is required")
   if (effect.targetType === "proposal") throw new Error("partial apply target must be bundle or draft")
   return { ...effect, allowPartial: true }
+}
+
+function auditChainEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-commander-authority-chain" }> {
+  return {
+    type: "load-commander-authority-chain",
+    targetType: requiredArg(args, 0, "targetType"),
+    targetId: requiredArg(args, 1, "targetId"),
+  }
 }
 
 function requiredArg(args: string[], index: number, field: string): string {

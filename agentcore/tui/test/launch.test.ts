@@ -356,6 +356,8 @@ describe("TUI launch boundary", () => {
       { type: "submit" },
       { type: "insert", text: "/apply-preview proposal fake-proposal-1" },
       { type: "submit" },
+      { type: "insert", text: "/audit proposal fake-proposal-1" },
+      { type: "submit" },
     ]
 
     await runTuiEntrypoint({
@@ -371,6 +373,8 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("Commander workbench")
     expect(snapshot).toContain("Commander apply")
     expect(snapshot).toContain("preview=proposal:fake-proposal-1 blocked")
+    expect(snapshot).toContain("Commander audit")
+    expect(snapshot).toContain("chain=proposal:fake-proposal-1")
     expect(snapshot).toContain("fail_mission")
     expect(snapshot).not.toContain("playbook-secret")
   })
