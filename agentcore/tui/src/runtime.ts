@@ -239,7 +239,14 @@ export class FakeRuntimeClient implements RuntimeClient {
           payload.dryRun === true || payload.dry_run === true,
         )
       case "runtime.commander_audit_timeline":
-        return this.commanderAuditTimeline(optionalString(payload.category), readLimit(payload.limit, 20), optionalString(payload.targetType ?? payload.target_type), optionalString(payload.targetId ?? payload.target_id))
+        return this.commanderAuditTimeline(
+          optionalString(payload.category),
+          readLimit(payload.limit, 20),
+          optionalString(payload.targetType ?? payload.target_type),
+          optionalString(payload.targetId ?? payload.target_id),
+          optionalString(payload.afterEventId ?? payload.after_event_id),
+          optionalString(payload.beforeEventId ?? payload.before_event_id),
+        )
       case "runtime.commander_authority_chain":
         return this.commanderAuthorityChain(String(payload.targetType ?? payload.target_type ?? ""), String(payload.targetId ?? payload.target_id ?? ""))
       case "runtime.submit_user_message":
@@ -996,10 +1003,17 @@ export class FakeRuntimeClient implements RuntimeClient {
     }
   }
 
-  private commanderAuditTimeline(category: string | undefined, limit: number, targetType?: string, targetId?: string): { events: CommanderAuditEventSummary[]; total_considered: number; next_after_event_id?: string; next_before_event_id?: string } {
-    const events = this.fakeAuditEvents()
-      .filter((event) => !category || event.category === category)
-      .filter((event) => !targetType || !targetId || auditEventMatches(event, targetType, targetId))
+  private commanderAuditTimeline(category: string | undefined, limit: number, targetType?: string, targetId?: string, afterEventId?: string, beforeEventId?: string): { events: CommanderAuditEventSummary[]; total_considered: number; next_after_event_id?: string; next_before_event_id?: string } {
+    const cleanCategory = category === undefined ? undefined : readAuditCategory(category)
+    const cleanTarget = targetType === undefined && targetId === undefined ? undefined : readAuditTarget(targetType ?? "", targetId ?? "")
+    const allEvents = this.fakeAuditEvents()
+    const afterIndex = auditBoundaryIndex(allEvents, afterEventId)
+    const beforeIndex = auditBoundaryIndex(allEvents, beforeEventId)
+    const events = allEvents
+      .filter((event) => afterIndex === undefined || event.event_index > afterIndex)
+      .filter((event) => beforeIndex === undefined || event.event_index < beforeIndex)
+      .filter((event) => !cleanCategory || event.category === cleanCategory)
+      .filter((event) => !cleanTarget || auditEventMatches(event, cleanTarget.targetType, cleanTarget.targetId))
     const recent = [...events].reverse().slice(0, limit)
     return {
       events: recent,
@@ -1269,6 +1283,16 @@ function readApplyTarget(targetType: string, targetId: string): { targetType: "p
 function readAuditTarget(targetType: string, targetId: string): { targetType: string; targetId: string } {
   if (!["mission", "claim", "result", "review", "proposal", "bundle", "draft", "runtime"].includes(targetType)) throw new Error("targetType must be mission, claim, result, review, proposal, bundle, draft, or runtime")
   return { targetType, targetId: requiredString(targetId, "targetId") }
+}
+
+function readAuditCategory(category: string): string {
+  if (!["mission", "review", "proposal", "proposal_bundle", "playbook_draft", "apply", "runtime", "other"].includes(category)) throw new Error("commander audit category is invalid")
+  return category
+}
+
+function auditBoundaryIndex(events: CommanderAuditEventSummary[], eventId: string | undefined): number | undefined {
+  if (eventId === undefined) return undefined
+  return events.find((event) => event.event_id === requiredString(eventId, "eventId"))?.event_index
 }
 
 function fakeAuditEvent(
