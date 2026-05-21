@@ -1063,6 +1063,10 @@ describe("runtime UI effects", () => {
     const secondPage = await runtime.command("runtime.commander_audit_timeline", { limit: 2, beforeEventId: firstPage.next_before_event_id }) as { events: Array<{ event_id?: string; event_index: number }> }
     expect(secondPage.events.every((event) => event.event_index < firstPage.events.at(-1)!.event_index)).toBe(true)
     expect(secondPage.events.map((event) => event.event_id).some((eventId) => firstPage.events.map((event) => event.event_id).includes(eventId))).toBe(false)
+    const proposalAuditBefore = await runtime.command("runtime.commander_audit_timeline", { targetType: "proposal", targetId: proposalId, limit: 1 }) as { events: Array<{ event_id?: string }> }
+    await runtime.command("runtime.submit_user_message", { message: "new audit activity" })
+    const proposalAuditAfter = await runtime.command("runtime.commander_audit_timeline", { targetType: "proposal", targetId: proposalId, limit: 1 }) as { events: Array<{ event_id?: string }> }
+    expect(proposalAuditAfter.events[0]?.event_id).toBe(proposalAuditBefore.events[0]?.event_id)
     await expect(runtime.command("runtime.commander_audit_timeline", { category: "invalid" })).rejects.toThrow("category is invalid")
     await expect(runtime.command("runtime.commander_audit_timeline", { targetType: "proposal" })).rejects.toThrow("targetId is required")
 

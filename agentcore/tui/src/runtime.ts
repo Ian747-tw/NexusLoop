@@ -1310,7 +1310,7 @@ function fakeAuditEvent(
     if (clean.length > 0) cleanRelated[key] = clean
   }
   return {
-    event_id: `fake-audit-${index}`,
+    event_id: stableFakeAuditEventId(kind, targetId, cleanRelated),
     event_index: index,
     kind,
     category,
@@ -1321,6 +1321,20 @@ function fakeAuditEvent(
     title: `${kind} ${redactText(targetId)}`,
     summary: redactText(summary),
   }
+}
+
+function stableFakeAuditEventId(kind: string, targetId: string, relatedIds: Record<string, string[]>): string {
+  const stableId = relatedIds.draft_id?.[0]
+    ?? relatedIds.bundle_id?.[0]
+    ?? relatedIds.proposal_id?.[0]
+    ?? relatedIds.review_id?.[0]
+    ?? relatedIds.progress_id?.[0]
+    ?? relatedIds.result_id?.[0]
+    ?? relatedIds.claim_id?.[0]
+    ?? relatedIds.mission_id?.[0]
+    ?? relatedIds.intent_id?.[0]
+    ?? redactText(targetId)
+  return `fake-audit-${kind}-${stableId}`.replace(/[^A-Za-z0-9_.:-]/g, "_")
 }
 
 function auditEventMatches(event: CommanderAuditEventSummary, targetType: string, targetId: string): boolean {
