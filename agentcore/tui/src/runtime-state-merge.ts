@@ -15,6 +15,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
   const canUpdateProposalBundles = baseline === undefined || stableEqual(current.proposalBundles, baseline.proposalBundles)
   const canUpdateCommanderPlaybooks = baseline === undefined || stableEqual(current.commanderPlaybooks, baseline.commanderPlaybooks)
   const canUpdateCommanderWorkbench = baseline === undefined || stableEqual(current.commanderWorkbench, baseline.commanderWorkbench)
+  const canUpdateCommanderApply = baseline === undefined || stableEqual(current.commanderApply, baseline.commanderApply)
   const canUpdateRuntimeCommandError =
     baseline === undefined ||
     (stableEqual(current.runtimeCommandError, baseline.runtimeCommandError) &&
@@ -45,6 +46,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     proposalBundles: canUpdateProposalBundles ? next.proposalBundles : current.proposalBundles,
     commanderPlaybooks: canUpdateCommanderPlaybooks ? next.commanderPlaybooks : current.commanderPlaybooks,
     commanderWorkbench: canUpdateCommanderWorkbench ? next.commanderWorkbench : current.commanderWorkbench,
+    commanderApply: canUpdateCommanderApply ? next.commanderApply : current.commanderApply,
     runtimeCommandError: canUpdateRuntimeCommandError ? next.runtimeCommandError : current.runtimeCommandError,
     lastCommand: canUpdateLastCommand ? next.lastCommand : current.lastCommand,
     header: {

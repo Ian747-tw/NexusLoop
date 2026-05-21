@@ -20,6 +20,8 @@ import { draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } 
 import type { CommanderPlaybook, CommanderPlaybookDraftInput, CommanderPlaybookDraftResult } from "./missions/commander-playbook-types"
 import { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-draft-registry"
 import type { CommanderPlaybookDraft, CommanderPlaybookDraftReadiness, CommanderPlaybookDraftStatus, CommanderPlaybookDraftSummary } from "./missions/commander-playbook-draft-types"
+import { CommanderApplyService } from "./missions/commander-apply-service"
+import type { CommanderApplyOptions, CommanderApplyPreview, CommanderApplyResult, CommanderApplyTargetType } from "./missions/commander-apply-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -401,6 +403,13 @@ export class RuntimeServer {
         return this.requestCommanderPlaybookDraftReviews(requiredString(payload.draftId ?? payload.draft_id, "draftId"), requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"))
       case "runtime.cancel_commander_playbook_draft":
         return this.cancelCommanderPlaybookDraft(requiredString(payload.draftId ?? payload.draft_id, "draftId"), optionalString(payload.reason, "reason"))
+      case "runtime.commander_apply_preview":
+        return this.commanderApplyPreview(readCommanderApplyTarget(payload))
+      case "runtime.apply_commander_target":
+        return this.applyCommanderTarget(readCommanderApplyTarget(payload), {
+          allow_partial: optionalBoolean(payload.allowPartial ?? payload.allow_partial, "allowPartial"),
+          dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
+        })
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -702,6 +711,15 @@ export class RuntimeServer {
     return this.commanderPlaybookDraftRegistry.cancelDraft(draftId, reason)
   }
 
+  async commanderApplyPreview(target: { target_type: CommanderApplyTargetType; target_id: string }): Promise<CommanderApplyPreview> {
+    return this.commanderApplyService().preview(target)
+  }
+
+  async applyCommanderTarget(target: { target_type: CommanderApplyTargetType; target_id: string }, options: CommanderApplyOptions = {}): Promise<CommanderApplyResult> {
+    this.requireCommanderApplyWriteRuntime("runtime.apply_commander_target")
+    return this.commanderApplyService().apply(target, options)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -978,6 +996,19 @@ export class RuntimeServer {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before commander playbook writes")
   }
+
+  private requireCommanderApplyWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before commander apply writes")
+  }
+
+  private commanderApplyService(): CommanderApplyService {
+    return new CommanderApplyService({
+      proposalRegistry: this.proposalRegistry,
+      proposalBundleRegistry: this.proposalBundleRegistry,
+      commanderPlaybookDraftRegistry: this.commanderPlaybookDraftRegistry,
+    })
+  }
 }
 
 type ResearchProjectionRuntimeEventType = Extract<RuntimeEvent, { type: `ResearchProjection${string}` }>["type"]
@@ -1041,6 +1072,13 @@ function readCommanderPlaybookDraftInput(payload: Record<string, unknown>): Comm
     bundle_summary: optionalString(payload.bundleSummary ?? payload.bundle_summary, "bundleSummary"),
     create_bundle: optionalBoolean(payload.createBundle ?? payload.create_bundle, "createBundle"),
     request_reviews: optionalBoolean(payload.requestReviews ?? payload.request_reviews, "requestReviews"),
+  }
+}
+
+function readCommanderApplyTarget(payload: Record<string, unknown>): { target_type: CommanderApplyTargetType; target_id: string } {
+  return {
+    target_type: requiredString(payload.targetType ?? payload.target_type, "targetType") as CommanderApplyTargetType,
+    target_id: requiredString(payload.targetId ?? payload.target_id, "targetId"),
   }
 }
 

@@ -890,6 +890,60 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.results[0]).toMatchObject({ mission_id: "fake-mission-1", claim_id: claim.claim_id, summary: "summary" })
   })
 
+  test("commander apply workbench previews applies and reports partial targets", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "apply workbench target" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "propose-progress",
+      args: ["fake-mission-1", claim.claim_id, "Blocked", "--", "message token=apply-secret"],
+    })
+    const blockedProposalId = state.proposals?.selectedProposal?.proposal_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-preview", args: ["proposal", blockedProposalId] })
+    expect(state.commanderApply?.preview).toMatchObject({ target_type: "proposal", ready_to_apply: false, would_apply: [] })
+    expect(layoutSnapshot(state)).toContain("Commander apply")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "propose-progress",
+      args: ["fake-mission-1", claim.claim_id, "Approved", "--", "approved"],
+    })
+    const approvedProposalId = state.proposals?.selectedProposal?.proposal_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "proposal-review", args: [approvedProposalId, "Review", "--", "Summary"] })
+    const reviewId = state.proposals?.selectedProposal?.review_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "approve", args: [reviewId, "ok"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-target", args: ["proposal", approvedProposalId] })
+    expect(state.commanderApply?.lastResult).toMatchObject({ applied: true, applied_proposal_ids: [approvedProposalId] })
+    expect(state.missionExecution?.progress[0]).toMatchObject({ message: "approved" })
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "draft-progress",
+      args: ["fake-mission-1", claim.claim_id, "Draft", "--", "draft message"],
+    })
+    const draftId = state.commanderPlaybooks?.lastDraft?.draft_id ?? ""
+    const draftProposalId = state.commanderPlaybooks?.lastDraft?.proposal_ids[0] ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "draft-review", args: [draftId] })
+    const draftReviewId = state.commanderWorkbench?.selectedDraft?.review_ids?.[0] ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "approve", args: [draftReviewId, "ok"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-preview", args: ["draft", draftId] })
+    expect(state.commanderApply?.preview).toMatchObject({ target_type: "draft", ready_to_apply: true, would_apply: [draftProposalId] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-target", args: ["draft", draftId] })
+    expect(state.commanderApply?.lastResult).toMatchObject({ applied: true, applied_proposal_ids: [draftProposalId] })
+
+    const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "Partial", summary: "Partial", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blockedProposalId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-partial", args: ["bundle", bundle.bundle_id] })
+    expect(state.commanderApply?.commandError).toContain("partial commander apply")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-partial", args: ["proposal", approvedProposalId] })
+    expect(state.commanderApply?.commandError).toContain("bundle or draft")
+    expect(JSON.stringify(state)).not.toContain("apply-secret")
+    expect(layoutSnapshot(state)).not.toContain("apply-secret")
+  })
+
   test("missing bundle command args produce redacted bundle errors", async () => {
     const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), new FakeRuntimeClient("/tmp/demo", "demo"), {
       type: "send-command",

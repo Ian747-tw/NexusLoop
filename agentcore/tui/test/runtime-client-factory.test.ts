@@ -460,10 +460,21 @@ describe("TUI runtime client factory", () => {
       action_kind: "record_progress",
       status: "proposed",
     })
-    await expect(client.command("runtime.request_commander_playbook_draft_reviews", { draftId: draft.draft_id, requestedBy: "tester" })).resolves.toMatchObject({
+    const reviewed = await client.command("runtime.request_commander_playbook_draft_reviews", { draftId: draft.draft_id, requestedBy: "tester" }) as { review_ids: string[] }
+    expect(reviewed).toMatchObject({
       draft_id: draft.draft_id,
       status: "review_requested",
       review_ids: [expect.any(String)],
+    })
+    const reviews = await client.command("runtime.list_review_requests", { status: "pending" }) as Array<{ review_id: string }>
+    await client.command("runtime.approve_review_request", { reviewId: reviews[0].review_id, decidedBy: "tester", reason: "ok" })
+    await expect(client.command("runtime.commander_apply_preview", { targetType: "draft", targetId: draft.draft_id })).resolves.toMatchObject({
+      ready_to_apply: true,
+      would_apply: draft.proposal_ids,
+    })
+    await expect(client.command("runtime.apply_commander_target", { targetType: "draft", targetId: draft.draft_id })).resolves.toMatchObject({
+      applied: true,
+      applied_proposal_ids: draft.proposal_ids,
     })
 
     await client.runtime.shutdown()

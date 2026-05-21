@@ -347,6 +347,38 @@ export type CommanderWorkbenchState = {
   commandError?: string
 }
 
+export type CommanderApplyPreviewSummary = {
+  target_type: string
+  target_id: string
+  ready_to_apply: boolean
+  proposal_ids: string[]
+  bundle_id?: string
+  draft_id?: string
+  approved_count: number
+  applied_count: number
+  blocked_count: number
+  blockers: string[]
+  apply_mode: string
+  would_apply: string[]
+  would_skip: string[]
+}
+
+export type CommanderApplyResultSummary = {
+  target_type: string
+  target_id: string
+  applied: boolean
+  applied_proposal_ids: string[]
+  skipped_proposal_ids: string[]
+  result_summary: string
+  created_at: string
+}
+
+export type CommanderApplyState = {
+  preview?: CommanderApplyPreviewSummary | null
+  lastResult?: CommanderApplyResultSummary | null
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -431,6 +463,7 @@ export type UiState = {
   proposalBundles?: ProposalBundlesState
   commanderPlaybooks?: CommanderPlaybooksState
   commanderWorkbench?: CommanderWorkbenchState
+  commanderApply?: CommanderApplyState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -535,6 +568,10 @@ export function initialState(projectDir: string): UiState {
       drafts: [],
       selectedDraft: null,
       readiness: null,
+    },
+    commanderApply: {
+      preview: null,
+      lastResult: null,
     },
   }
 }

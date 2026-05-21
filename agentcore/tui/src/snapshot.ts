@@ -68,6 +68,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...proposalBundleLines(state))
   out.push(...playbookLines(state))
   out.push(...workbenchLines(state))
+  out.push(...applyLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -300,6 +301,39 @@ function workbenchLines(state: UiState): string[] {
     }
   }
   if (workbench.commandError) out.push(`  command_error=${redactText(workbench.commandError)}`)
+  return out
+}
+
+function applyLines(state: UiState): string[] {
+  const apply = state.commanderApply
+  const out = ["Commander apply"]
+  if (!apply) {
+    out.push("  preview=none")
+    return out
+  }
+  if (apply.preview) {
+    const applyPreview = apply.preview
+    out.push(`  preview=${applyPreview.target_type}:${applyPreview.target_id} ${applyPreview.ready_to_apply ? "ready" : "blocked"} mode=${applyPreview.apply_mode}`)
+    out.push(`  counts approved=${applyPreview.approved_count} applied=${applyPreview.applied_count} blocked=${applyPreview.blocked_count}`)
+    out.push(`  would_apply=${applyPreview.would_apply.slice(0, 10).join(",") || "none"}`)
+    out.push(`  would_skip=${applyPreview.would_skip.slice(0, 10).join(",") || "none"}`)
+    if (applyPreview.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...applyPreview.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (apply.lastResult) {
+    const result = apply.lastResult
+    out.push(`  last_result=${result.target_type}:${result.target_id} applied=${result.applied}`)
+    out.push(`  applied=${result.applied_proposal_ids.slice(0, 10).join(",") || "none"}`)
+    out.push(`  skipped=${result.skipped_proposal_ids.slice(0, 10).join(",") || "none"}`)
+    out.push(`  summary=${preview(redactText(result.result_summary))}`)
+  } else {
+    out.push("  last_result=none")
+  }
+  if (apply.commandError) out.push(`  command_error=${redactText(apply.commandError)}`)
   return out
 }
 
