@@ -492,11 +492,11 @@ function missionIdForClaim(state: UiState, claimId?: string): string | undefined
   return state.missionExecution?.claims.find((claim) => claim.claim_id === claimId)?.mission_id
 }
 
-function missionIdForProposalIds(state: UiState, proposalIds: string[]): string | undefined {
-  return proposalIds
+function missionIdsForProposalIds(state: UiState, proposalIds: string[]): string[] {
+  return [...new Set(proposalIds
     .map((proposalId) => state.proposals?.recent.find((proposal) => proposal.proposal_id === proposalId))
     .map((proposal) => proposal?.mission_id ?? missionIdForClaim(state, proposal?.claim_id))
-    .find((candidate): candidate is string => typeof candidate === "string")
+    .filter((candidate): candidate is string => typeof candidate === "string"))]
 }
 
 async function loadReviews(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
@@ -630,7 +630,11 @@ async function refreshAfterCommanderApply(state: UiState, runtime: RuntimeClient
     ...(next.commanderApply?.lastResult?.applied_proposal_ids ?? []),
     ...(next.commanderApply?.lastResult?.skipped_proposal_ids ?? []),
   ]
-  const missionId = missionIdForProposalIds(next, targetProposalIds)
+  const affectedMissionIds = missionIdsForProposalIds(next, targetProposalIds)
+  const selectedMissionId = next.missionExecution?.selectedMissionId
+  const missionId = selectedMissionId && affectedMissionIds.includes(selectedMissionId)
+    ? selectedMissionId
+    : affectedMissionIds[0]
   return missionId ? await refreshAfterMissionWrite(next, runtime, missionId) : next
 }
 

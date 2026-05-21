@@ -1423,6 +1423,16 @@ describe("RuntimeServer core", () => {
       ready_to_apply: true,
       would_apply: [approved.proposal_id],
     })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: approved.proposal_id, dryRun: true })).resolves.toMatchObject({
+      applied: false,
+      applied_proposal_ids: [],
+      skipped_proposal_ids: [approved.proposal_id],
+      result_summary: "dry run; no proposals applied",
+    })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "proposal", targetId: approved.proposal_id })).resolves.toMatchObject({
+      ready_to_apply: true,
+      would_apply: [approved.proposal_id],
+    })
     await expect(server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: approved.proposal_id })).resolves.toMatchObject({
       applied: true,
       applied_proposal_ids: [approved.proposal_id],

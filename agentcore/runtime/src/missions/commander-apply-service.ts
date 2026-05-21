@@ -54,7 +54,7 @@ export class CommanderApplyService {
         target_id: clean.target_id,
         applied: false,
         applied_proposal_ids: [],
-        skipped_proposal_ids: preview.would_skip,
+        skipped_proposal_ids: preview.proposal_ids,
         result_summary: "dry run; no proposals applied",
         created_at: this.isoNow(),
       })

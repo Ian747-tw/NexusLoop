@@ -948,6 +948,7 @@ describe("runtime UI effects", () => {
     await expect(runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: dryRunProposal.proposal_id, dryRun: true })).resolves.toMatchObject({
       applied: false,
       applied_proposal_ids: [],
+      skipped_proposal_ids: [dryRunProposal.proposal_id],
       result_summary: "dry run; no proposals applied",
     })
     await expect(runtime.command("runtime.get_commander_proposal", { proposalId: dryRunProposal.proposal_id })).resolves.toMatchObject({ status: "approved" })
@@ -985,6 +986,46 @@ describe("runtime UI effects", () => {
     expect(state.commanderApply?.commandError).toContain("bundle or draft")
     expect(JSON.stringify(state)).not.toContain("apply-secret")
     expect(layoutSnapshot(state)).not.toContain("apply-secret")
+  })
+
+  test("commander apply refreshes the selected affected mission for mixed bundles", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await runtime.command("runtime.submit_user_message", { message: "first apply mission" })
+    await runtime.command("runtime.submit_user_message", { message: "second apply mission" })
+    const firstClaim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    const secondClaim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-2", executorId: "executor" }) as { claim_id: string }
+    const firstProposal = await runtime.command("runtime.create_commander_proposal", {
+      missionId: "fake-mission-1",
+      claimId: firstClaim.claim_id,
+      actionKind: "record_progress",
+      title: "First",
+      summary: "First",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "fake-mission-1", claim_id: firstClaim.claim_id, message: "first progress" },
+    }) as { proposal_id: string }
+    const secondProposal = await runtime.command("runtime.create_commander_proposal", {
+      missionId: "fake-mission-2",
+      claimId: secondClaim.claim_id,
+      actionKind: "record_progress",
+      title: "Second",
+      summary: "Second",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "fake-mission-2", claim_id: secondClaim.claim_id, message: "second progress" },
+    }) as { proposal_id: string }
+    for (const proposal of [firstProposal, secondProposal]) {
+      const review = await runtime.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+      await runtime.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "ok" })
+    }
+    const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "Mixed", summary: "Mixed", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: firstProposal.proposal_id })
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: secondProposal.proposal_id })
+
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "mission", args: ["fake-mission-2"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-target", args: ["bundle", bundle.bundle_id] })
+
+    expect(state.commanderApply?.lastResult).toMatchObject({ applied: true, applied_proposal_ids: [firstProposal.proposal_id, secondProposal.proposal_id] })
+    expect(state.missionExecution?.selectedMissionId).toBe("fake-mission-2")
+    expect(state.missionExecution?.progress[0]).toMatchObject({ mission_id: "fake-mission-2", message: "second progress" })
   })
 
   test("missing bundle command args produce redacted bundle errors", async () => {
