@@ -1064,9 +1064,11 @@ describe("runtime UI effects", () => {
     expect(secondPage.events.every((event) => event.event_index < firstPage.events.at(-1)!.event_index)).toBe(true)
     expect(secondPage.events.map((event) => event.event_id).some((eventId) => firstPage.events.map((event) => event.event_id).includes(eventId))).toBe(false)
     const proposalAuditBefore = await runtime.command("runtime.commander_audit_timeline", { targetType: "proposal", targetId: proposalId, limit: 1 }) as { events: Array<{ event_id?: string }> }
-    await runtime.command("runtime.submit_user_message", { message: "new audit activity" })
+    const newActivity = await runtime.command("runtime.submit_user_message", { message: "new audit activity" }) as { missionId: string }
     const proposalAuditAfter = await runtime.command("runtime.commander_audit_timeline", { targetType: "proposal", targetId: proposalId, limit: 1 }) as { events: Array<{ event_id?: string }> }
     expect(proposalAuditAfter.events[0]?.event_id).toBe(proposalAuditBefore.events[0]?.event_id)
+    const newestAfterActivity = await runtime.command("runtime.commander_audit_timeline", { limit: 1 }) as { events: Array<{ kind: string; target_id?: string }> }
+    expect(newestAfterActivity.events[0]).toMatchObject({ kind: "mission_created", target_id: newActivity.missionId })
     await expect(runtime.command("runtime.commander_audit_timeline", { category: "invalid" })).rejects.toThrow("category is invalid")
     await expect(runtime.command("runtime.commander_audit_timeline", { targetType: "proposal" })).rejects.toThrow("targetId is required")
 

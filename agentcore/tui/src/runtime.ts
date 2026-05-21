@@ -1084,6 +1084,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     }
     if (events.length === 0) events.push(fakeAuditEvent(0, "runtime_started", "runtime", "runtime", "fake-runtime", { runtime_id: ["fake-runtime"] }, "fake runtime connected"))
     return events
+      .sort((a, b) => fakeAuditSortKey(a) - fakeAuditSortKey(b) || fakeAuditKindOrder(a.kind) - fakeAuditKindOrder(b.kind) || a.kind.localeCompare(b.kind))
+      .map((event, index) => ({ ...event, event_index: index }))
   }
 
   private projectProposalBundle(bundle: CommanderProposalBundleSummary): CommanderProposalBundleSummary {
@@ -1335,6 +1337,29 @@ function stableFakeAuditEventId(kind: string, targetId: string, relatedIds: Reco
     ?? relatedIds.intent_id?.[0]
     ?? redactText(targetId)
   return `fake-audit-${kind}-${stableId}`.replace(/[^A-Za-z0-9_.:-]/g, "_")
+}
+
+function fakeAuditSortKey(event: CommanderAuditEventSummary): number {
+  const ids = [
+    event.target_id,
+    ...Object.values(event.related_ids).flat(),
+  ].filter((value): value is string => typeof value === "string")
+  const suffixes = ids.map((value) => /-(\d+)$/.exec(value)?.[1]).filter((value): value is string => typeof value === "string").map(Number)
+  return suffixes.length > 0 ? Math.max(...suffixes) : -1
+}
+
+function fakeAuditKindOrder(kind: string): number {
+  if (kind === "mission_created") return 0
+  if (kind === "mission_claimed") return 1
+  if (kind === "mission_progress_recorded") return 2
+  if (kind === "mission_result_submitted") return 3
+  if (kind === "review_request_created") return 4
+  if (kind.startsWith("review_request_")) return 5
+  if (kind === "commander_proposal_created") return 6
+  if (kind === "commander_proposal_bundle_created") return 7
+  if (kind === "commander_playbook_draft_created") return 8
+  if (kind === "commander_proposal_applied") return 9
+  return 20
 }
 
 function auditEventMatches(event: CommanderAuditEventSummary, targetType: string, targetId: string): boolean {
