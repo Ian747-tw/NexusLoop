@@ -996,7 +996,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     }
   }
 
-  private commanderAuditTimeline(category: string | undefined, limit: number, targetType?: string, targetId?: string): { events: CommanderAuditEventSummary[]; total_considered: number; next_after_event_id?: string } {
+  private commanderAuditTimeline(category: string | undefined, limit: number, targetType?: string, targetId?: string): { events: CommanderAuditEventSummary[]; total_considered: number; next_after_event_id?: string; next_before_event_id?: string } {
     const events = this.fakeAuditEvents()
       .filter((event) => !category || event.category === category)
       .filter((event) => !targetType || !targetId || auditEventMatches(event, targetType, targetId))
@@ -1004,7 +1004,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     return {
       events: recent,
       total_considered: events.length,
-      next_after_event_id: recent.at(-1)?.event_id,
+      next_after_event_id: recent.at(0)?.event_id,
+      next_before_event_id: events.length > recent.length ? recent.at(-1)?.event_id : undefined,
     }
   }
 

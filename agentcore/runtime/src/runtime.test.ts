@@ -1547,6 +1547,12 @@ describe("RuntimeServer core", () => {
     expect(timeline.total_considered).toBeGreaterThan(0)
     expect(timeline.events.map((event) => event.event_index)).toEqual([...timeline.events.map((event) => event.event_index)].sort((a, b) => b - a))
     expect(timeline.events.map((event) => event.kind)).toContain("commander_playbook_draft_created")
+    const firstPage = await server.command("runtime.commander_audit_timeline", { limit: 2 }) as { events: Array<{ event_id?: string; event_index: number }>; next_after_event_id?: string; next_before_event_id?: string }
+    expect(firstPage.next_after_event_id).toBe(firstPage.events[0]?.event_id)
+    expect(firstPage.next_before_event_id).toBe(firstPage.events.at(-1)?.event_id)
+    const secondPage = await server.command("runtime.commander_audit_timeline", { limit: 2, beforeEventId: firstPage.next_before_event_id }) as { events: Array<{ event_id?: string; event_index: number }> }
+    expect(secondPage.events.every((event) => event.event_index < firstPage.events.at(-1)!.event_index)).toBe(true)
+    expect(secondPage.events.map((event) => event.event_id).some((eventId) => firstPage.events.map((event) => event.event_id).includes(eventId))).toBe(false)
 
     const proposalTimeline = await server.command("runtime.commander_audit_timeline", { category: "proposal", limit: 25 }) as { events: Array<{ category: string }> }
     expect(proposalTimeline.events.length).toBeGreaterThan(0)

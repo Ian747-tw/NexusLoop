@@ -102,10 +102,14 @@ export class CommanderAuditService {
       .filter((event) => category === undefined || event.category === category)
       .filter((event) => !target || eventMatchesTarget(event, target.target_type, target.target_id))
     const recent = [...filtered].reverse().slice(0, limit)
+    const newest = recent.at(0)
+    const oldest = recent.at(-1)
+    const hasOlder = oldest ? filtered.some((event) => event.event_index < oldest.event_index) : false
     return redactValue({
       events: recent,
       total_considered: filtered.length,
-      next_after_event_id: recent.at(-1)?.event_id,
+      next_after_event_id: newest?.event_id,
+      next_before_event_id: hasOlder ? oldest?.event_id : undefined,
     })
   }
 

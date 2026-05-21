@@ -44,6 +44,7 @@ export interface CommanderAuditTimeline {
   events: CommanderAuditEventSummary[]
   total_considered: number
   next_after_event_id?: string
+  next_before_event_id?: string
 }
 
 export interface CommanderAuthorityChain {
