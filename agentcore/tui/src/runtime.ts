@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -238,6 +238,10 @@ export class FakeRuntimeClient implements RuntimeClient {
           payload.allowPartial === true || payload.allow_partial === true,
           payload.dryRun === true || payload.dry_run === true,
         )
+      case "runtime.commander_audit_timeline":
+        return this.commanderAuditTimeline(optionalString(payload.category), readLimit(payload.limit, 20), optionalString(payload.targetType ?? payload.target_type), optionalString(payload.targetId ?? payload.target_id))
+      case "runtime.commander_authority_chain":
+        return this.commanderAuthorityChain(String(payload.targetType ?? payload.target_type ?? ""), String(payload.targetId ?? payload.target_id ?? ""))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -992,6 +996,81 @@ export class FakeRuntimeClient implements RuntimeClient {
     }
   }
 
+  private commanderAuditTimeline(category: string | undefined, limit: number, targetType?: string, targetId?: string): { events: CommanderAuditEventSummary[]; total_considered: number; next_after_event_id?: string } {
+    const events = this.fakeAuditEvents()
+      .filter((event) => !category || event.category === category)
+      .filter((event) => !targetType || !targetId || auditEventMatches(event, targetType, targetId))
+    const recent = [...events].reverse().slice(0, limit)
+    return {
+      events: recent,
+      total_considered: events.length,
+      next_after_event_id: recent.at(-1)?.event_id,
+    }
+  }
+
+  private commanderAuthorityChain(targetType: string, targetId: string): CommanderAuthorityChainSummary {
+    const cleanTarget = readAuditTarget(targetType, targetId)
+    const events = this.fakeAuditEvents()
+    const related = new Set<string>([`${cleanTarget.targetType}:${cleanTarget.targetId}`])
+    for (let depth = 0; depth < 3; depth += 1) {
+      let expanded = false
+      for (const event of events) {
+        if (!auditEventMatchesAny(event, related)) continue
+        for (const [key, values] of Object.entries(event.related_ids)) {
+          const type = auditKeyToType(key)
+          if (!type) continue
+          for (const value of values) {
+            const encoded = `${type}:${value}`
+            if (!related.has(encoded)) {
+              related.add(encoded)
+              expanded = true
+            }
+          }
+        }
+      }
+      if (!expanded) break
+    }
+    const chainEvents = events.filter((event) => auditEventMatchesAny(event, related))
+    return {
+      target_type: cleanTarget.targetType,
+      target_id: cleanTarget.targetId,
+      related_ids: auditRelatedRecord(related),
+      events: chainEvents,
+      missing_links: chainEvents.length === 0 ? [`no audit events found for ${cleanTarget.targetType} ${cleanTarget.targetId}`] : [],
+    }
+  }
+
+  private fakeAuditEvents(): CommanderAuditEventSummary[] {
+    const events: CommanderAuditEventSummary[] = []
+    for (const mission of [...this.missions].reverse()) {
+      events.push(fakeAuditEvent(events.length, "mission_created", "mission", "mission", mission.mission_id, { mission_id: [mission.mission_id], intent_id: mission.intent_id ? [mission.intent_id] : [] }, mission.status))
+    }
+    for (const claim of [...this.claims].reverse()) {
+      events.push(fakeAuditEvent(events.length, "mission_claimed", "mission", "claim", claim.claim_id, { mission_id: [claim.mission_id], claim_id: [claim.claim_id] }, claim.status))
+    }
+    for (const item of [...this.progress].reverse()) {
+      events.push(fakeAuditEvent(events.length, "mission_progress_recorded", "mission", "mission", item.mission_id, { mission_id: [item.mission_id], claim_id: [item.claim_id], progress_id: [item.progress_id] }, item.message))
+    }
+    for (const result of [...this.results].reverse()) {
+      events.push(fakeAuditEvent(events.length, "mission_result_submitted", "mission", "result", result.result_id, { mission_id: [result.mission_id], claim_id: [result.claim_id], result_id: [result.result_id] }, result.summary))
+    }
+    for (const review of [...this.reviews].reverse()) {
+      events.push(fakeAuditEvent(events.length, review.status === "pending" ? "review_request_created" : `review_request_${review.status}`, "review", "review", review.review_id, { review_id: [review.review_id], mission_id: review.mission_id ? [review.mission_id] : [], claim_id: review.claim_id ? [review.claim_id] : [], result_id: review.result_id ? [review.result_id] : [] }, review.title))
+    }
+    for (const proposal of [...this.proposals].reverse()) {
+      events.push(fakeAuditEvent(events.length, "commander_proposal_created", "proposal", "proposal", proposal.proposal_id, { proposal_id: [proposal.proposal_id], review_id: proposal.review_id ? [proposal.review_id] : [], mission_id: proposal.mission_id ? [proposal.mission_id] : [], claim_id: proposal.claim_id ? [proposal.claim_id] : [], result_id: proposal.result_id ? [proposal.result_id] : [] }, proposal.action_kind))
+      if (proposal.status === "applied") events.push(fakeAuditEvent(events.length, "commander_proposal_applied", "apply", "proposal", proposal.proposal_id, { proposal_id: [proposal.proposal_id], review_id: proposal.review_id ? [proposal.review_id] : [], mission_id: proposal.mission_id ? [proposal.mission_id] : [], claim_id: proposal.claim_id ? [proposal.claim_id] : [] }, proposal.application_result ?? "applied"))
+    }
+    for (const bundle of [...this.proposalBundles].reverse()) {
+      events.push(fakeAuditEvent(events.length, "commander_proposal_bundle_created", "proposal_bundle", "bundle", bundle.bundle_id, { bundle_id: [bundle.bundle_id], proposal_id: bundle.proposal_ids }, bundle.status))
+    }
+    for (const draft of [...this.playbookDrafts].reverse()) {
+      events.push(fakeAuditEvent(events.length, "commander_playbook_draft_created", "playbook_draft", "draft", draft.draft_id, { draft_id: [draft.draft_id], proposal_id: draft.proposal_ids, bundle_id: draft.bundle_id ? [draft.bundle_id] : [], review_id: draft.review_ids ?? [] }, draft.playbook_id))
+    }
+    if (events.length === 0) events.push(fakeAuditEvent(0, "runtime_started", "runtime", "runtime", "fake-runtime", { runtime_id: ["fake-runtime"] }, "fake runtime connected"))
+    return events
+  }
+
   private projectProposalBundle(bundle: CommanderProposalBundleSummary): CommanderProposalBundleSummary {
     if (bundle.status === "cancelled") return bundle
     const readiness = this.proposalBundleReadiness(bundle.bundle_id)
@@ -1184,6 +1263,67 @@ function reviewStatusForDraft(proposalCount: number, reviewCount: number): strin
 function readApplyTarget(targetType: string, targetId: string): { targetType: "proposal" | "bundle" | "draft"; targetId: string } {
   if (targetType !== "proposal" && targetType !== "bundle" && targetType !== "draft") throw new Error("targetType must be proposal, bundle, or draft")
   return { targetType, targetId: requiredString(targetId, "targetId") }
+}
+
+function readAuditTarget(targetType: string, targetId: string): { targetType: string; targetId: string } {
+  if (!["mission", "claim", "result", "review", "proposal", "bundle", "draft", "runtime"].includes(targetType)) throw new Error("targetType must be mission, claim, result, review, proposal, bundle, draft, or runtime")
+  return { targetType, targetId: requiredString(targetId, "targetId") }
+}
+
+function fakeAuditEvent(
+  index: number,
+  kind: string,
+  category: string,
+  targetType: string,
+  targetId: string,
+  relatedIds: Record<string, string[] | undefined>,
+  summary: string,
+): CommanderAuditEventSummary {
+  const cleanRelated: Record<string, string[]> = {}
+  for (const [key, values] of Object.entries(relatedIds)) {
+    const clean = (values ?? []).filter((value) => typeof value === "string" && value.trim()).map(redactText).sort()
+    if (clean.length > 0) cleanRelated[key] = clean
+  }
+  return {
+    event_id: `fake-audit-${index}`,
+    event_index: index,
+    kind,
+    category,
+    target_type: targetType,
+    target_id: redactText(targetId),
+    related_ids: cleanRelated,
+    created_at: new Date(0).toISOString(),
+    title: `${kind} ${redactText(targetId)}`,
+    summary: redactText(summary),
+  }
+}
+
+function auditEventMatches(event: CommanderAuditEventSummary, targetType: string, targetId: string): boolean {
+  return event.target_type === targetType && event.target_id === targetId
+    || event.related_ids[`${targetType}_id`]?.includes(targetId) === true
+}
+
+function auditEventMatchesAny(event: CommanderAuditEventSummary, related: Set<string>): boolean {
+  for (const item of related) {
+    const [targetType, targetId] = item.split(":", 2)
+    if (auditEventMatches(event, targetType, targetId)) return true
+  }
+  return false
+}
+
+function auditKeyToType(key: string): string | undefined {
+  if (key.endsWith("_id")) return key.slice(0, -3)
+  return undefined
+}
+
+function auditRelatedRecord(related: Set<string>): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const item of related) {
+    const [targetType, targetId] = item.split(":", 2)
+    const key = `${targetType}_id`
+    out[key] = [...(out[key] ?? []), targetId].sort()
+  }
+  return out
 }
 
 function fakeProposalBlockers(proposal: CommanderProposalSummary): string[] {

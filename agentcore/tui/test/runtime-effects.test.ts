@@ -1039,6 +1039,54 @@ describe("runtime UI effects", () => {
     expect(state.missionExecution?.progress[0]).toMatchObject({ mission_id: "fake-mission-2", message: "second progress" })
   })
 
+  test("commander audit commands load timelines chains filters and redact state", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    await runtime.command("runtime.submit_user_message", { message: "audit target token=audit-secret" })
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "fake-mission-1", executorId: "executor" }) as { claim_id: string }
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "draft-progress",
+      args: ["fake-mission-1", claim.claim_id, "Audit", "--", "message token=audit-secret"],
+    })
+    const draftId = state.commanderPlaybooks?.lastDraft?.draft_id ?? ""
+    const proposalId = state.commanderPlaybooks?.lastDraft?.proposal_ids[0] ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "draft-review", args: [draftId] })
+    const reviewId = state.commanderWorkbench?.selectedDraft?.review_ids?.[0] ?? ""
+    const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "Audit bundle", summary: "Audit", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: [] })
+    expect(state.commanderAudit?.timeline.length).toBeGreaterThan(0)
+    expect(layoutSnapshot(state)).toContain("Commander audit")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit-kind", args: ["proposal"] })
+    expect(state.commanderAudit?.timeline.every((event) => event.category === "proposal")).toBe(true)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["proposal", proposalId] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "proposal", target_id: proposalId })
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("commander_proposal_created")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["bundle", bundle.bundle_id] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "bundle", target_id: bundle.bundle_id })
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("commander_proposal_bundle_created")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["draft", draftId] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "draft", target_id: draftId })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["review", reviewId] })
+    expect(state.commanderAudit?.selectedChain).toMatchObject({ target_type: "review", target_id: reviewId })
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("review_request_created")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["mission", "fake-mission-1"] })
+    expect(state.commanderAudit?.selectedChain?.events.map((event) => event.kind)).toContain("mission_created")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit", args: ["bundle"] })
+    expect(state.commanderAudit?.commandError).toContain("targetId is required")
+    expect(JSON.stringify(state)).not.toContain("audit-secret")
+    expect(layoutSnapshot(state)).not.toContain("audit-secret")
+  })
+
   test("missing bundle command args produce redacted bundle errors", async () => {
     const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), new FakeRuntimeClient("/tmp/demo", "demo"), {
       type: "send-command",

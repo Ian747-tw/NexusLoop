@@ -69,6 +69,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...playbookLines(state))
   out.push(...workbenchLines(state))
   out.push(...applyLines(state))
+  out.push(...auditLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -334,6 +335,43 @@ function applyLines(state: UiState): string[] {
     out.push("  last_result=none")
   }
   if (apply.commandError) out.push(`  command_error=${redactText(apply.commandError)}`)
+  return out
+}
+
+function auditLines(state: UiState): string[] {
+  const audit = state.commanderAudit
+  const out = ["Commander audit"]
+  if (!audit) {
+    out.push("  timeline=empty")
+    return out
+  }
+  out.push("  timeline")
+  if (audit.timeline.length === 0) out.push("    - empty")
+  else {
+    out.push(...audit.timeline.slice(0, 10).map((event) => {
+      const target = event.target_type && event.target_id ? `${event.target_type}:${event.target_id}` : "none"
+      return `    - #${event.event_index} ${event.category}/${event.kind} target=${target}: ${preview(redactText(event.summary))}`
+    }))
+  }
+  if (audit.selectedChain) {
+    const chain = audit.selectedChain
+    out.push(`  chain=${chain.target_type}:${chain.target_id}`)
+    out.push("  chain_events")
+    if (chain.events.length === 0) out.push("    - empty")
+    else {
+      out.push(...chain.events.slice(0, 20).map((event) => {
+        const target = event.target_type && event.target_id ? `${event.target_type}:${event.target_id}` : "none"
+        return `    - #${event.event_index} ${event.category}/${event.kind} target=${target}: ${preview(redactText(event.summary))}`
+      }))
+    }
+    if (chain.missing_links.length > 0) {
+      out.push("  missing_links")
+      out.push(...chain.missing_links.slice(0, 10).map((link) => `    - ${preview(redactText(link))}`))
+    }
+  } else {
+    out.push("  chain=none")
+  }
+  if (audit.commandError) out.push(`  command_error=${redactText(audit.commandError)}`)
   return out
 }
 

@@ -1518,6 +1518,77 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("commander audit timeline and authority chains read durable commander event history", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const submitted = await server.submitUserMessage("audit mission token=audit-secret")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const draft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "submit-result-and-complete",
+      proposedBy: "operator",
+      requestedBy: "operator",
+      requestReviews: true,
+      fields: {
+        mission_id: submitted.missionId,
+        claim_id: claim.claim_id,
+        title: "Audit token=audit-secret",
+        result_summary: "result token=audit-secret",
+        completion_summary: "complete token=audit-secret",
+      },
+    }) as { draft_id: string; proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    expect(draft.bundle_id).toBeTruthy()
+    const bundleId = draft.bundle_id as string
+    for (const reviewId of draft.review_ids ?? []) await server.command("runtime.approve_review_request", { reviewId, decidedBy: "operator", reason: "ok token=audit-secret" })
+
+    const timeline = await server.command("runtime.commander_audit_timeline", { limit: 1000 }) as { events: Array<{ kind: string; event_index: number; summary: string }>; total_considered: number }
+    expect(timeline.events.length).toBeLessThanOrEqual(100)
+    expect(timeline.total_considered).toBeGreaterThan(0)
+    expect(timeline.events.map((event) => event.event_index)).toEqual([...timeline.events.map((event) => event.event_index)].sort((a, b) => b - a))
+    expect(timeline.events.map((event) => event.kind)).toContain("commander_playbook_draft_created")
+
+    const proposalTimeline = await server.command("runtime.commander_audit_timeline", { category: "proposal", limit: 25 }) as { events: Array<{ category: string }> }
+    expect(proposalTimeline.events.length).toBeGreaterThan(0)
+    expect(proposalTimeline.events.every((event) => event.category === "proposal")).toBe(true)
+
+    const targetTimeline = await server.command("runtime.commander_audit_timeline", { targetType: "proposal", targetId: draft.proposal_ids[0], limit: 25 }) as { events: Array<{ related_ids: Record<string, string[]> }> }
+    expect(targetTimeline.events.length).toBeGreaterThan(0)
+    expect(targetTimeline.events.every((event) => event.related_ids.proposal_id?.includes(draft.proposal_ids[0]))).toBe(true)
+
+    const proposalChain = await server.command("runtime.commander_authority_chain", { targetType: "proposal", targetId: draft.proposal_ids[0] }) as { events: Array<{ kind: string }>; related_ids: Record<string, string[]>; missing_links: string[] }
+    expect(proposalChain.missing_links).toEqual([])
+    expect(proposalChain.related_ids.review_id?.length).toBeGreaterThan(0)
+    expect(proposalChain.events.map((event) => event.kind)).toContain("commander_proposal_created")
+    expect(proposalChain.events.map((event) => event.kind)).toContain("review_request_created")
+
+	    const bundleChain = await server.command("runtime.commander_authority_chain", { targetType: "bundle", targetId: bundleId }) as { events: Array<{ kind: string }>; related_ids: Record<string, string[]> }
+    expect(bundleChain.related_ids.proposal_id).toEqual(draft.proposal_ids)
+    expect(bundleChain.events.map((event) => event.kind)).toContain("commander_proposal_bundle_created")
+
+    const draftChain = await server.command("runtime.commander_authority_chain", { targetType: "draft", targetId: draft.draft_id }) as { events: Array<{ kind: string }>; related_ids: Record<string, string[]> }
+    expect(draftChain.related_ids.proposal_id).toEqual(draft.proposal_ids)
+	    expect(draftChain.related_ids.bundle_id).toEqual([bundleId])
+    expect(draftChain.events.map((event) => event.kind)).toContain("commander_playbook_draft_created")
+
+    const missionChain = await server.command("runtime.commander_authority_chain", { targetType: "mission", targetId: submitted.missionId }) as { events: Array<{ kind: string }>; related_ids: Record<string, string[]> }
+    expect(missionChain.related_ids.draft_id).toEqual([draft.draft_id])
+    expect(missionChain.events.map((event) => event.kind)).toContain("mission_created")
+
+    const missing = await server.command("runtime.commander_authority_chain", { targetType: "proposal", targetId: "missing-proposal" }) as { events: unknown[]; missing_links: string[] }
+    expect(missing.events).toEqual([])
+    expect(missing.missing_links[0]).toContain("missing-proposal")
+    await expect(server.command("runtime.commander_authority_chain", { targetType: "unknown", targetId: "x" })).rejects.toThrow("targetType is invalid")
+    await expect(server.command("runtime.commander_audit_timeline", { limit: 0 })).rejects.toThrow("limit must be a positive integer")
+
+    const serialized = JSON.stringify({ timeline, proposalChain, bundleChain, draftChain, missionChain, events: await readJsonlEvents(dir) })
+    expect(serialized).not.toContain("audit-secret")
+    await server.shutdown()
+
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await expect(statusServer.command("runtime.commander_audit_timeline", { limit: 5 })).resolves.toMatchObject({ total_considered: expect.any(Number) })
+  })
+
   test("proposal bundle cancellation and partial apply rules are explicit", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

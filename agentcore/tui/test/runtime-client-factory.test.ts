@@ -476,6 +476,21 @@ describe("TUI runtime client factory", () => {
       applied: true,
       applied_proposal_ids: draft.proposal_ids,
     })
+    const auditTimeline = await client.command("runtime.commander_audit_timeline", { limit: 25 }) as { events: Array<{ kind: string }> }
+    expect(auditTimeline.events.map((event) => event.kind)).toEqual(expect.arrayContaining([
+      "commander_playbook_draft_created",
+      "commander_proposal_created",
+      "review_request_created",
+      "commander_proposal_applied",
+    ]))
+    const draftChain = await client.command("runtime.commander_authority_chain", { targetType: "draft", targetId: draft.draft_id }) as { events: Array<{ kind: string }> }
+    expect(draftChain.events.map((event) => event.kind)).toEqual(expect.arrayContaining([
+      "commander_playbook_draft_created",
+      "commander_proposal_created",
+      "review_request_created",
+      "commander_proposal_applied",
+      "mission_progress_recorded",
+    ]))
 
     await client.runtime.shutdown()
   })
