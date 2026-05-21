@@ -1382,6 +1382,142 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("commander apply workbench previews and applies proposals bundles and drafts through existing authority", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "missing", targetId: "x" })).rejects.toThrow("commander apply target_type is invalid")
+    await expect(server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: "proposal-1" })).rejects.toThrow("runtime must be started before commander apply writes")
+
+    await server.start()
+    const submitted = await server.submitUserMessage("apply mission")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const blocked = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "Blocked token=apply-blocked-secret",
+      summary: "blocked",
+      proposedBy: "operator",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "blocked" },
+    }) as { proposal_id: string }
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "proposal", targetId: blocked.proposal_id })).resolves.toMatchObject({
+      ready_to_apply: false,
+      would_apply: [],
+      blocked_count: 1,
+    })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: blocked.proposal_id })).rejects.toThrow("commander apply target is not ready")
+
+    const approved = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "Approved",
+      summary: "approved",
+      proposedBy: "operator",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "approved progress" },
+    }) as { proposal_id: string }
+    const review = await server.command("runtime.request_proposal_review", { proposalId: approved.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "ok" })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "proposal", targetId: approved.proposal_id })).resolves.toMatchObject({
+      ready_to_apply: true,
+      would_apply: [approved.proposal_id],
+    })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: approved.proposal_id, dryRun: true })).resolves.toMatchObject({
+      applied: false,
+      applied_proposal_ids: [],
+      skipped_proposal_ids: [approved.proposal_id],
+      result_summary: "dry run; no proposals applied",
+    })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "proposal", targetId: approved.proposal_id })).resolves.toMatchObject({
+      ready_to_apply: true,
+      would_apply: [approved.proposal_id],
+    })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: approved.proposal_id })).resolves.toMatchObject({
+      applied: true,
+      applied_proposal_ids: [approved.proposal_id],
+    })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "proposal", targetId: approved.proposal_id })).resolves.toMatchObject({
+      ready_to_apply: true,
+      would_apply: [],
+      would_skip: [approved.proposal_id],
+    })
+
+    const bundleReady = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "Bundle ready",
+      summary: "bundle ready",
+      proposedBy: "operator",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "bundle ready" },
+    }) as { proposal_id: string }
+    const bundleReview = await server.command("runtime.request_proposal_review", { proposalId: bundleReady.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: bundleReview.review_id, decidedBy: "operator", reason: "ok" })
+    const bundle = await server.command("runtime.create_proposal_bundle", { title: "Bundle", summary: "Bundle", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: bundleReady.proposal_id })
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "bundle", targetId: bundle.bundle_id })).resolves.toMatchObject({
+      ready_to_apply: false,
+      would_apply: [bundleReady.proposal_id],
+    })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "bundle", targetId: bundle.bundle_id })).rejects.toThrow("commander apply target is not ready")
+    await expect(server.command("runtime.apply_commander_target", { targetType: "bundle", targetId: bundle.bundle_id, allowPartial: true })).resolves.toMatchObject({
+      applied: true,
+      applied_proposal_ids: [bundleReady.proposal_id],
+      skipped_proposal_ids: [blocked.proposal_id],
+    })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "bundle", targetId: bundle.bundle_id, allowPartial: true })).rejects.toThrow("partial commander apply did not have any approved proposals")
+
+    const draft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      proposedBy: "operator",
+      requestedBy: "operator",
+      requestReviews: true,
+      fields: { mission_id: submitted.missionId, claim_id: claim.claim_id, title: "Draft", message: "draft progress" },
+    }) as { draft_id: string; proposal_ids: string[]; review_ids?: string[] }
+    await server.command("runtime.approve_review_request", { reviewId: draft.review_ids?.[0], decidedBy: "operator", reason: "ok" })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "draft", targetId: draft.draft_id })).resolves.toMatchObject({
+      ready_to_apply: true,
+      apply_mode: "draft_proposals",
+      would_apply: draft.proposal_ids,
+    })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "draft", targetId: draft.draft_id })).resolves.toMatchObject({
+      applied: true,
+      applied_proposal_ids: draft.proposal_ids,
+    })
+
+    const bundledDraft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "submit-result-and-complete",
+      proposedBy: "operator",
+      requestedBy: "operator",
+      requestReviews: true,
+      fields: {
+        mission_id: submitted.missionId,
+        claim_id: claim.claim_id,
+        title: "Cancelled bundle draft",
+        result_summary: "cancelled draft result",
+        completion_summary: "cancelled draft completion",
+      },
+    }) as { draft_id: string; proposal_ids: string[]; bundle_id?: string; review_ids?: string[] }
+    for (const reviewId of bundledDraft.review_ids ?? []) {
+      await server.command("runtime.approve_review_request", { reviewId, decidedBy: "operator", reason: "ok" })
+    }
+    await server.command("runtime.cancel_commander_playbook_draft", { draftId: bundledDraft.draft_id, reason: "operator cancelled" })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "draft", targetId: bundledDraft.draft_id })).resolves.toMatchObject({
+      ready_to_apply: false,
+      apply_mode: "draft_bundle",
+      would_apply: [],
+      blockers: [`draft ${bundledDraft.draft_id} is cancelled`],
+    })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "draft", targetId: bundledDraft.draft_id })).rejects.toThrow("commander apply target is not ready")
+    await expect(server.command("runtime.apply_commander_target", { targetType: "draft", targetId: bundledDraft.draft_id, allowPartial: true })).rejects.toThrow("partial commander apply did not have any approved proposals")
+
+    const serialized = JSON.stringify({ events: await readJsonlEvents(dir), preview: await server.command("runtime.commander_apply_preview", { targetType: "proposal", targetId: blocked.proposal_id }) })
+    expect(serialized).not.toContain("apply-blocked-secret")
+    await server.shutdown()
+  })
+
   test("proposal bundle cancellation and partial apply rules are explicit", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

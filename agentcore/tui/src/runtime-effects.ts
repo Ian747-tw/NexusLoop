@@ -8,6 +8,9 @@ import type {
   MissionProgressSummary,
   MissionResultSummary,
   MissionSummaryState,
+  CommanderApplyPreviewSummary,
+  CommanderApplyResultSummary,
+  CommanderApplyState,
   CommanderWorkbenchDraftSummary,
   CommanderWorkbenchReadinessSummary,
   CommanderWorkbenchState,
@@ -99,6 +102,8 @@ export type RuntimeUiEffect =
   | { type: "load-playbook-draft-readiness"; draftId: string }
   | { type: "request-playbook-draft-reviews"; draftId: string }
   | { type: "cancel-playbook-draft"; draftId: string; reason?: string }
+  | { type: "commander-apply-preview"; targetType: "proposal" | "bundle" | "draft"; targetId: string }
+  | { type: "commander-apply-target"; targetType: "proposal" | "bundle" | "draft"; targetId: string; allowPartial?: boolean }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -390,6 +395,18 @@ export async function applyRuntimeUiEffect(
         )
         return await loadPlaybookDraftReadiness(await loadPlaybookDrafts(next, runtime, WORKBENCH_DRAFT_LIMIT), runtime, effect.draftId)
       }
+      case "commander-apply-preview":
+        return applyCommanderApplyPreview(
+          state,
+          await runtime.command("runtime.commander_apply_preview", { targetType: effect.targetType, targetId: effect.targetId }),
+        )
+      case "commander-apply-target": {
+        const next = applyCommanderApplyResult(
+          state,
+          await runtime.command("runtime.apply_commander_target", { targetType: effect.targetType, targetId: effect.targetId, allowPartial: effect.allowPartial }),
+        )
+        return await refreshAfterCommanderApply(next, runtime, effect.targetType, effect.targetId)
+      }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -407,6 +424,7 @@ export async function applyRuntimeUiEffect(
     if (isProposalBundleEffect(effect)) return recordProposalBundleCommandError(state, error)
     if (isPlaybookEffect(effect)) return recordPlaybookCommandError(state, error)
     if (isWorkbenchEffect(effect)) return recordWorkbenchCommandError(state, error)
+    if (isCommanderApplyEffect(effect)) return recordCommanderApplyCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -472,6 +490,19 @@ async function refreshAfterMissionWrite(state: UiState, runtime: RuntimeClient, 
 function missionIdForClaim(state: UiState, claimId?: string): string | undefined {
   if (!claimId) return undefined
   return state.missionExecution?.claims.find((claim) => claim.claim_id === claimId)?.mission_id
+}
+
+async function missionIdsForProposalIds(state: UiState, runtime: RuntimeClient, proposalIds: string[]): Promise<string[]> {
+  const missionIds: string[] = []
+  for (const proposalId of proposalIds) {
+    let proposal = state.proposals?.recent.find((item) => item.proposal_id === proposalId)
+    if (!proposal) {
+      proposal = readProposal(await runtime.command("runtime.get_commander_proposal", { proposalId })) ?? undefined
+    }
+    const missionId = proposal?.mission_id ?? missionIdForClaim(state, proposal?.claim_id)
+    if (missionId && !missionIds.includes(missionId)) missionIds.push(missionId)
+  }
+  return missionIds
 }
 
 async function loadReviews(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
@@ -589,6 +620,28 @@ async function refreshAfterPlaybookDraft(state: UiState, runtime: RuntimeClient)
   next = await loadReviews(next, runtime, REVIEW_LIMIT)
   next = await loadPlaybookDrafts(next, runtime, WORKBENCH_DRAFT_LIMIT)
   return next
+}
+
+async function refreshAfterCommanderApply(state: UiState, runtime: RuntimeClient, targetType: "proposal" | "bundle" | "draft", targetId: string): Promise<UiState> {
+  let next = await loadProposals(state, runtime, PROPOSAL_LIMIT)
+  next = await loadProposalBundles(next, runtime, PROPOSAL_BUNDLE_LIMIT)
+  next = await loadPlaybookDrafts(next, runtime, WORKBENCH_DRAFT_LIMIT)
+  next = await loadReviews(next, runtime, REVIEW_LIMIT)
+  try {
+    next = applyCommanderApplyPreview(next, await runtime.command("runtime.commander_apply_preview", { targetType, targetId }))
+  } catch {
+    // The apply result is more important than a stale post-apply preview.
+  }
+  const targetProposalIds = [
+    ...(next.commanderApply?.lastResult?.applied_proposal_ids ?? []),
+    ...(next.commanderApply?.lastResult?.skipped_proposal_ids ?? []),
+  ]
+  const affectedMissionIds = await missionIdsForProposalIds(next, runtime, targetProposalIds)
+  const selectedMissionId = next.missionExecution?.selectedMissionId
+  const missionId = selectedMissionId && affectedMissionIds.includes(selectedMissionId)
+    ? selectedMissionId
+    : affectedMissionIds[0]
+  return missionId ? await refreshAfterMissionWrite(next, runtime, missionId) : next
 }
 
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
@@ -738,6 +791,12 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "request-playbook-draft-reviews", draftId: requiredArg(args, 0, "draftId") })
     case "cancel-draft":
       return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-playbook-draft", draftId: requiredArg(args, 0, "draftId"), reason: optionalRest(args, 1) })
+    case "apply-preview":
+      return applyRuntimeUiEffect(commandState, runtime, commanderApplyEffect(args, false))
+    case "apply-target":
+      return applyRuntimeUiEffect(commandState, runtime, commanderApplyEffect(args, true))
+    case "apply-partial":
+      return applyRuntimeUiEffect(commandState, runtime, commanderApplyPartialEffect(args))
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -909,6 +968,11 @@ function isWorkbenchEffect(effect: RuntimeUiEffect): boolean {
   return workbenchCommands.has(effect.command)
 }
 
+function isCommanderApplyEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return commanderApplyEffectTypes.has(effect.type)
+  return commanderApplyCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -941,6 +1005,17 @@ const workbenchEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-playbook-draft-readiness",
   "request-playbook-draft-reviews",
   "cancel-playbook-draft",
+])
+
+const commanderApplyCommands = new Set([
+  "apply-preview",
+  "apply-target",
+  "apply-partial",
+])
+
+const commanderApplyEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "commander-apply-preview",
+  "commander-apply-target",
 ])
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
@@ -1119,6 +1194,32 @@ function applySelectedWorkbenchDraft(state: UiState, value: unknown, draftId: st
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "playbook draft selected", detail: `draft_id=${selectedDraftId}`, status: draft?.status }].slice(-12),
+  }
+}
+
+function applyCommanderApplyPreview(state: UiState, value: unknown): UiState {
+  const preview = readCommanderApplyPreview(value)
+  return {
+    ...state,
+    commanderApply: {
+      ...commanderApplyState(state),
+      preview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander apply preview", detail: `${preview.target_type}:${preview.target_id}`, status: preview.ready_to_apply ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyCommanderApplyResult(state: UiState, value: unknown): UiState {
+  const result = readCommanderApplyResult(value)
+  return {
+    ...state,
+    commanderApply: {
+      ...commanderApplyState(state),
+      lastResult: result,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander apply result", detail: `${result.target_type}:${result.target_id}`, status: result.applied ? "applied" : "skipped" }].slice(-12),
   }
 }
 
@@ -1441,6 +1542,18 @@ function recordWorkbenchCommandError(state: UiState, error: unknown): UiState {
   }
 }
 
+function recordCommanderApplyCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderApply: {
+      ...commanderApplyState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "commander apply command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -1708,6 +1821,42 @@ function readWorkbenchReadiness(value: unknown): CommanderWorkbenchReadinessSumm
   }
 }
 
+function readCommanderApplyPreview(value: unknown): CommanderApplyPreviewSummary {
+  if (!isRecord(value) || typeof value.target_type !== "string" || typeof value.target_id !== "string") throw new Error("runtime.commander_apply_preview returned invalid preview")
+  return {
+    target_type: readString(value.target_type, "unknown"),
+    target_id: redactText(value.target_id),
+    ready_to_apply: readBoolean(value.ready_to_apply),
+    proposal_ids: readStringList(value.proposal_ids, 20),
+    bundle_id: typeof value.bundle_id === "string" ? redactText(value.bundle_id) : undefined,
+    draft_id: typeof value.draft_id === "string" ? redactText(value.draft_id) : undefined,
+    approved_count: readNumber(value.approved_count, 0),
+    applied_count: readNumber(value.applied_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    apply_mode: readString(value.apply_mode, "single"),
+    would_apply: readStringList(value.would_apply, 20),
+    would_skip: readStringList(value.would_skip, 20),
+  }
+}
+
+function readCommanderApplyResult(value: unknown): CommanderApplyResultSummary {
+  if (!isRecord(value) || typeof value.target_type !== "string" || typeof value.target_id !== "string") throw new Error("runtime.apply_commander_target returned invalid result")
+  return {
+    target_type: readString(value.target_type, "unknown"),
+    target_id: redactText(value.target_id),
+    applied: readBoolean(value.applied),
+    applied_proposal_ids: readStringList(value.applied_proposal_ids, 20),
+    skipped_proposal_ids: readStringList(value.skipped_proposal_ids, 20),
+    result_summary: preview(readString(value.result_summary, "")),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+  }
+}
+
+function readStringList(value: unknown, limit: number): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map(redactText).slice(0, limit) : []
+}
+
 function readMissionRecord(value: unknown): MissionRecord | null {
   if (!isRecord(value) || typeof value.mission_id !== "string" || typeof value.status !== "string") return null
   return {
@@ -1849,6 +1998,10 @@ function commanderPlaybooksState(state: UiState): CommanderPlaybooksState {
 
 function commanderWorkbenchState(state: UiState): CommanderWorkbenchState {
   return state.commanderWorkbench ?? { drafts: [], selectedDraft: null, readiness: null }
+}
+
+function commanderApplyState(state: UiState): CommanderApplyState {
+  return state.commanderApply ?? { preview: null, lastResult: null }
 }
 
 function missionExecutionState(state: UiState): MissionExecutionState {
@@ -2048,6 +2201,22 @@ function draftReasonPlaybookEffect(args: string[], playbookId: "fail-mission" | 
   if (!title) throw new Error("title is required")
   if (!reason) throw new Error("reason is required")
   return { type: "draft-playbook", playbookId, fields: { mission_id: missionId, title, reason } }
+}
+
+function commanderApplyEffect(args: string[], apply: boolean): Extract<RuntimeUiEffect, { type: "commander-apply-preview" | "commander-apply-target" }> {
+  const targetType = requiredArg(args, 0, "targetType")
+  if (targetType !== "proposal" && targetType !== "bundle" && targetType !== "draft") throw new Error("targetType must be proposal, bundle, or draft")
+  const targetId = requiredArg(args, 1, "targetId")
+  return apply
+    ? { type: "commander-apply-target", targetType, targetId }
+    : { type: "commander-apply-preview", targetType, targetId }
+}
+
+function commanderApplyPartialEffect(args: string[]): Extract<RuntimeUiEffect, { type: "commander-apply-target" }> {
+  const effect = commanderApplyEffect(args, true)
+  if (effect.type !== "commander-apply-target") throw new Error("apply target is required")
+  if (effect.targetType === "proposal") throw new Error("partial apply target must be bundle or draft")
+  return { ...effect, allowPartial: true }
 }
 
 function requiredArg(args: string[], index: number, field: string): string {

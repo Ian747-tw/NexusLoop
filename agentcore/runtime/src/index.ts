@@ -23,6 +23,7 @@ export { ReviewRegistry } from "./missions/review-registry"
 export { ProposalRegistry } from "./missions/proposal-registry"
 export { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
 export { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-draft-registry"
+export { CommanderApplyService } from "./missions/commander-apply-service"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"
 export { MISSION_PROTOCOL_VERSION } from "./missions/mission-types"
@@ -82,6 +83,13 @@ export type {
   CommanderPlaybookDraftSummary,
   CreateCommanderPlaybookDraftRecordInput,
 } from "./missions/commander-playbook-draft-types"
+export type {
+  CommanderApplyOptions,
+  CommanderApplyPreview,
+  CommanderApplyResult,
+  CommanderApplyTarget,
+  CommanderApplyTargetType,
+} from "./missions/commander-apply-types"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"

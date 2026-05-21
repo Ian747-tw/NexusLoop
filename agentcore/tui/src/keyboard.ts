@@ -221,4 +221,7 @@ const runtimeCommands = new Set([
   "draft-ready",
   "draft-review",
   "cancel-draft",
+  "apply-preview",
+  "apply-target",
+  "apply-partial",
 ])

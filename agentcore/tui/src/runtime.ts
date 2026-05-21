@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -229,6 +229,15 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.requestCommanderPlaybookDraftReviews(String(payload.draftId ?? payload.draft_id ?? ""), String(payload.requestedBy ?? payload.requested_by ?? "operator"))
       case "runtime.cancel_commander_playbook_draft":
         return this.cancelCommanderPlaybookDraft(String(payload.draftId ?? payload.draft_id ?? ""), optionalString(payload.reason))
+      case "runtime.commander_apply_preview":
+        return this.commanderApplyPreview(String(payload.targetType ?? payload.target_type ?? ""), String(payload.targetId ?? payload.target_id ?? ""))
+      case "runtime.apply_commander_target":
+        return this.applyCommanderTarget(
+          String(payload.targetType ?? payload.target_type ?? ""),
+          String(payload.targetId ?? payload.target_id ?? ""),
+          payload.allowPartial === true || payload.allow_partial === true,
+          payload.dryRun === true || payload.dry_run === true,
+        )
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -865,6 +874,124 @@ export class FakeRuntimeClient implements RuntimeClient {
     return draft
   }
 
+  private commanderApplyPreview(targetType: string, targetId: string): CommanderApplyPreviewSummary {
+    const target = readApplyTarget(targetType, targetId)
+    if (target.targetType === "proposal") return this.proposalApplyPreview(target.targetId)
+    if (target.targetType === "bundle") return this.bundleApplyPreview(target.targetId, "bundle")
+    return this.draftApplyPreview(target.targetId)
+  }
+
+  private applyCommanderTarget(targetType: string, targetId: string, allowPartial: boolean, dryRun: boolean): CommanderApplyResultSummary {
+    const target = readApplyTarget(targetType, targetId)
+    const preview = this.commanderApplyPreview(target.targetType, target.targetId)
+    if (dryRun) {
+      return {
+        target_type: target.targetType,
+        target_id: target.targetId,
+        applied: false,
+        applied_proposal_ids: [],
+        skipped_proposal_ids: [...preview.proposal_ids],
+        result_summary: "dry run; no proposals applied",
+        created_at: new Date(0).toISOString(),
+      }
+    }
+    if (!preview.ready_to_apply && !allowPartial) throw new Error(`commander apply target is not ready: ${preview.blockers.join("; ") || "blocked"}`)
+    if (allowPartial && preview.would_apply.length === 0) throw new Error("partial commander apply did not have any approved proposals to apply")
+    const before = new Map(preview.proposal_ids.map((proposalId) => [proposalId, this.requireProposal(proposalId).status]))
+    if (preview.apply_mode === "single") {
+      if (preview.would_apply.length > 0) this.applyProposal(target.targetId)
+    } else if (preview.apply_mode === "bundle" || preview.apply_mode === "draft_bundle") {
+      if (preview.bundle_id && preview.would_apply.length > 0) this.applyProposalBundle(preview.bundle_id, allowPartial)
+    } else {
+      for (const proposalId of preview.proposal_ids) {
+        const proposal = this.requireProposal(proposalId)
+        if (proposal.status === "approved") this.applyProposal(proposal.proposal_id)
+        else if (proposal.status !== "applied" && !allowPartial) throw new Error(`proposal is not approved: ${redactText(proposal.proposal_id)}`)
+      }
+    }
+    const appliedProposalIds = preview.proposal_ids.filter((proposalId) => before.get(proposalId) !== "applied" && this.requireProposal(proposalId).status === "applied")
+    const skippedProposalIds = preview.proposal_ids.filter((proposalId) => !appliedProposalIds.includes(proposalId))
+    return {
+      target_type: target.targetType,
+      target_id: target.targetId,
+      applied: appliedProposalIds.length > 0,
+      applied_proposal_ids: appliedProposalIds,
+      skipped_proposal_ids: skippedProposalIds,
+      result_summary: appliedProposalIds.length > 0 ? `applied ${appliedProposalIds.length} proposal(s); skipped ${skippedProposalIds.length}` : `no new proposals applied; skipped ${skippedProposalIds.length}`,
+      created_at: new Date(0).toISOString(),
+    }
+  }
+
+  private proposalApplyPreview(proposalId: string): CommanderApplyPreviewSummary {
+    const proposal = this.requireProposal(proposalId)
+    const blockers = fakeProposalBlockers(proposal)
+    return {
+      target_type: "proposal",
+      target_id: proposal.proposal_id,
+      ready_to_apply: blockers.length === 0,
+      proposal_ids: [proposal.proposal_id],
+      approved_count: proposal.status === "approved" ? 1 : 0,
+      applied_count: proposal.status === "applied" ? 1 : 0,
+      blocked_count: blockers.length,
+      blockers,
+      apply_mode: "single",
+      would_apply: proposal.status === "approved" ? [proposal.proposal_id] : [],
+      would_skip: proposal.status === "applied" ? [proposal.proposal_id] : [],
+    }
+  }
+
+  private bundleApplyPreview(bundleId: string, applyMode: "bundle" | "draft_bundle", draftId?: string): CommanderApplyPreviewSummary {
+    const bundle = this.requireProposalBundle(bundleId)
+    const readiness = this.proposalBundleReadiness(bundle.bundle_id)
+    return {
+      target_type: draftId ? "draft" : "bundle",
+      target_id: draftId ?? bundle.bundle_id,
+      ready_to_apply: readiness.ready_to_apply,
+      proposal_ids: [...bundle.proposal_ids],
+      bundle_id: bundle.bundle_id,
+      draft_id: draftId,
+      approved_count: readiness.approved_count,
+      applied_count: readiness.applied_count,
+      blocked_count: readiness.blocked_count,
+      blockers: readiness.blockers,
+      apply_mode: applyMode,
+      would_apply: bundle.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "approved"),
+      would_skip: bundle.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "applied"),
+    }
+  }
+
+  private draftApplyPreview(draftId: string): CommanderApplyPreviewSummary {
+    const draft = this.requireCommanderPlaybookDraft(draftId)
+    const cancelledBlocker = draft.status === "cancelled" ? `draft ${draft.draft_id} is cancelled` : undefined
+    if (draft.bundle_id) {
+      const preview = this.bundleApplyPreview(draft.bundle_id, "draft_bundle", draft.draft_id)
+      if (!cancelledBlocker) return preview
+      return {
+        ...preview,
+        ready_to_apply: false,
+        blocked_count: preview.blocked_count + 1,
+        blockers: [...preview.blockers, redactText(cancelledBlocker)],
+        would_apply: [],
+      }
+    }
+    const blockers = draft.proposal_ids.flatMap((proposalId) => fakeProposalBlockers(this.requireProposal(proposalId)))
+    if (cancelledBlocker) blockers.push(cancelledBlocker)
+    return {
+      target_type: "draft",
+      target_id: draft.draft_id,
+      ready_to_apply: blockers.length === 0 && draft.proposal_ids.length > 0,
+      proposal_ids: [...draft.proposal_ids],
+      draft_id: draft.draft_id,
+      approved_count: draft.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "approved").length,
+      applied_count: draft.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "applied").length,
+      blocked_count: blockers.length,
+      blockers: blockers.map(redactText),
+      apply_mode: "draft_proposals",
+      would_apply: cancelledBlocker ? [] : draft.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "approved"),
+      would_skip: draft.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "applied"),
+    }
+  }
+
   private projectProposalBundle(bundle: CommanderProposalBundleSummary): CommanderProposalBundleSummary {
     if (bundle.status === "cancelled") return bundle
     const readiness = this.proposalBundleReadiness(bundle.bundle_id)
@@ -1052,6 +1179,18 @@ function reviewStatusForDraft(proposalCount: number, reviewCount: number): strin
   if (reviewCount <= 0) return "drafted"
   if (reviewCount >= proposalCount) return "review_requested"
   return "partially_review_requested"
+}
+
+function readApplyTarget(targetType: string, targetId: string): { targetType: "proposal" | "bundle" | "draft"; targetId: string } {
+  if (targetType !== "proposal" && targetType !== "bundle" && targetType !== "draft") throw new Error("targetType must be proposal, bundle, or draft")
+  return { targetType, targetId: requiredString(targetId, "targetId") }
+}
+
+function fakeProposalBlockers(proposal: CommanderProposalSummary): string[] {
+  if (proposal.status === "approved" || proposal.status === "applied") return []
+  if (proposal.status === "rejected" || proposal.status === "cancelled") return [`proposal ${proposal.proposal_id} is ${proposal.status}`]
+  if (!proposal.review_id) return [`proposal ${proposal.proposal_id} has no linked review`]
+  return [`proposal ${proposal.proposal_id} status is ${proposal.status}`]
 }
 
 function requiredActionString(proposal: CommanderProposalSummary, payload: Record<string, unknown>, field: "mission_id" | "claim_id" | "result_id"): string {
