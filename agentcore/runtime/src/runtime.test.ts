@@ -1574,8 +1574,23 @@ describe("RuntimeServer core", () => {
 
     const draftChain = await server.command("runtime.commander_authority_chain", { targetType: "draft", targetId: draft.draft_id }) as { events: Array<{ kind: string }>; related_ids: Record<string, string[]> }
     expect(draftChain.related_ids.proposal_id).toEqual(draft.proposal_ids)
-	    expect(draftChain.related_ids.bundle_id).toEqual([bundleId])
+    expect(draftChain.related_ids.bundle_id).toEqual([bundleId])
     expect(draftChain.events.map((event) => event.kind)).toContain("commander_playbook_draft_created")
+    const singleSubmitted = await server.submitUserMessage("audit single draft")
+    const singleClaim = await server.command("runtime.claim_mission", { missionId: singleSubmitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const singleDraft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      proposedBy: "operator",
+      fields: {
+        mission_id: singleSubmitted.missionId,
+        claim_id: singleClaim.claim_id,
+        title: "Single audit",
+        message: "progress",
+      },
+    }) as { draft_id: string; proposal_ids: string[] }
+    const singleDraftChain = await server.command("runtime.commander_authority_chain", { targetType: "draft", targetId: singleDraft.draft_id }) as { events: Array<{ kind: string }>; related_ids: Record<string, string[]> }
+    expect(singleDraftChain.related_ids.proposal_id).toEqual(singleDraft.proposal_ids)
+    expect(singleDraftChain.events.map((event) => event.kind)).toContain("commander_proposal_created")
 
     const missionChain = await server.command("runtime.commander_authority_chain", { targetType: "mission", targetId: submitted.missionId }) as { events: Array<{ kind: string }>; related_ids: Record<string, string[]> }
     expect(missionChain.related_ids.draft_id).toEqual([draft.draft_id])

@@ -74,16 +74,25 @@ const RUNTIME_EVENTS = new Set([
 const TARGET_TYPES = new Set(["mission", "claim", "result", "review", "proposal", "bundle", "draft", "runtime"])
 const CATEGORIES = new Set(["mission", "review", "proposal", "proposal_bundle", "playbook_draft", "apply", "runtime", "other"])
 
-const RELATED_ID_KEYS: Array<[string, CommanderAuditTargetType]> = [
-  ["mission_id", "mission"],
-  ["intent_id", "runtime"],
-  ["claim_id", "claim"],
-  ["progress_id", "mission"],
-  ["result_id", "result"],
-  ["review_id", "review"],
-  ["proposal_id", "proposal"],
-  ["bundle_id", "bundle"],
-  ["draft_id", "draft"],
+const RELATED_ID_KEYS: Array<[sourceKey: string, outputKey: string, targetType: CommanderAuditTargetType]> = [
+  ["mission_id", "mission_id", "mission"],
+  ["mission_ids", "mission_id", "mission"],
+  ["intent_id", "intent_id", "runtime"],
+  ["intent_ids", "intent_id", "runtime"],
+  ["claim_id", "claim_id", "claim"],
+  ["claim_ids", "claim_id", "claim"],
+  ["progress_id", "progress_id", "mission"],
+  ["progress_ids", "progress_id", "mission"],
+  ["result_id", "result_id", "result"],
+  ["result_ids", "result_id", "result"],
+  ["review_id", "review_id", "review"],
+  ["review_ids", "review_id", "review"],
+  ["proposal_id", "proposal_id", "proposal"],
+  ["proposal_ids", "proposal_id", "proposal"],
+  ["bundle_id", "bundle_id", "bundle"],
+  ["bundle_ids", "bundle_id", "bundle"],
+  ["draft_id", "draft_id", "draft"],
+  ["draft_ids", "draft_id", "draft"],
 ]
 
 export class CommanderAuditService {
@@ -181,9 +190,10 @@ function collectRelatedIds(value: unknown, out: Record<string, Set<string>> = {}
       const related = RELATED_ID_KEYS.find(([candidate]) => candidate === key)
       if (related) {
         const values = Array.isArray(raw) ? raw : [raw]
-        const bucket = out[key] ?? new Set<string>()
+        const outputKey = related[1]
+        const bucket = out[outputKey] ?? new Set<string>()
         for (const item of values) if (typeof item === "string" && item.trim()) bucket.add(redactText(item.trim()))
-        out[key] = bucket
+        out[outputKey] = bucket
       }
       collectRelatedIds(raw, out)
     }
