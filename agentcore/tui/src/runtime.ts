@@ -236,6 +236,7 @@ export class FakeRuntimeClient implements RuntimeClient {
           String(payload.targetType ?? payload.target_type ?? ""),
           String(payload.targetId ?? payload.target_id ?? ""),
           payload.allowPartial === true || payload.allow_partial === true,
+          payload.dryRun === true || payload.dry_run === true,
         )
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
@@ -880,9 +881,20 @@ export class FakeRuntimeClient implements RuntimeClient {
     return this.draftApplyPreview(target.targetId)
   }
 
-  private applyCommanderTarget(targetType: string, targetId: string, allowPartial: boolean): CommanderApplyResultSummary {
+  private applyCommanderTarget(targetType: string, targetId: string, allowPartial: boolean, dryRun: boolean): CommanderApplyResultSummary {
     const target = readApplyTarget(targetType, targetId)
     const preview = this.commanderApplyPreview(target.targetType, target.targetId)
+    if (dryRun) {
+      return {
+        target_type: target.targetType,
+        target_id: target.targetId,
+        applied: false,
+        applied_proposal_ids: [],
+        skipped_proposal_ids: [...preview.would_skip],
+        result_summary: "dry run; no proposals applied",
+        created_at: new Date(0).toISOString(),
+      }
+    }
     if (!preview.ready_to_apply && !allowPartial) throw new Error(`commander apply target is not ready: ${preview.blockers.join("; ") || "blocked"}`)
     if (allowPartial && preview.would_apply.length === 0) throw new Error("partial commander apply did not have any approved proposals to apply")
     const before = new Map(preview.proposal_ids.map((proposalId) => [proposalId, this.requireProposal(proposalId).status]))
@@ -950,9 +962,20 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private draftApplyPreview(draftId: string): CommanderApplyPreviewSummary {
     const draft = this.requireCommanderPlaybookDraft(draftId)
-    if (draft.bundle_id) return this.bundleApplyPreview(draft.bundle_id, "draft_bundle", draft.draft_id)
+    const cancelledBlocker = draft.status === "cancelled" ? `draft ${draft.draft_id} is cancelled` : undefined
+    if (draft.bundle_id) {
+      const preview = this.bundleApplyPreview(draft.bundle_id, "draft_bundle", draft.draft_id)
+      if (!cancelledBlocker) return preview
+      return {
+        ...preview,
+        ready_to_apply: false,
+        blocked_count: preview.blocked_count + 1,
+        blockers: [...preview.blockers, redactText(cancelledBlocker)],
+        would_apply: [],
+      }
+    }
     const blockers = draft.proposal_ids.flatMap((proposalId) => fakeProposalBlockers(this.requireProposal(proposalId)))
-    if (draft.status === "cancelled") blockers.push(`draft ${draft.draft_id} is cancelled`)
+    if (cancelledBlocker) blockers.push(cancelledBlocker)
     return {
       target_type: "draft",
       target_id: draft.draft_id,
@@ -964,7 +987,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       blocked_count: blockers.length,
       blockers: blockers.map(redactText),
       apply_mode: "draft_proposals",
-      would_apply: draft.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "approved"),
+      would_apply: cancelledBlocker ? [] : draft.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "approved"),
       would_skip: draft.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "applied"),
     }
   }

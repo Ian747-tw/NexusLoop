@@ -934,6 +934,49 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-target", args: ["draft", draftId] })
     expect(state.commanderApply?.lastResult).toMatchObject({ applied: true, applied_proposal_ids: [draftProposalId] })
 
+    const dryRunProposal = await runtime.command("runtime.create_commander_proposal", {
+      missionId: "fake-mission-1",
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "Dry run",
+      summary: "Dry run",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "fake-mission-1", claim_id: claim.claim_id, message: "dry run" },
+    }) as { proposal_id: string }
+    const dryRunReview = await runtime.command("runtime.request_proposal_review", { proposalId: dryRunProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: dryRunReview.review_id, decidedBy: "operator", reason: "ok" })
+    await expect(runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: dryRunProposal.proposal_id, dryRun: true })).resolves.toMatchObject({
+      applied: false,
+      applied_proposal_ids: [],
+      result_summary: "dry run; no proposals applied",
+    })
+    await expect(runtime.command("runtime.get_commander_proposal", { proposalId: dryRunProposal.proposal_id })).resolves.toMatchObject({ status: "approved" })
+
+    const bundledDraft = await runtime.command("runtime.draft_commander_playbook", {
+      playbookId: "submit-result-and-complete",
+      proposedBy: "operator",
+      requestedBy: "operator",
+      requestReviews: true,
+      fields: {
+        mission_id: "fake-mission-1",
+        claim_id: claim.claim_id,
+        title: "Cancelled bundled draft",
+        result_summary: "result",
+        completion_summary: "complete",
+      },
+    }) as { draft_id: string; proposal_ids: string[]; review_ids?: string[] }
+    for (const bundledReviewId of bundledDraft.review_ids ?? []) {
+      await runtime.command("runtime.approve_review_request", { reviewId: bundledReviewId, decidedBy: "operator", reason: "ok" })
+    }
+    await runtime.command("runtime.cancel_commander_playbook_draft", { draftId: bundledDraft.draft_id, reason: "operator cancelled" })
+    await expect(runtime.command("runtime.commander_apply_preview", { targetType: "draft", targetId: bundledDraft.draft_id })).resolves.toMatchObject({
+      ready_to_apply: false,
+      apply_mode: "draft_bundle",
+      would_apply: [],
+      blockers: [`draft ${bundledDraft.draft_id} is cancelled`],
+    })
+    await expect(runtime.command("runtime.apply_commander_target", { targetType: "draft", targetId: bundledDraft.draft_id, allowPartial: true })).rejects.toThrow("partial commander apply")
+
     const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "Partial", summary: "Partial", createdBy: "operator" }) as { bundle_id: string }
     await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blockedProposalId })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apply-partial", args: ["bundle", bundle.bundle_id] })
