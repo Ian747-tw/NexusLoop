@@ -296,6 +296,7 @@ function eventBoundaryIndex(events: CommanderAuditEventSummary[], eventId: unkno
   if (eventId === undefined) return undefined
   const clean = cleanString(eventId, "eventId")
   const index = events.find((event) => event.event_id === clean)?.event_index
+  if (index === undefined) throw new Error("audit event cursor not found")
   return index
 }
 

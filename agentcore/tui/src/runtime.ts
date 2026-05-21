@@ -241,7 +241,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       case "runtime.commander_audit_timeline":
         return this.commanderAuditTimeline(
           optionalString(payload.category),
-          readLimit(payload.limit, 20),
+          readAuditLimit(payload.limit),
           optionalString(payload.targetType ?? payload.target_type),
           optionalString(payload.targetId ?? payload.target_id),
           optionalString(payload.afterEventId ?? payload.after_event_id),
@@ -1255,6 +1255,12 @@ function readLimit(value: unknown, fallback: number): number {
   return Math.min(Number(value), 100)
 }
 
+function readAuditLimit(value: unknown): number {
+  if (value === undefined) return 20
+  if (!Number.isInteger(value) || Number(value) < 1) throw new Error("audit limit must be a positive integer")
+  return Math.min(Number(value), 100)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -1294,7 +1300,9 @@ function readAuditCategory(category: string): string {
 
 function auditBoundaryIndex(events: CommanderAuditEventSummary[], eventId: string | undefined): number | undefined {
   if (eventId === undefined) return undefined
-  return events.find((event) => event.event_id === requiredString(eventId, "eventId"))?.event_index
+  const index = events.find((event) => event.event_id === requiredString(eventId, "eventId"))?.event_index
+  if (index === undefined) throw new Error("audit event cursor not found")
+  return index
 }
 
 function fakeAuditEvent(

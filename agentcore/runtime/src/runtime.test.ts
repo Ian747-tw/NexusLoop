@@ -1553,6 +1553,7 @@ describe("RuntimeServer core", () => {
     const secondPage = await server.command("runtime.commander_audit_timeline", { limit: 2, beforeEventId: firstPage.next_before_event_id }) as { events: Array<{ event_id?: string; event_index: number }> }
     expect(secondPage.events.every((event) => event.event_index < firstPage.events.at(-1)!.event_index)).toBe(true)
     expect(secondPage.events.map((event) => event.event_id).some((eventId) => firstPage.events.map((event) => event.event_id).includes(eventId))).toBe(false)
+    await expect(server.command("runtime.commander_audit_timeline", { beforeEventId: "missing-event" })).rejects.toThrow("audit event cursor not found")
 
     const proposalTimeline = await server.command("runtime.commander_audit_timeline", { category: "proposal", limit: 25 }) as { events: Array<{ category: string }> }
     expect(proposalTimeline.events.length).toBeGreaterThan(0)

@@ -1070,6 +1070,8 @@ describe("runtime UI effects", () => {
     const newestAfterActivity = await runtime.command("runtime.commander_audit_timeline", { limit: 1 }) as { events: Array<{ kind: string; target_id?: string }> }
     expect(newestAfterActivity.events[0]).toMatchObject({ kind: "mission_created", target_id: newActivity.missionId })
     await expect(runtime.command("runtime.commander_audit_timeline", { category: "invalid" })).rejects.toThrow("category is invalid")
+    await expect(runtime.command("runtime.commander_audit_timeline", { limit: 0 })).rejects.toThrow("audit limit must be a positive integer")
+    await expect(runtime.command("runtime.commander_audit_timeline", { beforeEventId: "missing-event" })).rejects.toThrow("audit event cursor not found")
     await expect(runtime.command("runtime.commander_audit_timeline", { targetType: "proposal" })).rejects.toThrow("targetId is required")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "audit-kind", args: ["proposal"] })
