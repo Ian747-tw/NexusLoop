@@ -17,6 +17,8 @@ export interface RunLockOptions {
   staleAfterMs?: number
   now?: () => Date
   beforeRemoveStale?: () => Promise<void> | void
+  beforeStaleRename?: () => Promise<void> | void
+  beforeRestoreMovedLock?: () => Promise<void> | void
 }
 
 const DEFAULT_STALE_AFTER_MS = 24 * 60 * 60 * 1000
@@ -26,12 +28,16 @@ export class RunLock {
   private readonly staleAfterMs: number
   private readonly now: () => Date
   private readonly beforeRemoveStale?: () => Promise<void> | void
+  private readonly beforeStaleRename?: () => Promise<void> | void
+  private readonly beforeRestoreMovedLock?: () => Promise<void> | void
   private readonly token = randomUUID()
 
   constructor(readonly lockPath: string, options: RunLockOptions = {}) {
     this.staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS
     this.now = options.now ?? (() => new Date())
     this.beforeRemoveStale = options.beforeRemoveStale
+    this.beforeStaleRename = options.beforeStaleRename
+    this.beforeRestoreMovedLock = options.beforeRestoreMovedLock
   }
 
   async acquire(): Promise<void> {
@@ -74,15 +80,12 @@ export class RunLock {
     if (!current || current.raw !== candidate.raw) return false
     const stalePath = `${this.lockPath}.${this.token}.stale`
     try {
+      await this.beforeStaleRename?.()
       await rename(this.lockPath, stalePath)
       const moved = await readFile(stalePath, "utf8")
       if (moved !== candidate.raw) {
-        try {
-          await rename(stalePath, this.lockPath)
-        } catch (restoreError) {
-          if ((restoreError as NodeJS.ErrnoException).code !== "EEXIST") throw restoreError
-          await rm(stalePath, { force: true })
-        }
+        await this.beforeRestoreMovedLock?.()
+        await this.restoreMovedLockWithoutClobber(stalePath, moved)
         return false
       }
       await rm(stalePath, { force: true })
@@ -91,6 +94,19 @@ export class RunLock {
       throw error
     }
     return true
+  }
+
+  private async restoreMovedLockWithoutClobber(stalePath: string, raw: string): Promise<void> {
+    let handle
+    try {
+      handle = await open(this.lockPath, "wx")
+      await handle.writeFile(raw)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+    } finally {
+      await handle?.close()
+    }
+    await rm(stalePath, { force: true })
   }
 
   private async readLockCandidate(): Promise<LockCandidate | null> {

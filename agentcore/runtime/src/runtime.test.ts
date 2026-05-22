@@ -2783,6 +2783,27 @@ describe("RunLock", () => {
     expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(replacement)
   })
 
+  test("stale cleanup rollback does not clobber a fresh lock winner", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const replacement = { pid: 99999999, acquired_at: lockNow().toISOString(), token: "replacement-token" }
+    const winner = { pid: process.pid, acquired_at: lockNow().toISOString(), token: "winner-token" }
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-09T11:59:59Z", token: "old-token" }) + "\n")
+    const lock = new RunLock(lockPath, {
+      now: lockNow,
+      beforeStaleRename: async () => {
+        await writeFile(lockPath, JSON.stringify(replacement) + "\n")
+      },
+      beforeRestoreMovedLock: async () => {
+        await writeFile(lockPath, JSON.stringify(winner) + "\n")
+      },
+    })
+
+    await expect(lock.acquire()).rejects.toThrow("runtime lock already held")
+    expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(winner)
+  })
+
   test("concurrent stale recovery leaves one fresh lock winner", async () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")
