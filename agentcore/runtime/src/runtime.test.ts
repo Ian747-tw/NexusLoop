@@ -5934,6 +5934,21 @@ describe("ProcessOpenCodeAdapter", () => {
     const failedReview = await server.command("runtime.request_proposal_review", { proposalId: failed.proposal_id, requestedBy: "operator" }) as { review_id: string }
     await server.command("runtime.approve_review_request", { reviewId: failedReview.review_id, decidedBy: "operator" })
     await expect(server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: failed.proposal_id })).rejects.toThrow("proposal apply failed")
+    const cancelled = await server.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "cancelled",
+      summary: "cancelled",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    await server.command("runtime.cancel_commander_proposal", { proposalId: cancelled.proposal_id, reason: "operator cancelled" })
+    const rejected = await server.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "rejected",
+      summary: "rejected",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    const rejectedReview = await server.command("runtime.request_proposal_review", { proposalId: rejected.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.reject_review_request", { reviewId: rejectedReview.review_id, decidedBy: "operator", reason: "operator rejected" })
     const bundle = await server.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
     await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
     const draft = await server.command("runtime.draft_commander_playbook", {
@@ -5964,6 +5979,9 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_queue", { queue: "failed_apply", limit: 20 })).resolves.toMatchObject({
       items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: failed.proposal_id })]),
     })
+    const failedApply = await server.command("runtime.commander_queue", { queue: "failed_apply", limit: 20 }) as { items: Array<{ target_id: string }> }
+    expect(failedApply.items.map((item) => item.target_id)).not.toContain(cancelled.proposal_id)
+    expect(failedApply.items.map((item) => item.target_id)).not.toContain(rejected.proposal_id)
     await server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id })
     await expect(server.command("runtime.commander_queue", { queue: "recently_applied", limit: 20 })).resolves.toMatchObject({
       items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: ready.proposal_id, status: "applied" })]),

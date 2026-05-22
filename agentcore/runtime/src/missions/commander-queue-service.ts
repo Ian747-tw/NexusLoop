@@ -124,8 +124,8 @@ export class CommanderQueueService {
         return this.applyPreviewItems(queue, proposals, bundles, drafts, false)
       case "failed_apply":
         return [
-          ...proposals.filter((proposal) => proposal.failure_reason).map((proposal) => proposalItem(queue, proposal, { blockers: [proposal.failure_reason!] })),
-          ...bundles.filter((bundle) => bundle.failure_reason).map((bundle) => bundleItem(queue, bundle, { blockers: [bundle.failure_reason!] })),
+          ...proposals.filter((proposal) => proposal.status === "approved" && proposal.failure_reason).map((proposal) => proposalItem(queue, proposal, { blockers: [proposal.failure_reason!] })),
+          ...bundles.filter((bundle) => bundle.status === "partially_applied" && bundle.failure_reason).map((bundle) => bundleItem(queue, bundle, { blockers: [bundle.failure_reason!] })),
         ]
       case "recently_applied":
         return [
