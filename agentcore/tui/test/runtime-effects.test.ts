@@ -1766,6 +1766,19 @@ describe("runtime UI effects", () => {
     await runtime.command("runtime.reject_review_request", { reviewId: rejectedReview.review_id, decidedBy: "operator", reason: "operator rejected" })
     const failedBundle = await runtime.command("runtime.create_proposal_bundle", { title: "failed bundle", summary: "failed bundle", createdBy: "operator" }) as { bundle_id: string }
     await expect(runtime.command("runtime.apply_proposal_bundle", { bundleId: failedBundle.bundle_id, allowPartial: true })).rejects.toThrow("has no proposals to apply")
+    const resolvedBundle = await runtime.command("runtime.create_proposal_bundle", { title: "resolved bundle", summary: "resolved bundle", createdBy: "operator" }) as { bundle_id: string }
+    const resolvedProposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "record_progress",
+      title: "resolved",
+      summary: "resolved",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "mission-1", claim_id: claim.claim_id, message: "resolved" },
+    }) as { proposal_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: resolvedBundle.bundle_id, proposalId: resolvedProposal.proposal_id })
+    await expect(runtime.command("runtime.apply_proposal_bundle", { bundleId: resolvedBundle.bundle_id, allowPartial: true })).rejects.toThrow("did not apply any proposals")
+    const resolvedReview = await runtime.command("runtime.request_proposal_review", { proposalId: resolvedProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: resolvedReview.review_id, decidedBy: "operator" })
+    await runtime.command("runtime.apply_proposal_bundle", { bundleId: resolvedBundle.bundle_id, allowPartial: true })
     const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
     await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
     await runtime.command("runtime.draft_commander_playbook", {
@@ -1788,6 +1801,7 @@ describe("runtime UI effects", () => {
     expect(state.commanderQueues?.items).toEqual(expect.arrayContaining([expect.objectContaining({ target_id: failedBundle.bundle_id })]))
     expect(state.commanderQueues?.items.map((item) => item.target_id)).not.toContain(cancelled.proposal_id)
     expect(state.commanderQueues?.items.map((item) => item.target_id)).not.toContain(rejected.proposal_id)
+    expect(state.commanderQueues?.items.map((item) => item.target_id)).not.toContain(resolvedBundle.bundle_id)
 
     for (const command of ["queue-blocked", "queue-applied", "queue-drafts", "queue-bundles"] as const) {
       if (command === "queue-applied") await runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id })
@@ -1805,6 +1819,7 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("queue-review-secret")
     expect(JSON.stringify(state)).not.toContain("queue-summary-secret")
     expect(JSON.stringify(state)).not.toContain("queue-blocked-secret")
+    await expect(runtime.command("runtime.commander_queue", { queue: "needs_review", limit: 0 })).rejects.toThrow("commander queue limit must be a positive integer")
   })
 
   test("commander queue runtime result preserves requested rows above default render limit", async () => {

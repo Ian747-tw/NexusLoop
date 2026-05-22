@@ -254,7 +254,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       case "runtime.commander_queue":
         return this.commanderQueue(
           readQueueKind(String(payload.queue ?? "")),
-          readLimit(payload.limit, 20),
+          readQueueLimit(payload.limit ?? 20),
           readStaleAfterMs(payload.staleAfterMs ?? payload.stale_after_ms),
         )
       case "runtime.submit_user_message":
@@ -1107,7 +1107,11 @@ export class FakeRuntimeClient implements RuntimeClient {
       case "failed_apply":
         return [
           ...this.proposals.filter((proposal) => proposal.status === "approved" && proposal.failure_reason).map((proposal) => fakeQueueItem(queue, "proposal", proposal.proposal_id, proposal.title, proposal.summary, proposal.status, proposalRelatedIds(proposal), proposal.created_at, proposal.updated_at, "high", proposal.failure_reason ? [proposal.failure_reason] : [])),
-          ...this.proposalBundles.filter((bundle) => bundle.failure_reason && bundle.status !== "cancelled" && bundle.status !== "applied").map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, bundle.status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "high", bundle.failure_reason ? [bundle.failure_reason] : [])),
+          ...this.proposalBundles.flatMap((bundle) => {
+            const projected = this.projectProposalBundle(bundle)
+            if (!bundle.failure_reason || projected.status === "cancelled" || projected.status === "applied") return []
+            return [fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, projected.status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "high", [bundle.failure_reason])]
+          }),
         ]
       case "recently_applied":
         return [
@@ -1336,6 +1340,11 @@ export class FakeRuntimeClient implements RuntimeClient {
 
 function readLimit(value: unknown, fallback: number): number {
   if (!Number.isInteger(value) || Number(value) < 1) return fallback
+  return Math.min(Number(value), 100)
+}
+
+function readQueueLimit(value: unknown): number {
+  if (!Number.isInteger(value) || Number(value) < 1) throw new Error("commander queue limit must be a positive integer")
   return Math.min(Number(value), 100)
 }
 
