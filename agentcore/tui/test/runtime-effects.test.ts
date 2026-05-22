@@ -1759,6 +1759,13 @@ describe("runtime UI effects", () => {
     const failedReview = await runtime.command("runtime.request_proposal_review", { proposalId: failed.proposal_id, requestedBy: "operator" }) as { review_id: string }
     await runtime.command("runtime.approve_review_request", { reviewId: failedReview.review_id, decidedBy: "operator" })
     await expect(runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: failed.proposal_id })).rejects.toThrow()
+    const cancelled = await runtime.command("runtime.create_commander_proposal", { actionKind: "other", title: "cancelled", summary: "cancelled", proposedBy: "operator" }) as { proposal_id: string }
+    await runtime.command("runtime.cancel_commander_proposal", { proposalId: cancelled.proposal_id, reason: "operator cancelled" })
+    const rejected = await runtime.command("runtime.create_commander_proposal", { actionKind: "other", title: "rejected", summary: "rejected", proposedBy: "operator" }) as { proposal_id: string }
+    const rejectedReview = await runtime.command("runtime.request_proposal_review", { proposalId: rejected.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.reject_review_request", { reviewId: rejectedReview.review_id, decidedBy: "operator", reason: "operator rejected" })
+    const failedBundle = await runtime.command("runtime.create_proposal_bundle", { title: "failed bundle", summary: "failed bundle", createdBy: "operator" }) as { bundle_id: string }
+    await expect(runtime.command("runtime.apply_proposal_bundle", { bundleId: failedBundle.bundle_id, allowPartial: true })).rejects.toThrow("has no proposals to apply")
     const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
     await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
     await runtime.command("runtime.draft_commander_playbook", {
@@ -1776,11 +1783,22 @@ describe("runtime UI effects", () => {
     expect(state.commanderQueues?.selectedQueue).toBe("ready_to_apply")
     expect(state.commanderQueues?.items).toEqual(expect.arrayContaining([expect.objectContaining({ target_id: ready.proposal_id })]))
 
-    for (const command of ["queue-blocked", "queue-failed", "queue-applied", "queue-drafts", "queue-bundles", "queue-stale"] as const) {
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue-failed" })
+    expect(state.commanderQueues?.selectedQueue).toBe("failed_apply")
+    expect(state.commanderQueues?.items).toEqual(expect.arrayContaining([expect.objectContaining({ target_id: failedBundle.bundle_id })]))
+    expect(state.commanderQueues?.items.map((item) => item.target_id)).not.toContain(cancelled.proposal_id)
+    expect(state.commanderQueues?.items.map((item) => item.target_id)).not.toContain(rejected.proposal_id)
+
+    for (const command of ["queue-blocked", "queue-applied", "queue-drafts", "queue-bundles"] as const) {
       if (command === "queue-applied") await runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id })
       state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command })
       expect(state.commanderQueues?.selectedQueue).toBeDefined()
     }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue-stale" })
+    expect(state.commanderQueues?.selectedQueue).toBe("stale_open")
+    expect(state.commanderQueues?.items).toHaveLength(0)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "load-commander-queue", queue: "stale_open", limit: 20, staleAfterMs: 1 })
+    expect(state.commanderQueues?.items.length).toBeGreaterThan(0)
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue", args: ["invalid"] })
     expect(state.commanderQueues?.commandError).toBe("commander queue kind is invalid")
