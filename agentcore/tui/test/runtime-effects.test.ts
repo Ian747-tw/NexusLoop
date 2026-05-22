@@ -1781,11 +1781,20 @@ describe("runtime UI effects", () => {
     await runtime.command("runtime.apply_proposal_bundle", { bundleId: resolvedBundle.bundle_id, allowPartial: true })
     const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
     await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
+    const cancelledBundle = await runtime.command("runtime.create_proposal_bundle", { title: "cancelled bundle", summary: "cancelled bundle", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: cancelledBundle.bundle_id, proposalId: blocked.proposal_id })
+    await runtime.command("runtime.cancel_proposal_bundle", { bundleId: cancelledBundle.bundle_id, reason: "operator cancelled" })
     await runtime.command("runtime.draft_commander_playbook", {
       playbookId: "record-progress",
       fields: { mission_id: "mission-1", claim_id: claim.claim_id, title: "draft", message: "draft" },
       proposedBy: "operator",
     })
+    const cancelledDraft = await runtime.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      fields: { mission_id: "mission-1", claim_id: claim.claim_id, title: "cancelled draft", message: "cancelled draft" },
+      proposedBy: "operator",
+    }) as { draft_id: string }
+    await runtime.command("runtime.cancel_commander_playbook_draft", { draftId: cancelledDraft.draft_id, reason: "operator cancelled" })
 
     let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "queues" })
     expect(state.commanderQueues?.summary?.needs_review_count).toBeGreaterThan(0)
@@ -1829,6 +1838,14 @@ describe("runtime UI effects", () => {
       if (command === "queue-applied") await runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id })
       state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command })
       expect(state.commanderQueues?.selectedQueue).toBeDefined()
+      if (command === "queue-blocked") {
+        const blockedIds = state.commanderQueues?.items.map((item) => item.target_id) ?? []
+        expect(blockedIds).toContain(blocked.proposal_id)
+        expect(blockedIds).not.toContain(cancelled.proposal_id)
+        expect(blockedIds).not.toContain(rejected.proposal_id)
+        expect(blockedIds).not.toContain(cancelledBundle.bundle_id)
+        expect(blockedIds).not.toContain(cancelledDraft.draft_id)
+      }
     }
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue-stale" })
     expect(state.commanderQueues?.selectedQueue).toBe("stale_open")

@@ -1100,9 +1100,9 @@ export class FakeRuntimeClient implements RuntimeClient {
         ]
       case "blocked":
         return [
-          ...this.proposals.filter((proposal) => !this.proposalApplyPreview(proposal.proposal_id).ready_to_apply && proposal.status !== "applied").map((proposal) => fakeQueueItem(queue, "proposal", proposal.proposal_id, proposal.title, proposal.summary, proposal.status, proposalRelatedIds(proposal), proposal.created_at, proposal.updated_at, "normal", this.proposalApplyPreview(proposal.proposal_id).blockers)),
-          ...this.proposalBundles.filter((bundle) => !this.bundleApplyPreview(bundle.bundle_id, "bundle").ready_to_apply && this.projectProposalBundle(bundle).status !== "applied").map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, this.projectProposalBundle(bundle).status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "normal", this.bundleApplyPreview(bundle.bundle_id, "bundle").blockers)),
-          ...this.playbookDrafts.filter((draft) => !this.draftApplyPreview(draft.draft_id).ready_to_apply).map((draft) => draftQueueItem(queue, draft, "normal", this.draftApplyPreview(draft.draft_id).blockers)),
+          ...this.proposals.filter((proposal) => !isTerminalFakeProposal(proposal) && !this.proposalApplyPreview(proposal.proposal_id).ready_to_apply).map((proposal) => fakeQueueItem(queue, "proposal", proposal.proposal_id, proposal.title, proposal.summary, proposal.status, proposalRelatedIds(proposal), proposal.created_at, proposal.updated_at, "normal", this.proposalApplyPreview(proposal.proposal_id).blockers)),
+          ...this.proposalBundles.filter((bundle) => !isTerminalFakeBundle(this.projectProposalBundle(bundle)) && !this.bundleApplyPreview(bundle.bundle_id, "bundle").ready_to_apply).map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, this.projectProposalBundle(bundle).status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "normal", this.bundleApplyPreview(bundle.bundle_id, "bundle").blockers)),
+          ...this.playbookDrafts.filter((draft) => !isTerminalFakeDraft(draft) && !this.draftApplyPreview(draft.draft_id).ready_to_apply).map((draft) => draftQueueItem(queue, draft, "normal", this.draftApplyPreview(draft.draft_id).blockers)),
         ]
       case "failed_apply":
         return [
@@ -1608,6 +1608,18 @@ function fakeProposalBlockers(proposal: CommanderProposalSummary): string[] {
   if (proposal.status === "rejected" || proposal.status === "cancelled") return [`proposal ${proposal.proposal_id} is ${proposal.status}`]
   if (!proposal.review_id) return [`proposal ${proposal.proposal_id} has no linked review`]
   return [`proposal ${proposal.proposal_id} status is ${proposal.status}`]
+}
+
+function isTerminalFakeProposal(proposal: CommanderProposalSummary): boolean {
+  return proposal.status === "applied" || proposal.status === "rejected" || proposal.status === "cancelled"
+}
+
+function isTerminalFakeBundle(bundle: CommanderProposalBundleSummary): boolean {
+  return bundle.status === "applied" || bundle.status === "cancelled"
+}
+
+function isTerminalFakeDraft(draft: CommanderWorkbenchDraftSummary): boolean {
+  return draft.status === "cancelled"
 }
 
 function requiredActionString(proposal: CommanderProposalSummary, payload: Record<string, unknown>, field: "mission_id" | "claim_id" | "result_id"): string {
