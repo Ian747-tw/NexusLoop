@@ -5987,6 +5987,12 @@ describe("ProcessOpenCodeAdapter", () => {
     const failedApply = await server.command("runtime.commander_queue", { queue: "failed_apply", limit: 20 }) as { items: Array<{ target_id: string }> }
     expect(failedApply.items.map((item) => item.target_id)).not.toContain(cancelled.proposal_id)
     expect(failedApply.items.map((item) => item.target_id)).not.toContain(rejected.proposal_id)
+    const dryRunStartedAt = Date.now()
+    const dryRunApply = await server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id, dryRun: true }) as { created_at: string }
+    const dryRunFinishedAt = Date.now()
+    expect(dryRunApply.created_at).not.toBe("2026-05-25T00:00:00.000Z")
+    expect(Date.parse(dryRunApply.created_at)).toBeGreaterThanOrEqual(dryRunStartedAt - 1000)
+    expect(Date.parse(dryRunApply.created_at)).toBeLessThanOrEqual(dryRunFinishedAt + 1000)
     await server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id })
     await expect(server.command("runtime.commander_queue", { queue: "recently_applied", limit: 20 })).resolves.toMatchObject({
       items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: ready.proposal_id, status: "applied" })]),

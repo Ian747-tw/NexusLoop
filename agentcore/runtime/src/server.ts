@@ -1050,7 +1050,6 @@ export class RuntimeServer {
       proposalRegistry: this.proposalRegistry,
       proposalBundleRegistry: this.proposalBundleRegistry,
       commanderPlaybookDraftRegistry: this.commanderPlaybookDraftRegistry,
-      now: this.commanderQueueNow,
     })
   }
 
