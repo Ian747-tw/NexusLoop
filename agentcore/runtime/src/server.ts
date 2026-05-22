@@ -430,12 +430,12 @@ export class RuntimeServer {
         return this.commanderAuthorityChain(requiredString(payload.targetType ?? payload.target_type, "targetType"), requiredString(payload.targetId ?? payload.target_id, "targetId"))
       case "runtime.commander_queue_summary":
         return this.commanderQueueSummary({
-          staleAfterMs: readCommanderQueueStaleAfterMs(payload.staleAfterMs ?? payload.stale_after_ms),
+          staleAfterMs: readCommanderQueueStaleAfterMs(payload.staleAfterMs === undefined ? payload.stale_after_ms : payload.staleAfterMs),
         })
       case "runtime.commander_queue":
         return this.commanderQueue(readCommanderQueueKind(payload.queue), {
-          limit: readCommanderQueueLimit(payload.limit ?? 20),
-          staleAfterMs: readCommanderQueueStaleAfterMs(payload.staleAfterMs ?? payload.stale_after_ms),
+          limit: readCommanderQueueLimit(payload.limit === undefined ? 20 : payload.limit),
+          staleAfterMs: readCommanderQueueStaleAfterMs(payload.staleAfterMs === undefined ? payload.stale_after_ms : payload.staleAfterMs),
         })
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))

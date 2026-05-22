@@ -250,12 +250,12 @@ export class FakeRuntimeClient implements RuntimeClient {
       case "runtime.commander_authority_chain":
         return this.commanderAuthorityChain(String(payload.targetType ?? payload.target_type ?? ""), String(payload.targetId ?? payload.target_id ?? ""))
       case "runtime.commander_queue_summary":
-        return this.commanderQueueSummary(readStaleAfterMs(payload.staleAfterMs ?? payload.stale_after_ms))
+        return this.commanderQueueSummary(readStaleAfterMs(payload.staleAfterMs === undefined ? payload.stale_after_ms : payload.staleAfterMs))
       case "runtime.commander_queue":
         return this.commanderQueue(
           readQueueKind(String(payload.queue ?? "")),
-          readQueueLimit(payload.limit ?? 20),
-          readStaleAfterMs(payload.staleAfterMs ?? payload.stale_after_ms),
+          readQueueLimit(payload.limit === undefined ? 20 : payload.limit),
+          readStaleAfterMs(payload.staleAfterMs === undefined ? payload.stale_after_ms : payload.staleAfterMs),
         )
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))

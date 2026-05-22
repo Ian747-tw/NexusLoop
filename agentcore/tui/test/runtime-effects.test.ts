@@ -1859,6 +1859,9 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("queue-summary-secret")
     expect(JSON.stringify(state)).not.toContain("queue-blocked-secret")
     await expect(runtime.command("runtime.commander_queue", { queue: "needs_review", limit: 0 })).rejects.toThrow("commander queue limit must be a positive integer")
+    await expect(runtime.command("runtime.commander_queue", { queue: "needs_review", limit: null })).rejects.toThrow("commander queue limit must be a positive integer")
+    await expect(runtime.command("runtime.commander_queue", { queue: "needs_review", staleAfterMs: null })).rejects.toThrow("staleAfterMs")
+    await expect(runtime.command("runtime.commander_queue_summary", { staleAfterMs: null })).rejects.toThrow("staleAfterMs")
   })
 
   test("commander queue runtime result preserves requested rows above default render limit", async () => {
