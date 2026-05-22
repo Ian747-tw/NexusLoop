@@ -82,6 +82,36 @@ class CountingRuntime implements RuntimeClient {
   }
 }
 
+class CommanderQueueLimitRuntime implements RuntimeClient {
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+    if (name === "runtime.commander_queue") {
+      const limit = typeof payload?.limit === "number" ? payload.limit : 25
+      return {
+        queue: "needs_review",
+        total_considered: limit,
+        limit,
+        items: Array.from({ length: limit }, (_, index) => ({
+          queue: "needs_review",
+          target_type: "review",
+          target_id: `review_${index + 1}`,
+          title: `review ${index + 1}`,
+          summary: `summary ${index + 1}`,
+          status: "pending",
+          related_ids: { review_id: [`review_${index + 1}`] },
+          created_at: "2026-05-22T00:00:00.000Z",
+          updated_at: "2026-05-22T00:00:00.000Z",
+        })),
+      }
+    }
+    return { ok: true }
+  }
+}
+
 class ResearchRuntime implements RuntimeClient {
   readonly calls: string[] = []
 
@@ -1757,5 +1787,19 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("queue-review-secret")
     expect(JSON.stringify(state)).not.toContain("queue-summary-secret")
     expect(JSON.stringify(state)).not.toContain("queue-blocked-secret")
+  })
+
+  test("commander queue runtime result preserves requested rows above default render limit", async () => {
+    const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), new CommanderQueueLimitRuntime(), {
+      type: "load-commander-queue",
+      queue: "needs_review",
+      limit: 25,
+    })
+
+    expect(state.commanderQueues?.selectedQueue).toBe("needs_review")
+    expect(state.commanderQueues?.limit).toBe(25)
+    expect(state.commanderQueues?.totalConsidered).toBe(25)
+    expect(state.commanderQueues?.items).toHaveLength(25)
+    expect(state.commanderQueues?.items.at(-1)?.target_id).toBe("review_25")
   })
 })

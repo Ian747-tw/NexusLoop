@@ -5968,4 +5968,43 @@ describe("ProcessOpenCodeAdapter", () => {
     const reader = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
     await expect(reader.command("runtime.commander_queue", { queue: "ready_to_apply", limit: 20 })).resolves.toMatchObject({ queue: "ready_to_apply" })
   })
+
+  test("commander operator queues scan full registries beyond public list caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let reviewIds = 0
+    let nowMs = 0
+    const base = Date.UTC(2026, 4, 1, 0, 0, 0, 0)
+    const reviewRegistry = new ReviewRegistry({
+      eventStore,
+      idFactory: () => `review_${++reviewIds}`,
+      now: () => new Date(base + nowMs++),
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      reviewRegistry,
+      researchProjectionMode: "disabled",
+    })
+
+    for (let index = 0; index < 105; index++) {
+      await server.reviewRegistry.createReviewRequest({
+        title: `review ${index}`,
+        summary: `summary ${index}`,
+        requested_by: "operator",
+      })
+    }
+
+    await expect(server.command("runtime.list_review_requests", { status: "pending", limit: 1000 })).resolves.toHaveLength(100)
+    await expect(server.command("runtime.commander_queue_summary")).resolves.toMatchObject({
+      needs_review_count: 105,
+      last_updated_at: "2026-05-01T00:00:00.104Z",
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", limit: 100 })).resolves.toMatchObject({
+      queue: "needs_review",
+      total_considered: 105,
+      limit: 100,
+      items: expect.arrayContaining([expect.objectContaining({ target_id: "review_1" })]),
+    })
+  })
 })

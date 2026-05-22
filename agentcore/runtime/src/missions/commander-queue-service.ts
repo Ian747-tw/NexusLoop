@@ -31,7 +31,6 @@ export const COMMANDER_QUEUE_KINDS: CommanderQueueKind[] = [
 const QUEUE_KIND_SET = new Set<CommanderQueueKind>(COMMANDER_QUEUE_KINDS)
 const DEFAULT_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_LIMIT = 100
-const SOURCE_LIMIT = 1000
 const TITLE_LIMIT = 120
 const SUMMARY_LIMIT = 240
 const BLOCKER_LIMIT = 160
@@ -76,9 +75,9 @@ export class CommanderQueueService {
     }
     let lastUpdatedAt: string | undefined
     for (const queue of COMMANDER_QUEUE_KINDS) {
-      const result = await this.queue(queue, { limit: MAX_LIMIT, staleAfterMs })
-      counts[queue] = result.total_considered
-      for (const item of result.items) {
+      const items = orderQueueItems(queue, await this.collect(queue, staleAfterMs))
+      counts[queue] = items.length
+      for (const item of items) {
         lastUpdatedAt = newestIso(lastUpdatedAt, item.updated_at ?? item.created_at)
       }
     }
@@ -111,10 +110,10 @@ export class CommanderQueueService {
 
   private async collect(queue: CommanderQueueKind, staleAfterMs: number): Promise<CommanderQueueItem[]> {
     const [reviews, proposals, bundles, drafts] = await Promise.all([
-      this.reviewRegistry.listReviewRequests({ limit: SOURCE_LIMIT }),
-      this.proposalRegistry.listProposals({ limit: SOURCE_LIMIT }),
-      this.proposalBundleRegistry.listBundles({ limit: SOURCE_LIMIT }),
-      this.commanderPlaybookDraftRegistry.listDrafts({ limit: SOURCE_LIMIT }),
+      this.reviewRegistry.listAllReviewRequests(),
+      this.proposalRegistry.listAllProposals(),
+      this.proposalBundleRegistry.listAllBundles(),
+      this.commanderPlaybookDraftRegistry.listAllDrafts(),
     ])
     switch (queue) {
       case "needs_review":

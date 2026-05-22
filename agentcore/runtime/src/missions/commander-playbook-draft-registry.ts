@@ -101,6 +101,18 @@ export class CommanderPlaybookDraftRegistry {
     )
   }
 
+  async listAllDrafts(options: { status?: CommanderPlaybookDraftStatus } = {}): Promise<CommanderPlaybookDraft[]> {
+    await this.hydrate()
+    const status = options.status === undefined ? undefined : cleanStatus(options.status)
+    return redactValue(
+      this.draftOrder
+        .slice()
+        .reverse()
+        .map((draftId) => this.drafts.get(draftId))
+        .filter((draft): draft is CommanderPlaybookDraft => draft !== undefined && (status === undefined || draft.status === status)),
+    )
+  }
+
   async statusSummary(): Promise<CommanderPlaybookDraftSummary> {
     await this.hydrate()
     const drafts = [...this.drafts.values()]

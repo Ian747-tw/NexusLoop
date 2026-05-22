@@ -2079,11 +2079,12 @@ function readCommanderQueueSummary(value: unknown): CommanderQueueSummary {
 function readCommanderQueueResult(value: unknown): { queue: CommanderQueueKind; items: CommanderQueueItemSummary[]; total_considered: number; limit: number } {
   if (!isRecord(value) || typeof value.queue !== "string" || !Array.isArray(value.items)) throw new Error("runtime.commander_queue returned invalid result")
   const queue = readQueueKind(value.queue)
+  const limit = Math.max(0, Math.min(readNumber(value.limit, QUEUE_LIMIT), 100))
   return {
     queue,
-    items: value.items.map(readCommanderQueueItem).filter((item): item is CommanderQueueItemSummary => item !== null).slice(0, QUEUE_LIMIT),
+    items: value.items.map(readCommanderQueueItem).filter((item): item is CommanderQueueItemSummary => item !== null).slice(0, limit),
     total_considered: readNumber(value.total_considered, 0),
-    limit: readNumber(value.limit, QUEUE_LIMIT),
+    limit,
   }
 }
 
