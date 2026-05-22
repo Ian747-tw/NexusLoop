@@ -1436,11 +1436,13 @@ function redactQueueRelatedIds(value: Record<string, string[]>): Record<string, 
   return out
 }
 
-function orderQueueItems(queue: CommanderQueueKind, items: CommanderQueueItemSummary[]): CommanderQueueItemSummary[] {
+export function orderQueueItems(queue: CommanderQueueKind, items: CommanderQueueItemSummary[]): CommanderQueueItemSummary[] {
   const direction = queue === "recently_applied" || queue === "ready_to_apply" || queue === "blocked" || queue === "failed_apply" ? -1 : 1
   return items.slice().sort((a, b) => {
     const byTime = direction * (queueTime(a) - queueTime(b))
     if (byTime !== 0) return byTime
+    const byPriority = queuePriorityRank(b.priority) - queuePriorityRank(a.priority)
+    if (byPriority !== 0) return byPriority
     return `${a.target_type}:${a.target_id}`.localeCompare(`${b.target_type}:${b.target_id}`)
   })
 }
@@ -1448,6 +1450,12 @@ function orderQueueItems(queue: CommanderQueueKind, items: CommanderQueueItemSum
 function queueTime(item: CommanderQueueItemSummary): number {
   const timestamp = Date.parse(item.updated_at ?? item.created_at ?? "")
   return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+function queuePriorityRank(value: CommanderQueueItemSummary["priority"]): number {
+  if (value === "high") return 2
+  if (value === "normal") return 1
+  return 0
 }
 
 function readAuditLimit(value: unknown): number {

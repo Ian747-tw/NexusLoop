@@ -866,7 +866,7 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "queues":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "needs_review", limit: QUEUE_LIMIT })
     case "queue":
-      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queue", queue: requiredQueueKindArg(args, 0), limit: QUEUE_LIMIT })
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: requiredQueueKindArg(args, 0), limit: QUEUE_LIMIT })
     case "queue-review":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "needs_review", limit: QUEUE_LIMIT })
     case "queue-apply":

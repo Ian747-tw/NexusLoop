@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
-import { FakeRuntimeClient, type RuntimeClient } from "../src/runtime"
+import { FakeRuntimeClient, orderQueueItems, type RuntimeClient } from "../src/runtime"
 import { layoutSnapshot } from "../src/snapshot"
 import { initialState, type UiState } from "../src/state"
 
@@ -1792,6 +1792,28 @@ describe("runtime UI effects", () => {
     expect(state.commanderQueues?.selectedQueue).toBe("needs_review")
     expect(layoutSnapshot(state)).toContain("Commander queues")
 
+    state = {
+      ...state,
+      commanderQueues: {
+        ...state.commanderQueues,
+        items: [],
+        summary: {
+          needs_review_count: 0,
+          ready_to_apply_count: 0,
+          blocked_count: 0,
+          failed_apply_count: 0,
+          recently_applied_count: 0,
+          drafts_needing_review_count: 0,
+          bundles_needing_review_count: 0,
+          stale_open_count: 0,
+          last_updated_at: "1970-01-01T00:00:00.000Z",
+        },
+      },
+    }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue", args: ["needs_review"] })
+    expect(state.commanderQueues?.summary?.needs_review_count).toBeGreaterThan(0)
+    expect(state.commanderQueues?.selectedQueue).toBe("needs_review")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue-apply" })
     expect(state.commanderQueues?.selectedQueue).toBe("ready_to_apply")
     expect(state.commanderQueues?.items).toEqual(expect.arrayContaining([expect.objectContaining({ target_id: ready.proposal_id })]))
@@ -1834,5 +1856,34 @@ describe("runtime UI effects", () => {
     expect(state.commanderQueues?.totalConsidered).toBe(25)
     expect(state.commanderQueues?.items).toHaveLength(25)
     expect(state.commanderQueues?.items.at(-1)?.target_id).toBe("review_25")
+  })
+
+  test("fake commander queue ordering applies priority tie-break before target id", () => {
+    const ordered = orderQueueItems("needs_review", [
+      {
+        queue: "needs_review",
+        target_type: "review",
+        target_id: "a-normal",
+        title: "normal",
+        summary: "normal",
+        status: "pending",
+        priority: "normal",
+        related_ids: {},
+        updated_at: "1970-01-01T00:00:00.000Z",
+      },
+      {
+        queue: "needs_review",
+        target_type: "review",
+        target_id: "z-high",
+        title: "high",
+        summary: "high",
+        status: "pending",
+        priority: "high",
+        related_ids: {},
+        updated_at: "1970-01-01T00:00:00.000Z",
+      },
+    ])
+
+    expect(ordered.map((item) => item.target_id)).toEqual(["z-high", "a-normal"])
   })
 })
