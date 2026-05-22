@@ -5949,6 +5949,8 @@ describe("ProcessOpenCodeAdapter", () => {
     }) as { proposal_id: string }
     const rejectedReview = await server.command("runtime.request_proposal_review", { proposalId: rejected.proposal_id, requestedBy: "operator" }) as { review_id: string }
     await server.command("runtime.reject_review_request", { reviewId: rejectedReview.review_id, decidedBy: "operator", reason: "operator rejected" })
+    const failedBundle = await server.command("runtime.create_proposal_bundle", { title: "failed bundle", summary: "failed bundle", createdBy: "operator" }) as { bundle_id: string }
+    await expect(server.command("runtime.apply_proposal_bundle", { bundleId: failedBundle.bundle_id, allowPartial: true })).rejects.toThrow("has no proposals to apply")
     const bundle = await server.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
     await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
     const draft = await server.command("runtime.draft_commander_playbook", {
@@ -5961,7 +5963,7 @@ describe("ProcessOpenCodeAdapter", () => {
       needs_review_count: 1,
       ready_to_apply_count: 2,
       blocked_count: expect.any(Number),
-      failed_apply_count: 1,
+      failed_apply_count: 2,
       drafts_needing_review_count: 1,
       bundles_needing_review_count: 1,
       stale_open_count: expect.any(Number),
@@ -5977,7 +5979,10 @@ describe("ProcessOpenCodeAdapter", () => {
       items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: blocked.proposal_id, blockers: expect.arrayContaining([expect.stringContaining("no linked review")]) })]),
     })
     await expect(server.command("runtime.commander_queue", { queue: "failed_apply", limit: 20 })).resolves.toMatchObject({
-      items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: failed.proposal_id })]),
+      items: expect.arrayContaining([
+        expect.objectContaining({ target_type: "proposal", target_id: failed.proposal_id }),
+        expect.objectContaining({ target_type: "bundle", target_id: failedBundle.bundle_id }),
+      ]),
     })
     const failedApply = await server.command("runtime.commander_queue", { queue: "failed_apply", limit: 20 }) as { items: Array<{ target_id: string }> }
     expect(failedApply.items.map((item) => item.target_id)).not.toContain(cancelled.proposal_id)

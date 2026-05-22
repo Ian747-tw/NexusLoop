@@ -1107,7 +1107,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       case "failed_apply":
         return [
           ...this.proposals.filter((proposal) => proposal.status === "approved" && proposal.failure_reason).map((proposal) => fakeQueueItem(queue, "proposal", proposal.proposal_id, proposal.title, proposal.summary, proposal.status, proposalRelatedIds(proposal), proposal.created_at, proposal.updated_at, "high", proposal.failure_reason ? [proposal.failure_reason] : [])),
-          ...this.proposalBundles.filter((bundle) => bundle.status === "partially_applied" && bundle.failure_reason).map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, bundle.status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "high", bundle.failure_reason ? [bundle.failure_reason] : [])),
+          ...this.proposalBundles.filter((bundle) => bundle.failure_reason && bundle.status !== "cancelled" && bundle.status !== "applied").map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, bundle.status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "high", bundle.failure_reason ? [bundle.failure_reason] : [])),
         ]
       case "recently_applied":
         return [
