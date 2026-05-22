@@ -144,16 +144,17 @@ export class CommanderQueueService {
   private async applyPreviewItems(queue: CommanderQueueKind, proposals: CommanderProposal[], bundles: CommanderProposalBundle[], drafts: CommanderPlaybookDraft[], ready: boolean): Promise<CommanderQueueItem[]> {
     const out: CommanderQueueItem[] = []
     for (const proposal of proposals) {
-      if (proposal.status === "applied") continue
+      if (isTerminalProposal(proposal)) continue
       const preview = await this.applyService.preview({ target_type: "proposal", target_id: proposal.proposal_id })
       if (preview.ready_to_apply === ready) out.push(proposalItem(queue, proposal, { blockers: preview.blockers, priority: ready ? "high" : "normal" }))
     }
     for (const bundle of bundles) {
-      if (bundle.status === "applied") continue
+      if (isTerminalBundle(bundle)) continue
       const preview = await this.applyService.preview({ target_type: "bundle", target_id: bundle.bundle_id })
       if (preview.ready_to_apply === ready) out.push(bundleItem(queue, bundle, { blockers: preview.blockers, priority: ready ? "high" : "normal" }))
     }
     for (const draft of drafts) {
+      if (isTerminalDraft(draft)) continue
       const preview = await this.applyService.preview({ target_type: "draft", target_id: draft.draft_id })
       if (preview.ready_to_apply === ready) out.push(draftItem(queue, draft, { blockers: preview.blockers, priority: ready ? "high" : "normal" }))
     }
@@ -201,6 +202,18 @@ export class CommanderQueueService {
       ...drafts.filter((draft) => draft.status !== "cancelled" && isStale(draft.created_at, draft.updated_at)).map((draft) => draftItem(queue, draft, { priority: "normal" })),
     ]
   }
+}
+
+function isTerminalProposal(proposal: CommanderProposal): boolean {
+  return proposal.status === "applied" || proposal.status === "rejected" || proposal.status === "cancelled"
+}
+
+function isTerminalBundle(bundle: CommanderProposalBundle): boolean {
+  return bundle.status === "applied" || bundle.status === "cancelled"
+}
+
+function isTerminalDraft(draft: CommanderPlaybookDraft): boolean {
+  return draft.status === "cancelled"
 }
 
 function reviewItem(queue: CommanderQueueKind, review: ReviewRequest, extra: Partial<CommanderQueueItem> = {}): CommanderQueueItem {
