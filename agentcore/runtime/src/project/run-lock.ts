@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises"
-import { dirname } from "node:path"
+import { link, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises"
+import { basename, dirname, join } from "node:path"
 
 interface LockRecord {
   pid: number
@@ -97,16 +97,16 @@ export class RunLock {
   }
 
   private async restoreMovedLockWithoutClobber(stalePath: string, raw: string): Promise<void> {
-    let handle
     try {
-      handle = await open(this.lockPath, "wx")
-      await handle.writeFile(raw)
+      const current = await readFile(stalePath, "utf8")
+      if (current !== raw) return
+      await link(stalePath, this.lockPath)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== "EEXIST" && code !== "ENOENT") throw error
     } finally {
-      await handle?.close()
+      await rm(stalePath, { force: true })
     }
-    await rm(stalePath, { force: true })
   }
 
   private async readLockCandidate(): Promise<LockCandidate | null> {
@@ -156,11 +156,39 @@ export class RunLock {
     const current = await this.readLockCandidate()
     if (current?.kind === "modern" && current.record.pid === process.pid && current.record.token === this.token) {
       await rm(this.lockPath, { force: true })
+    } else {
+      await this.removeMovedLockForToken()
     }
     this.acquired = false
   }
 
   isHeld(): boolean {
     return this.acquired
+  }
+
+  private async removeMovedLockForToken(): Promise<void> {
+    const lockDir = dirname(this.lockPath)
+    const prefix = `${basename(this.lockPath)}.`
+    let entries: string[]
+    try {
+      entries = await readdir(lockDir)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+      throw error
+    }
+    for (const entry of entries) {
+      if (!entry.startsWith(prefix) || !entry.endsWith(".stale")) continue
+      const stalePath = join(lockDir, entry)
+      let candidate: LockCandidate
+      try {
+        candidate = this.parseLockCandidate(await readFile(stalePath, "utf8"))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
+        throw error
+      }
+      if (candidate.kind === "modern" && candidate.record.pid === process.pid && candidate.record.token === this.token) {
+        await rm(stalePath, { force: true })
+      }
+    }
   }
 }
