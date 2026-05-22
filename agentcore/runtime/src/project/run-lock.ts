@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { link, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises"
+import { constants, copyFile, link, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 
 interface LockRecord {
@@ -19,6 +19,7 @@ export interface RunLockOptions {
   beforeRemoveStale?: () => Promise<void> | void
   beforeStaleRename?: () => Promise<void> | void
   beforeRestoreMovedLock?: () => Promise<void> | void
+  linkMovedLock?: (existingPath: string, newPath: string) => Promise<void>
 }
 
 const DEFAULT_STALE_AFTER_MS = 24 * 60 * 60 * 1000
@@ -30,6 +31,7 @@ export class RunLock {
   private readonly beforeRemoveStale?: () => Promise<void> | void
   private readonly beforeStaleRename?: () => Promise<void> | void
   private readonly beforeRestoreMovedLock?: () => Promise<void> | void
+  private readonly linkMovedLock: (existingPath: string, newPath: string) => Promise<void>
   private readonly token = randomUUID()
 
   constructor(readonly lockPath: string, options: RunLockOptions = {}) {
@@ -38,6 +40,7 @@ export class RunLock {
     this.beforeRemoveStale = options.beforeRemoveStale
     this.beforeStaleRename = options.beforeStaleRename
     this.beforeRestoreMovedLock = options.beforeRestoreMovedLock
+    this.linkMovedLock = options.linkMovedLock ?? link
   }
 
   async acquire(): Promise<void> {
@@ -100,12 +103,25 @@ export class RunLock {
     try {
       const current = await readFile(stalePath, "utf8")
       if (current !== raw) return
-      await link(stalePath, this.lockPath)
+      await this.linkMovedLock(stalePath, this.lockPath)
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
+      if (isUnsupportedHardLinkError(code)) {
+        await this.copyMovedLockWithoutClobber(stalePath)
+        return
+      }
       if (code !== "EEXIST" && code !== "ENOENT") throw error
     } finally {
       await rm(stalePath, { force: true })
+    }
+  }
+
+  private async copyMovedLockWithoutClobber(stalePath: string): Promise<void> {
+    try {
+      await copyFile(stalePath, this.lockPath, constants.COPYFILE_EXCL)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== "EEXIST" && code !== "ENOENT") throw error
     }
   }
 
@@ -191,4 +207,8 @@ export class RunLock {
       }
     }
   }
+}
+
+function isUnsupportedHardLinkError(code: string | undefined): boolean {
+  return code === "EPERM" || code === "EOPNOTSUPP" || code === "ENOTSUP" || code === "EXDEV"
 }
