@@ -2645,6 +2645,49 @@ describe("RunLock", () => {
     expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(replacement)
   })
 
+  test("release removes owned lock restored after stale-file cleanup", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const stalePath = `${lockPath}.released-owner.stale`
+    const lock = new RunLock(lockPath, {
+      now: lockNow,
+      beforeSecondOwnedLockPathCheck: async () => {
+        await writeFile(lockPath, JSON.stringify(record) + "\n")
+      },
+    })
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+    await rm(lockPath, { force: true })
+    await writeFile(stalePath, JSON.stringify(record) + "\n")
+    await lock.release()
+
+    expect(existsSync(lockPath)).toBe(false)
+    expect(existsSync(stalePath)).toBe(false)
+  })
+
+  test("release preserves another owner lock restored after stale-file cleanup", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const stalePath = `${lockPath}.released-owner.stale`
+    const restored = { pid: process.pid, acquired_at: lockNow().toISOString(), token: "other-owner-token" }
+    const lock = new RunLock(lockPath, {
+      now: lockNow,
+      beforeSecondOwnedLockPathCheck: async () => {
+        await writeFile(lockPath, JSON.stringify(restored) + "\n")
+      },
+    })
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+    await rm(lockPath, { force: true })
+    await writeFile(stalePath, JSON.stringify(record) + "\n")
+    await lock.release()
+
+    expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(restored)
+    expect(existsSync(stalePath)).toBe(false)
+  })
+
   test("second live lock fails", async () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")

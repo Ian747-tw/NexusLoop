@@ -19,6 +19,7 @@ export interface RunLockOptions {
   beforeRemoveStale?: () => Promise<void> | void
   beforeStaleRename?: () => Promise<void> | void
   beforeRestoreMovedLock?: () => Promise<void> | void
+  beforeSecondOwnedLockPathCheck?: () => Promise<void> | void
   linkMovedLock?: (existingPath: string, newPath: string) => Promise<void>
 }
 
@@ -31,6 +32,7 @@ export class RunLock {
   private readonly beforeRemoveStale?: () => Promise<void> | void
   private readonly beforeStaleRename?: () => Promise<void> | void
   private readonly beforeRestoreMovedLock?: () => Promise<void> | void
+  private readonly beforeSecondOwnedLockPathCheck?: () => Promise<void> | void
   private readonly linkMovedLock: (existingPath: string, newPath: string) => Promise<void>
   private readonly token = randomUUID()
 
@@ -40,6 +42,7 @@ export class RunLock {
     this.beforeRemoveStale = options.beforeRemoveStale
     this.beforeStaleRename = options.beforeStaleRename
     this.beforeRestoreMovedLock = options.beforeRestoreMovedLock
+    this.beforeSecondOwnedLockPathCheck = options.beforeSecondOwnedLockPathCheck
     this.linkMovedLock = options.linkMovedLock ?? link
   }
 
@@ -169,13 +172,18 @@ export class RunLock {
 
   async release(): Promise<void> {
     if (!this.acquired) return
+    await this.removeOwnedLockPath()
+    await this.removeMovedLockForToken()
+    await this.beforeSecondOwnedLockPathCheck?.()
+    await this.removeOwnedLockPath()
+    this.acquired = false
+  }
+
+  private async removeOwnedLockPath(): Promise<void> {
     const current = await this.readLockCandidate()
     if (current?.kind === "modern" && current.record.pid === process.pid && current.record.token === this.token) {
       await rm(this.lockPath, { force: true })
-    } else {
-      await this.removeMovedLockForToken()
     }
-    this.acquired = false
   }
 
   isHeld(): boolean {
