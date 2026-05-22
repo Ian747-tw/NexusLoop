@@ -70,6 +70,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...workbenchLines(state))
   out.push(...applyLines(state))
   out.push(...auditLines(state))
+  out.push(...queueLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -372,6 +373,35 @@ function auditLines(state: UiState): string[] {
     out.push("  chain=none")
   }
   if (audit.commandError) out.push(`  command_error=${redactText(audit.commandError)}`)
+  return out
+}
+
+function queueLines(state: UiState): string[] {
+  const queues = state.commanderQueues
+  const out = ["Commander queues"]
+  if (!queues) {
+    out.push("  selected=needs_review total=0")
+    return out
+  }
+  if (queues.summary) {
+    const summary = queues.summary
+    out.push(`  summary needs_review=${summary.needs_review_count} ready_to_apply=${summary.ready_to_apply_count} blocked=${summary.blocked_count} failed_apply=${summary.failed_apply_count} recently_applied=${summary.recently_applied_count} drafts=${summary.drafts_needing_review_count} bundles=${summary.bundles_needing_review_count} stale=${summary.stale_open_count}`)
+  }
+  out.push(`  selected=${queues.selectedQueue ?? "needs_review"} total=${queues.totalConsidered ?? queues.items.length} limit=${queues.limit ?? queues.items.length}`)
+  out.push("  rows")
+  if (queues.items.length === 0) out.push("    - empty")
+  else {
+    out.push(...queues.items.slice(0, 20).map((item) => {
+      const related = Object.entries(item.related_ids).flatMap(([key, values]) => values.slice(0, 3).map((value) => `${key}=${value}`)).slice(0, 4).join(" ")
+      return `    - ${item.target_type}:${item.target_id} [${item.status}] ${preview(redactText(item.title))}${related ? ` ${related}` : ""}`
+    }))
+  }
+  const blockerRows = queues.items.flatMap((item) => (item.blockers ?? []).slice(0, 3).map((blocker) => `${item.target_type}:${item.target_id} ${blocker}`)).slice(0, 10)
+  if (blockerRows.length > 0) {
+    out.push("  blockers")
+    out.push(...blockerRows.map((blocker) => `    - ${preview(redactText(blocker))}`))
+  }
+  if (queues.commandError) out.push(`  command_error=${redactText(queues.commandError)}`)
   return out
 }
 

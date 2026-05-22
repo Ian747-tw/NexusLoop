@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
-import { FakeRuntimeClient, type RuntimeClient } from "../src/runtime"
+import { FakeRuntimeClient, orderQueueItems, type RuntimeClient } from "../src/runtime"
 import { layoutSnapshot } from "../src/snapshot"
 import { initialState, type UiState } from "../src/state"
 
@@ -79,6 +79,36 @@ class CountingRuntime implements RuntimeClient {
       specApproved: true,
       lockHeld: true,
     }
+  }
+}
+
+class CommanderQueueLimitRuntime implements RuntimeClient {
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+    if (name === "runtime.commander_queue") {
+      const limit = typeof payload?.limit === "number" ? payload.limit : 25
+      return {
+        queue: "needs_review",
+        total_considered: limit,
+        limit,
+        items: Array.from({ length: limit }, (_, index) => ({
+          queue: "needs_review",
+          target_type: "review",
+          target_id: `review_${index + 1}`,
+          title: `review ${index + 1}`,
+          summary: `summary ${index + 1}`,
+          status: "pending",
+          related_ids: { review_id: [`review_${index + 1}`] },
+          created_at: "2026-05-22T00:00:00.000Z",
+          updated_at: "2026-05-22T00:00:00.000Z",
+        })),
+      }
+    }
+    return { ok: true }
   }
 }
 
@@ -1699,5 +1729,181 @@ describe("runtime UI effects", () => {
     expect(next.missions).toEqual(state.missions)
     expect(next.research).toEqual(state.research)
     expect(next.missionExecution?.commandError).toBe("claim failed [REDACTED]")
+  })
+
+  test("queue slash commands load summary rows blockers applied stale and redact state", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "mission-1", executorId: "executor" }) as { claim_id: string }
+    await runtime.command("runtime.create_review_request", {
+      title: "review token=queue-review-secret",
+      summary: "summary api_key=queue-summary-secret",
+      requestedBy: "operator",
+    })
+    const blocked = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "record_progress",
+      title: "blocked token=queue-blocked-secret",
+      summary: "blocked",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "mission-1", claim_id: claim.claim_id, message: "blocked" },
+    }) as { proposal_id: string }
+    const ready = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "record_progress",
+      title: "ready",
+      summary: "ready",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "mission-1", claim_id: claim.claim_id, message: "ready" },
+    }) as { proposal_id: string }
+    const review = await runtime.command("runtime.request_proposal_review", { proposalId: ready.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator" })
+    const failed = await runtime.command("runtime.create_commander_proposal", { actionKind: "other", title: "failed", summary: "failed", proposedBy: "operator" }) as { proposal_id: string }
+    const failedReview = await runtime.command("runtime.request_proposal_review", { proposalId: failed.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: failedReview.review_id, decidedBy: "operator" })
+    await expect(runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: failed.proposal_id })).rejects.toThrow()
+    const cancelled = await runtime.command("runtime.create_commander_proposal", { actionKind: "other", title: "cancelled", summary: "cancelled", proposedBy: "operator" }) as { proposal_id: string }
+    await runtime.command("runtime.cancel_commander_proposal", { proposalId: cancelled.proposal_id, reason: "operator cancelled" })
+    const rejected = await runtime.command("runtime.create_commander_proposal", { actionKind: "other", title: "rejected", summary: "rejected", proposedBy: "operator" }) as { proposal_id: string }
+    const rejectedReview = await runtime.command("runtime.request_proposal_review", { proposalId: rejected.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.reject_review_request", { reviewId: rejectedReview.review_id, decidedBy: "operator", reason: "operator rejected" })
+    const failedBundle = await runtime.command("runtime.create_proposal_bundle", { title: "failed bundle", summary: "failed bundle", createdBy: "operator" }) as { bundle_id: string }
+    await expect(runtime.command("runtime.apply_proposal_bundle", { bundleId: failedBundle.bundle_id, allowPartial: true })).rejects.toThrow("has no proposals to apply")
+    const resolvedBundle = await runtime.command("runtime.create_proposal_bundle", { title: "resolved bundle", summary: "resolved bundle", createdBy: "operator" }) as { bundle_id: string }
+    const resolvedProposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "record_progress",
+      title: "resolved",
+      summary: "resolved",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "mission-1", claim_id: claim.claim_id, message: "resolved" },
+    }) as { proposal_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: resolvedBundle.bundle_id, proposalId: resolvedProposal.proposal_id })
+    await expect(runtime.command("runtime.apply_proposal_bundle", { bundleId: resolvedBundle.bundle_id, allowPartial: true })).rejects.toThrow("did not apply any proposals")
+    const resolvedReview = await runtime.command("runtime.request_proposal_review", { proposalId: resolvedProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: resolvedReview.review_id, decidedBy: "operator" })
+    await runtime.command("runtime.apply_proposal_bundle", { bundleId: resolvedBundle.bundle_id, allowPartial: true })
+    const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
+    const cancelledBundle = await runtime.command("runtime.create_proposal_bundle", { title: "cancelled bundle", summary: "cancelled bundle", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: cancelledBundle.bundle_id, proposalId: blocked.proposal_id })
+    await runtime.command("runtime.cancel_proposal_bundle", { bundleId: cancelledBundle.bundle_id, reason: "operator cancelled" })
+    await runtime.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      fields: { mission_id: "mission-1", claim_id: claim.claim_id, title: "draft", message: "draft" },
+      proposedBy: "operator",
+    })
+    const cancelledDraft = await runtime.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      fields: { mission_id: "mission-1", claim_id: claim.claim_id, title: "cancelled draft", message: "cancelled draft" },
+      proposedBy: "operator",
+    }) as { draft_id: string }
+    await runtime.command("runtime.cancel_commander_playbook_draft", { draftId: cancelledDraft.draft_id, reason: "operator cancelled" })
+
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "queues" })
+    expect(state.commanderQueues?.summary?.needs_review_count).toBeGreaterThan(0)
+    expect(state.commanderQueues?.selectedQueue).toBe("needs_review")
+    expect(layoutSnapshot(state)).toContain("Commander queues")
+
+    state = {
+      ...state,
+      commanderQueues: {
+        ...state.commanderQueues,
+        items: [],
+        summary: {
+          needs_review_count: 0,
+          ready_to_apply_count: 0,
+          blocked_count: 0,
+          failed_apply_count: 0,
+          recently_applied_count: 0,
+          drafts_needing_review_count: 0,
+          bundles_needing_review_count: 0,
+          stale_open_count: 0,
+          last_updated_at: "1970-01-01T00:00:00.000Z",
+        },
+      },
+    }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue", args: ["needs_review"] })
+    expect(state.commanderQueues?.summary?.needs_review_count).toBeGreaterThan(0)
+    expect(state.commanderQueues?.selectedQueue).toBe("needs_review")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue-apply" })
+    expect(state.commanderQueues?.selectedQueue).toBe("ready_to_apply")
+    expect(state.commanderQueues?.items).toEqual(expect.arrayContaining([expect.objectContaining({ target_id: ready.proposal_id })]))
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue-failed" })
+    expect(state.commanderQueues?.selectedQueue).toBe("failed_apply")
+    expect(state.commanderQueues?.items).toEqual(expect.arrayContaining([expect.objectContaining({ target_id: failedBundle.bundle_id })]))
+    expect(state.commanderQueues?.items.map((item) => item.target_id)).not.toContain(cancelled.proposal_id)
+    expect(state.commanderQueues?.items.map((item) => item.target_id)).not.toContain(rejected.proposal_id)
+    expect(state.commanderQueues?.items.map((item) => item.target_id)).not.toContain(resolvedBundle.bundle_id)
+
+    for (const command of ["queue-blocked", "queue-applied", "queue-drafts", "queue-bundles"] as const) {
+      if (command === "queue-applied") await runtime.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command })
+      expect(state.commanderQueues?.selectedQueue).toBeDefined()
+      if (command === "queue-blocked") {
+        const blockedIds = state.commanderQueues?.items.map((item) => item.target_id) ?? []
+        expect(blockedIds).toContain(blocked.proposal_id)
+        expect(blockedIds).not.toContain(cancelled.proposal_id)
+        expect(blockedIds).not.toContain(rejected.proposal_id)
+        expect(blockedIds).not.toContain(cancelledBundle.bundle_id)
+        expect(blockedIds).not.toContain(cancelledDraft.draft_id)
+      }
+    }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue-stale" })
+    expect(state.commanderQueues?.selectedQueue).toBe("stale_open")
+    expect(state.commanderQueues?.items).toHaveLength(0)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "load-commander-queue", queue: "stale_open", limit: 20, staleAfterMs: 1 })
+    expect(state.commanderQueues?.items.length).toBeGreaterThan(0)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "queue", args: ["invalid"] })
+    expect(state.commanderQueues?.commandError).toBe("commander queue kind is invalid")
+    expect(JSON.stringify(state)).not.toContain("queue-review-secret")
+    expect(JSON.stringify(state)).not.toContain("queue-summary-secret")
+    expect(JSON.stringify(state)).not.toContain("queue-blocked-secret")
+    await expect(runtime.command("runtime.commander_queue", { queue: "needs_review", limit: 0 })).rejects.toThrow("commander queue limit must be a positive integer")
+    await expect(runtime.command("runtime.commander_queue", { queue: "needs_review", limit: null })).rejects.toThrow("commander queue limit must be a positive integer")
+    await expect(runtime.command("runtime.commander_queue", { queue: "needs_review", staleAfterMs: null })).rejects.toThrow("staleAfterMs")
+    await expect(runtime.command("runtime.commander_queue_summary", { staleAfterMs: null })).rejects.toThrow("staleAfterMs")
+  })
+
+  test("commander queue runtime result preserves requested rows above default render limit", async () => {
+    const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), new CommanderQueueLimitRuntime(), {
+      type: "load-commander-queue",
+      queue: "needs_review",
+      limit: 25,
+    })
+
+    expect(state.commanderQueues?.selectedQueue).toBe("needs_review")
+    expect(state.commanderQueues?.limit).toBe(25)
+    expect(state.commanderQueues?.totalConsidered).toBe(25)
+    expect(state.commanderQueues?.items).toHaveLength(25)
+    expect(state.commanderQueues?.items.at(-1)?.target_id).toBe("review_25")
+  })
+
+  test("fake commander queue ordering applies priority tie-break before target id", () => {
+    const ordered = orderQueueItems("needs_review", [
+      {
+        queue: "needs_review",
+        target_type: "review",
+        target_id: "a-normal",
+        title: "normal",
+        summary: "normal",
+        status: "pending",
+        priority: "normal",
+        related_ids: {},
+        updated_at: "1970-01-01T00:00:00.000Z",
+      },
+      {
+        queue: "needs_review",
+        target_type: "review",
+        target_id: "z-high",
+        title: "high",
+        summary: "high",
+        status: "pending",
+        priority: "high",
+        related_ids: {},
+        updated_at: "1970-01-01T00:00:00.000Z",
+      },
+    ])
+
+    expect(ordered.map((item) => item.target_id)).toEqual(["z-high", "a-normal"])
   })
 })

@@ -95,6 +95,18 @@ export class ReviewRegistry {
     )
   }
 
+  async listAllReviewRequests(options: { status?: ReviewStatus } = {}): Promise<ReviewRequest[]> {
+    await this.hydrate()
+    const status = options.status === undefined ? undefined : cleanStatus(options.status)
+    return redactValue(
+      this.reviewOrder
+        .slice()
+        .reverse()
+        .map((reviewId) => this.reviews.get(reviewId))
+        .filter((review): review is ReviewRequest => review !== undefined && (status === undefined || review.status === status)),
+    )
+  }
+
   async approveReviewRequest(reviewId: string, decidedBy: string, reason?: string): Promise<ReviewRequest> {
     return this.decide(reviewId, "approved", decidedBy, reason)
   }

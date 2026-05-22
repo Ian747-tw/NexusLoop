@@ -107,6 +107,17 @@ export class ProposalBundleRegistry {
     return redactValue(out)
   }
 
+  async listAllBundles(options: { status?: CommanderProposalBundleStatus } = {}): Promise<CommanderProposalBundle[]> {
+    await this.hydrate()
+    const status = options.status === undefined ? undefined : cleanStatus(options.status)
+    const out: CommanderProposalBundle[] = []
+    for (const bundleId of this.bundleOrder.slice().reverse()) {
+      const bundle = await this.projectBundle(bundleId)
+      if (status === undefined || bundle.status === status) out.push(bundle)
+    }
+    return redactValue(out)
+  }
+
   async readiness(bundleId: string): Promise<CommanderProposalBundleReadiness> {
     await this.hydrate()
     return redactValue(await this.computeReadiness(cleanRequiredString(bundleId, "bundle_id")))

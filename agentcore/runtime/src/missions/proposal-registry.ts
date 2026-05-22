@@ -132,6 +132,18 @@ export class ProposalRegistry {
     )
   }
 
+  async listAllProposals(options: { status?: ProposalStatus } = {}): Promise<CommanderProposal[]> {
+    await this.hydrate()
+    const status = options.status === undefined ? undefined : cleanStatus(options.status)
+    return redactValue(
+      this.proposalOrder
+        .slice()
+        .reverse()
+        .map((proposalId) => this.proposals.get(proposalId))
+        .filter((proposal): proposal is CommanderProposal => proposal !== undefined && (status === undefined || proposal.status === status)),
+    )
+  }
+
   async cancelProposal(proposalId: string, reason?: string): Promise<CommanderProposal> {
     return this.serializeMutation(async () => {
       await this.hydrate()

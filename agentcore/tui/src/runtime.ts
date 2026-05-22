@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -249,6 +249,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         )
       case "runtime.commander_authority_chain":
         return this.commanderAuthorityChain(String(payload.targetType ?? payload.target_type ?? ""), String(payload.targetId ?? payload.target_id ?? ""))
+      case "runtime.commander_queue_summary":
+        return this.commanderQueueSummary(readStaleAfterMs(payload.staleAfterMs === undefined ? payload.stale_after_ms : payload.staleAfterMs))
+      case "runtime.commander_queue":
+        return this.commanderQueue(
+          readQueueKind(String(payload.queue ?? "")),
+          readQueueLimit(payload.limit === undefined ? 20 : payload.limit),
+          readStaleAfterMs(payload.staleAfterMs === undefined ? payload.stale_after_ms : payload.staleAfterMs),
+        )
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -1055,6 +1063,86 @@ export class FakeRuntimeClient implements RuntimeClient {
     }
   }
 
+  private commanderQueueSummary(staleAfterMs: number): CommanderQueueSummary {
+    return {
+      needs_review_count: this.commanderQueue("needs_review", 100, staleAfterMs).total_considered,
+      ready_to_apply_count: this.commanderQueue("ready_to_apply", 100, staleAfterMs).total_considered,
+      blocked_count: this.commanderQueue("blocked", 100, staleAfterMs).total_considered,
+      failed_apply_count: this.commanderQueue("failed_apply", 100, staleAfterMs).total_considered,
+      recently_applied_count: this.commanderQueue("recently_applied", 100, staleAfterMs).total_considered,
+      drafts_needing_review_count: this.commanderQueue("drafts_needing_review", 100, staleAfterMs).total_considered,
+      bundles_needing_review_count: this.commanderQueue("bundles_needing_review", 100, staleAfterMs).total_considered,
+      stale_open_count: this.commanderQueue("stale_open", 100, staleAfterMs).total_considered,
+      last_updated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private commanderQueue(queue: CommanderQueueKind, limit: number, staleAfterMs: number): { queue: CommanderQueueKind; items: CommanderQueueItemSummary[]; total_considered: number; limit: number } {
+    const items = this.collectCommanderQueue(queue, staleAfterMs)
+    const ordered = orderQueueItems(queue, items)
+    return {
+      queue,
+      items: ordered.slice(0, limit),
+      total_considered: ordered.length,
+      limit,
+    }
+  }
+
+  private collectCommanderQueue(queue: CommanderQueueKind, staleAfterMs: number): CommanderQueueItemSummary[] {
+    switch (queue) {
+      case "needs_review":
+        return this.reviews.filter((review) => review.status === "pending").map((review) => fakeQueueItem(queue, "review", review.review_id, review.title, review.summary, review.status, { review_id: [review.review_id], mission_id: review.mission_id ? [review.mission_id] : [] }, review.created_at, review.updated_at, "high"))
+      case "ready_to_apply":
+        return [
+          ...this.proposals.filter((proposal) => this.proposalApplyPreview(proposal.proposal_id).ready_to_apply && proposal.status !== "applied").map((proposal) => fakeQueueItem(queue, "proposal", proposal.proposal_id, proposal.title, proposal.summary, proposal.status, proposalRelatedIds(proposal), proposal.created_at, proposal.updated_at, "high")),
+          ...this.proposalBundles.filter((bundle) => this.bundleApplyPreview(bundle.bundle_id, "bundle").ready_to_apply && this.projectProposalBundle(bundle).status !== "applied").map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, this.projectProposalBundle(bundle).status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "high")),
+          ...this.playbookDrafts.filter((draft) => this.draftApplyPreview(draft.draft_id).ready_to_apply).map((draft) => draftQueueItem(queue, draft, "high")),
+        ]
+      case "blocked":
+        return [
+          ...this.proposals.filter((proposal) => !isTerminalFakeProposal(proposal) && !this.proposalApplyPreview(proposal.proposal_id).ready_to_apply).map((proposal) => fakeQueueItem(queue, "proposal", proposal.proposal_id, proposal.title, proposal.summary, proposal.status, proposalRelatedIds(proposal), proposal.created_at, proposal.updated_at, "normal", this.proposalApplyPreview(proposal.proposal_id).blockers)),
+          ...this.proposalBundles.filter((bundle) => !isTerminalFakeBundle(this.projectProposalBundle(bundle)) && !this.bundleApplyPreview(bundle.bundle_id, "bundle").ready_to_apply).map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, this.projectProposalBundle(bundle).status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "normal", this.bundleApplyPreview(bundle.bundle_id, "bundle").blockers)),
+          ...this.playbookDrafts.filter((draft) => !isTerminalFakeDraft(draft) && !this.draftApplyPreview(draft.draft_id).ready_to_apply).map((draft) => draftQueueItem(queue, draft, "normal", this.draftApplyPreview(draft.draft_id).blockers)),
+        ]
+      case "failed_apply":
+        return [
+          ...this.proposals.filter((proposal) => proposal.status === "approved" && proposal.failure_reason).map((proposal) => fakeQueueItem(queue, "proposal", proposal.proposal_id, proposal.title, proposal.summary, proposal.status, proposalRelatedIds(proposal), proposal.created_at, proposal.updated_at, "high", proposal.failure_reason ? [proposal.failure_reason] : [])),
+          ...this.proposalBundles.flatMap((bundle) => {
+            const projected = this.projectProposalBundle(bundle)
+            if (!bundle.failure_reason || projected.status === "cancelled" || projected.status === "applied") return []
+            return [fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, projected.status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "high", [bundle.failure_reason])]
+          }),
+        ]
+      case "recently_applied":
+        return [
+          ...this.proposals.filter((proposal) => proposal.status === "applied").map((proposal) => fakeQueueItem(queue, "proposal", proposal.proposal_id, proposal.title, proposal.summary, proposal.status, proposalRelatedIds(proposal), proposal.created_at, proposal.updated_at, "normal")),
+          ...this.proposalBundles.filter((bundle) => this.projectProposalBundle(bundle).status === "applied").map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, "applied", bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "normal")),
+        ]
+      case "drafts_needing_review":
+        return this.playbookDrafts.filter((draft) => draft.status !== "cancelled" && draft.proposal_ids.some((proposalId) => !this.requireProposal(proposalId).review_id)).map((draft) => draftQueueItem(queue, draft, "high", draft.proposal_ids.filter((proposalId) => !this.requireProposal(proposalId).review_id).map((proposalId) => `proposal ${proposalId} has no linked review`)))
+      case "bundles_needing_review":
+        return this.proposalBundles.filter((bundle) => this.projectProposalBundle(bundle).status !== "cancelled" && this.projectProposalBundle(bundle).status !== "applied" && bundle.proposal_ids.some((proposalId) => {
+          const proposal = this.requireProposal(proposalId)
+          return !proposal.review_id || proposal.status === "proposed"
+        })).map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, this.projectProposalBundle(bundle).status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "high", bundle.proposal_ids.flatMap((proposalId) => {
+          const proposal = this.requireProposal(proposalId)
+          if (!proposal.review_id) return [`proposal ${proposalId} has no linked review`]
+          if (proposal.status === "proposed") return [`proposal ${proposalId} status is proposed`]
+          return []
+        })))
+      case "stale_open": {
+        const threshold = Date.parse(fakeNowIso()) - staleAfterMs
+        const stale = (createdAt?: string, updatedAt?: string) => Date.parse(updatedAt ?? createdAt ?? "") <= threshold
+        return [
+          ...this.reviews.filter((review) => review.status === "pending" && stale(review.created_at, review.updated_at)).map((review) => fakeQueueItem(queue, "review", review.review_id, review.title, review.summary, review.status, { review_id: [review.review_id] }, review.created_at, review.updated_at, "normal")),
+          ...this.proposals.filter((proposal) => ["proposed", "review_requested", "approved"].includes(proposal.status) && stale(proposal.created_at, proposal.updated_at)).map((proposal) => fakeQueueItem(queue, "proposal", proposal.proposal_id, proposal.title, proposal.summary, proposal.status, proposalRelatedIds(proposal), proposal.created_at, proposal.updated_at, "normal")),
+          ...this.proposalBundles.filter((bundle) => ["open", "review_requested", "partially_approved", "approved"].includes(this.projectProposalBundle(bundle).status) && stale(bundle.created_at, bundle.updated_at)).map((bundle) => fakeQueueItem(queue, "bundle", bundle.bundle_id, bundle.title, bundle.summary, this.projectProposalBundle(bundle).status, bundleRelatedIds(bundle), bundle.created_at, bundle.updated_at, "normal")),
+          ...this.playbookDrafts.filter((draft) => draft.status !== "cancelled" && stale(draft.created_at, draft.updated_at)).map((draft) => draftQueueItem(queue, draft, "normal")),
+        ]
+      }
+    }
+  }
+
   private fakeAuditEvents(): CommanderAuditEventSummary[] {
     const events: CommanderAuditEventSummary[] = []
     for (const mission of [...this.missions].reverse()) {
@@ -1255,6 +1343,121 @@ function readLimit(value: unknown, fallback: number): number {
   return Math.min(Number(value), 100)
 }
 
+function readQueueLimit(value: unknown): number {
+  if (!Number.isInteger(value) || Number(value) < 1) throw new Error("commander queue limit must be a positive integer")
+  return Math.min(Number(value), 100)
+}
+
+function readQueueKind(value: string): CommanderQueueKind {
+  if (isCommanderQueueKind(value)) return value
+  throw new Error("commander queue kind is invalid")
+}
+
+function isCommanderQueueKind(value: string): value is CommanderQueueKind {
+  return value === "needs_review" ||
+    value === "ready_to_apply" ||
+    value === "blocked" ||
+    value === "failed_apply" ||
+    value === "recently_applied" ||
+    value === "drafts_needing_review" ||
+    value === "bundles_needing_review" ||
+    value === "stale_open"
+}
+
+function readStaleAfterMs(value: unknown): number {
+  if (value === undefined) return 7 * 24 * 60 * 60 * 1000
+  if (!Number.isInteger(value) || Number(value) < 1) throw new Error("commander queue staleAfterMs must be a positive integer")
+  return Number(value)
+}
+
+function fakeNowIso(): string {
+  return "1970-01-07T23:59:59.999Z"
+}
+
+function fakeQueueItem(queue: CommanderQueueKind, targetType: string, targetId: string, title: string, summary: string, status: string, relatedIds: Record<string, string[]>, createdAt?: string, updatedAt?: string, priority?: string, blockers?: string[]): CommanderQueueItemSummary {
+  return {
+    queue,
+    target_type: targetType,
+    target_id: redactText(targetId),
+    title: preview(redactText(title)),
+    summary: preview(redactText(summary)),
+    status: redactText(status),
+    priority,
+    related_ids: redactQueueRelatedIds(relatedIds),
+    blockers: blockers?.map((blocker) => preview(redactText(blocker))).slice(0, 10),
+    created_at: createdAt,
+    updated_at: updatedAt,
+  }
+}
+
+function preview(value: string): string {
+  return value.length > 160 ? `${value.slice(0, 160)}...` : value
+}
+
+function draftQueueItem(queue: CommanderQueueKind, draft: CommanderWorkbenchDraftSummary, priority?: string, blockers?: string[]): CommanderQueueItemSummary {
+  return fakeQueueItem(
+    queue,
+    "draft",
+    draft.draft_id,
+    draft.playbook_id,
+    Object.entries(draft.field_values).map(([key, value]) => `${key}=${value}`).join("; ") || "playbook draft",
+    draft.status,
+    { draft_id: [draft.draft_id], proposal_id: draft.proposal_ids, bundle_id: draft.bundle_id ? [draft.bundle_id] : [], review_id: draft.review_ids ?? [] },
+    draft.created_at,
+    draft.updated_at,
+    priority,
+    blockers,
+  )
+}
+
+function proposalRelatedIds(proposal: CommanderProposalSummary): Record<string, string[]> {
+  return {
+    proposal_id: [proposal.proposal_id],
+    review_id: proposal.review_id ? [proposal.review_id] : [],
+    mission_id: proposal.mission_id ? [proposal.mission_id] : [],
+    claim_id: proposal.claim_id ? [proposal.claim_id] : [],
+    result_id: proposal.result_id ? [proposal.result_id] : [],
+  }
+}
+
+function bundleRelatedIds(bundle: CommanderProposalBundleSummary): Record<string, string[]> {
+  return {
+    bundle_id: [bundle.bundle_id],
+    proposal_id: bundle.proposal_ids,
+  }
+}
+
+function redactQueueRelatedIds(value: Record<string, string[]>): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const [key, values] of Object.entries(value)) {
+    const clean = values.filter(Boolean).map(redactText).slice(0, 50)
+    if (clean.length > 0) out[key] = clean
+  }
+  return out
+}
+
+export function orderQueueItems(queue: CommanderQueueKind, items: CommanderQueueItemSummary[]): CommanderQueueItemSummary[] {
+  const direction = queue === "recently_applied" || queue === "ready_to_apply" || queue === "blocked" || queue === "failed_apply" ? -1 : 1
+  return items.slice().sort((a, b) => {
+    const byTime = direction * (queueTime(a) - queueTime(b))
+    if (byTime !== 0) return byTime
+    const byPriority = queuePriorityRank(b.priority) - queuePriorityRank(a.priority)
+    if (byPriority !== 0) return byPriority
+    return `${a.target_type}:${a.target_id}`.localeCompare(`${b.target_type}:${b.target_id}`)
+  })
+}
+
+function queueTime(item: CommanderQueueItemSummary): number {
+  const timestamp = Date.parse(item.updated_at ?? item.created_at ?? "")
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+function queuePriorityRank(value: CommanderQueueItemSummary["priority"]): number {
+  if (value === "high") return 2
+  if (value === "normal") return 1
+  return 0
+}
+
 function readAuditLimit(value: unknown): number {
   if (value === undefined) return 20
   if (!Number.isInteger(value) || Number(value) < 1) throw new Error("audit limit must be a positive integer")
@@ -1405,6 +1608,18 @@ function fakeProposalBlockers(proposal: CommanderProposalSummary): string[] {
   if (proposal.status === "rejected" || proposal.status === "cancelled") return [`proposal ${proposal.proposal_id} is ${proposal.status}`]
   if (!proposal.review_id) return [`proposal ${proposal.proposal_id} has no linked review`]
   return [`proposal ${proposal.proposal_id} status is ${proposal.status}`]
+}
+
+function isTerminalFakeProposal(proposal: CommanderProposalSummary): boolean {
+  return proposal.status === "applied" || proposal.status === "rejected" || proposal.status === "cancelled"
+}
+
+function isTerminalFakeBundle(bundle: CommanderProposalBundleSummary): boolean {
+  return bundle.status === "applied" || bundle.status === "cancelled"
+}
+
+function isTerminalFakeDraft(draft: CommanderWorkbenchDraftSummary): boolean {
+  return draft.status === "cancelled"
 }
 
 function requiredActionString(proposal: CommanderProposalSummary, payload: Record<string, unknown>, field: "mission_id" | "claim_id" | "result_id"): string {

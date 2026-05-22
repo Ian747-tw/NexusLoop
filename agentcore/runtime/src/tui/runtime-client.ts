@@ -7,6 +7,7 @@ import type { CommanderPlaybook, CommanderPlaybookDraftInput, CommanderPlaybookD
 import type { CommanderPlaybookDraft, CommanderPlaybookDraftReadiness, CommanderPlaybookDraftStatus, CommanderPlaybookDraftSummary } from "../missions/commander-playbook-draft-types"
 import type { CommanderApplyPreview, CommanderApplyResult, CommanderApplyTargetType } from "../missions/commander-apply-types"
 import type { CommanderAuditEventKind, CommanderAuditTimeline, CommanderAuthorityChain } from "../missions/commander-audit-types"
+import type { CommanderQueueKind, CommanderQueueResult, CommanderQueueSummary } from "../missions/commander-queue-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -75,6 +76,8 @@ export interface RuntimeClient {
   command(name: "runtime.apply_commander_target", payload: { targetType: CommanderApplyTargetType; targetId: string; allowPartial?: boolean; dryRun?: boolean }): Promise<CommanderApplyResult>
   command(name: "runtime.commander_audit_timeline", payload?: { limit?: number; category?: CommanderAuditEventKind; targetType?: string; targetId?: string; afterEventId?: string; beforeEventId?: string }): Promise<CommanderAuditTimeline>
   command(name: "runtime.commander_authority_chain", payload: { targetType: string; targetId: string }): Promise<CommanderAuthorityChain>
+  command(name: "runtime.commander_queue_summary", payload?: { staleAfterMs?: number }): Promise<CommanderQueueSummary>
+  command(name: "runtime.commander_queue", payload: { queue: CommanderQueueKind; limit?: number; staleAfterMs?: number }): Promise<CommanderQueueResult>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -140,6 +143,8 @@ export interface RuntimeCommandEnvelope {
     | "runtime.apply_commander_target"
     | "runtime.commander_audit_timeline"
     | "runtime.commander_authority_chain"
+    | "runtime.commander_queue_summary"
+    | "runtime.commander_queue"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

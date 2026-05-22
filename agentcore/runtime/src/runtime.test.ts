@@ -2645,6 +2645,49 @@ describe("RunLock", () => {
     expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(replacement)
   })
 
+  test("release removes owned lock restored after stale-file cleanup", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const stalePath = `${lockPath}.released-owner.stale`
+    const lock = new RunLock(lockPath, {
+      now: lockNow,
+      beforeSecondOwnedLockPathCheck: async () => {
+        await writeFile(lockPath, JSON.stringify(record) + "\n")
+      },
+    })
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+    await rm(lockPath, { force: true })
+    await writeFile(stalePath, JSON.stringify(record) + "\n")
+    await lock.release()
+
+    expect(existsSync(lockPath)).toBe(false)
+    expect(existsSync(stalePath)).toBe(false)
+  })
+
+  test("release preserves another owner lock restored after stale-file cleanup", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const stalePath = `${lockPath}.released-owner.stale`
+    const restored = { pid: process.pid, acquired_at: lockNow().toISOString(), token: "other-owner-token" }
+    const lock = new RunLock(lockPath, {
+      now: lockNow,
+      beforeSecondOwnedLockPathCheck: async () => {
+        await writeFile(lockPath, JSON.stringify(restored) + "\n")
+      },
+    })
+
+    await lock.acquire()
+    const record = JSON.parse(await readFile(lockPath, "utf8"))
+    await rm(lockPath, { force: true })
+    await writeFile(stalePath, JSON.stringify(record) + "\n")
+    await lock.release()
+
+    expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(restored)
+    expect(existsSync(stalePath)).toBe(false)
+  })
+
   test("second live lock fails", async () => {
     const dir = await tempProject()
     const lockPath = join(dir, ".nxl", "run.lock")
@@ -2776,6 +2819,74 @@ describe("RunLock", () => {
       now: lockNow,
       beforeRemoveStale: async () => {
         await writeFile(lockPath, JSON.stringify(replacement) + "\n")
+      },
+    })
+
+    await expect(lock.acquire()).rejects.toThrow("runtime lock already held")
+    expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(replacement)
+  })
+
+  test("stale cleanup rollback does not clobber a fresh lock winner", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const replacement = { pid: 99999999, acquired_at: lockNow().toISOString(), token: "replacement-token" }
+    const winner = { pid: process.pid, acquired_at: lockNow().toISOString(), token: "winner-token" }
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-09T11:59:59Z", token: "old-token" }) + "\n")
+    const lock = new RunLock(lockPath, {
+      now: lockNow,
+      beforeStaleRename: async () => {
+        await writeFile(lockPath, JSON.stringify(replacement) + "\n")
+      },
+      beforeRestoreMovedLock: async () => {
+        await writeFile(lockPath, JSON.stringify(winner) + "\n")
+      },
+    })
+
+    await expect(lock.acquire()).rejects.toThrow("runtime lock already held")
+    expect(JSON.parse(await readFile(lockPath, "utf8"))).toEqual(winner)
+  })
+
+  test("stale cleanup rollback does not resurrect a fresh winner released while moved", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-09T11:59:59Z", token: "old-token" }) + "\n")
+    const winner = new RunLock(lockPath, { now: lockNow })
+    const lock = new RunLock(lockPath, {
+      now: lockNow,
+      beforeStaleRename: async () => {
+        await winner.acquire()
+      },
+      beforeRestoreMovedLock: async () => {
+        await winner.release()
+      },
+    })
+
+    await expect(lock.acquire()).rejects.toThrow("runtime lock already held")
+    expect(existsSync(lockPath)).toBe(false)
+
+    const next = new RunLock(lockPath, { now: lockNow })
+    await next.acquire()
+    expect(next.isHeld()).toBe(true)
+    await next.release()
+  })
+
+  test("stale cleanup rollback treats unsupported hard links as lock contention", async () => {
+    const dir = await tempProject()
+    const lockPath = join(dir, ".nxl", "run.lock")
+    const replacement = { pid: process.pid, acquired_at: lockNow().toISOString(), token: "replacement-token" }
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, acquired_at: "2026-05-09T11:59:59Z", token: "old-token" }) + "\n")
+    const lock = new RunLock(lockPath, {
+      now: lockNow,
+      beforeStaleRename: async () => {
+        await writeFile(lockPath, JSON.stringify(replacement) + "\n")
+      },
+      linkMovedLock: async () => {
+        const error = new Error("hard links unsupported") as NodeJS.ErrnoException
+        error.code = "EOPNOTSUPP"
+        throw error
       },
     })
 
@@ -5863,5 +5974,192 @@ describe("ProcessOpenCodeAdapter", () => {
     processes[0]?.emitExit(0, null)
     processes[1]?.emitExit(0, null)
     await shutdown
+  })
+
+  test("commander operator queue commands project read-only review apply failure stale and redacted state", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderQueueNow: () => new Date("2026-05-25T00:00:00.000Z"),
+    })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("queue mission")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    const pendingReview = await server.command("runtime.create_review_request", {
+      missionId: submitted.missionId,
+      title: "review token=queue-review-secret",
+      summary: "summary api_key=queue-review-summary-secret",
+      requestedBy: "operator",
+    }) as { review_id: string }
+    const blocked = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "blocked token=queue-blocked-secret",
+      summary: "missing review",
+      proposedBy: "operator",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "blocked" },
+    }) as { proposal_id: string }
+    const ready = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "ready",
+      summary: "ready",
+      proposedBy: "operator",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "ready" },
+    }) as { proposal_id: string }
+    const readyReview = await server.command("runtime.request_proposal_review", { proposalId: ready.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: readyReview.review_id, decidedBy: "operator" })
+    const failed = await server.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "failed",
+      summary: "failed",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    const failedReview = await server.command("runtime.request_proposal_review", { proposalId: failed.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: failedReview.review_id, decidedBy: "operator" })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: failed.proposal_id })).rejects.toThrow("proposal apply failed")
+    const cancelled = await server.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "cancelled",
+      summary: "cancelled",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    await server.command("runtime.cancel_commander_proposal", { proposalId: cancelled.proposal_id, reason: "operator cancelled" })
+    const rejected = await server.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "rejected",
+      summary: "rejected",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    const rejectedReview = await server.command("runtime.request_proposal_review", { proposalId: rejected.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.reject_review_request", { reviewId: rejectedReview.review_id, decidedBy: "operator", reason: "operator rejected" })
+    const failedBundle = await server.command("runtime.create_proposal_bundle", { title: "failed bundle", summary: "failed bundle", createdBy: "operator" }) as { bundle_id: string }
+    await expect(server.command("runtime.apply_proposal_bundle", { bundleId: failedBundle.bundle_id, allowPartial: true })).rejects.toThrow("has no proposals to apply")
+    const bundle = await server.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: blocked.proposal_id })
+    const cancelledBundle = await server.command("runtime.create_proposal_bundle", { title: "cancelled bundle", summary: "cancelled bundle", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: cancelledBundle.bundle_id, proposalId: blocked.proposal_id })
+    await server.command("runtime.cancel_proposal_bundle", { bundleId: cancelledBundle.bundle_id, reason: "operator cancelled" })
+    const draft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      proposedBy: "operator",
+      fields: { mission_id: submitted.missionId, claim_id: claim.claim_id, title: "draft", message: "draft" },
+    }) as { draft_id: string }
+    const cancelledDraft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      proposedBy: "operator",
+      fields: { mission_id: submitted.missionId, claim_id: claim.claim_id, title: "cancelled draft", message: "cancelled draft" },
+    }) as { draft_id: string }
+    await server.command("runtime.cancel_commander_playbook_draft", { draftId: cancelledDraft.draft_id, reason: "operator cancelled" })
+
+    await expect(server.command("runtime.commander_queue_summary")).resolves.toMatchObject({
+      needs_review_count: 1,
+      ready_to_apply_count: 2,
+      blocked_count: expect.any(Number),
+      failed_apply_count: 2,
+      drafts_needing_review_count: 1,
+      bundles_needing_review_count: 1,
+      stale_open_count: expect.any(Number),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", limit: 20 })).resolves.toMatchObject({
+      queue: "needs_review",
+      items: [expect.objectContaining({ target_type: "review", target_id: pendingReview.review_id, status: "pending" })],
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "ready_to_apply", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: ready.proposal_id, status: "approved" })]),
+    })
+    const blockedQueue = await server.command("runtime.commander_queue", { queue: "blocked", limit: 20 }) as { items: Array<{ target_id: string; target_type: string; blockers?: string[] }> }
+    expect(blockedQueue.items).toEqual(expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: blocked.proposal_id, blockers: expect.arrayContaining([expect.stringContaining("no linked review")]) })]))
+    expect(blockedQueue.items.map((item) => item.target_id)).not.toContain(cancelled.proposal_id)
+    expect(blockedQueue.items.map((item) => item.target_id)).not.toContain(rejected.proposal_id)
+    expect(blockedQueue.items.map((item) => item.target_id)).not.toContain(cancelledBundle.bundle_id)
+    expect(blockedQueue.items.map((item) => item.target_id)).not.toContain(cancelledDraft.draft_id)
+    await expect(server.command("runtime.commander_queue", { queue: "failed_apply", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ target_type: "proposal", target_id: failed.proposal_id }),
+        expect.objectContaining({ target_type: "bundle", target_id: failedBundle.bundle_id }),
+      ]),
+    })
+    const failedApply = await server.command("runtime.commander_queue", { queue: "failed_apply", limit: 20 }) as { items: Array<{ target_id: string }> }
+    expect(failedApply.items.map((item) => item.target_id)).not.toContain(cancelled.proposal_id)
+    expect(failedApply.items.map((item) => item.target_id)).not.toContain(rejected.proposal_id)
+    const dryRunStartedAt = Date.now()
+    const dryRunApply = await server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id, dryRun: true }) as { created_at: string }
+    const dryRunFinishedAt = Date.now()
+    expect(dryRunApply.created_at).not.toBe("2026-05-25T00:00:00.000Z")
+    expect(Date.parse(dryRunApply.created_at)).toBeGreaterThanOrEqual(dryRunStartedAt - 1000)
+    expect(Date.parse(dryRunApply.created_at)).toBeLessThanOrEqual(dryRunFinishedAt + 1000)
+    await server.command("runtime.apply_commander_target", { targetType: "proposal", targetId: ready.proposal_id })
+    await expect(server.command("runtime.commander_queue", { queue: "recently_applied", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: ready.proposal_id, status: "applied" })]),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "drafts_needing_review", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "draft", target_id: draft.draft_id })]),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "bundles_needing_review", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "bundle", target_id: bundle.bundle_id })]),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "stale_open", limit: 1, staleAfterMs: 1 })).resolves.toMatchObject({ limit: 1, total_considered: expect.any(Number) })
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", limit: 1000 })).resolves.toMatchObject({ limit: 100 })
+    await expect(server.command("runtime.commander_queue", { queue: "unknown", limit: 20 })).rejects.toThrow("commander queue kind is invalid")
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", limit: 0 })).rejects.toThrow("commander queue limit must be a positive integer")
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", limit: null })).rejects.toThrow("commander queue limit must be a positive integer")
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", staleAfterMs: null })).rejects.toThrow("staleAfterMs")
+    await expect(server.command("runtime.commander_queue_summary", { staleAfterMs: 0 })).rejects.toThrow("staleAfterMs")
+    await expect(server.command("runtime.commander_queue_summary", { staleAfterMs: null })).rejects.toThrow("staleAfterMs")
+    const serialized = JSON.stringify(await server.command("runtime.commander_queue", { queue: "blocked", limit: 20 }))
+    expect(serialized).not.toContain("queue-blocked-secret")
+    expect(serialized).not.toContain("queue-review-secret")
+    expect(serialized).not.toContain("queue-review-summary-secret")
+
+    await server.shutdown()
+
+    const reader = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    await expect(reader.command("runtime.commander_queue", { queue: "ready_to_apply", limit: 20 })).resolves.toMatchObject({ queue: "ready_to_apply" })
+  })
+
+  test("commander operator queues scan full registries beyond public list caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let reviewIds = 0
+    let nowMs = 0
+    const base = Date.UTC(2026, 4, 1, 0, 0, 0, 0)
+    const reviewRegistry = new ReviewRegistry({
+      eventStore,
+      idFactory: () => `review_${++reviewIds}`,
+      now: () => new Date(base + nowMs++),
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      reviewRegistry,
+      researchProjectionMode: "disabled",
+    })
+
+    for (let index = 0; index < 105; index++) {
+      await server.reviewRegistry.createReviewRequest({
+        title: `review ${index}`,
+        summary: `summary ${index}`,
+        requested_by: "operator",
+      })
+    }
+
+    await expect(server.command("runtime.list_review_requests", { status: "pending", limit: 1000 })).resolves.toHaveLength(100)
+    await expect(server.command("runtime.commander_queue_summary")).resolves.toMatchObject({
+      needs_review_count: 105,
+      last_updated_at: "2026-05-01T00:00:00.104Z",
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "needs_review", limit: 100 })).resolves.toMatchObject({
+      queue: "needs_review",
+      total_considered: 105,
+      limit: 100,
+      items: expect.arrayContaining([expect.objectContaining({ target_id: "review_1" })]),
+    })
   })
 })

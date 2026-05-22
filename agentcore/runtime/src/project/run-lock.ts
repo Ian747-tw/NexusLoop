@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises"
-import { dirname } from "node:path"
+import { constants, copyFile, link, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises"
+import { basename, dirname, join } from "node:path"
 
 interface LockRecord {
   pid: number
@@ -17,6 +17,10 @@ export interface RunLockOptions {
   staleAfterMs?: number
   now?: () => Date
   beforeRemoveStale?: () => Promise<void> | void
+  beforeStaleRename?: () => Promise<void> | void
+  beforeRestoreMovedLock?: () => Promise<void> | void
+  beforeSecondOwnedLockPathCheck?: () => Promise<void> | void
+  linkMovedLock?: (existingPath: string, newPath: string) => Promise<void>
 }
 
 const DEFAULT_STALE_AFTER_MS = 24 * 60 * 60 * 1000
@@ -26,12 +30,20 @@ export class RunLock {
   private readonly staleAfterMs: number
   private readonly now: () => Date
   private readonly beforeRemoveStale?: () => Promise<void> | void
+  private readonly beforeStaleRename?: () => Promise<void> | void
+  private readonly beforeRestoreMovedLock?: () => Promise<void> | void
+  private readonly beforeSecondOwnedLockPathCheck?: () => Promise<void> | void
+  private readonly linkMovedLock: (existingPath: string, newPath: string) => Promise<void>
   private readonly token = randomUUID()
 
   constructor(readonly lockPath: string, options: RunLockOptions = {}) {
     this.staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS
     this.now = options.now ?? (() => new Date())
     this.beforeRemoveStale = options.beforeRemoveStale
+    this.beforeStaleRename = options.beforeStaleRename
+    this.beforeRestoreMovedLock = options.beforeRestoreMovedLock
+    this.beforeSecondOwnedLockPathCheck = options.beforeSecondOwnedLockPathCheck
+    this.linkMovedLock = options.linkMovedLock ?? link
   }
 
   async acquire(): Promise<void> {
@@ -74,13 +86,46 @@ export class RunLock {
     if (!current || current.raw !== candidate.raw) return false
     const stalePath = `${this.lockPath}.${this.token}.stale`
     try {
+      await this.beforeStaleRename?.()
       await rename(this.lockPath, stalePath)
+      const moved = await readFile(stalePath, "utf8")
+      if (moved !== candidate.raw) {
+        await this.beforeRestoreMovedLock?.()
+        await this.restoreMovedLockWithoutClobber(stalePath, moved)
+        return false
+      }
       await rm(stalePath, { force: true })
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
       throw error
     }
     return true
+  }
+
+  private async restoreMovedLockWithoutClobber(stalePath: string, raw: string): Promise<void> {
+    try {
+      const current = await readFile(stalePath, "utf8")
+      if (current !== raw) return
+      await this.linkMovedLock(stalePath, this.lockPath)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (isUnsupportedHardLinkError(code)) {
+        await this.copyMovedLockWithoutClobber(stalePath)
+        return
+      }
+      if (code !== "EEXIST" && code !== "ENOENT") throw error
+    } finally {
+      await rm(stalePath, { force: true })
+    }
+  }
+
+  private async copyMovedLockWithoutClobber(stalePath: string): Promise<void> {
+    try {
+      await copyFile(stalePath, this.lockPath, constants.COPYFILE_EXCL)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== "EEXIST" && code !== "ENOENT") throw error
+    }
   }
 
   private async readLockCandidate(): Promise<LockCandidate | null> {
@@ -127,14 +172,51 @@ export class RunLock {
 
   async release(): Promise<void> {
     if (!this.acquired) return
+    await this.removeOwnedLockPath()
+    await this.removeMovedLockForToken()
+    await this.beforeSecondOwnedLockPathCheck?.()
+    await this.removeOwnedLockPath()
+    this.acquired = false
+  }
+
+  private async removeOwnedLockPath(): Promise<void> {
     const current = await this.readLockCandidate()
     if (current?.kind === "modern" && current.record.pid === process.pid && current.record.token === this.token) {
       await rm(this.lockPath, { force: true })
     }
-    this.acquired = false
   }
 
   isHeld(): boolean {
     return this.acquired
   }
+
+  private async removeMovedLockForToken(): Promise<void> {
+    const lockDir = dirname(this.lockPath)
+    const prefix = `${basename(this.lockPath)}.`
+    let entries: string[]
+    try {
+      entries = await readdir(lockDir)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+      throw error
+    }
+    for (const entry of entries) {
+      if (!entry.startsWith(prefix) || !entry.endsWith(".stale")) continue
+      const stalePath = join(lockDir, entry)
+      let candidate: LockCandidate
+      try {
+        candidate = this.parseLockCandidate(await readFile(stalePath, "utf8"))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
+        throw error
+      }
+      if (candidate.kind === "modern" && candidate.record.pid === process.pid && candidate.record.token === this.token) {
+        await rm(stalePath, { force: true })
+      }
+    }
+  }
+}
+
+function isUnsupportedHardLinkError(code: string | undefined): boolean {
+  return code === "EPERM" || code === "EOPNOTSUPP" || code === "ENOTSUP" || code === "EXDEV"
 }
