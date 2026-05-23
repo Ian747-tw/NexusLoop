@@ -50,7 +50,7 @@ export class CommanderTargetContextService {
       queue_membership: queueMembership,
       audit_event_count: chain.events.length,
       recent_audit_events: chain.events.slice(-AUDIT_LIMIT).reverse(),
-      suggested_commands: suggestedCommands(target.target_type, target.target_id, base.status, queueMembership),
+      suggested_commands: suggestedCommands(target.target_type, target.target_id, base.status, queueMembership, relatedIds),
       missing_links: missingLinks.map((link) => safe(link, SUMMARY_LIMIT)).slice(0, 20),
     }
     return redactValue(context)
@@ -216,19 +216,20 @@ function missing(targetType: CommanderTargetType, targetId: string): Omit<Comman
   }
 }
 
-function suggestedCommands(targetType: CommanderTargetType, targetId: string, status: string | undefined, queues: string[]): CommanderSuggestedCommand[] {
+function suggestedCommands(targetType: CommanderTargetType, targetId: string, status: string | undefined, queues: string[], relatedIds: Record<string, string[]>): CommanderSuggestedCommand[] {
   const id = safe(targetId, TITLE_LIMIT)
+  const missionId = relatedIds.mission_id?.[0] ?? id
   const commands: CommanderSuggestedCommand[] = []
   const add = (label: string, command: string, command_type: "read" | "write" = "read", extra: Partial<CommanderSuggestedCommand> = {}) => commands.push({ label, command, command_type, ...extra })
   if (targetType === "mission") {
     add("Open mission", `/mission ${id}`)
     add("Audit mission", `/audit mission ${id}`)
   } else if (targetType === "claim") {
-    add("List claims", `/claims ${id}`)
+    add("List claims", `/claims ${missionId}`)
     add("Audit claim", `/audit claim ${id}`)
     add("Propose release", `/propose-release ${id} <title> -- <reason>`, "write", { requires_review: true, requires_active_runtime: true })
   } else if (targetType === "result") {
-    add("List results", `/results ${id}`)
+    add("List results", `/results ${missionId}`)
     add("Audit result", `/audit result ${id}`)
     add("Draft completion", `/draft-complete <missionId> <title> -- <summary>`, "write", { requires_review: true, requires_active_runtime: true })
   } else if (targetType === "review") {

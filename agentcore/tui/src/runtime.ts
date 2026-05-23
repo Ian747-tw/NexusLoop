@@ -1094,7 +1094,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       queue_membership: queueMembership,
       audit_event_count: chain.events.length,
       recent_audit_events: chain.events.slice(-20).reverse(),
-      suggested_commands: fakeSuggestedCommands(target.targetType, target.targetId, record.status, queueMembership),
+      suggested_commands: fakeSuggestedCommands(target.targetType, target.targetId, record.status, queueMembership, related),
       missing_links: [...record.missing_links, ...chain.missing_links].map(redactText).slice(0, 20),
     }
   }
@@ -1614,8 +1614,9 @@ function mergeRelatedIds(...records: Record<string, string[]>[]): Record<string,
   return Object.fromEntries(Object.entries(out).filter(([, values]) => values.length > 0).sort(([a], [b]) => a.localeCompare(b)))
 }
 
-function fakeSuggestedCommands(targetType: CommanderTargetType, targetId: string, status: string | undefined, queues: CommanderQueueKind[]): CommanderTargetContextSummary["suggested_commands"] {
+function fakeSuggestedCommands(targetType: CommanderTargetType, targetId: string, status: string | undefined, queues: CommanderQueueKind[], relatedIds: Record<string, string[]>): CommanderTargetContextSummary["suggested_commands"] {
   const id = redactText(targetId)
+  const missionId = relatedIds.mission_id?.[0] ?? id
   const commands: CommanderTargetContextSummary["suggested_commands"] = []
   const add = (label: string, command: string, commandType: "read" | "write" = "read", requiresReview = false, requiresActiveRuntime = false) => {
     commands.push({ label: redactText(label), command: redactText(command), command_type: commandType, requires_review: requiresReview || undefined, requires_active_runtime: requiresActiveRuntime || undefined })
@@ -1646,11 +1647,11 @@ function fakeSuggestedCommands(targetType: CommanderTargetType, targetId: string
     add("Request reviews", `/draft-review ${id}`, "write", true, true)
     add("Preview apply", `/apply-preview draft ${id}`)
   } else if (targetType === "claim") {
-    add("List claims", `/claims ${id}`)
+    add("List claims", `/claims ${missionId}`)
     add("Audit claim", `/audit claim ${id}`)
     add("Propose release", `/propose-release ${id} <title> -- <reason>`, "write", true, true)
   } else if (targetType === "result") {
-    add("List results", `/results ${id}`)
+    add("List results", `/results ${missionId}`)
     add("Audit result", `/audit result ${id}`)
   } else {
     add("Runtime status", "/status")

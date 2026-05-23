@@ -6172,6 +6172,8 @@ describe("ProcessOpenCodeAdapter", () => {
     const beforeEvents = (await readJsonlEvents(dir)).length
     const submitted = await server.submitUserMessage("target context mission")
     const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    await server.command("runtime.record_mission_progress", { missionId: submitted.missionId, claimId: claim.claim_id, message: "progress" })
+    const result = await server.command("runtime.submit_mission_result", { missionId: submitted.missionId, claimId: claim.claim_id, summary: "result summary" }) as { result_id: string }
     const proposal = await server.command("runtime.create_commander_proposal", {
       missionId: submitted.missionId,
       claimId: claim.claim_id,
@@ -6228,6 +6230,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(missionContext.status).toBeTruthy()
     expect(missionContext.related_ids.claim_id).toContain(claim.claim_id)
     expect(missionContext.audit_event_count).toBeGreaterThan(0)
+    const claimContext = await server.command("runtime.commander_target_context", { targetType: "claim", targetId: claim.claim_id }) as { suggested_commands: Array<{ command: string }> }
+    expect(claimContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/claims ${submitted.missionId}` }))
+    const resultContext = await server.command("runtime.commander_target_context", { targetType: "result", targetId: result.result_id }) as { suggested_commands: Array<{ command: string }> }
+    expect(resultContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/results ${submitted.missionId}` }))
     await expect(server.command("runtime.commander_target_context", { targetType: "proposal", targetId: "proposal_missing" })).resolves.toMatchObject({
       found: false,
       missing_links: expect.arrayContaining([expect.stringContaining("proposal record not found")]),

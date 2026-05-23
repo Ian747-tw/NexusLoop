@@ -1734,6 +1734,7 @@ describe("runtime UI effects", () => {
   test("queue slash commands load summary rows blockers applied stale and redact state", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     const claim = await runtime.command("runtime.claim_mission", { missionId: "mission-1", executorId: "executor" }) as { claim_id: string }
+    const result = await runtime.command("runtime.submit_mission_result", { missionId: "mission-1", claimId: claim.claim_id, summary: "result summary" }) as { result_id: string }
     await runtime.command("runtime.create_review_request", {
       title: "review token=queue-review-secret",
       summary: "summary api_key=queue-summary-secret",
@@ -1881,6 +1882,7 @@ describe("runtime UI effects", () => {
   test("target navigation slash commands load fake context and render bounded redacted snapshot", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     const claim = await runtime.command("runtime.claim_mission", { missionId: "mission-1", executorId: "executor" }) as { claim_id: string }
+    const result = await runtime.command("runtime.submit_mission_result", { missionId: "mission-1", claimId: claim.claim_id, summary: "result summary" }) as { result_id: string }
     const proposal = await runtime.command("runtime.create_commander_proposal", {
       actionKind: "record_progress",
       title: "proposal token=nav-title-secret",
@@ -1918,10 +1920,14 @@ describe("runtime UI effects", () => {
       ["open-mission", ["mission-1"], "mission"],
       ["jump", ["proposal", proposal.proposal_id], "proposal"],
       ["target", ["proposal", proposal.proposal_id], "proposal"],
+      ["open", ["claim", claim.claim_id], "claim"],
+      ["open", ["result", result.result_id], "result"],
     ] as const) {
       state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command, args: [...args] })
       expect(state.commanderNavigation?.selected?.target_type).toBe(targetType)
     }
+    expect((await runtime.command("runtime.commander_target_context", { targetType: "claim", targetId: claim.claim_id }) as { suggested_commands: Array<{ command: string }> }).suggested_commands).toContainEqual(expect.objectContaining({ command: "/claims mission-1" }))
+    expect((await runtime.command("runtime.commander_target_context", { targetType: "result", targetId: result.result_id }) as { suggested_commands: Array<{ command: string }> }).suggested_commands).toContainEqual(expect.objectContaining({ command: "/results mission-1" }))
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "open", args: ["proposal"] })
     expect(state.commanderNavigation?.commandError).toBe("targetId is required")
