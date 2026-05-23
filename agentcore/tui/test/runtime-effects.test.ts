@@ -232,6 +232,78 @@ class ResearchRuntime implements RuntimeClient {
   }
 }
 
+class ExternalApiRuntime implements RuntimeClient {
+  readonly calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+  private readonly audit: unknown[] = []
+
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+    this.calls.push({ name, payload })
+    switch (name) {
+      case "runtime.list_external_api_connectors":
+        return [
+          {
+            connector_id: "mock-research-api",
+            title: "Mock research API",
+            base_url: "https://api.example.test",
+            allowed_hosts: ["api.example.test"],
+            allowed_methods: ["GET", "POST"],
+            timeout_ms: 5000,
+            max_response_bytes: 4096,
+            credential_refs: [],
+          },
+        ]
+      case "runtime.get_external_api_connector":
+        return {
+          connector_id: payload?.connectorId,
+          title: "Mock research API token=connector-secret",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET", "POST"],
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          credential_refs: [{ name: "test-key", source: "env", inject_as: "header", target_name: "Authorization", env_name: "NXL_TEST_TOKEN" }],
+        }
+      case "runtime.preview_external_api_request":
+        return {
+          connector_id: payload?.connectorId,
+          method: payload?.method,
+          url: `https://api.example.test${payload?.path}?token=query-secret`,
+          allowed: true,
+          blockers: [],
+          redacted_headers: { Authorization: "[REDACTED]" },
+          has_body: false,
+          body_bytes: 0,
+          credential_refs_used: ["test-key"],
+        }
+      case "runtime.execute_external_api_request": {
+        const result = {
+          request_id: "fake-api-request-1",
+          connector_id: payload?.connectorId,
+          method: payload?.method,
+          url: `https://api.example.test${payload?.path}`,
+          status_code: payload?.dryRun ? undefined : 200,
+          ok: true,
+          response_bytes: payload?.dryRun ? undefined : 36,
+          response_preview: payload?.dryRun ? "dry run: transport not called" : "token=response-secret value=ok",
+          dry_run: payload?.dryRun === true,
+          created_at: "1970-01-01T00:00:00.000Z",
+        }
+        if (!result.dry_run) this.audit.unshift({ ...result, requested_by: "operator" })
+        return result
+      }
+      case "runtime.list_external_api_audit":
+        return this.audit
+      default:
+        return { ok: true }
+    }
+  }
+}
+
 class FailingResearchRuntime extends ResearchRuntime {
   async command(name: string): Promise<unknown> {
     if (name.startsWith("research.")) throw new Error("research failed token=research-secret")
@@ -2142,5 +2214,43 @@ describe("runtime UI effects", () => {
     ])
 
     expect(ordered.map((item) => item.target_id)).toEqual(["z-high", "a-normal"])
+  })
+
+  test("external API slash commands load connectors preview results and audit", async () => {
+    const runtime = new ExternalApiRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apis" })
+    expect(state.externalApi?.connectors.map((connector) => connector.connector_id)).toEqual(["mock-research-api"])
+    expect(runtime.calls.map((call) => call.name)).toContain("runtime.list_external_api_audit")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api", args: ["mock-research-api"] })
+    expect(state.externalApi?.selectedConnector?.title).toContain("[REDACTED]")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api-preview", args: ["mock-research-api", "GET", "/search", "q=token=query-secret"] })
+    expect(state.externalApi?.preview).toMatchObject({ connector_id: "mock-research-api", allowed: true })
+    expect(JSON.stringify(state)).not.toContain("query-secret")
+    expect(layoutSnapshot(state)).not.toContain("query-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api-call", args: ["mock-research-api", "GET", "/search"] })
+    expect(state.externalApi?.lastResult).toMatchObject({ request_id: "fake-api-request-1", ok: true, dry_run: false })
+    expect(JSON.stringify(state)).not.toContain("response-secret")
+    expect(state.externalApi?.audit).toHaveLength(1)
+    expect(layoutSnapshot(state)).toContain("External API")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api-audit" })
+    expect(state.externalApi?.audit.at(0)).toMatchObject({ request_id: "fake-api-request-1" })
+  })
+
+  test("external API dry-run does not append audit and missing args are redacted errors", async () => {
+    const runtime = new ExternalApiRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api-dry-run", args: ["mock-research-api", "GET", "/dry"] })
+    expect(state.externalApi?.lastResult).toMatchObject({ ok: true, dry_run: true })
+    expect(state.externalApi?.audit).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api-preview", args: ["mock-research-api"] })
+    expect(state.externalApi?.commandError).toContain("method is required")
   })
 })

@@ -564,4 +564,26 @@ describe("TUI runtime client factory", () => {
 
     await client.runtime.shutdown()
   })
+
+  test("real runtime client path exercises external API preview and dry-run without network", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    let state = await applyRuntimeUiEffect(initialState(dir), client, { type: "send-command", command: "apis" })
+    expect(state.externalApi?.connectors.map((connector) => connector.connector_id)).toContain("mock-research-api")
+
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "api-preview", args: ["mock-research-api", "GET", "/research", "q=token=api-secret"] })
+    expect(state.externalApi?.preview).toMatchObject({ connector_id: "mock-research-api", allowed: true })
+    expect(JSON.stringify(state)).not.toContain("api-secret")
+
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "api-dry-run", args: ["mock-research-api", "GET", "/research"] })
+    expect(state.externalApi?.lastResult).toMatchObject({ ok: true, dry_run: true })
+    expect(state.externalApi?.audit).toEqual([])
+
+    await client.runtime.shutdown()
+  })
 })

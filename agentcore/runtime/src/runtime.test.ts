@@ -18,6 +18,8 @@ import { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-dr
 import { CommanderQueueService } from "./missions/commander-queue-service"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
+import { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
+import { FakeExternalApiTransport } from "./external-api/api-transport"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
@@ -2602,6 +2604,115 @@ describe("RuntimeServer core", () => {
     expect(server.researchProjectionStatus()).toMatchObject({ mode: "check_only", ok: false, stale: true })
     expect(server.eventBus.snapshot().map((event) => event.type)).toContain("ResearchProjectionStale")
     await server.shutdown()
+  })
+
+  test("external API connectors preview, execute, audit, and redact secrets", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "token=response-secret api_key=response-key value=ok" }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_TEST_API_KEY: "raw-secret-token" },
+      externalApiRequestId: () => "api_req_test",
+      externalApiNow: () => new Date("2026-05-24T00:00:00.000Z"),
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([
+        {
+          connector_id: "with-credential",
+          title: "With credential token=title-secret",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET", "POST"],
+          credential_refs: [{ name: "test-key", source: "env", env_name: "NXL_TEST_API_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }],
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        },
+      ]),
+    })
+
+    const connectors = await server.command("runtime.list_external_api_connectors") as Array<{ connector_id: string; title: string }>
+    expect(connectors).toHaveLength(1)
+    expect(JSON.stringify(connectors)).not.toContain("title-secret")
+
+    const preview = await server.command("runtime.preview_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/search",
+      query: { q: "token=query-secret" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; url: string; redacted_headers: Record<string, string>; credential_refs_used: string[] }
+    expect(preview.allowed).toBe(true)
+    expect(preview.url).not.toContain("query-secret")
+    expect(preview.redacted_headers.Authorization).toBe("[REDACTED]")
+    expect(preview.credential_refs_used).toEqual(["test-key"])
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).not.toContain("external_api_request_executed")
+
+    await expect(server.command("runtime.execute_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/search",
+      requestedBy: "operator",
+    })).rejects.toThrow("runtime must be started before external API requests")
+
+    await server.start()
+    const result = await server.command("runtime.execute_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/search",
+      requestedBy: "operator token=requester-secret",
+    }) as { ok: boolean; response_preview: string }
+    expect(result.ok).toBe(true)
+    expect(result.response_preview).not.toContain("response-secret")
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].headers.Authorization).toBe("Bearer raw-secret-token")
+
+    const audit = await server.command("runtime.list_external_api_audit") as Array<{ request_id: string; requested_by: string; ok: boolean }>
+    expect(audit).toContainEqual(expect.objectContaining({ request_id: "api_req_test", ok: true }))
+    expect(JSON.stringify(audit)).not.toContain("requester-secret")
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("raw-secret-token")
+    await server.shutdown()
+  })
+
+  test("external API safety rejects disallowed requests and dry-run skips transport", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport()
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled", externalApiTransport: transport })
+
+    const blocked = await server.command("runtime.preview_external_api_request", {
+      connectorId: "mock-research-api",
+      method: "POST",
+      path: "https://evil.example.test/data",
+      headers: { Authorization: "Bearer secret-token" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blocked.allowed).toBe(false)
+    expect(blocked.blockers.join(" ")).toContain("host not allowed")
+    expect(blocked.blockers.join(" ")).toContain("header is not allowed")
+
+    await server.start()
+    const dryRun = await server.command("runtime.execute_external_api_request", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/dry",
+      dryRun: true,
+      requestedBy: "operator",
+    }) as { ok: boolean; dry_run: boolean }
+    expect(dryRun).toMatchObject({ ok: true, dry_run: true })
+    expect(transport.requests).toHaveLength(0)
+    expect(await server.command("runtime.list_external_api_audit")).toEqual([])
+    await server.shutdown()
+  })
+
+  test("external API connector env config validation fails clearly", () => {
+    expect(() => readExternalApiConnectorsFromEnv({ NXL_EXTERNAL_API_CONNECTORS_JSON: "not-json" })).toThrow("must be valid JSON")
+    expect(() => readExternalApiConnectorsFromEnv({
+      NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{ connector_id: "bad", title: "Bad", base_url: "ftp://example.test", allowed_hosts: ["example.test"], allowed_methods: ["GET"], timeout_ms: 1, max_response_bytes: 1, created_at: "now", updated_at: "now" }]),
+    })).toThrow("base_url must use https")
   })
 })
 

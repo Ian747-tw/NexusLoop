@@ -9,6 +9,7 @@ import type { CommanderApplyPreview, CommanderApplyResult, CommanderApplyTargetT
 import type { CommanderAuditEventKind, CommanderAuditTimeline, CommanderAuthorityChain } from "../missions/commander-audit-types"
 import type { CommanderQueueKind, CommanderQueueResult, CommanderQueueSummary } from "../missions/commander-queue-types"
 import type { CommanderTargetContext, CommanderTargetType } from "../missions/commander-target-context-types"
+import type { ExternalApiAuditRecord, ExternalApiConnectorSummary, ExternalApiRequestInput, ExternalApiRequestPreview, ExternalApiRequestResult } from "../external-api/api-connector-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -80,6 +81,29 @@ export interface RuntimeClient {
   command(name: "runtime.commander_queue_summary", payload?: { staleAfterMs?: number }): Promise<CommanderQueueSummary>
   command(name: "runtime.commander_queue", payload: { queue: CommanderQueueKind; limit?: number; staleAfterMs?: number }): Promise<CommanderQueueResult>
   command(name: "runtime.commander_target_context", payload: { targetType: CommanderTargetType; targetId: string } | { target_type: CommanderTargetType; target_id: string }): Promise<CommanderTargetContext>
+  command(name: "runtime.list_external_api_connectors"): Promise<ExternalApiConnectorSummary[]>
+  command(name: "runtime.get_external_api_connector", payload: { connectorId: string } | { connector_id: string }): Promise<ExternalApiConnectorSummary | null>
+  command(name: "runtime.preview_external_api_request", payload: ExternalApiRequestInput | {
+    connectorId: string
+    method: ExternalApiRequestInput["method"]
+    path: string
+    query?: Record<string, string>
+    headers?: Record<string, string>
+    body?: string
+    dryRun?: boolean
+    requestedBy: string
+  }): Promise<ExternalApiRequestPreview>
+  command(name: "runtime.execute_external_api_request", payload: ExternalApiRequestInput | {
+    connectorId: string
+    method: ExternalApiRequestInput["method"]
+    path: string
+    query?: Record<string, string>
+    headers?: Record<string, string>
+    body?: string
+    dryRun?: boolean
+    requestedBy: string
+  }): Promise<ExternalApiRequestResult>
+  command(name: "runtime.list_external_api_audit", payload?: { limit?: number }): Promise<ExternalApiAuditRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -148,6 +172,11 @@ export interface RuntimeCommandEnvelope {
     | "runtime.commander_queue_summary"
     | "runtime.commander_queue"
     | "runtime.commander_target_context"
+    | "runtime.list_external_api_connectors"
+    | "runtime.get_external_api_connector"
+    | "runtime.preview_external_api_request"
+    | "runtime.execute_external_api_request"
+    | "runtime.list_external_api_audit"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

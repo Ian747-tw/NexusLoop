@@ -73,6 +73,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...queueLines(state))
   out.push(...navigationLines(state))
   out.push(...operatorActionLines(state))
+  out.push(...externalApiLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -479,6 +480,56 @@ function operatorActionLines(state: UiState): string[] {
     out.push(`  summary=${preview(redactText(result.summary))}`)
   }
   if (actions.commandError) out.push(`  command_error=${redactText(actions.commandError)}`)
+  return out
+}
+
+function externalApiLines(state: UiState): string[] {
+  const api = state.externalApi
+  const out = ["External API"]
+  if (!api) {
+    out.push("  connectors=0")
+    return out
+  }
+  out.push(`  connectors=${api.connectors.length}`)
+  if (api.connectors.length > 0) {
+    out.push("  connector_rows")
+    out.push(...api.connectors.slice(0, 10).map((connector) => {
+      return `    - ${connector.connector_id}: ${preview(redactText(connector.title))} methods=${connector.allowed_methods.join(",") || "none"} hosts=${connector.allowed_hosts.join(",") || "none"}`
+    }))
+  }
+  if (api.selectedConnector) {
+    const connector = api.selectedConnector
+    out.push(`  selected_connector=${connector.connector_id}`)
+    out.push(`  base_url=${preview(redactText(connector.base_url))}`)
+    out.push(`  timeout_ms=${connector.timeout_ms} max_response_bytes=${connector.max_response_bytes}`)
+    out.push(`  credentials=${connector.credential_refs?.map((ref) => `${ref.name}:${ref.inject_as}:${ref.target_name}`).join(",") || "none"}`)
+  } else {
+    out.push("  selected_connector=none")
+  }
+  if (api.preview) {
+    const previewResult = api.preview
+    out.push(`  preview=${previewResult.connector_id} ${previewResult.method} allowed=${previewResult.allowed}`)
+    out.push(`  preview_url=${preview(redactText(previewResult.url))}`)
+    out.push(`  body_bytes=${previewResult.body_bytes} has_body=${previewResult.has_body}`)
+    if (previewResult.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewResult.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  }
+  if (api.lastResult) {
+    const result = api.lastResult
+    out.push(`  last_result=${result.request_id} ${result.ok ? "ok" : "failed"} dry_run=${result.dry_run} status=${result.status_code ?? "none"}`)
+    out.push(`  result_url=${preview(redactText(result.url))}`)
+    if (result.response_preview) out.push(`  response=${preview(redactText(result.response_preview))}`)
+    if (result.error) out.push(`  error=${preview(redactText(result.error))}`)
+  }
+  out.push(`  audit=${api.audit.length}`)
+  if (api.audit.length > 0) {
+    out.push(...api.audit.slice(0, 10).map((record) => {
+      return `  - ${record.request_id} ${record.connector_id} ${record.method} ${record.ok ? "ok" : "failed"} dry_run=${record.dry_run} status=${record.status_code ?? "none"}`
+    }))
+  }
+  if (api.commandError) out.push(`  command_error=${redactText(api.commandError)}`)
   return out
 }
 
