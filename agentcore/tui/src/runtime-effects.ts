@@ -1,5 +1,13 @@
 import { redactText, redactUnknown } from "./redaction"
-import type { KeySideEffect } from "./keyboard"
+import { parseRuntimeCommand, type KeySideEffect } from "./keyboard"
+import {
+  executionCommandFor,
+  stageExplicitCommand,
+  stageSuggestedCommand,
+  type OperatorCommandExecutionResult,
+  type OperatorStagedCommand,
+  withExecutionCommand,
+} from "./operator-actions"
 import type { RuntimeClient, SubmitUserMessageResult } from "./runtime"
 import type {
   ExecutorClaimSummary,
@@ -19,6 +27,7 @@ import type {
   CommanderQueuesState,
   CommanderQueueSummary,
   CommanderNavigationState,
+  OperatorActionsState,
   CommanderSuggestedCommandSummary,
   CommanderTargetContextSummary,
   CommanderTargetType,
@@ -457,6 +466,7 @@ export async function applyRuntimeUiEffect(
       }
     }
   } catch (error) {
+    if (isOperatorActionEffect(effect)) return recordOperatorActionCommandError(state, error)
     if (isMissionExecutionEffect(effect)) return recordMissionExecutionCommandError(state, error)
     if (isReviewEffect(effect)) return recordReviewCommandError(state, error)
     if (isProposalEffect(effect)) return recordProposalCommandError(state, error)
@@ -728,9 +738,195 @@ function applyCommanderTargetContext(state: UiState, value: unknown): UiState {
   }
 }
 
+function stageSuggestedOperatorCommand(state: UiState, args: string[]): UiState {
+  const staged = stageSuggestedCommand(state.commanderNavigation?.selected, requiredArg(args, 0, "index"))
+  return applyStagedOperatorCommand(state, staged, "operator command staged")
+}
+
+function stageExplicitOperatorCommand(state: UiState, args: string[]): UiState {
+  const staged = stageExplicitCommand(requiredRest(args, 0, "command"))
+  return applyStagedOperatorCommand(state, staged, "operator command staged")
+}
+
+function applyStagedOperatorCommand(state: UiState, staged: OperatorStagedCommand, title: string): UiState {
+  return {
+    ...state,
+    operatorActions: {
+      ...operatorActionsState(state),
+      staged,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title, detail: preview(redactText(staged.command)), status: staged.command_type }].slice(-12),
+  }
+}
+
+function clearStagedOperatorCommand(state: UiState): UiState {
+  return {
+    ...state,
+    operatorActions: {
+      ...operatorActionsState(state),
+      staged: null,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "operator command cleared", detail: "staged=none", status: "cleared" }].slice(-12),
+  }
+}
+
+function previewStagedOperatorCommand(state: UiState): UiState {
+  const staged = operatorActionsState(state).staged
+  if (!staged) throw new Error("staged command is required")
+  return {
+    ...state,
+    operatorActions: {
+      ...operatorActionsState(state),
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "operator command preview", detail: preview(redactText(staged.command)), status: staged.command_type }].slice(-12),
+  }
+}
+
+async function runStagedOperatorCommand(state: UiState, runtime: RuntimeClient): Promise<UiState> {
+  const staged = operatorActionsState(state).staged
+  if (!staged) throw new Error("staged command is required")
+  const commandToRun = executionCommandFor(staged)
+  const parsed = parseRuntimeCommand(commandToRun)
+  if (!parsed) {
+    return applyOperatorExecutionFailure(state, staged, `unsupported staged command: ${staged.command}`)
+  }
+  if (operatorActionCommands.has(parsed.command)) {
+    return applyOperatorExecutionFailure(state, staged, `staged command cannot be an operator action command: ${parsed.command}`)
+  }
+  const executedAt = new Date().toISOString()
+  try {
+    const executionState = clearCommandErrorFor(parsed.command, state)
+    const executedRaw = await applyNamedRuntimeCommand(executionState, runtime, parsed.command, parsed.args)
+    const executed = shouldRefreshAfterCommand(parsed.command)
+      ? await refreshRuntimeRecordsOrRecordError(executedRaw, runtime)
+      : executedRaw
+    const afterError = commandErrorFor(parsed.command, executed)
+    if (afterError) {
+      return applyOperatorExecutionFailure(executed, staged, afterError, executedAt)
+    }
+    const result = operatorExecutionResult(staged.command, true, `executed ${parsed.command}`, executedAt, parsed.command, parsed.args)
+    return {
+      ...executed,
+      operatorActions: {
+        ...operatorActionsState(executed),
+        staged: null,
+        lastResult: result,
+        commandError: undefined,
+      },
+      systemActions: [...executed.systemActions, { title: "operator command executed", detail: result.summary, status: "ok" }].slice(-12),
+    }
+  } catch (error) {
+    return applyOperatorExecutionFailure(state, staged, error instanceof Error ? error.message : String(error), executedAt)
+  }
+}
+
+function applyOperatorExecutionFailure(state: UiState, staged: OperatorStagedCommand, summary: string, executedAt = new Date().toISOString()): UiState {
+  const message = redactText(summary)
+  const result = operatorExecutionResult(staged.command, false, message, executedAt)
+  return {
+    ...state,
+    operatorActions: {
+      ...operatorActionsState(state),
+      staged,
+      lastResult: result,
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "operator command failed", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function operatorExecutionResult(command: string, ok: boolean, summary: string, executedAt: string, parsedCommand?: string, args: string[] = []): OperatorCommandExecutionResult {
+  return {
+    command: redactText(command),
+    ok,
+    summary: redactText(summary),
+    executed_at: executedAt,
+    ...affectedTarget(parsedCommand, args),
+  }
+}
+
+function affectedTarget(command: string | undefined, args: string[]): Pick<OperatorCommandExecutionResult, "affected_target_type" | "affected_target_id"> {
+  if (!command) return {}
+  if (command === "open" || command === "jump" || command === "target" || command === "audit" || command === "apply-preview" || command === "apply-target" || command === "apply-partial") {
+    return args[0] && args[1] ? { affected_target_type: redactText(args[0]), affected_target_id: redactText(args[1]) } : {}
+  }
+  const aliasTarget = command.startsWith("open-") ? command.slice("open-".length) : undefined
+  if (aliasTarget && args[0]) return { affected_target_type: redactText(aliasTarget), affected_target_id: redactText(args[0]) }
+  const directTargets: Record<string, string> = {
+    mission: "mission",
+    claims: "mission",
+    progress: "mission",
+    results: "mission",
+    review: "review",
+    approve: "review",
+    reject: "review",
+    "cancel-review": "review",
+    proposal: "proposal",
+    "proposal-review": "proposal",
+    "apply-proposal": "proposal",
+    "cancel-proposal": "proposal",
+    bundle: "bundle",
+    "bundle-add": "bundle",
+    "bundle-review": "bundle",
+    "bundle-ready": "bundle",
+    "apply-bundle": "bundle",
+    "cancel-bundle": "bundle",
+    draft: "draft",
+    "draft-ready": "draft",
+    "draft-review": "draft",
+    "cancel-draft": "draft",
+  }
+  const targetType = directTargets[command]
+  return targetType && args[0] ? { affected_target_type: targetType, affected_target_id: redactText(args[0]) } : {}
+}
+
+function commandErrorFor(command: string, state: UiState): string | undefined {
+  if (missionExecutionCommands.has(command)) return state.missionExecution?.commandError
+  if (reviewCommands.has(command)) return state.reviews?.commandError
+  if (proposalCommands.has(command)) return state.proposals?.commandError
+  if (proposalBundleCommands.has(command)) return state.proposalBundles?.commandError
+  if (playbookCommands.has(command)) return state.commanderPlaybooks?.commandError
+  if (workbenchCommands.has(command)) return state.commanderWorkbench?.commandError
+  if (commanderApplyCommands.has(command)) return state.commanderApply?.commandError
+  if (commanderAuditCommands.has(command)) return state.commanderAudit?.commandError
+  if (commanderQueueCommands.has(command)) return state.commanderQueues?.commandError
+  if (commanderNavigationCommands.has(command)) return state.commanderNavigation?.commandError
+  if (researchCommands.has(command)) return state.research?.commandError
+  return state.runtimeCommandError
+}
+
+function clearCommandErrorFor(command: string, state: UiState): UiState {
+  if (missionExecutionCommands.has(command)) return { ...state, missionExecution: { ...missionExecutionState(state), commandError: undefined } }
+  if (reviewCommands.has(command)) return { ...state, reviews: { ...reviewsState(state), commandError: undefined } }
+  if (proposalCommands.has(command)) return { ...state, proposals: { ...proposalsState(state), commandError: undefined } }
+  if (proposalBundleCommands.has(command)) return { ...state, proposalBundles: { ...proposalBundlesState(state), commandError: undefined } }
+  if (playbookCommands.has(command)) return { ...state, commanderPlaybooks: { ...commanderPlaybooksState(state), commandError: undefined } }
+  if (workbenchCommands.has(command)) return { ...state, commanderWorkbench: { ...commanderWorkbenchState(state), commandError: undefined } }
+  if (commanderApplyCommands.has(command)) return { ...state, commanderApply: { ...commanderApplyState(state), commandError: undefined } }
+  if (commanderAuditCommands.has(command)) return { ...state, commanderAudit: { ...commanderAuditState(state), commandError: undefined } }
+  if (commanderQueueCommands.has(command)) return { ...state, commanderQueues: { ...commanderQueuesState(state), commandError: undefined } }
+  if (commanderNavigationCommands.has(command)) return { ...state, commanderNavigation: { ...commanderNavigationState(state), commandError: undefined } }
+  if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
+  return { ...state, runtimeCommandError: undefined }
+}
+
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
   const commandState = { ...state, lastCommand: command }
   switch (command) {
+    case "stage":
+      return Promise.resolve(stageSuggestedOperatorCommand(commandState, args))
+    case "stage-command":
+      return Promise.resolve(stageExplicitOperatorCommand(commandState, args))
+    case "clear-stage":
+      return Promise.resolve(clearStagedOperatorCommand(commandState))
+    case "stage-preview":
+      return Promise.resolve(previewStagedOperatorCommand(commandState))
+    case "run-staged":
+    case "execute-staged":
+      return runStagedOperatorCommand(commandState, runtime)
     case "status":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-status" })
     case "missions":
@@ -945,6 +1141,19 @@ async function runClientCommand(state: UiState, runtime: RuntimeClient, command:
 function shouldRefreshAfterCommand(command: string): boolean {
   return ["resume", "new-session", "records"].includes(command)
 }
+
+function isOperatorActionEffect(effect: RuntimeUiEffect): boolean {
+  return effect.type === "send-command" && operatorActionCommands.has(effect.command)
+}
+
+const operatorActionCommands = new Set([
+  "stage",
+  "stage-command",
+  "clear-stage",
+  "run-staged",
+  "execute-staged",
+  "stage-preview",
+])
 
 function isResearchEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") {
@@ -1796,6 +2005,18 @@ function recordCommanderNavigationCommandError(state: UiState, error: unknown): 
   }
 }
 
+function recordOperatorActionCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    operatorActions: {
+      ...operatorActionsState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "operator action command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -2193,13 +2414,13 @@ function readCommanderTargetContext(value: unknown): CommanderTargetContextSumma
 function readSuggestedCommand(value: unknown): CommanderSuggestedCommandSummary | null {
   if (!isRecord(value) || typeof value.label !== "string" || typeof value.command !== "string") return null
   const commandType = value.command_type === "write" ? "write" : "read"
-  return {
+  return withExecutionCommand<CommanderSuggestedCommandSummary>({
     label: preview(readString(value.label, "")),
-    command: preview(readString(value.command, "")),
+    command: readString(value.command, ""),
     command_type: commandType,
     requires_review: typeof value.requires_review === "boolean" ? value.requires_review : undefined,
     requires_active_runtime: typeof value.requires_active_runtime === "boolean" ? value.requires_active_runtime : undefined,
-  }
+  }, value.command)
 }
 
 function readRelatedIds(value: unknown): Record<string, string[]> {
@@ -2394,6 +2615,10 @@ function commanderQueuesState(state: UiState): CommanderQueuesState {
 
 function commanderNavigationState(state: UiState): CommanderNavigationState {
   return state.commanderNavigation ?? { selected: null }
+}
+
+function operatorActionsState(state: UiState): OperatorActionsState {
+  return state.operatorActions ?? { staged: null, lastResult: null }
 }
 
 function missionExecutionState(state: UiState): MissionExecutionState {

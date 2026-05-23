@@ -1,3 +1,5 @@
+import type { OperatorCommandExecutionResult, OperatorStagedCommand } from "./operator-actions"
+
 export type Screen = "boot" | "init" | "resume" | "main"
 
 export type FocusTarget =
@@ -492,6 +494,12 @@ export type CommanderNavigationState = {
   commandError?: string
 }
 
+export type OperatorActionsState = {
+  staged?: OperatorStagedCommand | null
+  lastResult?: OperatorCommandExecutionResult | null
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -580,6 +588,7 @@ export type UiState = {
   commanderAudit?: CommanderAuditState
   commanderQueues?: CommanderQueuesState
   commanderNavigation?: CommanderNavigationState
+  operatorActions?: OperatorActionsState
 }
 
 export function initialState(projectDir: string): UiState {
