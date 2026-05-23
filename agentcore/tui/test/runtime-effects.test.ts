@@ -2066,6 +2066,21 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.lastResult).toMatchObject({ command: fullCommand, ok: true, affected_target_id: runtime.proposalId })
   })
 
+  test("operator action execution preserves raw staged command text without leaking it into state", async () => {
+    const runtime = new ResearchRuntime()
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "stage-command", args: ["/notes", "topic-1", "token=raw-stage-secret"] })
+
+    expect(state.operatorActions?.staged?.command).toBe("/notes topic-1 [REDACTED]")
+    expect(JSON.stringify(state)).not.toContain("raw-stage-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(runtime.calls.some((call) => call.includes("token=raw-stage-secret"))).toBe(true)
+    expect(runtime.calls.some((call) => call.includes("[REDACTED]"))).toBe(false)
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/notes topic-1 [REDACTED]", ok: true })
+    expect(JSON.stringify(state)).not.toContain("raw-stage-secret")
+    expect(layoutSnapshot(state)).not.toContain("raw-stage-secret")
+  })
+
   test("operator action staging fails closed for missing context bad indexes unsupported commands and write authority errors", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "stage", args: ["1"] })

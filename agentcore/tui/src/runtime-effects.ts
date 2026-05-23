@@ -1,10 +1,12 @@
 import { redactText, redactUnknown } from "./redaction"
 import { parseRuntimeCommand, type KeySideEffect } from "./keyboard"
 import {
+  executionCommandFor,
   stageExplicitCommand,
   stageSuggestedCommand,
   type OperatorCommandExecutionResult,
   type OperatorStagedCommand,
+  withExecutionCommand,
 } from "./operator-actions"
 import type { RuntimeClient, SubmitUserMessageResult } from "./runtime"
 import type {
@@ -786,7 +788,8 @@ function previewStagedOperatorCommand(state: UiState): UiState {
 async function runStagedOperatorCommand(state: UiState, runtime: RuntimeClient): Promise<UiState> {
   const staged = operatorActionsState(state).staged
   if (!staged) throw new Error("staged command is required")
-  const parsed = parseRuntimeCommand(staged.command)
+  const commandToRun = executionCommandFor(staged)
+  const parsed = parseRuntimeCommand(commandToRun)
   if (!parsed) {
     return applyOperatorExecutionFailure(state, staged, `unsupported staged command: ${staged.command}`)
   }
@@ -2411,13 +2414,13 @@ function readCommanderTargetContext(value: unknown): CommanderTargetContextSumma
 function readSuggestedCommand(value: unknown): CommanderSuggestedCommandSummary | null {
   if (!isRecord(value) || typeof value.label !== "string" || typeof value.command !== "string") return null
   const commandType = value.command_type === "write" ? "write" : "read"
-  return {
+  return withExecutionCommand<CommanderSuggestedCommandSummary>({
     label: preview(readString(value.label, "")),
     command: readString(value.command, ""),
     command_type: commandType,
     requires_review: typeof value.requires_review === "boolean" ? value.requires_review : undefined,
     requires_active_runtime: typeof value.requires_active_runtime === "boolean" ? value.requires_active_runtime : undefined,
-  }
+  }, value.command)
 }
 
 function readRelatedIds(value: unknown): Record<string, string[]> {

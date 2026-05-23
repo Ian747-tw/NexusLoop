@@ -59,6 +59,8 @@ const WRITE_COMMANDS = new Set([
   "apply-partial",
 ])
 
+const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"
+
 export function stageSuggestedCommand(context: CommanderTargetContextSummary | null | undefined, indexText: string | undefined): OperatorStagedCommand {
   if (!context) throw new Error("selected target context is required")
   const index = Number(indexText)
@@ -69,20 +71,22 @@ export function stageSuggestedCommand(context: CommanderTargetContextSummary | n
 }
 
 export function stageExplicitCommand(commandText: string): OperatorStagedCommand {
-  const command = normalizeCommandText(commandText)
-  return {
+  const executionCommand = normalizeCommandText(commandText, { redact: false })
+  const command = redactText(executionCommand)
+  return withExecutionCommand({
     label: "Explicit command",
     command,
     command_type: commandTypeFromSlash(command),
     requires_review: undefined,
     requires_active_runtime: undefined,
-  }
+  }, executionCommand)
 }
 
-export function normalizeCommandText(commandText: string): string {
+export function normalizeCommandText(commandText: string, options: { redact?: boolean } = {}): string {
   const cleaned = commandText.trim()
   if (!cleaned) throw new Error("command is required")
-  return redactText(cleaned.startsWith("/") ? cleaned : `/${cleaned}`)
+  const normalized = cleaned.startsWith("/") ? cleaned : `/${cleaned}`
+  return options.redact === false ? normalized : redactText(normalized)
 }
 
 export function commandTypeFromSlash(commandText: string): "read" | "write" {
@@ -90,8 +94,24 @@ export function commandTypeFromSlash(commandText: string): "read" | "write" {
   return command && WRITE_COMMANDS.has(command) ? "write" : "read"
 }
 
+export function withExecutionCommand<T extends { command: string }>(value: T, executionCommand: string): T {
+  Object.defineProperty(value, EXECUTION_COMMAND_FIELD, {
+    value: executionCommand,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  })
+  return value
+}
+
+export function executionCommandFor(value: { command: string }): string {
+  const executionCommand = (value as { [EXECUTION_COMMAND_FIELD]?: unknown })[EXECUTION_COMMAND_FIELD]
+  return typeof executionCommand === "string" ? executionCommand : value.command
+}
+
 function stagedFromSuggestion(suggestion: CommanderSuggestedCommandSummary, context: CommanderTargetContextSummary): OperatorStagedCommand {
-  return {
+  const executionCommand = normalizeCommandText(executionCommandFor(suggestion), { redact: false })
+  return withExecutionCommand({
     source_target_type: redactText(context.target_type),
     source_target_id: redactText(context.target_id),
     label: redactText(suggestion.label),
@@ -99,5 +119,5 @@ function stagedFromSuggestion(suggestion: CommanderSuggestedCommandSummary, cont
     command_type: suggestion.command_type,
     requires_review: suggestion.requires_review || undefined,
     requires_active_runtime: suggestion.requires_active_runtime || undefined,
-  }
+  }, executionCommand)
 }
