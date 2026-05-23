@@ -1641,11 +1641,13 @@ function fakeSuggestedCommands(targetType: CommanderTargetType, targetId: string
     add("Check readiness", `/bundle-ready ${id}`)
     add("Request reviews", `/bundle-review ${id}`, "write", true, true)
     add("Preview apply", `/apply-preview bundle ${id}`)
+    if (status === "approved") add("Apply bundle", `/apply-target bundle ${id}`, "write", true, true)
   } else if (targetType === "draft") {
     add("Open draft", `/draft ${id}`)
     add("Check readiness", `/draft-ready ${id}`)
     add("Request reviews", `/draft-review ${id}`, "write", true, true)
     add("Preview apply", `/apply-preview draft ${id}`)
+    if (status !== "cancelled") add("Apply draft", `/apply-target draft ${id}`, "write", true, true)
   } else if (targetType === "claim") {
     add("List claims", `/claims ${missionId}`)
     add("Audit claim", `/audit claim ${id}`)

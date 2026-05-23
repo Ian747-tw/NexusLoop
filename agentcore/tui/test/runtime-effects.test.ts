@@ -1891,6 +1891,7 @@ describe("runtime UI effects", () => {
       actionPayload: { mission_id: "mission-1", claim_id: claim.claim_id, message: "progress" },
     }) as { proposal_id: string }
     const review = await runtime.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "ok" })
     const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
     await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: proposal.proposal_id })
     const draft = await runtime.command("runtime.draft_commander_playbook", {
@@ -1930,6 +1931,10 @@ describe("runtime UI effects", () => {
     const resultContext = await runtime.command("runtime.commander_target_context", { targetType: "result", targetId: result.result_id }) as { suggested_commands: Array<{ command: string }> }
     expect(resultContext.suggested_commands).toContainEqual(expect.objectContaining({ command: "/results mission-1" }))
     expect(resultContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/draft-complete mission-1 ${result.result_id} <title> -- <summary>` }))
+    const bundleContext = await runtime.command("runtime.commander_target_context", { targetType: "bundle", targetId: bundle.bundle_id }) as { suggested_commands: Array<{ command: string }> }
+    expect(bundleContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/apply-target bundle ${bundle.bundle_id}` }))
+    const draftContext = await runtime.command("runtime.commander_target_context", { targetType: "draft", targetId: draft.draft_id }) as { suggested_commands: Array<{ command: string }> }
+    expect(draftContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/apply-target draft ${draft.draft_id}` }))
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "open", args: ["proposal"] })
     expect(state.commanderNavigation?.commandError).toBe("targetId is required")

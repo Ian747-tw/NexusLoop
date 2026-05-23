@@ -15,6 +15,7 @@ import { ReviewRegistry } from "./missions/review-registry"
 import { ProposalRegistry } from "./missions/proposal-registry"
 import { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
 import { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-draft-registry"
+import { CommanderQueueService } from "./missions/commander-queue-service"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { SpecService } from "./spec/spec-service"
@@ -6161,6 +6162,95 @@ describe("ProcessOpenCodeAdapter", () => {
       limit: 100,
       items: expect.arrayContaining([expect.objectContaining({ target_id: "review_1" })]),
     })
+  })
+
+  test("commander queue membership reuses one registry snapshot", async () => {
+    const calls = { reviews: 0, proposals: 0, bundles: 0, drafts: 0, previews: 0 }
+    const service = new CommanderQueueService({
+      reviewRegistry: {
+        listAllReviewRequests: async () => {
+          calls.reviews += 1
+          return [{
+            review_id: "review_1",
+            title: "Review",
+            summary: "Review",
+            status: "pending",
+            requested_by: "operator",
+            created_at: "2026-05-01T00:00:00.000Z",
+            updated_at: "2026-05-01T00:00:00.000Z",
+          }]
+        },
+      } as ReviewRegistry,
+      proposalRegistry: {
+        listAllProposals: async () => {
+          calls.proposals += 1
+          return [{
+            proposal_id: "proposal_1",
+            title: "Proposal",
+            summary: "Proposal",
+            status: "proposed",
+            action_kind: "record_progress",
+            action_payload: {},
+            proposed_by: "operator",
+            created_at: "2026-05-01T00:00:00.000Z",
+            updated_at: "2026-05-01T00:00:00.000Z",
+          }]
+        },
+      } as ProposalRegistry,
+      proposalBundleRegistry: {
+        listAllBundles: async () => {
+          calls.bundles += 1
+          return [{
+            bundle_id: "bundle_1",
+            title: "Bundle",
+            summary: "Bundle",
+            status: "open",
+            proposal_ids: ["proposal_1"],
+            created_by: "operator",
+            created_at: "2026-05-01T00:00:00.000Z",
+            updated_at: "2026-05-01T00:00:00.000Z",
+          }]
+        },
+      } as ProposalBundleRegistry,
+      commanderPlaybookDraftRegistry: {
+        listAllDrafts: async () => {
+          calls.drafts += 1
+          return [{
+            draft_id: "draft_1",
+            playbook_id: "record-progress",
+            status: "drafted",
+            field_values: {},
+            proposal_ids: ["proposal_1"],
+            review_ids: [],
+            created_by: "operator",
+            created_at: "2026-05-01T00:00:00.000Z",
+            updated_at: "2026-05-01T00:00:00.000Z",
+          }]
+        },
+      } as unknown as CommanderPlaybookDraftRegistry,
+      applyService: {
+        preview: async (target: { target_type: string; target_id: string }) => {
+          calls.previews += 1
+          return {
+            target_type: target.target_type,
+            target_id: target.target_id,
+            ready_to_apply: false,
+            proposal_ids: target.target_type === "proposal" ? [target.target_id] : ["proposal_1"],
+            approved_count: 0,
+            applied_count: 0,
+            blocked_count: 1,
+            blockers: ["not approved"],
+            apply_mode: target.target_type === "proposal" ? "single" : target.target_type,
+            would_apply: [],
+            would_skip: [],
+          }
+        },
+      } as never,
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+    })
+
+    await expect(service.membership("proposal", "proposal_1")).resolves.toContain("blocked")
+    expect(calls).toMatchObject({ reviews: 1, proposals: 1, bundles: 1, drafts: 1, previews: 6 })
   })
 
   test("commander target context is read-only redacted and spans proposal bundle draft review mission navigation", async () => {
