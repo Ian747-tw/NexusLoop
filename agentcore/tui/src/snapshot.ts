@@ -72,6 +72,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...auditLines(state))
   out.push(...queueLines(state))
   out.push(...navigationLines(state))
+  out.push(...operatorActionLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -447,6 +448,37 @@ function navigationLines(state: UiState): string[] {
     }
   }
   if (navigation.commandError) out.push(`  command_error=${redactText(navigation.commandError)}`)
+  return out
+}
+
+function operatorActionLines(state: UiState): string[] {
+  const actions = state.operatorActions
+  const out = ["Operator actions"]
+  if (!actions) {
+    out.push("  staged=none")
+    return out
+  }
+  if (actions.staged) {
+    const staged = actions.staged
+    const flags = [
+      staged.command_type,
+      staged.requires_review ? "review" : undefined,
+      staged.requires_active_runtime ? "active" : undefined,
+    ].filter(Boolean).join(",")
+    const source = staged.source_target_type && staged.source_target_id ? `${staged.source_target_type}:${staged.source_target_id}` : "none"
+    out.push(`  staged=${preview(redactText(staged.label))} [${flags}] source=${source}`)
+    out.push(`  command=${preview(redactText(staged.command))}`)
+  } else {
+    out.push("  staged=none")
+  }
+  if (actions.lastResult) {
+    const result = actions.lastResult
+    const affected = result.affected_target_type && result.affected_target_id ? `${result.affected_target_type}:${result.affected_target_id}` : "none"
+    out.push(`  last_result=${result.ok ? "ok" : "failed"} affected=${affected}`)
+    out.push(`  last_command=${preview(redactText(result.command))}`)
+    out.push(`  summary=${preview(redactText(result.summary))}`)
+  }
+  if (actions.commandError) out.push(`  command_error=${redactText(actions.commandError)}`)
   return out
 }
 

@@ -148,7 +148,7 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
   }
 }
 
-function parseRuntimeCommand(value: string): { command: string; args: string[] } | undefined {
+export function parseRuntimeCommand(value: string): { command: string; args: string[] } | undefined {
   const trimmed = value.trim()
   const match = /^\/([a-z][a-z-]*)(?:\s+(.+))?$/i.exec(trimmed)
   const command = match?.[1]?.toLowerCase()
@@ -244,4 +244,10 @@ const runtimeCommands = new Set([
   "open-draft",
   "open-review",
   "open-mission",
+  "stage",
+  "stage-command",
+  "clear-stage",
+  "run-staged",
+  "execute-staged",
+  "stage-preview",
 ])

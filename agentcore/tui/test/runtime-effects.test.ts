@@ -1944,6 +1944,77 @@ describe("runtime UI effects", () => {
     expect(missing.missing_links[0]).toContain("proposal record not found")
   })
 
+  test("operator action staging previews clears runs and redacts suggested commands", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "mission-1", executorId: "executor" }) as { claim_id: string }
+    const proposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "record_progress",
+      title: "proposal token=stage-title-secret",
+      summary: "summary",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "mission-1", claim_id: claim.claim_id, message: "progress" },
+    }) as { proposal_id: string }
+
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "open", args: ["proposal", proposal.proposal_id] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage", args: ["1"] })
+    expect(state.operatorActions?.staged).toMatchObject({
+      source_target_type: "proposal",
+      source_target_id: proposal.proposal_id,
+      command: `/proposal ${proposal.proposal_id}`,
+      command_type: "read",
+    })
+    expect(state.proposals?.selectedProposal).toBeUndefined()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-preview" })
+    expect(layoutSnapshot(state)).toContain("Operator actions")
+    expect(layoutSnapshot(state)).toContain(`command=/proposal ${proposal.proposal_id}`)
+    expect(state.proposals?.selectedProposal).toBeUndefined()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.staged).toBeNull()
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: `/proposal ${proposal.proposal_id}`, ok: true, affected_target_type: "proposal", affected_target_id: proposal.proposal_id })
+    expect(state.proposals?.selectedProposal?.proposal_id).toBe(proposal.proposal_id)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/queues"] })
+    expect(state.operatorActions?.staged).toMatchObject({ command: "/queues", command_type: "read" })
+    expect(state.commanderQueues?.items ?? []).toHaveLength(0)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/queues", ok: true })
+    expect(state.operatorActions?.staged).toBeNull()
+    expect(state.commanderQueues?.selectedQueue).toBe("needs_review")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/notes", "topic-1", "token=stage-secret"] })
+    expect(state.operatorActions?.staged?.command).toBe("/notes topic-1 [REDACTED]")
+    expect(JSON.stringify(state)).not.toContain("stage-secret")
+    expect(layoutSnapshot(state)).not.toContain("stage-secret")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "clear-stage" })
+    expect(state.operatorActions?.staged).toBeNull()
+  })
+
+  test("operator action staging fails closed for missing context bad indexes unsupported commands and write authority errors", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "stage", args: ["1"] })
+    expect(state.operatorActions?.commandError).toBe("selected target context is required")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "open-mission", args: ["mission-1"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage", args: ["999"] })
+    expect(state.operatorActions?.commandError).toContain("suggested command index is out of range")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/tmp/repro"] })
+    expect(state.operatorActions?.staged?.command).toBe("/tmp/repro")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/tmp/repro", ok: false })
+    expect(state.operatorActions?.commandError).toContain("unsupported staged command")
+    expect(state.operatorActions?.staged?.command).toBe("/tmp/repro")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/apply-target", "proposal", "missing-proposal"] })
+    expect(state.operatorActions?.staged).toMatchObject({ command: "/apply-target proposal missing-proposal", command_type: "write" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/apply-target proposal missing-proposal", ok: false })
+    expect(state.operatorActions?.commandError).toContain("not found")
+    expect(state.operatorActions?.staged?.command).toBe("/apply-target proposal missing-proposal")
+  })
+
   test("fake commander queue ordering applies priority tie-break before target id", () => {
     const ordered = orderQueueItems("needs_review", [
       {

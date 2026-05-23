@@ -522,4 +522,46 @@ describe("TUI runtime client factory", () => {
     process.emitExit(0, null)
     await shutdown
   })
+
+  test("real runtime client path stages and runs target-context operator actions with fake adapter", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    const submitted = await client.command("runtime.submit_user_message", { message: "operator action mission" }) as { missionId: string }
+    const claim = await client.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "tester" }) as { claim_id: string }
+    const proposal = await client.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "Record staged progress",
+      summary: "working",
+      proposedBy: "tester",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "working" },
+    }) as { proposal_id: string }
+
+    let state = await applyRuntimeUiEffect(initialState(dir), client, { type: "send-command", command: "open", args: ["proposal", proposal.proposal_id] })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "stage", args: ["1"] })
+    expect(state.operatorActions?.staged).toMatchObject({ command: `/proposal ${proposal.proposal_id}`, command_type: "read" })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ ok: true, affected_target_type: "proposal", affected_target_id: proposal.proposal_id })
+    expect(state.proposals?.selectedProposal?.proposal_id).toBe(proposal.proposal_id)
+
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "stage-command", args: ["/apply-preview", "proposal", proposal.proposal_id] })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ ok: true, affected_target_type: "proposal", affected_target_id: proposal.proposal_id })
+    expect(state.commanderApply?.preview).toMatchObject({ target_type: "proposal", target_id: proposal.proposal_id, ready_to_apply: false })
+    await expect(client.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({ status: "proposed" })
+
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "stage-command", args: ["/apply-target", "proposal", proposal.proposal_id] })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ ok: false, command: `/apply-target proposal ${proposal.proposal_id}` })
+    expect(state.operatorActions?.staged?.command).toBe(`/apply-target proposal ${proposal.proposal_id}`)
+    expect(state.operatorActions?.commandError).toContain("not ready")
+
+    await client.runtime.shutdown()
+  })
 })

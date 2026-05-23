@@ -584,6 +584,32 @@ describe("TUI launch boundary", () => {
     expect(snapshot).not.toContain("runtime client has been shut down")
   })
 
+  test("headless staged command run produces deterministic operator snapshot", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/stage-command /queues" },
+      { type: "submit" },
+      { type: "insert", text: "/run-staged" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Operator actions")
+    expect(snapshot).toContain("staged=none")
+    expect(snapshot).toContain("last_result=ok")
+    expect(snapshot).toContain("last_command=/queues")
+    expect(snapshot).toContain("Commander queues")
+    expect(snapshot).toContain("selected=needs_review")
+  })
+
   test("headless entrypoint waits for the first runtime event before idle timeout", async () => {
     const runtime = new TestRuntimeClient(75)
     const output: string[] = []

@@ -263,6 +263,28 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("operator action slash commands route through whitelisted runtime command effects with args", () => {
+    for (const [message, command, args] of [
+      ["/stage 1", "stage", ["1"]],
+      ["/stage-command /queues", "stage-command", ["/queues"]],
+      ["/stage-preview", "stage-preview", []],
+      ["/clear-stage", "clear-stage", []],
+      ["/run-staged", "run-staged", []],
+      ["/execute-staged", "execute-staged", []],
+    ] as const) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+
+      expect(result.state.messageDraft).toBe("")
+      expect(result.state.lastCommand).toBe(command)
+      expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
+    }
+  })
+
   test("slash command arguments are redacted before entering system actions", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -322,7 +344,7 @@ describe("TUI keyboard command model", () => {
   })
 
   test("dot and colon prefixed text remains a user message", () => {
-    for (const message of [".status notes", ":missions", ".topics", ":research", ".mission", ":claim", ".complete", ":complete", ".reviews", ":approve", ".proposals", ":apply-proposal", ".bundles", ":apply-bundle", ".playbooks", ":draft-fail", ".drafts", ":draft-review", ".apply-target", ":apply-preview", ".audit", ":audit", ".queue", ":queues", ".open", ":jump", "/tmp/repro", "/path"]) {
+    for (const message of [".status notes", ":missions", ".topics", ":research", ".mission", ":claim", ".complete", ":complete", ".reviews", ":approve", ".proposals", ":apply-proposal", ".bundles", ":apply-bundle", ".playbooks", ":draft-fail", ".drafts", ":draft-review", ".apply-target", ":apply-preview", ".audit", ":audit", ".queue", ":queues", ".open", ":jump", ".stage", ":run-staged", "/tmp/repro", "/path"]) {
       const state: UiState = {
         ...initialState("/tmp/demo"),
         screen: "main",
