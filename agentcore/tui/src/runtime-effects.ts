@@ -754,7 +754,7 @@ function applyStagedOperatorCommand(state: UiState, staged: OperatorStagedComman
       staged,
       commandError: undefined,
     },
-    systemActions: [...state.systemActions, { title, detail: staged.command, status: staged.command_type }].slice(-12),
+    systemActions: [...state.systemActions, { title, detail: preview(redactText(staged.command)), status: staged.command_type }].slice(-12),
   }
 }
 
@@ -779,7 +779,7 @@ function previewStagedOperatorCommand(state: UiState): UiState {
       ...operatorActionsState(state),
       commandError: undefined,
     },
-    systemActions: [...state.systemActions, { title: "operator command preview", detail: staged.command, status: staged.command_type }].slice(-12),
+    systemActions: [...state.systemActions, { title: "operator command preview", detail: preview(redactText(staged.command)), status: staged.command_type }].slice(-12),
   }
 }
 
@@ -2413,7 +2413,7 @@ function readSuggestedCommand(value: unknown): CommanderSuggestedCommandSummary 
   const commandType = value.command_type === "write" ? "write" : "read"
   return {
     label: preview(readString(value.label, "")),
-    command: preview(readString(value.command, "")),
+    command: readString(value.command, ""),
     command_type: commandType,
     requires_review: typeof value.requires_review === "boolean" ? value.requires_review : undefined,
     requires_active_runtime: typeof value.requires_active_runtime === "boolean" ? value.requires_active_runtime : undefined,

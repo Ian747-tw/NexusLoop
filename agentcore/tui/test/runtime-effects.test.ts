@@ -112,6 +112,55 @@ class CommanderQueueLimitRuntime implements RuntimeClient {
   }
 }
 
+class LongSuggestedCommandRuntime implements RuntimeClient {
+  requestedProposalId: string | undefined
+  readonly proposalId = `proposal_${"x".repeat(220)}`
+
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+    if (name === "runtime.commander_target_context") {
+      return {
+        target_type: "proposal",
+        target_id: this.proposalId,
+        found: true,
+        title: "Long proposal",
+        summary: "Long command suggestion",
+        status: "proposed",
+        related_ids: {},
+        queue_membership: [],
+        audit_event_count: 0,
+        recent_audit_events: [],
+        suggested_commands: [
+          {
+            label: "Open long proposal",
+            command: `/proposal ${this.proposalId}`,
+            command_type: "read",
+          },
+        ],
+        missing_links: [],
+      }
+    }
+    if (name === "runtime.get_commander_proposal") {
+      this.requestedProposalId = typeof payload?.proposalId === "string" ? payload.proposalId : undefined
+      return {
+        proposal_id: this.proposalId,
+        status: "proposed",
+        action_kind: "record_progress",
+        title: "Long proposal",
+        summary: "Long command suggestion",
+        proposed_by: "operator",
+        created_at: "2026-05-23T00:00:00.000Z",
+        updated_at: "2026-05-23T00:00:00.000Z",
+      }
+    }
+    return { ok: true }
+  }
+}
+
 class ResearchRuntime implements RuntimeClient {
   readonly calls: string[] = []
 
@@ -1996,6 +2045,23 @@ describe("runtime UI effects", () => {
     expect(layoutSnapshot(state)).not.toContain("stage-secret")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "clear-stage" })
     expect(state.operatorActions?.staged).toBeNull()
+  })
+
+  test("operator action staging preserves full suggested command while rendering bounded previews", async () => {
+    const runtime = new LongSuggestedCommandRuntime()
+    const fullCommand = `/proposal ${runtime.proposalId}`
+
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "open", args: ["proposal", runtime.proposalId] })
+    expect(state.commanderNavigation?.selected?.suggested_commands[0]?.command).toBe(fullCommand)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage", args: ["1"] })
+    expect(state.operatorActions?.staged?.command).toBe(fullCommand)
+    expect(layoutSnapshot(state)).toContain("command=/proposal proposal_")
+    expect(layoutSnapshot(state)).toContain("...")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(runtime.requestedProposalId).toBe(runtime.proposalId)
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: fullCommand, ok: true, affected_target_id: runtime.proposalId })
   })
 
   test("operator action staging fails closed for missing context bad indexes unsupported commands and write authority errors", async () => {
