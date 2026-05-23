@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { withExecutionCommand } from "../src/operator-actions"
 import { mergeRuntimeEffectState } from "../src/runtime-state-merge"
 import { initialState, type UiState } from "../src/state"
 
@@ -288,6 +289,46 @@ describe("interactive runtime effect state merge", () => {
 
     expect(staleMerged.operatorActions?.staged?.command).toBe("/records")
     expect(staleMerged.systemActions.at(-1)).toEqual({ title: "operator command cleared", detail: "staged=none", status: "cleared" })
+
+    const baselineWithRedactedStage: UiState = {
+      ...baseline,
+      operatorActions: {
+        staged: withExecutionCommand({
+          label: "Explicit command",
+          command: "/notes topic-1 [REDACTED]",
+          command_type: "read" as const,
+        }, "/notes topic-1 token=old-secret"),
+        lastResult: null,
+      },
+    }
+    const currentWithSameVisibleStage: UiState = {
+      ...baselineWithRedactedStage,
+      operatorActions: {
+        staged: withExecutionCommand({
+          label: "Explicit command",
+          command: "/notes topic-1 [REDACTED]",
+          command_type: "read" as const,
+        }, "/notes topic-1 token=new-secret"),
+        lastResult: null,
+      },
+    }
+    const olderRunResult: UiState = {
+      ...baselineWithRedactedStage,
+      operatorActions: {
+        staged: null,
+        lastResult: {
+          command: "/notes topic-1 [REDACTED]",
+          ok: true,
+          summary: "executed notes",
+          executed_at: "2026-05-23T00:00:00.000Z",
+        },
+      },
+    }
+
+    const rawAwareMerged = mergeRuntimeEffectState(currentWithSameVisibleStage, olderRunResult, baseline.systemActions.length, baselineWithRedactedStage)
+
+    expect(rawAwareMerged.operatorActions?.staged?.command).toBe("/notes topic-1 [REDACTED]")
+    expect(rawAwareMerged.operatorActions?.lastResult).toBeNull()
   })
 
   test("keeps header mission aligned when mission execution rebases over newer mission summary", () => {

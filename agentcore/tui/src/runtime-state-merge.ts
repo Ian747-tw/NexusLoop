@@ -1,3 +1,4 @@
+import { executionCommandFor } from "./operator-actions"
 import type { UiState } from "./state"
 
 export function mergeRuntimeEffectState(current: UiState, next: UiState, previousActionCount = 0, baseline?: UiState): UiState {
@@ -18,7 +19,8 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
   const canUpdateCommanderApply = baseline === undefined || stableEqual(current.commanderApply, baseline.commanderApply)
   const canUpdateCommanderAudit = baseline === undefined || stableEqual(current.commanderAudit, baseline.commanderAudit)
   const canUpdateCommanderQueues = baseline === undefined || stableEqual(current.commanderQueues, baseline.commanderQueues)
-  const canUpdateOperatorActions = baseline === undefined || stableEqual(current.operatorActions, baseline.operatorActions)
+  const canUpdateOperatorActions =
+    baseline === undefined || stableOperatorActionsEqual(current.operatorActions, baseline.operatorActions)
   const canUpdateRuntimeCommandError =
     baseline === undefined ||
     (stableEqual(current.runtimeCommandError, baseline.runtimeCommandError) &&
@@ -66,6 +68,21 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
 
 function stableEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function stableOperatorActionsEqual(left: UiState["operatorActions"], right: UiState["operatorActions"]): boolean {
+  return stableEqual(operatorActionsComparable(left), operatorActionsComparable(right))
+}
+
+function operatorActionsComparable(actions: UiState["operatorActions"]): unknown {
+  if (!actions?.staged) return actions
+  return {
+    ...actions,
+    staged: {
+      ...actions.staged,
+      execution_command: executionCommandFor(actions.staged),
+    },
+  }
 }
 
 function addedSystemActions(
