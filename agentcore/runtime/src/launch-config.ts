@@ -1,5 +1,6 @@
 import { RuntimeServer, type RuntimeServerOptions } from "./server"
 import { readOpenCodeAdapterConfigFromEnv } from "./opencode/adapter-config"
+import { readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
 
 export interface RuntimeServerLaunchConfig extends RuntimeServerOptions {
   env?: Record<string, string | undefined>
@@ -9,10 +10,15 @@ export function readRuntimeServerLaunchOptionsFromEnv(
   env: Record<string, string | undefined>,
   baseOptions: RuntimeServerOptions = {},
 ): RuntimeServerOptions {
-  if (baseOptions.adapter || baseOptions.openCodeAdapterConfig) return { ...baseOptions }
+  const options: RuntimeServerOptions = { ...baseOptions }
+  if (!options.externalApiConnectorRegistry && !options.externalApiConnectors) {
+    options.externalApiConnectors = readExternalApiConnectorsFromEnv(env)
+  }
+  if (!options.externalApiEnv) options.externalApiEnv = env
+  if (options.adapter || options.openCodeAdapterConfig) return options
   const openCodeAdapterConfig = readOpenCodeAdapterConfigFromEnv(env)
-  if (!openCodeAdapterConfig) return { ...baseOptions }
-  return { ...baseOptions, openCodeAdapterConfig }
+  if (!openCodeAdapterConfig) return options
+  return { ...options, openCodeAdapterConfig }
 }
 
 export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchConfig = {}): RuntimeServer {

@@ -4402,6 +4402,52 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
     expect(spawnCalls).toBe(0)
   })
 
+  test("env external API config and credentials are wired through launch boundary", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "{\"ok\":true}" }])
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      mode: "active",
+      env: {
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{
+          connector_id: "env-api",
+          title: "Env API",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET"],
+          credential_refs: [{ name: "env-key", source: "env", env_name: "NXL_ENV_API_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }],
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        }]),
+        NXL_ENV_API_KEY: "raw-env-launch-secret",
+      },
+      externalApiTransport: transport,
+    })
+
+    expect(await server.command("runtime.list_external_api_connectors")).toContainEqual(expect.objectContaining({ connector_id: "env-api" }))
+    const preview = await server.command("runtime.preview_external_api_request", {
+      connectorId: "env-api",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; redacted_headers: Record<string, string> }
+    expect(preview).toMatchObject({ allowed: true, redacted_headers: { Authorization: "[REDACTED]" } })
+
+    await server.start()
+    await server.command("runtime.execute_external_api_request", {
+      connectorId: "env-api",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    })
+    expect(transport.requests[0].headers.Authorization).toBe("Bearer raw-env-launch-secret")
+    expect(JSON.stringify(await server.command("runtime.list_external_api_audit"))).not.toContain("raw-env-launch-secret")
+    await server.shutdown()
+  })
+
   test("env process config starts runtime with fake spawn and writes session start", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
