@@ -2635,11 +2635,23 @@ describe("RuntimeServer core", () => {
           created_at: "1970-01-01T00:00:00.000Z",
           updated_at: "1970-01-01T00:00:00.000Z",
         },
+        {
+          connector_id: "with-custom-credential-header",
+          title: "With custom credential header",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET"],
+          credential_refs: [{ name: "custom-key", source: "env", env_name: "NXL_TEST_API_KEY", inject_as: "header", target_name: "X-Api-Key" }],
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        },
       ]),
     })
 
     const connectors = await server.command("runtime.list_external_api_connectors") as Array<{ connector_id: string; title: string }>
-    expect(connectors).toHaveLength(1)
+    expect(connectors).toHaveLength(2)
     expect(JSON.stringify(connectors)).not.toContain("title-secret")
 
     const preview = await server.command("runtime.preview_external_api_request", {
@@ -2665,6 +2677,17 @@ describe("RuntimeServer core", () => {
     expect(blockedCredentialHeader.allowed).toBe(false)
     expect(blockedCredentialHeader.blockers.join(" ")).toContain("header is not allowed")
     expect(JSON.stringify(blockedCredentialHeader)).not.toContain("user-secret-token")
+
+    const blockedCustomCredentialHeader = await server.command("runtime.preview_external_api_request", {
+      connectorId: "with-custom-credential-header",
+      method: "GET",
+      path: "/search",
+      headers: { "x-api-key": "user-secret-token" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedCustomCredentialHeader.allowed).toBe(false)
+    expect(blockedCustomCredentialHeader.blockers.join(" ")).toContain("credential header is not allowed")
+    expect(JSON.stringify(blockedCustomCredentialHeader)).not.toContain("user-secret-token")
 
     await expect(server.command("runtime.execute_external_api_request", {
       connectorId: "with-credential",

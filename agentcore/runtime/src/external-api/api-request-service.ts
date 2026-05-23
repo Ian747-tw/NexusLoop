@@ -169,10 +169,12 @@ export class ExternalApiRequestService {
     }
 
     const headers: Record<string, string> = {}
+    const credentialHeaderTargets = new Set((connector.credential_refs ?? []).filter((ref) => ref.inject_as === "header").map((ref) => ref.target_name.toLowerCase()))
     for (const [key, value] of Object.entries(connector.default_headers ?? {})) headers[key] = value
     for (const [key, value] of Object.entries(input.headers ?? {})) {
       if (typeof value !== "string") blockers.push(`header value must be string: ${key}`)
       else if (DANGEROUS_USER_HEADERS.has(key.toLowerCase())) blockers.push(`header is not allowed from user input: ${key}`)
+      else if (credentialHeaderTargets.has(key.toLowerCase())) blockers.push(`credential header is not allowed from user input: ${key}`)
       else headers[key] = value
     }
 
