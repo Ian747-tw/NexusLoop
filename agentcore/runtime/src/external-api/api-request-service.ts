@@ -66,7 +66,7 @@ export class ExternalApiRequestService {
         createdAt,
         error: built.blockers.join("; "),
       })
-      await this.writeAudit("external_api_request_failed", result, input.requested_by)
+      if (input.dry_run !== true) await this.writeAudit("external_api_request_failed", result, input.requested_by)
       throw new Error(result.error ?? "external API request blocked")
     }
     if (input.dry_run === true) {

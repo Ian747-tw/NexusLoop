@@ -2776,6 +2776,15 @@ describe("RuntimeServer core", () => {
     expect(dryRun).toMatchObject({ ok: true, dry_run: true })
     expect(transport.requests).toHaveLength(0)
     expect(await server.command("runtime.list_external_api_audit")).toEqual([])
+    await expect(server.command("runtime.execute_external_api_request", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "https://evil.example.test/dry",
+      dryRun: true,
+      requestedBy: "operator",
+    })).rejects.toThrow("host not allowed")
+    expect(transport.requests).toHaveLength(0)
+    expect(await server.command("runtime.list_external_api_audit")).toEqual([])
     await server.shutdown()
   })
 
