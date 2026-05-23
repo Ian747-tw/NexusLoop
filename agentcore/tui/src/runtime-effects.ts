@@ -793,7 +793,7 @@ async function runStagedOperatorCommand(state: UiState, runtime: RuntimeClient):
   if (operatorActionCommands.has(parsed.command)) {
     return applyOperatorExecutionFailure(state, staged, `staged command cannot be an operator action command: ${parsed.command}`)
   }
-  const executedAt = new Date(0).toISOString()
+  const executedAt = new Date().toISOString()
   try {
     const executionState = clearCommandErrorFor(parsed.command, state)
     const executedRaw = await applyNamedRuntimeCommand(executionState, runtime, parsed.command, parsed.args)
@@ -820,7 +820,7 @@ async function runStagedOperatorCommand(state: UiState, runtime: RuntimeClient):
   }
 }
 
-function applyOperatorExecutionFailure(state: UiState, staged: OperatorStagedCommand, summary: string, executedAt = new Date(0).toISOString()): UiState {
+function applyOperatorExecutionFailure(state: UiState, staged: OperatorStagedCommand, summary: string, executedAt = new Date().toISOString()): UiState {
   const message = redactText(summary)
   const result = operatorExecutionResult(staged.command, false, message, executedAt)
   return {

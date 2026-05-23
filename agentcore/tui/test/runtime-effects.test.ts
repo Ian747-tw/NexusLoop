@@ -2022,6 +2022,8 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
     expect(state.operatorActions?.staged).toBeNull()
     expect(state.operatorActions?.lastResult).toMatchObject({ command: `/proposal ${proposal.proposal_id}`, ok: true, affected_target_type: "proposal", affected_target_id: proposal.proposal_id })
+    expect(Date.parse(state.operatorActions?.lastResult?.executed_at ?? "")).toBeGreaterThan(0)
+    expect(state.operatorActions?.lastResult?.executed_at).not.toBe("1970-01-01T00:00:00.000Z")
     expect(state.proposals?.selectedProposal?.proposal_id).toBe(proposal.proposal_id)
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/queues"] })
@@ -2077,6 +2079,8 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.staged?.command).toBe("/tmp/repro")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
     expect(state.operatorActions?.lastResult).toMatchObject({ command: "/tmp/repro", ok: false })
+    expect(Date.parse(state.operatorActions?.lastResult?.executed_at ?? "")).toBeGreaterThan(0)
+    expect(state.operatorActions?.lastResult?.executed_at).not.toBe("1970-01-01T00:00:00.000Z")
     expect(state.operatorActions?.commandError).toContain("unsupported staged command")
     expect(state.operatorActions?.staged?.command).toBe("/tmp/repro")
 
