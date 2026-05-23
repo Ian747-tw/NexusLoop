@@ -3,6 +3,7 @@ import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 import { FakeRuntimeClient, orderQueueItems, type RuntimeClient } from "../src/runtime"
 import { layoutSnapshot } from "../src/snapshot"
+import { snapshotUiState } from "../src/state-snapshot"
 import { initialState, type UiState } from "../src/state"
 
 class RecentMissionRuntime implements RuntimeClient {
@@ -2073,7 +2074,10 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.staged?.command).toBe("/notes topic-1 [REDACTED]")
     expect(JSON.stringify(state)).not.toContain("raw-stage-secret")
 
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    const cloned = snapshotUiState(state)
+    expect(JSON.stringify(cloned)).not.toContain("raw-stage-secret")
+
+    state = await applyRuntimeUiEffect(cloned, runtime, { type: "send-command", command: "run-staged" })
     expect(runtime.calls.some((call) => call.includes("token=raw-stage-secret"))).toBe(true)
     expect(runtime.calls.some((call) => call.includes("[REDACTED]"))).toBe(false)
     expect(state.operatorActions?.lastResult).toMatchObject({ command: "/notes topic-1 [REDACTED]", ok: true })

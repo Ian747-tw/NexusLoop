@@ -98,7 +98,7 @@ export function withExecutionCommand<T extends { command: string }>(value: T, ex
   Object.defineProperty(value, EXECUTION_COMMAND_FIELD, {
     value: executionCommand,
     enumerable: false,
-    configurable: false,
+    configurable: true,
     writable: false,
   })
   return value
@@ -107,6 +107,10 @@ export function withExecutionCommand<T extends { command: string }>(value: T, ex
 export function executionCommandFor(value: { command: string }): string {
   const executionCommand = (value as { [EXECUTION_COMMAND_FIELD]?: unknown })[EXECUTION_COMMAND_FIELD]
   return typeof executionCommand === "string" ? executionCommand : value.command
+}
+
+export function copyExecutionCommand<T extends { command: string }>(source: { command: string }, target: T): T {
+  return withExecutionCommand(target, executionCommandFor(source))
 }
 
 function stagedFromSuggestion(suggestion: CommanderSuggestedCommandSummary, context: CommanderTargetContextSummary): OperatorStagedCommand {
