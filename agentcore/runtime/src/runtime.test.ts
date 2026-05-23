@@ -2727,6 +2727,18 @@ describe("RuntimeServer core", () => {
     expect(blocked.blockers.join(" ")).toContain("host not allowed")
     expect(blocked.blockers.join(" ")).toContain("header is not allowed")
 
+    const emptyValues = await server.command("runtime.preview_external_api_request", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/empty",
+      query: { flag: "" },
+      headers: { "X-Empty": "" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; url: string; redacted_headers: Record<string, string> }
+    expect(emptyValues.allowed).toBe(true)
+    expect(emptyValues.url).toContain("flag=")
+    expect(emptyValues.redacted_headers["X-Empty"]).toBe("")
+
     const ipv6Server = new RuntimeServer({
       projectDir: dir,
       mode: "view-records",

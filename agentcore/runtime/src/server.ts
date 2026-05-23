@@ -1240,8 +1240,8 @@ function readExternalApiRequestInput(payload: Record<string, unknown>): External
     connector_id: requiredString(payload.connectorId ?? payload.connector_id, "connectorId"),
     method: requiredString(payload.method, "method").toUpperCase() as ExternalApiRequestInput["method"],
     path: requiredString(payload.path, "path"),
-    query: optionalStringRecord(payload.query, "query"),
-    headers: optionalStringRecord(payload.headers, "headers"),
+    query: optionalRawStringRecord(payload.query, "query"),
+    headers: optionalRawStringRecord(payload.headers, "headers"),
     body: optionalRawString(payload.body, "body"),
     dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
     requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
@@ -1258,6 +1258,21 @@ function stringRecord(value: unknown, field: string): Record<string, string> {
 function optionalStringRecord(value: unknown, field: string): Record<string, string> | undefined {
   if (value === undefined) return undefined
   return stringRecord(value, field)
+}
+
+function rawStringRecord(value: unknown, field: string): Record<string, string> {
+  if (!isRecord(value)) throw new Error(`${field} must be an object`)
+  const out: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw !== "string") throw new Error(`${key} must be a string`)
+    out[requiredString(key, `${field} key`)] = raw
+  }
+  return out
+}
+
+function optionalRawStringRecord(value: unknown, field: string): Record<string, string> | undefined {
+  if (value === undefined) return undefined
+  return rawStringRecord(value, field)
 }
 
 function readResearchEventsOptions(value: unknown): ListResearchEventsOptions | undefined {
