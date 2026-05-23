@@ -296,9 +296,12 @@ function isLocalTestHost(host: string): boolean {
 }
 
 function isPrivateOrLocalHost(host: string): boolean {
-  return host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "::1" ||
+  const normalized = host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "")
+  return normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    /^f[cd][0-9a-f]{2}:/.test(normalized) ||
+    /^fe[89ab][0-9a-f]:/.test(normalized) ||
     host.startsWith("10.") ||
     host.startsWith("192.168.") ||
     /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
@@ -320,5 +323,19 @@ function byteLength(value: string): number {
 
 function preview(value: string): string {
   const redacted = redactText(value)
-  return byteLength(redacted) > PREVIEW_BYTES ? redacted.slice(0, PREVIEW_BYTES) : redacted
+  return truncateUtf8(redacted, PREVIEW_BYTES)
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const bytes = new TextEncoder().encode(value)
+  if (bytes.byteLength <= maxBytes) return value
+  const decoder = new TextDecoder("utf-8", { fatal: true })
+  for (let end = maxBytes; end > 0; end -= 1) {
+    try {
+      return decoder.decode(bytes.slice(0, end))
+    } catch {
+      // Keep backing off until the slice ends on a complete UTF-8 codepoint.
+    }
+  }
+  return ""
 }

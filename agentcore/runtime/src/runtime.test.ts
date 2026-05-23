@@ -2609,7 +2609,11 @@ describe("RuntimeServer core", () => {
   test("external API connectors preview, execute, audit, and redact secrets", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
-    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "token=response-secret api_key=response-key value=ok" }])
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: "token=response-secret api_key=response-key value=ok" },
+      { status_code: 200, body: "{\"ok\":true}" },
+      { status_code: 200, body: "語".repeat(600) },
+    ])
     const server = new RuntimeServer({
       projectDir: dir,
       mode: "active",
@@ -2690,8 +2694,17 @@ describe("RuntimeServer core", () => {
     })
     expect(transport.requests[1].body).toBe("  exact body\n")
 
+    const longPreview = await server.command("runtime.execute_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/long",
+      requestedBy: "operator",
+    }) as { response_preview: string }
+    expect(new TextEncoder().encode(longPreview.response_preview).byteLength).toBeLessThanOrEqual(512)
+
     const audit = await server.command("runtime.list_external_api_audit") as Array<{ request_id: string; requested_by: string; ok: boolean }>
     expect(audit).toContainEqual(expect.objectContaining({ request_id: "api_req_test", ok: true }))
+    expect(new TextEncoder().encode(JSON.stringify(audit)).byteLength).toBeLessThan(4096)
     expect(JSON.stringify(audit)).not.toContain("requester-secret")
     expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("raw-secret-token")
     await server.shutdown()
@@ -2713,6 +2726,32 @@ describe("RuntimeServer core", () => {
     expect(blocked.allowed).toBe(false)
     expect(blocked.blockers.join(" ")).toContain("host not allowed")
     expect(blocked.blockers.join(" ")).toContain("header is not allowed")
+
+    const ipv6Server = new RuntimeServer({
+      projectDir: dir,
+      mode: "view-records",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{
+        connector_id: "ipv6-local",
+        title: "IPv6 local",
+        base_url: "https://[::1]",
+        allowed_hosts: ["[::1]"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }]),
+      externalApiTransport: new FakeExternalApiTransport(),
+    })
+    const blockedIpv6 = await ipv6Server.command("runtime.preview_external_api_request", {
+      connectorId: "ipv6-local",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedIpv6.allowed).toBe(false)
+    expect(blockedIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
 
     await server.start()
     const dryRun = await server.command("runtime.execute_external_api_request", {
@@ -2737,7 +2776,18 @@ describe("RuntimeServer core", () => {
 
   test("fetch external API transport enforces response max bytes for multibyte text", async () => {
     const originalFetch = globalThis.fetch
-    const responses = ["日本語abc", "😀abc"]
+    let streamCanceled = false
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder()
+        controller.enqueue(encoder.encode("abc"))
+        controller.enqueue(encoder.encode("def"))
+      },
+      cancel() {
+        streamCanceled = true
+      },
+    })
+    const responses: Array<string | ReadableStream<Uint8Array>> = ["日本語abc", "😀abc", stream]
     globalThis.fetch = (async () => new Response(responses.shift() ?? "", { status: 200 })) as unknown as typeof fetch
     try {
       const transport = new FetchExternalApiTransport()
@@ -2758,6 +2808,15 @@ describe("RuntimeServer core", () => {
       })
       expect(splitCodepoint.body).toBe("")
       expect(new TextEncoder().encode(splitCodepoint.body).byteLength).toBeLessThanOrEqual(1)
+      const streamed = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/stream",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+      })
+      expect(streamed.body).toBe("abc")
+      expect(streamCanceled).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
     }

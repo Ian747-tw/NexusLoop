@@ -31,11 +31,10 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
         redirect: "manual",
         signal: controller.signal,
       })
-      const text = await response.text()
       return {
         status_code: response.status,
         headers: Object.fromEntries(response.headers.entries()),
-        body: truncateUtf8(text, input.max_response_bytes),
+        body: await readBoundedBody(response, input.max_response_bytes),
       }
     } finally {
       clearTimeout(timeout)
@@ -43,12 +42,47 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
   }
 }
 
-function truncateUtf8(value: string, maxBytes: number): string {
-  const encoder = new TextEncoder()
-  const bytes = encoder.encode(value)
-  if (bytes.byteLength <= maxBytes) return value
+async function readBoundedBody(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return ""
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value)
+      const remaining = Math.max(0, maxBytes - total)
+      if (chunk.byteLength > remaining) {
+        if (remaining > 0) {
+          chunks.push(chunk.slice(0, remaining))
+          total += remaining
+        }
+        await reader.cancel()
+        break
+      }
+      chunks.push(chunk)
+      total += chunk.byteLength
+      if (total >= maxBytes) {
+        await reader.cancel()
+        break
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return decodeCompleteUtf8(bytes)
+}
+
+function decodeCompleteUtf8(bytes: Uint8Array): string {
   const decoder = new TextDecoder("utf-8", { fatal: true })
-  for (let end = Math.max(0, maxBytes); end > 0; end -= 1) {
+  for (let end = bytes.byteLength; end > 0; end -= 1) {
     try {
       return decoder.decode(bytes.slice(0, end))
     } catch {
