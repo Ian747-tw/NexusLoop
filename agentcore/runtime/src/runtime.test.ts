@@ -2651,6 +2651,17 @@ describe("RuntimeServer core", () => {
     expect(preview.credential_refs_used).toEqual(["test-key"])
     expect((await readJsonlEvents(dir)).map((event) => event.kind)).not.toContain("external_api_request_executed")
 
+    const blockedCredentialHeader = await server.command("runtime.preview_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/search",
+      headers: { authorization: "Bearer user-secret-token" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedCredentialHeader.allowed).toBe(false)
+    expect(blockedCredentialHeader.blockers.join(" ")).toContain("header is not allowed")
+    expect(JSON.stringify(blockedCredentialHeader)).not.toContain("user-secret-token")
+
     await expect(server.command("runtime.execute_external_api_request", {
       connectorId: "with-credential",
       method: "GET",
@@ -2726,7 +2737,8 @@ describe("RuntimeServer core", () => {
 
   test("fetch external API transport enforces response max bytes for multibyte text", async () => {
     const originalFetch = globalThis.fetch
-    globalThis.fetch = (async () => new Response("日本語abc", { status: 200 })) as unknown as typeof fetch
+    const responses = ["日本語abc", "😀abc"]
+    globalThis.fetch = (async () => new Response(responses.shift() ?? "", { status: 200 })) as unknown as typeof fetch
     try {
       const transport = new FetchExternalApiTransport()
       const result = await transport.request({
@@ -2737,6 +2749,15 @@ describe("RuntimeServer core", () => {
         max_response_bytes: 6,
       })
       expect(new TextEncoder().encode(result.body).byteLength).toBeLessThanOrEqual(6)
+      const splitCodepoint = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/emoji",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 1,
+      })
+      expect(splitCodepoint.body).toBe("")
+      expect(new TextEncoder().encode(splitCodepoint.body).byteLength).toBeLessThanOrEqual(1)
     } finally {
       globalThis.fetch = originalFetch
     }

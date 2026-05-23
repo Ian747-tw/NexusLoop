@@ -47,7 +47,15 @@ function truncateUtf8(value: string, maxBytes: number): string {
   const encoder = new TextEncoder()
   const bytes = encoder.encode(value)
   if (bytes.byteLength <= maxBytes) return value
-  return new TextDecoder().decode(bytes.slice(0, maxBytes))
+  const decoder = new TextDecoder("utf-8", { fatal: true })
+  for (let end = Math.max(0, maxBytes); end > 0; end -= 1) {
+    try {
+      return decoder.decode(bytes.slice(0, end))
+    } catch {
+      // Keep backing off until the slice ends on a complete UTF-8 codepoint.
+    }
+  }
+  return ""
 }
 
 export class FakeExternalApiTransport implements ExternalApiTransport {
