@@ -2787,6 +2787,72 @@ describe("RuntimeServer core", () => {
     }) as { allowed: boolean; blockers: string[] }
     expect(blockedIpv6.allowed).toBe(false)
     expect(blockedIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
+    await ipv6Server.shutdown()
+
+    const loopbackServer = new RuntimeServer({
+      projectDir: dir,
+      mode: "view-records",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{
+        connector_id: "loopback-range",
+        title: "Loopback range",
+        base_url: "https://127.0.0.2",
+        allowed_hosts: ["127.0.0.2"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "private-with-local-http",
+        title: "Private with local HTTP",
+        base_url: "https://10.1.2.3",
+        allowed_hosts: ["10.1.2.3"],
+        allowed_methods: ["GET"],
+        allow_local_http: true,
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "localhost-http-test",
+        title: "Localhost HTTP test",
+        base_url: "http://localhost",
+        allowed_hosts: ["localhost"],
+        allowed_methods: ["GET"],
+        allow_local_http: true,
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }]),
+      externalApiTransport: new FakeExternalApiTransport(),
+    })
+    const blockedLoopbackRange = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "loopback-range",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedLoopbackRange.allowed).toBe(false)
+    expect(blockedLoopbackRange.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedPrivateWithLocalHttp = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "private-with-local-http",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedPrivateWithLocalHttp.allowed).toBe(false)
+    expect(blockedPrivateWithLocalHttp.blockers.join(" ")).toContain("local/private host is not allowed")
+    const allowedLocalhostHttp = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "localhost-http-test",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(allowedLocalhostHttp.allowed).toBe(true)
+    expect(allowedLocalhostHttp.blockers).toEqual([])
+    await loopbackServer.shutdown()
 
     await server.start()
     const dryRun = await server.command("runtime.execute_external_api_request", {

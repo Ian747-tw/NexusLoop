@@ -160,9 +160,10 @@ export class ExternalApiRequestService {
       blockers.push(error instanceof Error ? error.message : String(error))
     }
     if (!connector.allowed_hosts.includes(url.hostname)) blockers.push(`host not allowed: ${url.hostname}`)
-    if (url.protocol !== "https:" && !(connector.allow_local_http && url.protocol === "http:" && isLocalTestHost(url.hostname))) blockers.push(`protocol not allowed: ${url.protocol}`)
+    const allowedLocalHttp = connector.allow_local_http === true && url.protocol === "http:" && isLocalTestHost(url.hostname)
+    if (url.protocol !== "https:" && !allowedLocalHttp) blockers.push(`protocol not allowed: ${url.protocol}`)
     if (url.username || url.password) blockers.push("URL credentials are not allowed")
-    if (isPrivateOrLocalHost(url.hostname) && !connector.allow_local_http) blockers.push(`local/private host is not allowed: ${url.hostname}`)
+    if (isPrivateOrLocalHost(url.hostname) && !allowedLocalHttp) blockers.push(`local/private host is not allowed: ${url.hostname}`)
     for (const [key, value] of Object.entries(input.query ?? {})) {
       if (typeof value !== "string") blockers.push(`query value must be string: ${key}`)
       else url.searchParams.set(key, value)
@@ -300,7 +301,7 @@ function isLocalTestHost(host: string): boolean {
 function isPrivateOrLocalHost(host: string): boolean {
   const normalized = host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "")
   return normalized === "localhost" ||
-    normalized === "127.0.0.1" ||
+    normalized.startsWith("127.") ||
     normalized === "::1" ||
     /^f[cd][0-9a-f]{2}:/.test(normalized) ||
     /^fe[89ab][0-9a-f]:/.test(normalized) ||
