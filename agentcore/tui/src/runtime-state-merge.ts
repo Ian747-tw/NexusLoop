@@ -18,6 +18,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
   const canUpdateCommanderApply = baseline === undefined || stableEqual(current.commanderApply, baseline.commanderApply)
   const canUpdateCommanderAudit = baseline === undefined || stableEqual(current.commanderAudit, baseline.commanderAudit)
   const canUpdateCommanderQueues = baseline === undefined || stableEqual(current.commanderQueues, baseline.commanderQueues)
+  const canUpdateOperatorActions = baseline === undefined || stableEqual(current.operatorActions, baseline.operatorActions)
   const canUpdateRuntimeCommandError =
     baseline === undefined ||
     (stableEqual(current.runtimeCommandError, baseline.runtimeCommandError) &&
@@ -51,6 +52,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     commanderApply: canUpdateCommanderApply ? next.commanderApply : current.commanderApply,
     commanderAudit: canUpdateCommanderAudit ? next.commanderAudit : current.commanderAudit,
     commanderQueues: canUpdateCommanderQueues ? next.commanderQueues : current.commanderQueues,
+    operatorActions: canUpdateOperatorActions ? next.operatorActions : current.operatorActions,
     runtimeCommandError: canUpdateRuntimeCommandError ? next.runtimeCommandError : current.runtimeCommandError,
     lastCommand: canUpdateLastCommand ? next.lastCommand : current.lastCommand,
     header: {

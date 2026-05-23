@@ -234,6 +234,62 @@ describe("interactive runtime effect state merge", () => {
     })
   })
 
+  test("preserves staged operator actions through command effect merges", () => {
+    const baseline: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      systemActions: [{ title: "user command -> runtime", detail: "stage-command /queues" }],
+    }
+    const stagedResult: UiState = {
+      ...baseline,
+      operatorActions: {
+        staged: {
+          label: "Explicit command",
+          command: "/queues",
+          command_type: "read",
+        },
+        lastResult: null,
+      },
+      systemActions: [
+        ...baseline.systemActions,
+        { title: "operator command staged", detail: "/queues", status: "read" },
+      ],
+    }
+
+    const merged = mergeRuntimeEffectState(baseline, stagedResult, baseline.systemActions.length, baseline)
+
+    expect(merged.operatorActions?.staged?.command).toBe("/queues")
+    expect(merged.systemActions.at(-1)).toEqual({ title: "operator command staged", detail: "/queues", status: "read" })
+
+    const currentWithNewerStage: UiState = {
+      ...baseline,
+      operatorActions: {
+        staged: {
+          label: "Explicit command",
+          command: "/records",
+          command_type: "read",
+        },
+        lastResult: null,
+      },
+    }
+    const olderClearResult: UiState = {
+      ...baseline,
+      operatorActions: {
+        staged: null,
+        lastResult: null,
+      },
+      systemActions: [
+        ...baseline.systemActions,
+        { title: "operator command cleared", detail: "staged=none", status: "cleared" },
+      ],
+    }
+
+    const staleMerged = mergeRuntimeEffectState(currentWithNewerStage, olderClearResult, baseline.systemActions.length, baseline)
+
+    expect(staleMerged.operatorActions?.staged?.command).toBe("/records")
+    expect(staleMerged.systemActions.at(-1)).toEqual({ title: "operator command cleared", detail: "staged=none", status: "cleared" })
+  })
+
   test("keeps header mission aligned when mission execution rebases over newer mission summary", () => {
     const baseline: UiState = {
       ...initialState("/tmp/demo"),
