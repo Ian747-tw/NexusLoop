@@ -793,12 +793,12 @@ async function runStagedOperatorCommand(state: UiState, runtime: RuntimeClient):
   if (operatorActionCommands.has(parsed.command)) {
     return applyOperatorExecutionFailure(state, staged, `staged command cannot be an operator action command: ${parsed.command}`)
   }
-  const beforeError = commandErrorFor(parsed.command, state)
   const executedAt = new Date(0).toISOString()
   try {
-    const executed = await applyNamedRuntimeCommand(state, runtime, parsed.command, parsed.args)
+    const executionState = clearCommandErrorFor(parsed.command, state)
+    const executed = await applyNamedRuntimeCommand(executionState, runtime, parsed.command, parsed.args)
     const afterError = commandErrorFor(parsed.command, executed)
-    if (afterError && afterError !== beforeError) {
+    if (afterError) {
       return applyOperatorExecutionFailure(executed, staged, afterError, executedAt)
     }
     const result = operatorExecutionResult(staged.command, true, `executed ${parsed.command}`, executedAt, parsed.command, parsed.args)
@@ -890,6 +890,21 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (commanderNavigationCommands.has(command)) return state.commanderNavigation?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
+}
+
+function clearCommandErrorFor(command: string, state: UiState): UiState {
+  if (missionExecutionCommands.has(command)) return { ...state, missionExecution: { ...missionExecutionState(state), commandError: undefined } }
+  if (reviewCommands.has(command)) return { ...state, reviews: { ...reviewsState(state), commandError: undefined } }
+  if (proposalCommands.has(command)) return { ...state, proposals: { ...proposalsState(state), commandError: undefined } }
+  if (proposalBundleCommands.has(command)) return { ...state, proposalBundles: { ...proposalBundlesState(state), commandError: undefined } }
+  if (playbookCommands.has(command)) return { ...state, commanderPlaybooks: { ...commanderPlaybooksState(state), commandError: undefined } }
+  if (workbenchCommands.has(command)) return { ...state, commanderWorkbench: { ...commanderWorkbenchState(state), commandError: undefined } }
+  if (commanderApplyCommands.has(command)) return { ...state, commanderApply: { ...commanderApplyState(state), commandError: undefined } }
+  if (commanderAuditCommands.has(command)) return { ...state, commanderAudit: { ...commanderAuditState(state), commandError: undefined } }
+  if (commanderQueueCommands.has(command)) return { ...state, commanderQueues: { ...commanderQueuesState(state), commandError: undefined } }
+  if (commanderNavigationCommands.has(command)) return { ...state, commanderNavigation: { ...commanderNavigationState(state), commandError: undefined } }
+  if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
+  return { ...state, runtimeCommandError: undefined }
 }
 
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
