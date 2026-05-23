@@ -8,6 +8,7 @@ import type { CommanderPlaybookDraft, CommanderPlaybookDraftReadiness, Commander
 import type { CommanderApplyPreview, CommanderApplyResult, CommanderApplyTargetType } from "../missions/commander-apply-types"
 import type { CommanderAuditEventKind, CommanderAuditTimeline, CommanderAuthorityChain } from "../missions/commander-audit-types"
 import type { CommanderQueueKind, CommanderQueueResult, CommanderQueueSummary } from "../missions/commander-queue-types"
+import type { CommanderTargetContext, CommanderTargetType } from "../missions/commander-target-context-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -78,6 +79,7 @@ export interface RuntimeClient {
   command(name: "runtime.commander_authority_chain", payload: { targetType: string; targetId: string }): Promise<CommanderAuthorityChain>
   command(name: "runtime.commander_queue_summary", payload?: { staleAfterMs?: number }): Promise<CommanderQueueSummary>
   command(name: "runtime.commander_queue", payload: { queue: CommanderQueueKind; limit?: number; staleAfterMs?: number }): Promise<CommanderQueueResult>
+  command(name: "runtime.commander_target_context", payload: { targetType: CommanderTargetType; targetId: string } | { target_type: CommanderTargetType; target_id: string }): Promise<CommanderTargetContext>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -145,6 +147,7 @@ export interface RuntimeCommandEnvelope {
     | "runtime.commander_authority_chain"
     | "runtime.commander_queue_summary"
     | "runtime.commander_queue"
+    | "runtime.commander_target_context"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

@@ -18,6 +18,10 @@ import type {
   CommanderQueueKind,
   CommanderQueuesState,
   CommanderQueueSummary,
+  CommanderNavigationState,
+  CommanderSuggestedCommandSummary,
+  CommanderTargetContextSummary,
+  CommanderTargetType,
   CommanderWorkbenchDraftSummary,
   CommanderWorkbenchReadinessSummary,
   CommanderWorkbenchState,
@@ -117,6 +121,7 @@ export type RuntimeUiEffect =
   | { type: "load-commander-authority-chain"; targetType: string; targetId: string }
   | { type: "load-commander-queues"; queue?: CommanderQueueKind; limit?: number; staleAfterMs?: number }
   | { type: "load-commander-queue"; queue: CommanderQueueKind; limit?: number; staleAfterMs?: number }
+  | { type: "load-commander-target-context"; targetType: CommanderTargetType; targetId: string }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -436,6 +441,11 @@ export async function applyRuntimeUiEffect(
         return await loadCommanderQueues(state, runtime, effect.queue ?? "needs_review", effect.limit ?? QUEUE_LIMIT, effect.staleAfterMs)
       case "load-commander-queue":
         return await loadCommanderQueue(state, runtime, effect.queue, effect.limit ?? QUEUE_LIMIT, effect.staleAfterMs)
+      case "load-commander-target-context":
+        return applyCommanderTargetContext(
+          state,
+          await runtime.command("runtime.commander_target_context", { targetType: effect.targetType, targetId: effect.targetId }),
+        )
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -456,6 +466,7 @@ export async function applyRuntimeUiEffect(
     if (isCommanderApplyEffect(effect)) return recordCommanderApplyCommandError(state, error)
     if (isCommanderAuditEffect(effect)) return recordCommanderAuditCommandError(state, error)
     if (isCommanderQueueEffect(effect)) return recordCommanderQueueCommandError(state, error)
+    if (isCommanderNavigationEffect(effect)) return recordCommanderNavigationCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -704,6 +715,19 @@ async function loadCommanderQueue(state: UiState, runtime: RuntimeClient, queue:
   }
 }
 
+function applyCommanderTargetContext(state: UiState, value: unknown): UiState {
+  const context = readCommanderTargetContext(value)
+  return {
+    ...state,
+    commanderNavigation: {
+      ...commanderNavigationState(state),
+      selected: context,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "target context loaded", detail: `${context.target_type}:${context.target_id}`, status: context.found ? context.status : "missing" }].slice(-12),
+  }
+}
+
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
   const commandState = { ...state, lastCommand: command }
   switch (command) {
@@ -883,6 +907,20 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "bundles_needing_review", limit: QUEUE_LIMIT })
     case "queue-stale":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-queues", queue: "stale_open", limit: QUEUE_LIMIT })
+    case "open":
+    case "jump":
+    case "target":
+      return applyRuntimeUiEffect(commandState, runtime, targetContextEffect(args, 0))
+    case "open-proposal":
+      return applyRuntimeUiEffect(commandState, runtime, targetContextAliasEffect("proposal", args))
+    case "open-bundle":
+      return applyRuntimeUiEffect(commandState, runtime, targetContextAliasEffect("bundle", args))
+    case "open-draft":
+      return applyRuntimeUiEffect(commandState, runtime, targetContextAliasEffect("draft", args))
+    case "open-review":
+      return applyRuntimeUiEffect(commandState, runtime, targetContextAliasEffect("review", args))
+    case "open-mission":
+      return applyRuntimeUiEffect(commandState, runtime, targetContextAliasEffect("mission", args))
     case "resume":
       return runClientCommand(state, runtime, command)
     case "new-session":
@@ -1069,6 +1107,11 @@ function isCommanderQueueEffect(effect: RuntimeUiEffect): boolean {
   return commanderQueueCommands.has(effect.command)
 }
 
+function isCommanderNavigationEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return effect.type === "load-commander-target-context"
+  return commanderNavigationCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -1140,6 +1183,17 @@ const commanderQueueCommands = new Set([
 const commanderQueueEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-commander-queues",
   "load-commander-queue",
+])
+
+const commanderNavigationCommands = new Set([
+  "open",
+  "jump",
+  "target",
+  "open-proposal",
+  "open-bundle",
+  "open-draft",
+  "open-review",
+  "open-mission",
 ])
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
@@ -1730,6 +1784,18 @@ function recordCommanderQueueCommandError(state: UiState, error: unknown): UiSta
   }
 }
 
+function recordCommanderNavigationCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderNavigation: {
+      ...commanderNavigationState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "commander navigation command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -2105,6 +2171,37 @@ function readCommanderQueueItem(value: unknown): CommanderQueueItemSummary | nul
   }
 }
 
+function readCommanderTargetContext(value: unknown): CommanderTargetContextSummary {
+  if (!isRecord(value) || typeof value.target_type !== "string" || typeof value.target_id !== "string") throw new Error("runtime.commander_target_context returned invalid context")
+  return {
+    target_type: readTargetType(value.target_type),
+    target_id: redactText(value.target_id),
+    found: readBoolean(value.found),
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    status: typeof value.status === "string" ? redactText(value.status) : undefined,
+    record_kind: typeof value.record_kind === "string" ? redactText(value.record_kind) : undefined,
+    related_ids: readRelatedIds(value.related_ids),
+    queue_membership: readStringList(value.queue_membership, 20).map(readQueueKind),
+    audit_event_count: readNumber(value.audit_event_count, 0),
+    recent_audit_events: Array.isArray(value.recent_audit_events) ? value.recent_audit_events.map(readCommanderAuditEvent).filter((event): event is CommanderAuditEventSummary => event !== null).slice(0, 20) : [],
+    suggested_commands: Array.isArray(value.suggested_commands) ? value.suggested_commands.map(readSuggestedCommand).filter((command): command is CommanderSuggestedCommandSummary => command !== null).slice(0, 12) : [],
+    missing_links: readStringList(value.missing_links, 20).map(preview),
+  }
+}
+
+function readSuggestedCommand(value: unknown): CommanderSuggestedCommandSummary | null {
+  if (!isRecord(value) || typeof value.label !== "string" || typeof value.command !== "string") return null
+  const commandType = value.command_type === "write" ? "write" : "read"
+  return {
+    label: preview(readString(value.label, "")),
+    command: preview(readString(value.command, "")),
+    command_type: commandType,
+    requires_review: typeof value.requires_review === "boolean" ? value.requires_review : undefined,
+    requires_active_runtime: typeof value.requires_active_runtime === "boolean" ? value.requires_active_runtime : undefined,
+  }
+}
+
 function readRelatedIds(value: unknown): Record<string, string[]> {
   if (!isRecord(value)) return {}
   const out: Record<string, string[]> = {}
@@ -2126,6 +2223,18 @@ function readQueueKind(value: string): CommanderQueueKind {
     value === "bundles_needing_review" ||
     value === "stale_open") return value
   throw new Error("commander queue kind is invalid")
+}
+
+function readTargetType(value: string): CommanderTargetType {
+  if (value === "mission" ||
+    value === "claim" ||
+    value === "result" ||
+    value === "review" ||
+    value === "proposal" ||
+    value === "bundle" ||
+    value === "draft" ||
+    value === "runtime") return value
+  throw new Error("commander target type is invalid")
 }
 
 function readMissionRecord(value: unknown): MissionRecord | null {
@@ -2281,6 +2390,10 @@ function commanderAuditState(state: UiState): CommanderAuditState {
 
 function commanderQueuesState(state: UiState): CommanderQueuesState {
   return state.commanderQueues ?? { selectedQueue: "needs_review", items: [] }
+}
+
+function commanderNavigationState(state: UiState): CommanderNavigationState {
+  return state.commanderNavigation ?? { selected: null }
 }
 
 function missionExecutionState(state: UiState): MissionExecutionState {
@@ -2508,6 +2621,22 @@ function auditChainEffect(args: string[]): Extract<RuntimeUiEffect, { type: "loa
 
 function requiredQueueKindArg(args: string[], index: number): CommanderQueueKind {
   return readQueueKind(requiredArg(args, index, "queue"))
+}
+
+function targetContextEffect(args: string[], index: number): Extract<RuntimeUiEffect, { type: "load-commander-target-context" }> {
+  return {
+    type: "load-commander-target-context",
+    targetType: readTargetType(requiredArg(args, index, "targetType")),
+    targetId: requiredArg(args, index + 1, "targetId"),
+  }
+}
+
+function targetContextAliasEffect(targetType: CommanderTargetType, args: string[]): Extract<RuntimeUiEffect, { type: "load-commander-target-context" }> {
+  return {
+    type: "load-commander-target-context",
+    targetType,
+    targetId: requiredArg(args, 0, "targetId"),
+  }
 }
 
 function requiredArg(args: string[], index: number, field: string): string {

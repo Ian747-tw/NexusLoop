@@ -44,6 +44,13 @@ export interface CommanderQueueServiceOptions {
   now?: () => Date
 }
 
+interface CommanderQueueSnapshot {
+  reviews: ReviewRequest[]
+  proposals: CommanderProposal[]
+  bundles: CommanderProposalBundle[]
+  drafts: CommanderPlaybookDraft[]
+}
+
 export class CommanderQueueService {
   private readonly reviewRegistry: ReviewRegistry
   private readonly proposalRegistry: ProposalRegistry
@@ -63,6 +70,7 @@ export class CommanderQueueService {
 
   async summary(options: CommanderQueueOptions = {}): Promise<CommanderQueueSummary> {
     const staleAfterMs = readStaleAfterMs(options.staleAfterMs)
+    const snapshot = await this.snapshot()
     const counts: Record<CommanderQueueKind, number> = {
       needs_review: 0,
       ready_to_apply: 0,
@@ -75,7 +83,7 @@ export class CommanderQueueService {
     }
     let lastUpdatedAt: string | undefined
     for (const queue of COMMANDER_QUEUE_KINDS) {
-      const items = orderQueueItems(queue, await this.collect(queue, staleAfterMs))
+      const items = orderQueueItems(queue, await this.collectFromSnapshot(queue, staleAfterMs, snapshot))
       counts[queue] = items.length
       for (const item of items) {
         lastUpdatedAt = newestIso(lastUpdatedAt, item.updated_at ?? item.created_at)
@@ -108,13 +116,36 @@ export class CommanderQueueService {
     })
   }
 
+  async membership(targetType: string, targetId: string, options: CommanderQueueOptions = {}): Promise<CommanderQueueKind[]> {
+    if (typeof targetType !== "string" || !targetType.trim()) throw new Error("commander queue targetType is required")
+    if (typeof targetId !== "string" || !targetId.trim()) throw new Error("commander queue targetId is required")
+    const staleAfterMs = readStaleAfterMs(options.staleAfterMs)
+    const snapshot = await this.snapshot()
+    const cleanTargetId = redactText(targetId.trim())
+    const memberships: CommanderQueueKind[] = []
+    for (const queue of COMMANDER_QUEUE_KINDS) {
+      const items = await this.collectFromSnapshot(queue, staleAfterMs, snapshot)
+      if (items.some((item) => item.target_type === targetType && item.target_id === cleanTargetId)) memberships.push(queue)
+    }
+    return memberships
+  }
+
   private async collect(queue: CommanderQueueKind, staleAfterMs: number): Promise<CommanderQueueItem[]> {
+    return this.collectFromSnapshot(queue, staleAfterMs, await this.snapshot())
+  }
+
+  private async snapshot(): Promise<CommanderQueueSnapshot> {
     const [reviews, proposals, bundles, drafts] = await Promise.all([
       this.reviewRegistry.listAllReviewRequests(),
       this.proposalRegistry.listAllProposals(),
       this.proposalBundleRegistry.listAllBundles(),
       this.commanderPlaybookDraftRegistry.listAllDrafts(),
     ])
+    return { reviews, proposals, bundles, drafts }
+  }
+
+  private async collectFromSnapshot(queue: CommanderQueueKind, staleAfterMs: number, snapshot: CommanderQueueSnapshot): Promise<CommanderQueueItem[]> {
+    const { reviews, proposals, bundles, drafts } = snapshot
     switch (queue) {
       case "needs_review":
         return reviews.filter((review) => review.status === "pending").map((review) => reviewItem(queue, review))

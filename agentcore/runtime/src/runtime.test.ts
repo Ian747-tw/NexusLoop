@@ -15,6 +15,7 @@ import { ReviewRegistry } from "./missions/review-registry"
 import { ProposalRegistry } from "./missions/proposal-registry"
 import { ProposalBundleRegistry } from "./missions/proposal-bundle-registry"
 import { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-draft-registry"
+import { CommanderQueueService } from "./missions/commander-queue-service"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { SpecService } from "./spec/spec-service"
@@ -6161,5 +6162,183 @@ describe("ProcessOpenCodeAdapter", () => {
       limit: 100,
       items: expect.arrayContaining([expect.objectContaining({ target_id: "review_1" })]),
     })
+  })
+
+  test("commander queue membership reuses one registry snapshot", async () => {
+    const calls = { reviews: 0, proposals: 0, bundles: 0, drafts: 0, previews: 0 }
+    const service = new CommanderQueueService({
+      reviewRegistry: {
+        listAllReviewRequests: async () => {
+          calls.reviews += 1
+          return [{
+            review_id: "review_1",
+            title: "Review",
+            summary: "Review",
+            status: "pending",
+            requested_by: "operator",
+            created_at: "2026-05-01T00:00:00.000Z",
+            updated_at: "2026-05-01T00:00:00.000Z",
+          }]
+        },
+      } as ReviewRegistry,
+      proposalRegistry: {
+        listAllProposals: async () => {
+          calls.proposals += 1
+          return [{
+            proposal_id: "proposal_1",
+            title: "Proposal",
+            summary: "Proposal",
+            status: "proposed",
+            action_kind: "record_progress",
+            action_payload: {},
+            proposed_by: "operator",
+            created_at: "2026-05-01T00:00:00.000Z",
+            updated_at: "2026-05-01T00:00:00.000Z",
+          }]
+        },
+      } as ProposalRegistry,
+      proposalBundleRegistry: {
+        listAllBundles: async () => {
+          calls.bundles += 1
+          return [{
+            bundle_id: "bundle_1",
+            title: "Bundle",
+            summary: "Bundle",
+            status: "open",
+            proposal_ids: ["proposal_1"],
+            created_by: "operator",
+            created_at: "2026-05-01T00:00:00.000Z",
+            updated_at: "2026-05-01T00:00:00.000Z",
+          }]
+        },
+      } as ProposalBundleRegistry,
+      commanderPlaybookDraftRegistry: {
+        listAllDrafts: async () => {
+          calls.drafts += 1
+          return [{
+            draft_id: "draft_1",
+            playbook_id: "record-progress",
+            status: "drafted",
+            field_values: {},
+            proposal_ids: ["proposal_1"],
+            review_ids: [],
+            created_by: "operator",
+            created_at: "2026-05-01T00:00:00.000Z",
+            updated_at: "2026-05-01T00:00:00.000Z",
+          }]
+        },
+      } as unknown as CommanderPlaybookDraftRegistry,
+      applyService: {
+        preview: async (target: { target_type: string; target_id: string }) => {
+          calls.previews += 1
+          return {
+            target_type: target.target_type,
+            target_id: target.target_id,
+            ready_to_apply: false,
+            proposal_ids: target.target_type === "proposal" ? [target.target_id] : ["proposal_1"],
+            approved_count: 0,
+            applied_count: 0,
+            blocked_count: 1,
+            blockers: ["not approved"],
+            apply_mode: target.target_type === "proposal" ? "single" : target.target_type,
+            would_apply: [],
+            would_skip: [],
+          }
+        },
+      } as never,
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+    })
+
+    await expect(service.membership("proposal", "proposal_1")).resolves.toContain("blocked")
+    expect(calls).toMatchObject({ reviews: 1, proposals: 1, bundles: 1, drafts: 1, previews: 6 })
+  })
+
+  test("commander target context is read-only redacted and spans proposal bundle draft review mission navigation", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const beforeEvents = (await readJsonlEvents(dir)).length
+    const submitted = await server.submitUserMessage("target context mission")
+    const claim = await server.command("runtime.claim_mission", { missionId: submitted.missionId, executorId: "executor" }) as { claim_id: string }
+    await server.command("runtime.record_mission_progress", { missionId: submitted.missionId, claimId: claim.claim_id, message: "progress" })
+    const result = await server.command("runtime.submit_mission_result", { missionId: submitted.missionId, claimId: claim.claim_id, summary: "result summary" }) as { result_id: string }
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "proposal token=target-title-secret",
+      summary: "summary api_key=target-summary-secret",
+      proposedBy: "operator",
+      actionPayload: { mission_id: submitted.missionId, claim_id: claim.claim_id, message: "progress" },
+    }) as { proposal_id: string }
+    const review = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    const bundle = await server.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: proposal.proposal_id })
+    const draft = await server.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      proposedBy: "operator",
+      fields: { mission_id: submitted.missionId, claim_id: claim.claim_id, title: "draft", message: "draft" },
+      createBundle: true,
+      requestReviews: true,
+    }) as { draft_id: string; bundle_id: string; proposal_ids: string[]; review_ids: string[] }
+
+    const proposalContext = await server.command("runtime.commander_target_context", { targetType: "proposal", targetId: proposal.proposal_id }) as Record<string, unknown>
+    expect(proposalContext.target_type).toBe("proposal")
+    expect(proposalContext.target_id).toBe(proposal.proposal_id)
+    expect(proposalContext.found).toBe(true)
+    expect(proposalContext.status).toBe("review_requested")
+    const proposalRelated = proposalContext.related_ids as Record<string, string[]>
+    expect(proposalRelated.mission_id).toContain(submitted.missionId)
+    expect(proposalRelated.claim_id).toContain(claim.claim_id)
+    expect(proposalRelated.review_id).toContain(review.review_id)
+    expect(proposalRelated.bundle_id).toContain(bundle.bundle_id)
+    expect(proposalContext.queue_membership as string[]).toContain("blocked")
+    expect(Number(proposalContext.audit_event_count)).toBeGreaterThan(0)
+    expect(proposalContext.suggested_commands as Array<{ command: string; command_type: string }>).toContainEqual(expect.objectContaining({ command: `/apply-preview proposal ${proposal.proposal_id}`, command_type: "read" }))
+    expect(JSON.stringify(proposalContext)).not.toContain("target-title-secret")
+    expect(JSON.stringify(proposalContext)).not.toContain("target-summary-secret")
+
+    const bundleContext = await server.command("runtime.commander_target_context", { target_type: "bundle", target_id: bundle.bundle_id }) as { target_type: string; related_ids: Record<string, string[]>; queue_membership: string[] }
+    expect(bundleContext.target_type).toBe("bundle")
+    expect(bundleContext.related_ids.proposal_id).toContain(proposal.proposal_id)
+    expect(bundleContext.queue_membership).toContain("blocked")
+    const draftContext = await server.command("runtime.commander_target_context", { targetType: "draft", targetId: draft.draft_id }) as { target_type: string; related_ids: Record<string, string[]>; queue_membership: string[] }
+    expect(draftContext.target_type).toBe("draft")
+    for (const proposalId of draft.proposal_ids) expect(draftContext.related_ids.proposal_id).toContain(proposalId)
+    expect(draftContext.related_ids.bundle_id).toContain(draft.bundle_id)
+    for (const reviewId of draft.review_ids) expect(draftContext.related_ids.review_id).toContain(reviewId)
+    expect(draftContext.queue_membership).toContain("blocked")
+    const reviewContext = await server.command("runtime.commander_target_context", { targetType: "review", targetId: review.review_id }) as { target_type: string; status: string; related_ids: Record<string, string[]>; suggested_commands: Array<{ command: string; command_type: string }> }
+    expect(reviewContext.target_type).toBe("review")
+    expect(reviewContext.status).toBe("pending")
+    expect(reviewContext.related_ids.proposal_id).toContain(proposal.proposal_id)
+    expect(reviewContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/approve ${review.review_id}`, command_type: "write" }))
+    const missionContext = await server.command("runtime.commander_target_context", { targetType: "mission", targetId: submitted.missionId }) as { target_type: string; status: string; related_ids: Record<string, string[]>; audit_event_count: number }
+    expect(missionContext.target_type).toBe("mission")
+    expect(missionContext.status).toBeTruthy()
+    expect(missionContext.related_ids.claim_id).toContain(claim.claim_id)
+    expect(missionContext.audit_event_count).toBeGreaterThan(0)
+    const claimContext = await server.command("runtime.commander_target_context", { targetType: "claim", targetId: claim.claim_id }) as { suggested_commands: Array<{ command: string }> }
+    expect(claimContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/claims ${submitted.missionId}` }))
+    const resultContext = await server.command("runtime.commander_target_context", { targetType: "result", targetId: result.result_id }) as { suggested_commands: Array<{ command: string }> }
+    expect(resultContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/results ${submitted.missionId}` }))
+    expect(resultContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/draft-complete ${submitted.missionId} ${result.result_id} <title> -- <summary>` }))
+    await expect(server.command("runtime.commander_target_context", { targetType: "proposal", targetId: "proposal_missing" })).resolves.toMatchObject({
+      found: false,
+      missing_links: expect.arrayContaining([expect.stringContaining("proposal record not found")]),
+    })
+    await expect(server.command("runtime.commander_target_context", { targetType: "bogus", targetId: "x" })).rejects.toThrow("unknown commander target type")
+    await expect(server.command("runtime.commander_target_context", { targetType: "proposal" })).rejects.toThrow("targetId is required")
+
+    const afterEvents = (await readJsonlEvents(dir)).length
+    await server.command("runtime.commander_target_context", { targetType: "proposal", targetId: proposal.proposal_id })
+    expect((await readJsonlEvents(dir)).length).toBe(afterEvents)
+    expect(afterEvents).toBeGreaterThan(beforeEvents)
+
+    await server.shutdown()
+    const reader = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    await expect(reader.command("runtime.commander_target_context", { targetType: "proposal", targetId: proposal.proposal_id })).resolves.toMatchObject({ found: true })
   })
 })

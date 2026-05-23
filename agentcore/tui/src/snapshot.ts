@@ -71,6 +71,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...applyLines(state))
   out.push(...auditLines(state))
   out.push(...queueLines(state))
+  out.push(...navigationLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -402,6 +403,50 @@ function queueLines(state: UiState): string[] {
     out.push(...blockerRows.map((blocker) => `    - ${preview(redactText(blocker))}`))
   }
   if (queues.commandError) out.push(`  command_error=${redactText(queues.commandError)}`)
+  return out
+}
+
+function navigationLines(state: UiState): string[] {
+  const navigation = state.commanderNavigation
+  const out = ["Commander target context"]
+  if (!navigation) {
+    out.push("  selected=none")
+    return out
+  }
+  const context = navigation.selected
+  if (!context) {
+    out.push("  selected=none")
+  } else {
+    out.push(`  selected=${context.target_type}:${context.target_id} found=${context.found}`)
+    out.push(`  status=${context.status ?? "unknown"} kind=${context.record_kind ?? "unknown"}`)
+    out.push(`  title=${preview(redactText(context.title))}`)
+    out.push(`  summary=${preview(redactText(context.summary))}`)
+    out.push(`  queues=${context.queue_membership.join(",") || "none"}`)
+    out.push("  related")
+    const related = Object.entries(context.related_ids).flatMap(([key, values]) => values.slice(0, 5).map((value) => `${key}=${value}`)).slice(0, 20)
+    if (related.length === 0) out.push("    - empty")
+    else out.push(...related.map((item) => `    - ${item}`))
+    out.push(`  audit_events=${context.audit_event_count}`)
+    if (context.recent_audit_events.length > 0) {
+      out.push("  recent_audit")
+      out.push(...context.recent_audit_events.slice(0, 10).map((event) => {
+        const target = event.target_type && event.target_id ? `${event.target_type}:${event.target_id}` : "none"
+        return `    - #${event.event_index} ${event.category}/${event.kind} target=${target}: ${preview(redactText(event.summary))}`
+      }))
+    }
+    if (context.suggested_commands.length > 0) {
+      out.push("  suggested_commands")
+      out.push(...context.suggested_commands.slice(0, 12).map((command) => {
+        const flags = [command.command_type, command.requires_review ? "review" : undefined, command.requires_active_runtime ? "active" : undefined].filter(Boolean).join(",")
+        return `    - ${preview(redactText(command.label))} [${flags}]: ${preview(redactText(command.command))}`
+      }))
+    }
+    if (context.missing_links.length > 0) {
+      out.push("  missing_links")
+      out.push(...context.missing_links.slice(0, 10).map((link) => `    - ${preview(redactText(link))}`))
+    }
+  }
+  if (navigation.commandError) out.push(`  command_error=${redactText(navigation.commandError)}`)
   return out
 }
 

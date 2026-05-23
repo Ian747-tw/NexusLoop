@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -18,6 +18,17 @@ export interface RuntimeClient {
   sendCommand(command: string): Promise<unknown>
   shutdown?(): Promise<void>
 }
+
+const COMMANDER_QUEUE_KINDS: CommanderQueueKind[] = [
+  "needs_review",
+  "ready_to_apply",
+  "blocked",
+  "failed_apply",
+  "recently_applied",
+  "drafts_needing_review",
+  "bundles_needing_review",
+  "stale_open",
+]
 
 export class FakeRuntimeClient implements RuntimeClient {
   readonly sentMessages: string[] = []
@@ -257,6 +268,8 @@ export class FakeRuntimeClient implements RuntimeClient {
           readQueueLimit(payload.limit === undefined ? 20 : payload.limit),
           readStaleAfterMs(payload.staleAfterMs === undefined ? payload.stale_after_ms : payload.staleAfterMs),
         )
+      case "runtime.commander_target_context":
+        return this.commanderTargetContext(String(payload.targetType ?? payload.target_type ?? ""), String(payload.targetId ?? payload.target_id ?? ""))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -1063,6 +1076,90 @@ export class FakeRuntimeClient implements RuntimeClient {
     }
   }
 
+  private commanderTargetContext(targetType: string, targetId: string): CommanderTargetContextSummary {
+    const target = readAuditTarget(targetType, targetId) as { targetType: CommanderTargetType; targetId: string }
+    const chain = this.commanderAuthorityChain(target.targetType, target.targetId)
+    const queueMembership = this.fakeQueueMembership(target.targetType, target.targetId)
+    const record = this.fakeTargetRecord(target.targetType, target.targetId)
+    const related = mergeRelatedIds(record.related_ids, chain.related_ids)
+    return {
+      target_type: target.targetType,
+      target_id: redactText(target.targetId),
+      found: record.found,
+      title: preview(redactText(record.title)),
+      summary: preview(redactText(record.summary)),
+      status: record.status ? redactText(record.status) : undefined,
+      record_kind: record.record_kind,
+      related_ids: related,
+      queue_membership: queueMembership,
+      audit_event_count: chain.events.length,
+      recent_audit_events: chain.events.slice(-20).reverse(),
+      suggested_commands: fakeSuggestedCommands(target.targetType, target.targetId, record.status, queueMembership, related),
+      missing_links: [...record.missing_links, ...chain.missing_links].map(redactText).slice(0, 20),
+    }
+  }
+
+  private fakeQueueMembership(targetType: CommanderTargetType, targetId: string): CommanderQueueKind[] {
+    const out: CommanderQueueKind[] = []
+    for (const queue of COMMANDER_QUEUE_KINDS) {
+      if (this.collectCommanderQueue(queue, 7 * 24 * 60 * 60 * 1000).some((item) => item.target_type === targetType && item.target_id === targetId)) out.push(queue)
+    }
+    return out
+  }
+
+  private fakeTargetRecord(targetType: CommanderTargetType, targetId: string): { found: boolean; title: string; summary: string; status?: string; record_kind?: string; related_ids: Record<string, string[]>; missing_links: string[] } {
+    if (targetType === "mission") {
+      const mission = this.missions.find((item) => item.mission_id === targetId)
+      if (!mission) return fakeMissingTarget(targetType, targetId)
+      return {
+        found: true,
+        title: `mission ${mission.mission_id}`,
+        summary: mission.objective ?? mission.completion_summary ?? mission.failure_reason ?? "mission record",
+        status: mission.status,
+        record_kind: "mission",
+        related_ids: {
+          mission_id: [mission.mission_id],
+          intent_id: mission.intent_id ? [mission.intent_id] : [],
+          claim_id: this.claims.filter((claim) => claim.mission_id === mission.mission_id).map((claim) => claim.claim_id),
+          result_id: this.results.filter((result) => result.mission_id === mission.mission_id).map((result) => result.result_id),
+        },
+        missing_links: [],
+      }
+    }
+    if (targetType === "claim") {
+      const claim = this.claims.find((item) => item.claim_id === targetId)
+      if (!claim) return fakeMissingTarget(targetType, targetId)
+      return { found: true, title: `claim ${claim.claim_id}`, summary: `executor=${claim.executor_id}`, status: claim.status, record_kind: "mission_claim", related_ids: { claim_id: [claim.claim_id], mission_id: [claim.mission_id] }, missing_links: [] }
+    }
+    if (targetType === "result") {
+      const result = this.results.find((item) => item.result_id === targetId)
+      if (!result) return fakeMissingTarget(targetType, targetId)
+      return { found: true, title: `result ${result.result_id}`, summary: result.summary, status: result.status, record_kind: "mission_result", related_ids: { result_id: [result.result_id], mission_id: [result.mission_id], claim_id: [result.claim_id] }, missing_links: [] }
+    }
+    if (targetType === "review") {
+      const review = this.reviews.find((item) => item.review_id === targetId)
+      if (!review) return fakeMissingTarget(targetType, targetId)
+      return { found: true, title: review.title, summary: review.summary, status: review.status, record_kind: "review_request", related_ids: { review_id: [review.review_id], proposal_id: this.proposals.filter((proposal) => proposal.review_id === review.review_id).map((proposal) => proposal.proposal_id), mission_id: review.mission_id ? [review.mission_id] : [], claim_id: review.claim_id ? [review.claim_id] : [], result_id: review.result_id ? [review.result_id] : [] }, missing_links: [] }
+    }
+    if (targetType === "proposal") {
+      const proposal = this.proposals.find((item) => item.proposal_id === targetId)
+      if (!proposal) return fakeMissingTarget(targetType, targetId)
+      return { found: true, title: proposal.title, summary: proposal.summary, status: proposal.status, record_kind: "commander_proposal", related_ids: { proposal_id: [proposal.proposal_id], review_id: proposal.review_id ? [proposal.review_id] : [], bundle_id: this.proposalBundles.filter((bundle) => bundle.proposal_ids.includes(proposal.proposal_id)).map((bundle) => bundle.bundle_id), draft_id: this.playbookDrafts.filter((draft) => draft.proposal_ids.includes(proposal.proposal_id)).map((draft) => draft.draft_id), mission_id: proposal.mission_id ? [proposal.mission_id] : [], claim_id: proposal.claim_id ? [proposal.claim_id] : [], result_id: proposal.result_id ? [proposal.result_id] : [] }, missing_links: [] }
+    }
+    if (targetType === "bundle") {
+      const bundle = this.proposalBundles.find((item) => item.bundle_id === targetId)
+      if (!bundle) return fakeMissingTarget(targetType, targetId)
+      const projected = this.projectProposalBundle(bundle)
+      return { found: true, title: projected.title, summary: projected.summary, status: projected.status, record_kind: "commander_proposal_bundle", related_ids: { bundle_id: [projected.bundle_id], proposal_id: projected.proposal_ids }, missing_links: [] }
+    }
+    if (targetType === "draft") {
+      const draft = this.playbookDrafts.find((item) => item.draft_id === targetId)
+      if (!draft) return fakeMissingTarget(targetType, targetId)
+      return { found: true, title: draft.playbook_id, summary: "playbook draft", status: draft.status, record_kind: "commander_playbook_draft", related_ids: { draft_id: [draft.draft_id], proposal_id: draft.proposal_ids, bundle_id: draft.bundle_id ? [draft.bundle_id] : [], review_id: draft.review_ids ?? [] }, missing_links: [] }
+    }
+    return { found: true, title: `runtime ${targetId}`, summary: "fake runtime connected", status: "fake runtime connected", record_kind: "runtime", related_ids: { intent_id: [targetId] }, missing_links: [] }
+  }
+
   private commanderQueueSummary(staleAfterMs: number): CommanderQueueSummary {
     return {
       needs_review_count: this.commanderQueue("needs_review", 100, staleAfterMs).total_considered,
@@ -1494,6 +1591,77 @@ function readApplyTarget(targetType: string, targetId: string): { targetType: "p
 function readAuditTarget(targetType: string, targetId: string): { targetType: string; targetId: string } {
   if (!["mission", "claim", "result", "review", "proposal", "bundle", "draft", "runtime"].includes(targetType)) throw new Error("targetType must be mission, claim, result, review, proposal, bundle, draft, or runtime")
   return { targetType, targetId: requiredString(targetId, "targetId") }
+}
+
+function fakeMissingTarget(targetType: CommanderTargetType, targetId: string): { found: boolean; title: string; summary: string; record_kind: string; related_ids: Record<string, string[]>; missing_links: string[] } {
+  return {
+    found: false,
+    title: `${targetType} ${targetId}`,
+    summary: "target record not found",
+    record_kind: targetType,
+    related_ids: { [`${targetType}_id`]: [redactText(targetId)] },
+    missing_links: [`${targetType} record not found: ${targetId}`],
+  }
+}
+
+function mergeRelatedIds(...records: Record<string, string[]>[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const record of records) {
+    for (const [key, values] of Object.entries(record)) {
+      out[key] = [...new Set([...(out[key] ?? []), ...values.map(redactText)])].sort().slice(0, 20)
+    }
+  }
+  return Object.fromEntries(Object.entries(out).filter(([, values]) => values.length > 0).sort(([a], [b]) => a.localeCompare(b)))
+}
+
+function fakeSuggestedCommands(targetType: CommanderTargetType, targetId: string, status: string | undefined, queues: CommanderQueueKind[], relatedIds: Record<string, string[]>): CommanderTargetContextSummary["suggested_commands"] {
+  const id = redactText(targetId)
+  const missionId = relatedIds.mission_id?.[0] ?? id
+  const commands: CommanderTargetContextSummary["suggested_commands"] = []
+  const add = (label: string, command: string, commandType: "read" | "write" = "read", requiresReview = false, requiresActiveRuntime = false) => {
+    commands.push({ label: redactText(label), command: redactText(command), command_type: commandType, requires_review: requiresReview || undefined, requires_active_runtime: requiresActiveRuntime || undefined })
+  }
+  if (targetType === "mission") {
+    add("Open mission", `/mission ${id}`)
+    add("Audit mission", `/audit mission ${id}`)
+  } else if (targetType === "review") {
+    add("Open review", `/review ${id}`)
+    add("Audit review", `/audit review ${id}`)
+    if (status === "pending") {
+      add("Approve review", `/approve ${id}`, "write", false, true)
+      add("Reject review", `/reject ${id} <reason>`, "write", false, true)
+    }
+  } else if (targetType === "proposal") {
+    add("Open proposal", `/proposal ${id}`)
+    add("Request review", `/proposal-review ${id} <title> -- <summary>`, "write", true, true)
+    add("Preview apply", `/apply-preview proposal ${id}`)
+    if (status === "approved") add("Apply proposal", `/apply-target proposal ${id}`, "write", true, true)
+  } else if (targetType === "bundle") {
+    add("Open bundle", `/bundle ${id}`)
+    add("Check readiness", `/bundle-ready ${id}`)
+    add("Request reviews", `/bundle-review ${id}`, "write", true, true)
+    add("Preview apply", `/apply-preview bundle ${id}`)
+    if (status === "approved") add("Apply bundle", `/apply-target bundle ${id}`, "write", true, true)
+  } else if (targetType === "draft") {
+    add("Open draft", `/draft ${id}`)
+    add("Check readiness", `/draft-ready ${id}`)
+    add("Request reviews", `/draft-review ${id}`, "write", true, true)
+    add("Preview apply", `/apply-preview draft ${id}`)
+    if (status !== "cancelled") add("Apply draft", `/apply-target draft ${id}`, "write", true, true)
+  } else if (targetType === "claim") {
+    add("List claims", `/claims ${missionId}`)
+    add("Audit claim", `/audit claim ${id}`)
+    add("Propose release", `/propose-release ${id} <title> -- <reason>`, "write", true, true)
+  } else if (targetType === "result") {
+    add("List results", `/results ${missionId}`)
+    add("Audit result", `/audit result ${id}`)
+    add("Draft completion", `/draft-complete ${missionId} ${id} <title> -- <summary>`, "write", true, true)
+  } else {
+    add("Runtime status", "/status")
+    add("Audit runtime", `/audit runtime ${id}`)
+  }
+  for (const queue of queues) add(`Open ${queue}`, `/queue ${queue}`)
+  return commands.slice(0, 12)
 }
 
 function readAuditCategory(category: string): string {
