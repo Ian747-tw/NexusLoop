@@ -35,12 +35,19 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
       return {
         status_code: response.status,
         headers: Object.fromEntries(response.headers.entries()),
-        body: text.length > input.max_response_bytes ? text.slice(0, input.max_response_bytes) : text,
+        body: truncateUtf8(text, input.max_response_bytes),
       }
     } finally {
       clearTimeout(timeout)
     }
   }
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder()
+  const bytes = encoder.encode(value)
+  if (bytes.byteLength <= maxBytes) return value
+  return new TextDecoder().decode(bytes.slice(0, maxBytes))
 }
 
 export class FakeExternalApiTransport implements ExternalApiTransport {

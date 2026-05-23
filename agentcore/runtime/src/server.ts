@@ -1184,6 +1184,12 @@ function optionalString(value: unknown, field: string): string | undefined {
   return value.trim()
 }
 
+function optionalRawString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "string") throw new Error(`${field} must be a string`)
+  return value
+}
+
 function optionalPositiveInteger(value: unknown, field: string, max = 1000): number | undefined {
   if (value === undefined) return undefined
   if (!Number.isInteger(value) || Number(value) < 1) throw new Error(`${field} must be a positive integer`)
@@ -1236,7 +1242,7 @@ function readExternalApiRequestInput(payload: Record<string, unknown>): External
     path: requiredString(payload.path, "path"),
     query: optionalStringRecord(payload.query, "query"),
     headers: optionalStringRecord(payload.headers, "headers"),
-    body: optionalString(payload.body, "body"),
+    body: optionalRawString(payload.body, "body"),
     dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
     requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
   }

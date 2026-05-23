@@ -19,7 +19,7 @@ import { CommanderQueueService } from "./missions/commander-queue-service"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
-import { FakeExternalApiTransport } from "./external-api/api-transport"
+import { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
@@ -2670,6 +2670,15 @@ describe("RuntimeServer core", () => {
     expect(transport.requests).toHaveLength(1)
     expect(transport.requests[0].headers.Authorization).toBe("Bearer raw-secret-token")
 
+    await server.command("runtime.execute_external_api_request", {
+      connectorId: "with-credential",
+      method: "POST",
+      path: "/submit",
+      body: "  exact body\n",
+      requestedBy: "operator",
+    })
+    expect(transport.requests[1].body).toBe("  exact body\n")
+
     const audit = await server.command("runtime.list_external_api_audit") as Array<{ request_id: string; requested_by: string; ok: boolean }>
     expect(audit).toContainEqual(expect.objectContaining({ request_id: "api_req_test", ok: true }))
     expect(JSON.stringify(audit)).not.toContain("requester-secret")
@@ -2713,6 +2722,24 @@ describe("RuntimeServer core", () => {
     expect(() => readExternalApiConnectorsFromEnv({
       NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{ connector_id: "bad", title: "Bad", base_url: "ftp://example.test", allowed_hosts: ["example.test"], allowed_methods: ["GET"], timeout_ms: 1, max_response_bytes: 1, created_at: "now", updated_at: "now" }]),
     })).toThrow("base_url must use https")
+  })
+
+  test("fetch external API transport enforces response max bytes for multibyte text", async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response("日本語abc", { status: 200 })) as unknown as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport()
+      const result = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })
+      expect(new TextEncoder().encode(result.body).byteLength).toBeLessThanOrEqual(6)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })
 
