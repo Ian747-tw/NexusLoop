@@ -26,6 +26,8 @@ import { CommanderAuditService } from "./missions/commander-audit-service"
 import type { CommanderAuditEventKind, CommanderAuditTimeline, CommanderAuthorityChain } from "./missions/commander-audit-types"
 import { CommanderQueueService, readCommanderQueueKind, readCommanderQueueLimit, readCommanderQueueStaleAfterMs } from "./missions/commander-queue-service"
 import type { CommanderQueueKind, CommanderQueueResult, CommanderQueueSummary } from "./missions/commander-queue-types"
+import { CommanderTargetContextService } from "./missions/commander-target-context-service"
+import type { CommanderTargetContext } from "./missions/commander-target-context-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -437,6 +439,8 @@ export class RuntimeServer {
           limit: readCommanderQueueLimit(payload.limit === undefined ? 20 : payload.limit),
           staleAfterMs: readCommanderQueueStaleAfterMs(payload.staleAfterMs === undefined ? payload.stale_after_ms : payload.staleAfterMs),
         })
+      case "runtime.commander_target_context":
+        return this.commanderTargetContext(requiredString(payload.targetType ?? payload.target_type, "targetType"), requiredString(payload.targetId ?? payload.target_id, "targetId"))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -763,6 +767,10 @@ export class RuntimeServer {
     return this.commanderQueueService().queue(queue, options)
   }
 
+  async commanderTargetContext(targetType: string, targetId: string): Promise<CommanderTargetContext> {
+    return this.commanderTargetContextService().context(targetType, targetId)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1065,6 +1073,20 @@ export class RuntimeServer {
       commanderPlaybookDraftRegistry: this.commanderPlaybookDraftRegistry,
       applyService: this.commanderApplyService(),
       now: this.commanderQueueNow,
+    })
+  }
+
+  private commanderTargetContextService(): CommanderTargetContextService {
+    return new CommanderTargetContextService({
+      missionRegistry: this.missionRegistry,
+      reviewRegistry: this.reviewRegistry,
+      proposalRegistry: this.proposalRegistry,
+      proposalBundleRegistry: this.proposalBundleRegistry,
+      commanderPlaybookDraftRegistry: this.commanderPlaybookDraftRegistry,
+      applyService: this.commanderApplyService(),
+      auditService: this.commanderAuditService(),
+      queueService: this.commanderQueueService(),
+      runtimeStatus: this.status.bind(this),
     })
   }
 }

@@ -236,4 +236,12 @@ const runtimeCommands = new Set([
   "queue-drafts",
   "queue-bundles",
   "queue-stale",
+  "open",
+  "jump",
+  "target",
+  "open-proposal",
+  "open-bundle",
+  "open-draft",
+  "open-review",
+  "open-mission",
 ])

@@ -453,6 +453,45 @@ export type CommanderQueuesState = {
   commandError?: string
 }
 
+export type CommanderTargetType =
+  | "mission"
+  | "claim"
+  | "result"
+  | "review"
+  | "proposal"
+  | "bundle"
+  | "draft"
+  | "runtime"
+
+export type CommanderSuggestedCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_review?: boolean
+  requires_active_runtime?: boolean
+}
+
+export type CommanderTargetContextSummary = {
+  target_type: CommanderTargetType
+  target_id: string
+  found: boolean
+  title: string
+  summary: string
+  status?: string
+  record_kind?: string
+  related_ids: Record<string, string[]>
+  queue_membership: CommanderQueueKind[]
+  audit_event_count: number
+  recent_audit_events: CommanderAuditEventSummary[]
+  suggested_commands: CommanderSuggestedCommandSummary[]
+  missing_links: string[]
+}
+
+export type CommanderNavigationState = {
+  selected?: CommanderTargetContextSummary | null
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -540,6 +579,7 @@ export type UiState = {
   commanderApply?: CommanderApplyState
   commanderAudit?: CommanderAuditState
   commanderQueues?: CommanderQueuesState
+  commanderNavigation?: CommanderNavigationState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -656,6 +696,9 @@ export function initialState(projectDir: string): UiState {
     commanderQueues: {
       selectedQueue: "needs_review",
       items: [],
+    },
+    commanderNavigation: {
+      selected: null,
     },
   }
 }

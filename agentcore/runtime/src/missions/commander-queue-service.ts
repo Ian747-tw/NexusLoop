@@ -108,6 +108,19 @@ export class CommanderQueueService {
     })
   }
 
+  async membership(targetType: string, targetId: string, options: CommanderQueueOptions = {}): Promise<CommanderQueueKind[]> {
+    if (typeof targetType !== "string" || !targetType.trim()) throw new Error("commander queue targetType is required")
+    if (typeof targetId !== "string" || !targetId.trim()) throw new Error("commander queue targetId is required")
+    const staleAfterMs = readStaleAfterMs(options.staleAfterMs)
+    const memberships: CommanderQueueKind[] = []
+    for (const queue of COMMANDER_QUEUE_KINDS) {
+      const items = await this.collect(queue, staleAfterMs)
+      const cleanTargetId = redactText(targetId.trim())
+      if (items.some((item) => item.target_type === targetType && item.target_id === cleanTargetId)) memberships.push(queue)
+    }
+    return memberships
+  }
+
   private async collect(queue: CommanderQueueKind, staleAfterMs: number): Promise<CommanderQueueItem[]> {
     const [reviews, proposals, bundles, drafts] = await Promise.all([
       this.reviewRegistry.listAllReviewRequests(),

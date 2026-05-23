@@ -1878,6 +1878,59 @@ describe("runtime UI effects", () => {
     expect(state.commanderQueues?.items.at(-1)?.target_id).toBe("review_25")
   })
 
+  test("target navigation slash commands load fake context and render bounded redacted snapshot", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const claim = await runtime.command("runtime.claim_mission", { missionId: "mission-1", executorId: "executor" }) as { claim_id: string }
+    const proposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "record_progress",
+      title: "proposal token=nav-title-secret",
+      summary: "summary api_key=nav-summary-secret",
+      proposedBy: "operator",
+      actionPayload: { mission_id: "mission-1", claim_id: claim.claim_id, message: "progress" },
+    }) as { proposal_id: string }
+    const review = await runtime.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    const bundle = await runtime.command("runtime.create_proposal_bundle", { title: "bundle", summary: "bundle", createdBy: "operator" }) as { bundle_id: string }
+    await runtime.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: proposal.proposal_id })
+    const draft = await runtime.command("runtime.draft_commander_playbook", {
+      playbookId: "record-progress",
+      fields: { mission_id: "mission-1", claim_id: claim.claim_id, title: "draft", message: "draft" },
+      proposedBy: "operator",
+      createBundle: true,
+      requestReviews: true,
+    }) as { draft_id: string }
+
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "open", args: ["proposal", proposal.proposal_id] })
+    expect(state.commanderNavigation?.selected?.target_type).toBe("proposal")
+    expect(state.commanderNavigation?.selected?.target_id).toBe(proposal.proposal_id)
+    expect(state.commanderNavigation?.selected?.found).toBe(true)
+    expect(state.commanderNavigation?.selected?.related_ids.review_id).toContain(review.review_id)
+    expect(state.commanderNavigation?.selected?.related_ids.bundle_id).toContain(bundle.bundle_id)
+    expect(state.commanderNavigation?.selected?.suggested_commands).toContainEqual(expect.objectContaining({ command: `/apply-preview proposal ${proposal.proposal_id}` }))
+    expect(layoutSnapshot(state)).toContain("Commander target context")
+    expect(layoutSnapshot(state)).toContain(`selected=proposal:${proposal.proposal_id}`)
+    expect(JSON.stringify(state)).not.toContain("nav-title-secret")
+    expect(JSON.stringify(state)).not.toContain("nav-summary-secret")
+
+    for (const [command, args, targetType] of [
+      ["open-bundle", [bundle.bundle_id], "bundle"],
+      ["open-draft", [draft.draft_id], "draft"],
+      ["open-review", [review.review_id], "review"],
+      ["open-mission", ["mission-1"], "mission"],
+      ["jump", ["proposal", proposal.proposal_id], "proposal"],
+      ["target", ["proposal", proposal.proposal_id], "proposal"],
+    ] as const) {
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command, args: [...args] })
+      expect(state.commanderNavigation?.selected?.target_type).toBe(targetType)
+    }
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "open", args: ["proposal"] })
+    expect(state.commanderNavigation?.commandError).toBe("targetId is required")
+
+    const missing = await runtime.command("runtime.commander_target_context", { targetType: "proposal", targetId: "proposal_missing" }) as { found: boolean; missing_links: string[] }
+    expect(missing.found).toBe(false)
+    expect(missing.missing_links[0]).toContain("proposal record not found")
+  })
+
   test("fake commander queue ordering applies priority tie-break before target id", () => {
     const ordered = orderQueueItems("needs_review", [
       {
