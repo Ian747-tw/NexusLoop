@@ -1653,6 +1653,7 @@ function fakeSuggestedCommands(targetType: CommanderTargetType, targetId: string
   } else if (targetType === "result") {
     add("List results", `/results ${missionId}`)
     add("Audit result", `/audit result ${id}`)
+    add("Draft completion", `/draft-complete ${missionId} ${id} <title> -- <summary>`, "write", true, true)
   } else {
     add("Runtime status", "/status")
     add("Audit runtime", `/audit runtime ${id}`)

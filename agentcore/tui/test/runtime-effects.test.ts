@@ -1927,7 +1927,9 @@ describe("runtime UI effects", () => {
       expect(state.commanderNavigation?.selected?.target_type).toBe(targetType)
     }
     expect((await runtime.command("runtime.commander_target_context", { targetType: "claim", targetId: claim.claim_id }) as { suggested_commands: Array<{ command: string }> }).suggested_commands).toContainEqual(expect.objectContaining({ command: "/claims mission-1" }))
-    expect((await runtime.command("runtime.commander_target_context", { targetType: "result", targetId: result.result_id }) as { suggested_commands: Array<{ command: string }> }).suggested_commands).toContainEqual(expect.objectContaining({ command: "/results mission-1" }))
+    const resultContext = await runtime.command("runtime.commander_target_context", { targetType: "result", targetId: result.result_id }) as { suggested_commands: Array<{ command: string }> }
+    expect(resultContext.suggested_commands).toContainEqual(expect.objectContaining({ command: "/results mission-1" }))
+    expect(resultContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/draft-complete mission-1 ${result.result_id} <title> -- <summary>` }))
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "open", args: ["proposal"] })
     expect(state.commanderNavigation?.commandError).toBe("targetId is required")

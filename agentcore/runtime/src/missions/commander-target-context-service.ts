@@ -231,7 +231,7 @@ function suggestedCommands(targetType: CommanderTargetType, targetId: string, st
   } else if (targetType === "result") {
     add("List results", `/results ${missionId}`)
     add("Audit result", `/audit result ${id}`)
-    add("Draft completion", `/draft-complete <missionId> <title> -- <summary>`, "write", { requires_review: true, requires_active_runtime: true })
+    add("Draft completion", `/draft-complete ${missionId} ${id} <title> -- <summary>`, "write", { requires_review: true, requires_active_runtime: true })
   } else if (targetType === "review") {
     add("Open review", `/review ${id}`)
     add("Audit review", `/audit review ${id}`)

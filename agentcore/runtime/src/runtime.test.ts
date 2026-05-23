@@ -6234,6 +6234,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(claimContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/claims ${submitted.missionId}` }))
     const resultContext = await server.command("runtime.commander_target_context", { targetType: "result", targetId: result.result_id }) as { suggested_commands: Array<{ command: string }> }
     expect(resultContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/results ${submitted.missionId}` }))
+    expect(resultContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/draft-complete ${submitted.missionId} ${result.result_id} <title> -- <summary>` }))
     await expect(server.command("runtime.commander_target_context", { targetType: "proposal", targetId: "proposal_missing" })).resolves.toMatchObject({
       found: false,
       missing_links: expect.arrayContaining([expect.stringContaining("proposal record not found")]),
