@@ -796,7 +796,10 @@ async function runStagedOperatorCommand(state: UiState, runtime: RuntimeClient):
   const executedAt = new Date(0).toISOString()
   try {
     const executionState = clearCommandErrorFor(parsed.command, state)
-    const executed = await applyNamedRuntimeCommand(executionState, runtime, parsed.command, parsed.args)
+    const executedRaw = await applyNamedRuntimeCommand(executionState, runtime, parsed.command, parsed.args)
+    const executed = shouldRefreshAfterCommand(parsed.command)
+      ? await refreshRuntimeRecordsOrRecordError(executedRaw, runtime)
+      : executedRaw
     const afterError = commandErrorFor(parsed.command, executed)
     if (afterError) {
       return applyOperatorExecutionFailure(executed, staged, afterError, executedAt)

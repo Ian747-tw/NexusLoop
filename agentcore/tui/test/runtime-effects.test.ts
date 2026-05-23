@@ -1983,6 +1983,13 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.staged).toBeNull()
     expect(state.commanderQueues?.selectedQueue).toBe("needs_review")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/records"] })
+    expect(state.operatorActions?.staged).toMatchObject({ command: "/records", command_type: "read" })
+    state = await applyRuntimeUiEffect({ ...state, runtimeStatus: undefined, missions: undefined }, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/records", ok: true })
+    expect(state.runtimeStatus?.runtimeStatus).toBeTruthy()
+    expect(state.missions?.recent).toEqual(expect.any(Array))
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/notes", "topic-1", "token=stage-secret"] })
     expect(state.operatorActions?.staged?.command).toBe("/notes topic-1 [REDACTED]")
     expect(JSON.stringify(state)).not.toContain("stage-secret")
