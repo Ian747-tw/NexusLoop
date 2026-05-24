@@ -3134,6 +3134,53 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("external API default fetch transport uses configured host resolver", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const originalFetch = globalThis.fetch
+    let fetchCalled = false
+    let resolverCalls = 0
+    globalThis.fetch = (async () => {
+      fetchCalled = true
+      return new Response("{\"ok\":true}", { status: 200 })
+    }) as unknown as typeof fetch
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{
+        connector_id: "default-fetch-custom-resolver",
+        title: "Default fetch custom resolver",
+        base_url: "https://api.default-fetch.example",
+        allowed_hosts: ["api.default-fetch.example"],
+        allowed_methods: ["GET"],
+        timeout_ms: 1000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }]),
+      externalApiResolveHostAddresses: async () => {
+        resolverCalls += 1
+        return [{ address: "93.184.216.34" }]
+      },
+    })
+    try {
+      await server.start()
+      const result = await server.command("runtime.execute_external_api_request", {
+        connectorId: "default-fetch-custom-resolver",
+        method: "GET",
+        path: "/status",
+        requestedBy: "operator",
+      }) as { ok: boolean }
+      expect(result.ok).toBe(true)
+      expect(fetchCalled).toBe(true)
+      expect(resolverCalls).toBeGreaterThanOrEqual(2)
+    } finally {
+      await server.shutdown()
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test("external API connector env config validation fails clearly", () => {
     const connectorWithDefaultHeader = (headerName: string): Record<string, unknown> => ({
       connector_id: "bad-default-header",
