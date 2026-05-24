@@ -103,6 +103,8 @@ function isLocalTestHost(host: string): boolean {
 function mappedIpv4Address(normalized: string): string | null {
   const dotted = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
   if (dotted) return dotted[1] ?? null
+  const expandedDotted = normalized.match(/^0{1,4}:0{1,4}:0{1,4}:0{1,4}:0{1,4}:ffff:(\d+\.\d+\.\d+\.\d+)$/)
+  if (expandedDotted) return expandedDotted[1] ?? null
   const expanded = normalized.match(/^0{1,4}:0{1,4}:0{1,4}:0{1,4}:0{1,4}:ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
   if (expanded) return mappedIpv4HexAddress(expanded[1] ?? "", expanded[2] ?? "")
   const hex = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
