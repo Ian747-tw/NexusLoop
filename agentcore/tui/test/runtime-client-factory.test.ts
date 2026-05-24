@@ -231,6 +231,53 @@ describe("TUI runtime client factory", () => {
     })).toThrow("NXL_OPENCODE_ARGS_JSON must be valid JSON")
   })
 
+  test("invalid external API env config fails clearly without leaking default header secrets", async () => {
+    const dir = await tempProject()
+    expect(() => createTuiRuntimeClient({
+      projectDir: dir,
+      env: {
+        NXL_RUNTIME_CLIENT: "real",
+        NXL_OPENCODE_ADAPTER: "fake",
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{
+          connector_id: "bad-default-header",
+          title: "Bad default header",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET"],
+          default_headers: { Authorization: "Bearer default-header-secret" },
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        }]),
+      },
+    })).toThrow("connector[0].default_headers.Authorization must use credential_refs")
+    try {
+      createTuiRuntimeClient({
+        projectDir: dir,
+        env: {
+          NXL_RUNTIME_CLIENT: "real",
+          NXL_OPENCODE_ADAPTER: "fake",
+          NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{
+            connector_id: "bad-default-header",
+            title: "Bad default header",
+            base_url: "https://api.example.test",
+            allowed_hosts: ["api.example.test"],
+            allowed_methods: ["GET"],
+            default_headers: { Authorization: "Bearer default-header-secret" },
+            timeout_ms: 5000,
+            max_response_bytes: 4096,
+            created_at: "1970-01-01T00:00:00.000Z",
+            updated_at: "1970-01-01T00:00:00.000Z",
+          }]),
+        },
+      })
+      throw new Error("expected invalid external API config")
+    } catch (error) {
+      expect(error instanceof Error ? error.message : String(error)).not.toContain("default-header-secret")
+    }
+  })
+
   test("direct injected client wins over env", async () => {
     const dir = await tempProject()
     const injected = new FakeRuntimeClient(dir, "injected")

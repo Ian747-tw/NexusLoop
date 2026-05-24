@@ -2,6 +2,17 @@ import { redactValue } from "../security/redaction"
 import type { ExternalApiConnector, ExternalApiConnectorSummary, ExternalApiCredentialRef, ExternalApiMethod } from "./api-connector-types"
 
 const FIXED_TIME = "1970-01-01T00:00:00.000Z"
+const CREDENTIAL_DEFAULT_HEADER_NAMES = new Set([
+  "authorization",
+  "cookie",
+  "set-cookie",
+  "proxy-authorization",
+  "x-api-key",
+  "api-key",
+  "x-auth-token",
+  "x-access-token",
+])
+const CREDENTIAL_DEFAULT_HEADER_PATTERNS = [/api[_-]?key/i, /token/i, /secret/i, /password/i, /authorization/i]
 
 export const BUILTIN_EXTERNAL_API_CONNECTORS: ExternalApiConnector[] = [
   {
@@ -87,7 +98,7 @@ function validateExternalApiConnector(value: unknown, field = "connector"): Exte
     base_url: requiredString(value.base_url, `${field}.base_url`),
     allowed_hosts: stringArray(value.allowed_hosts, `${field}.allowed_hosts`, 100),
     allowed_methods: methodArray(value.allowed_methods, `${field}.allowed_methods`),
-    default_headers: recordOfStrings(value.default_headers, `${field}.default_headers`),
+    default_headers: defaultHeaders(value.default_headers, `${field}.default_headers`),
     credential_refs: credentialRefs(value.credential_refs, `${field}.credential_refs`),
     timeout_ms: positiveInteger(value.timeout_ms, `${field}.timeout_ms`, 60_000),
     max_response_bytes: positiveInteger(value.max_response_bytes, `${field}.max_response_bytes`, 1_000_000),
@@ -100,6 +111,22 @@ function validateExternalApiConnector(value: unknown, field = "connector"): Exte
   if (base.protocol !== "https:" && !(connector.allow_local_http && base.protocol === "http:")) throw new Error(`${field}.base_url must use https`)
   if (connector.allowed_hosts.some((host) => !host.trim())) throw new Error(`${field}.allowed_hosts must not include blank hosts`)
   return connector
+}
+
+function defaultHeaders(value: unknown, field: string): Record<string, string> | undefined {
+  const headers = recordOfStrings(value, field)
+  if (!headers) return undefined
+  for (const key of Object.keys(headers)) {
+    const normalized = key.toLowerCase()
+    if (CREDENTIAL_DEFAULT_HEADER_NAMES.has(normalized) || CREDENTIAL_DEFAULT_HEADER_PATTERNS.some((pattern) => pattern.test(key))) {
+      throw new Error(`${field}.${redactHeaderNameForError(key)} must use credential_refs`)
+    }
+  }
+  return headers
+}
+
+function redactHeaderNameForError(key: string): string {
+  return key.replace(/[^A-Za-z0-9_-]/g, "_")
 }
 
 function credentialRefs(value: unknown, field: string): ExternalApiCredentialRef[] | undefined {

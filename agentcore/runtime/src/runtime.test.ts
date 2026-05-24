@@ -2647,12 +2647,36 @@ describe("RuntimeServer core", () => {
           created_at: "1970-01-01T00:00:00.000Z",
           updated_at: "1970-01-01T00:00:00.000Z",
         },
+        {
+          connector_id: "with-safe-default-headers",
+          title: "With safe default headers",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET"],
+          default_headers: {
+            Accept: "application/json token=default-header-secret",
+            "Content-Type": "application/json",
+            "User-Agent": "NexusLoop",
+            "X-Client-Version": "branch-6w",
+          },
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        },
       ]),
     })
 
-    const connectors = await server.command("runtime.list_external_api_connectors") as Array<{ connector_id: string; title: string }>
-    expect(connectors).toHaveLength(2)
+    const connectors = await server.command("runtime.list_external_api_connectors") as Array<{ connector_id: string; title: string; default_headers?: Record<string, string> }>
+    expect(connectors).toHaveLength(3)
     expect(JSON.stringify(connectors)).not.toContain("title-secret")
+    expect(JSON.stringify(connectors)).not.toContain("default-header-secret")
+    expect(connectors.find((connector) => connector.connector_id === "with-safe-default-headers")?.default_headers).toMatchObject({
+      Accept: "application/json [REDACTED]",
+      "Content-Type": "application/json",
+      "User-Agent": "NexusLoop",
+      "X-Client-Version": "branch-6w",
+    })
 
     const preview = await server.command("runtime.preview_external_api_request", {
       connectorId: "with-credential",
@@ -2952,10 +2976,53 @@ describe("RuntimeServer core", () => {
   })
 
   test("external API connector env config validation fails clearly", () => {
+    const connectorWithDefaultHeader = (headerName: string): Record<string, unknown> => ({
+      connector_id: "bad-default-header",
+      title: "Bad default header",
+      base_url: "https://api.example.test",
+      allowed_hosts: ["api.example.test"],
+      allowed_methods: ["GET"],
+      default_headers: { [headerName]: "raw-secret-value" },
+      timeout_ms: 5000,
+      max_response_bytes: 4096,
+      created_at: "1970-01-01T00:00:00.000Z",
+      updated_at: "1970-01-01T00:00:00.000Z",
+    })
     expect(() => readExternalApiConnectorsFromEnv({ NXL_EXTERNAL_API_CONNECTORS_JSON: "not-json" })).toThrow("must be valid JSON")
     expect(() => readExternalApiConnectorsFromEnv({
       NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{ connector_id: "bad", title: "Bad", base_url: "ftp://example.test", allowed_hosts: ["example.test"], allowed_methods: ["GET"], timeout_ms: 1, max_response_bytes: 1, created_at: "now", updated_at: "now" }]),
     })).toThrow("base_url must use https")
+    for (const headerName of ["Authorization", "authorization", "Cookie", "X-Api-Key", "X-Custom-Token"]) {
+      expect(() => readExternalApiConnectorsFromEnv({
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connectorWithDefaultHeader(headerName)]),
+      })).toThrow(`connector[0].default_headers.${headerName} must use credential_refs`)
+    }
+    expect(() => readExternalApiConnectorsFromEnv({
+      NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connectorWithDefaultHeader("X-Secret-Thing")]),
+    })).toThrow("must use credential_refs")
+    try {
+      readExternalApiConnectorsFromEnv({
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connectorWithDefaultHeader("Authorization")]),
+      })
+      throw new Error("expected default header validation failure")
+    } catch (error) {
+      expect(error instanceof Error ? error.message : String(error)).not.toContain("raw-secret-value")
+    }
+    const safe = readExternalApiConnectorsFromEnv({
+      NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{
+        connector_id: "safe-default-headers",
+        title: "Safe default headers",
+        base_url: "https://api.example.test",
+        allowed_hosts: ["api.example.test"],
+        allowed_methods: ["GET"],
+        default_headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "NexusLoop", "X-Client-Version": "branch-6w" },
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }]),
+    })
+    expect(safe[0].default_headers).toMatchObject({ Accept: "application/json", "Content-Type": "application/json", "User-Agent": "NexusLoop", "X-Client-Version": "branch-6w" })
   })
 
   test("fetch external API transport enforces response max bytes for multibyte text", async () => {

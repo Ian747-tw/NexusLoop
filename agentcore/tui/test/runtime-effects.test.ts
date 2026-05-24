@@ -252,6 +252,7 @@ class ExternalApiRuntime implements RuntimeClient {
             base_url: "https://api.example.test",
             allowed_hosts: ["api.example.test"],
             allowed_methods: ["GET", "POST"],
+            default_headers: { Authorization: "Bearer default-header-secret" },
             timeout_ms: 5000,
             max_response_bytes: 4096,
             credential_refs: [],
@@ -264,6 +265,7 @@ class ExternalApiRuntime implements RuntimeClient {
           base_url: "https://api.example.test",
           allowed_hosts: ["api.example.test"],
           allowed_methods: ["GET", "POST"],
+          default_headers: { Authorization: "Bearer selected-default-header-secret" },
           timeout_ms: 5000,
           max_response_bytes: 4096,
           credential_refs: [{ name: "test-key", source: "env", inject_as: "header", target_name: "Authorization", env_name: "NXL_TEST_TOKEN" }],
@@ -2223,9 +2225,13 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "apis" })
     expect(state.externalApi?.connectors.map((connector) => connector.connector_id)).toEqual(["mock-research-api"])
     expect(runtime.calls.map((call) => call.name)).toContain("runtime.list_external_api_audit")
+    expect(JSON.stringify(state)).not.toContain("default-header-secret")
+    expect(layoutSnapshot(state)).not.toContain("default-header-secret")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api", args: ["mock-research-api"] })
     expect(state.externalApi?.selectedConnector?.title).toContain("[REDACTED]")
+    expect(JSON.stringify(state)).not.toContain("selected-default-header-secret")
+    expect(layoutSnapshot(state)).not.toContain("selected-default-header-secret")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api-preview", args: ["mock-research-api", "GET", "/search", "q=token=query-secret"] })
     expect(state.externalApi?.preview).toMatchObject({ connector_id: "mock-research-api", allowed: true })
