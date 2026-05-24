@@ -106,11 +106,19 @@ function validateExternalApiConnector(value: unknown, field = "connector"): Exte
     updated_at: requiredString(value.updated_at, `${field}.updated_at`),
     allow_local_http: value.allow_local_http === true ? true : undefined,
   }
-  const base = new URL(connector.base_url)
+  const base = parseConnectorBaseUrl(connector.base_url, `${field}.base_url`)
   if (base.username || base.password) throw new Error(`${field}.base_url must not include credentials`)
   if (base.protocol !== "https:" && !(connector.allow_local_http && base.protocol === "http:")) throw new Error(`${field}.base_url must use https`)
   if (connector.allowed_hosts.some((host) => !host.trim())) throw new Error(`${field}.allowed_hosts must not include blank hosts`)
   return connector
+}
+
+function parseConnectorBaseUrl(value: string, field: string): URL {
+  try {
+    return new URL(value)
+  } catch {
+    throw new Error(`${field} must be a valid URL`)
+  }
 }
 
 function defaultHeaders(value: unknown, field: string): Record<string, string> | undefined {

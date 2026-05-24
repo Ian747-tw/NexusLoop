@@ -2919,6 +2919,16 @@ describe("RuntimeServer core", () => {
         created_at: "1970-01-01T00:00:00.000Z",
         updated_at: "1970-01-01T00:00:00.000Z",
       }, {
+        connector_id: "public-default-port",
+        title: "Public default port",
+        base_url: "https://api.example.com",
+        allowed_hosts: ["api.example.com"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
         connector_id: "localhost-http-test",
         title: "Localhost HTTP test",
         base_url: "http://localhost",
@@ -3012,6 +3022,14 @@ describe("RuntimeServer core", () => {
     }) as { allowed: boolean; blockers: string[] }
     expect(allowedDnsLikePrivatePrefix.allowed).toBe(true)
     expect(allowedDnsLikePrivatePrefix.blockers).toEqual([])
+    const blockedPortOverride = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "public-default-port",
+      method: "GET",
+      path: "https://api.example.com:8443/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedPortOverride.allowed).toBe(false)
+    expect(blockedPortOverride.blockers.join(" ")).toContain("port not allowed")
     await loopbackServer.start()
     await expect(loopbackServer.command("runtime.execute_external_api_request", {
       connectorId: "mapped-ipv6-private",
@@ -3198,6 +3216,16 @@ describe("RuntimeServer core", () => {
     expect(() => readExternalApiConnectorsFromEnv({
       NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{ connector_id: "bad", title: "Bad", base_url: "ftp://example.test", allowed_hosts: ["example.test"], allowed_methods: ["GET"], timeout_ms: 1, max_response_bytes: 1, created_at: "now", updated_at: "now" }]),
     })).toThrow("base_url must use https")
+    try {
+      readExternalApiConnectorsFromEnv({
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{ connector_id: "bad-url", title: "Bad URL", base_url: "https://api.example.test:secret_token_raw/status", allowed_hosts: ["api.example.test"], allowed_methods: ["GET"], timeout_ms: 1, max_response_bytes: 1, created_at: "now", updated_at: "now" }]),
+      })
+      throw new Error("expected base URL validation failure")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      expect(message).toContain("connector[0].base_url must be a valid URL")
+      expect(message).not.toContain("secret_token_raw")
+    }
     for (const headerName of ["Authorization", "authorization", "Cookie", "X-Api-Key", "X-Custom-Token"]) {
       expect(() => readExternalApiConnectorsFromEnv({
         NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connectorWithDefaultHeader(headerName)]),
