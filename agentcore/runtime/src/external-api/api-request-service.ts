@@ -178,7 +178,7 @@ export class ExternalApiRequestService {
       url = new URL(connector.base_url)
       blockers.push(error instanceof Error ? error.message : String(error))
     }
-    if (!connector.allowed_hosts.includes(url.hostname)) blockers.push(`host not allowed: ${url.hostname}`)
+    if (!connector.allowed_hosts.some((host) => normalizeHostForAllowlist(host) === normalizeHostForAllowlist(url.hostname))) blockers.push(`host not allowed: ${url.hostname}`)
     const allowedLocalHttp = connector.allow_local_http === true && url.protocol === "http:" && isLocalTestHost(url.hostname)
     if (url.protocol !== "https:" && !allowedLocalHttp) blockers.push(`protocol not allowed: ${url.protocol}`)
     if (url.username || url.password) blockers.push("URL credentials are not allowed")
@@ -328,6 +328,10 @@ function isPrivateOrLocalHost(host: string): boolean {
     host.startsWith("10.") ||
     host.startsWith("192.168.") ||
     /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+}
+
+function normalizeHostForAllowlist(host: string): string {
+  return host.trim().toLowerCase()
 }
 
 function readMethod(value: unknown): ExternalApiMethod {

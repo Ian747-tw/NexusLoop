@@ -2849,6 +2849,26 @@ describe("RuntimeServer core", () => {
         created_at: "1970-01-01T00:00:00.000Z",
         updated_at: "1970-01-01T00:00:00.000Z",
       }, {
+        connector_id: "link-local",
+        title: "Link local",
+        base_url: "https://169.254.169.254",
+        allowed_hosts: ["169.254.169.254"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "mixed-case-host",
+        title: "Mixed case host",
+        base_url: "https://API.EXAMPLE.TEST",
+        allowed_hosts: ["API.EXAMPLE.TEST"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
         connector_id: "localhost-http-test",
         title: "Localhost HTTP test",
         base_url: "http://localhost",
@@ -2886,6 +2906,22 @@ describe("RuntimeServer core", () => {
     }) as { allowed: boolean; blockers: string[] }
     expect(blockedMappedIpv6.allowed).toBe(false)
     expect(blockedMappedIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedLinkLocal = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "link-local",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedLinkLocal.allowed).toBe(false)
+    expect(blockedLinkLocal.blockers.join(" ")).toContain("local/private host is not allowed")
+    const allowedMixedCaseHost = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "mixed-case-host",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(allowedMixedCaseHost.allowed).toBe(true)
+    expect(allowedMixedCaseHost.blockers).toEqual([])
     await loopbackServer.start()
     await expect(loopbackServer.command("runtime.execute_external_api_request", {
       connectorId: "mapped-ipv6-private",
@@ -3069,6 +3105,13 @@ describe("RuntimeServer core", () => {
         max_response_bytes: 6,
       })).rejects.toThrow("resolved host is local/private")
       await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "::ffff:a00:5" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "169.254.169.254" }] }).request({
         method: "GET",
         url: "https://api.public.example/text",
         headers: {},
