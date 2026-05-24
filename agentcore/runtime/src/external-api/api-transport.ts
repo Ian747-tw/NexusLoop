@@ -88,7 +88,7 @@ export function isPrivateOrLocalExternalApiAddress(address: string): boolean {
   if (mappedIpv4) return isPrivateOrLocalExternalApiAddress(mappedIpv4)
   const ipFamily = isIP(normalized)
   if (normalized === "localhost" || normalized === "::1" || normalized === "::" || normalized === "0.0.0.0" || (ipFamily === 4 && normalized.startsWith("127."))) return true
-  if (/^f[cd][0-9a-f]{2}:/.test(normalized) || /^fe[89ab][0-9a-f]:/.test(normalized)) return true
+  if (/^f[cd][0-9a-f]{0,2}:/.test(normalized) || /^fe[89ab][0-9a-f]?:/.test(normalized)) return true
   return ipFamily === 4 && (normalized.startsWith("10.") ||
     normalized.startsWith("169.254.") ||
     normalized.startsWith("192.168.") ||
