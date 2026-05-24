@@ -18,6 +18,7 @@ export interface ExternalApiTransportResult {
 }
 
 export interface ExternalApiTransport {
+  readonly requiresResolvedHostValidation?: boolean
   request(input: ExternalApiTransportRequest): Promise<ExternalApiTransportResult>
 }
 
@@ -29,6 +30,8 @@ export interface ExternalApiResolvedAddress {
 export type ExternalApiHostResolver = (hostname: string) => Promise<ExternalApiResolvedAddress[]>
 
 export class FetchExternalApiTransport implements ExternalApiTransport {
+  readonly requiresResolvedHostValidation = true
+
   constructor(private readonly options: { resolveHostAddresses?: ExternalApiHostResolver } = {}) {}
 
   async request(input: ExternalApiTransportRequest): Promise<ExternalApiTransportResult> {
@@ -63,7 +66,7 @@ export async function validateResolvedHost(hostname: string, resolver: ExternalA
 
 export async function defaultResolveHostAddresses(hostname: string): Promise<ExternalApiResolvedAddress[]> {
   const normalized = normalizeHost(hostname)
-  if (normalized === "localhost" || normalized.endsWith(".test")) return []
+  if (normalized === "localhost") return [{ address: normalized }]
   const ipFamily = isIP(normalized)
   if (ipFamily !== 0) return [{ address: normalized, family: ipFamily }]
   return dnsLookup(normalized, { all: true, verbatim: true })
@@ -71,6 +74,8 @@ export async function defaultResolveHostAddresses(hostname: string): Promise<Ext
 
 function isPrivateOrLocalAddress(address: string): boolean {
   const normalized = normalizeHost(address)
+  const mappedIpv4 = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+  if (mappedIpv4) return isPrivateOrLocalAddress(mappedIpv4[1] ?? "")
   if (normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.")) return true
   if (/^f[cd][0-9a-f]{2}:/.test(normalized) || /^fe[89ab][0-9a-f]:/.test(normalized)) return true
   return normalized.startsWith("10.") ||

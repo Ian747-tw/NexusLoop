@@ -82,21 +82,23 @@ export class ExternalApiRequestService {
         responsePreview: "dry run: transport not called",
       })
     }
-    try {
-      await validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses)
-    } catch (error) {
-      const result = this.result({
-        requestId,
-        connectorId: built.connector.connector_id,
-        method: built.method,
-        url: built.redactedUrl,
-        ok: false,
-        dryRun: false,
-        createdAt,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      await this.writeAudit("external_api_request_failed", result, input.requested_by)
-      throw new Error(result.error ?? "external API request blocked")
+    if (this.options.resolveHostAddresses || this.options.transport.requiresResolvedHostValidation === true) {
+      try {
+        await validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses)
+      } catch (error) {
+        const result = this.result({
+          requestId,
+          connectorId: built.connector.connector_id,
+          method: built.method,
+          url: built.redactedUrl,
+          ok: false,
+          dryRun: false,
+          createdAt,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        await this.writeAudit("external_api_request_failed", result, input.requested_by)
+        throw new Error(result.error ?? "external API request blocked")
+      }
     }
     try {
       const response = await this.options.transport.request({

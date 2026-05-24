@@ -2961,7 +2961,22 @@ describe("RuntimeServer core", () => {
         max_response_bytes: 6,
       })).rejects.toThrow("resolved host is local/private")
       expect(fetchCalled).toBe(false)
-      const transport = new FetchExternalApiTransport()
+      await expect(guardedTransport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "::ffff:10.0.0.5" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      expect(fetchCalled).toBe(false)
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
       const result = await transport.request({
         method: "GET",
         url: "https://api.example.test/text",
