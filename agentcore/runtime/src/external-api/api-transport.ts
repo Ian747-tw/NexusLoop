@@ -76,12 +76,13 @@ export function isPrivateOrLocalExternalApiAddress(address: string): boolean {
   const normalized = normalizeHost(address)
   const mappedIpv4 = mappedIpv4Address(normalized)
   if (mappedIpv4) return isPrivateOrLocalExternalApiAddress(mappedIpv4)
-  if (normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.")) return true
+  const ipFamily = isIP(normalized)
+  if (normalized === "localhost" || normalized === "::1" || (ipFamily === 4 && normalized.startsWith("127."))) return true
   if (/^f[cd][0-9a-f]{2}:/.test(normalized) || /^fe[89ab][0-9a-f]:/.test(normalized)) return true
-  return normalized.startsWith("10.") ||
+  return ipFamily === 4 && (normalized.startsWith("10.") ||
     normalized.startsWith("169.254.") ||
     normalized.startsWith("192.168.") ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized))
 }
 
 function mappedIpv4Address(normalized: string): string | null {

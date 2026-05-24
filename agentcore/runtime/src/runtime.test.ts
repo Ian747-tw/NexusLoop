@@ -2869,6 +2869,16 @@ describe("RuntimeServer core", () => {
         created_at: "1970-01-01T00:00:00.000Z",
         updated_at: "1970-01-01T00:00:00.000Z",
       }, {
+        connector_id: "dns-like-private-prefix",
+        title: "DNS-like private prefix",
+        base_url: "https://10.example.com",
+        allowed_hosts: ["10.example.com"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
         connector_id: "localhost-http-test",
         title: "Localhost HTTP test",
         base_url: "http://localhost",
@@ -2922,6 +2932,14 @@ describe("RuntimeServer core", () => {
     }) as { allowed: boolean; blockers: string[] }
     expect(allowedMixedCaseHost.allowed).toBe(true)
     expect(allowedMixedCaseHost.blockers).toEqual([])
+    const allowedDnsLikePrivatePrefix = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "dns-like-private-prefix",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(allowedDnsLikePrivatePrefix.allowed).toBe(true)
+    expect(allowedDnsLikePrivatePrefix.blockers).toEqual([])
     await loopbackServer.start()
     await expect(loopbackServer.command("runtime.execute_external_api_request", {
       connectorId: "mapped-ipv6-private",

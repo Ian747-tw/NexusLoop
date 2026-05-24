@@ -318,16 +318,7 @@ function isLocalTestHost(host: string): boolean {
 }
 
 function isPrivateOrLocalHost(host: string): boolean {
-  const normalized = host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "")
-  if (isPrivateOrLocalExternalApiAddress(normalized)) return true
-  return normalized === "localhost" ||
-    normalized.startsWith("127.") ||
-    normalized === "::1" ||
-    /^f[cd][0-9a-f]{2}:/.test(normalized) ||
-    /^fe[89ab][0-9a-f]:/.test(normalized) ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+  return isPrivateOrLocalExternalApiAddress(host)
 }
 
 function normalizeHostForAllowlist(host: string): string {
