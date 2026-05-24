@@ -10,7 +10,7 @@ import type {
   ExternalApiRequestResult,
 } from "./api-connector-types"
 import type { ExternalApiConnectorRegistry } from "./api-connector-registry"
-import { validateResolvedHost, type ExternalApiHostResolver, type ExternalApiTransport } from "./api-transport"
+import { isPrivateOrLocalExternalApiAddress, validateResolvedHost, type ExternalApiHostResolver, type ExternalApiTransport } from "./api-transport"
 
 const MAX_BODY_BYTES = 64 * 1024
 const PREVIEW_BYTES = 512
@@ -319,6 +319,7 @@ function isLocalTestHost(host: string): boolean {
 
 function isPrivateOrLocalHost(host: string): boolean {
   const normalized = host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "")
+  if (isPrivateOrLocalExternalApiAddress(normalized)) return true
   return normalized === "localhost" ||
     normalized.startsWith("127.") ||
     normalized === "::1" ||

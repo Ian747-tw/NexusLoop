@@ -2791,7 +2791,7 @@ describe("RuntimeServer core", () => {
 
     const loopbackServer = new RuntimeServer({
       projectDir: dir,
-      mode: "view-records",
+      mode: "active",
       researchProjectionMode: "disabled",
       externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{
         connector_id: "loopback-range",
@@ -2810,6 +2810,16 @@ describe("RuntimeServer core", () => {
         allowed_hosts: ["10.1.2.3"],
         allowed_methods: ["GET"],
         allow_local_http: true,
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "mapped-ipv6-private",
+        title: "Mapped IPv6 private",
+        base_url: "https://[::ffff:a00:5]",
+        allowed_hosts: ["[::ffff:a00:5]"],
+        allowed_methods: ["GET"],
         timeout_ms: 5000,
         max_response_bytes: 4096,
         created_at: "1970-01-01T00:00:00.000Z",
@@ -2844,6 +2854,22 @@ describe("RuntimeServer core", () => {
     }) as { allowed: boolean; blockers: string[] }
     expect(blockedPrivateWithLocalHttp.allowed).toBe(false)
     expect(blockedPrivateWithLocalHttp.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedMappedIpv6 = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "mapped-ipv6-private",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedMappedIpv6.allowed).toBe(false)
+    expect(blockedMappedIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
+    await loopbackServer.start()
+    await expect(loopbackServer.command("runtime.execute_external_api_request", {
+      connectorId: "mapped-ipv6-private",
+      method: "GET",
+      path: "/status",
+      dryRun: true,
+      requestedBy: "operator",
+    })).rejects.toThrow("local/private host is not allowed")
     const allowedLocalhostHttp = await loopbackServer.command("runtime.preview_external_api_request", {
       connectorId: "localhost-http-test",
       method: "GET",
@@ -2969,6 +2995,13 @@ describe("RuntimeServer core", () => {
         max_response_bytes: 6,
       })).rejects.toThrow("resolved host is local/private")
       await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "::ffff:10.0.0.5" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "::ffff:a00:5" }] }).request({
         method: "GET",
         url: "https://api.public.example/text",
         headers: {},

@@ -60,7 +60,7 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
 export async function validateResolvedHost(hostname: string, resolver: ExternalApiHostResolver = defaultResolveHostAddresses): Promise<void> {
   const addresses = await resolver(hostname)
   for (const address of addresses) {
-    if (isPrivateOrLocalAddress(address.address)) throw new Error(`resolved host is local/private: ${hostname}`)
+    if (isPrivateOrLocalExternalApiAddress(address.address)) throw new Error(`resolved host is local/private: ${hostname}`)
   }
 }
 
@@ -72,15 +72,26 @@ export async function defaultResolveHostAddresses(hostname: string): Promise<Ext
   return dnsLookup(normalized, { all: true, verbatim: true })
 }
 
-function isPrivateOrLocalAddress(address: string): boolean {
+export function isPrivateOrLocalExternalApiAddress(address: string): boolean {
   const normalized = normalizeHost(address)
-  const mappedIpv4 = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-  if (mappedIpv4) return isPrivateOrLocalAddress(mappedIpv4[1] ?? "")
+  const mappedIpv4 = mappedIpv4Address(normalized)
+  if (mappedIpv4) return isPrivateOrLocalExternalApiAddress(mappedIpv4)
   if (normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.")) return true
   if (/^f[cd][0-9a-f]{2}:/.test(normalized) || /^fe[89ab][0-9a-f]:/.test(normalized)) return true
   return normalized.startsWith("10.") ||
     normalized.startsWith("192.168.") ||
     /^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
+}
+
+function mappedIpv4Address(normalized: string): string | null {
+  const dotted = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+  if (dotted) return dotted[1] ?? null
+  const hex = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  if (!hex) return null
+  const high = Number.parseInt(hex[1] ?? "", 16)
+  const low = Number.parseInt(hex[2] ?? "", 16)
+  if (!Number.isInteger(high) || !Number.isInteger(low) || high < 0 || high > 0xffff || low < 0 || low > 0xffff) return null
+  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`
 }
 
 function normalizeHost(host: string): string {
