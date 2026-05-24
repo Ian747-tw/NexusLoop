@@ -108,6 +108,7 @@ function validateExternalApiConnector(value: unknown, field = "connector"): Exte
   }
   const base = parseConnectorBaseUrl(connector.base_url, `${field}.base_url`)
   if (base.username || base.password) throw new Error(`${field}.base_url must not include credentials`)
+  if (base.search || base.hash) throw new Error(`${field}.base_url must not include query or fragment`)
   if (base.protocol !== "https:" && !(connector.allow_local_http && base.protocol === "http:")) throw new Error(`${field}.base_url must use https`)
   if (connector.allowed_hosts.some((host) => !host.trim())) throw new Error(`${field}.allowed_hosts must not include blank hosts`)
   return connector

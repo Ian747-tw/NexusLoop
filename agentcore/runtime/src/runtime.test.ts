@@ -3226,6 +3226,18 @@ describe("RuntimeServer core", () => {
       expect(message).toContain("connector[0].base_url must be a valid URL")
       expect(message).not.toContain("secret_token_raw")
     }
+    for (const base_url of ["https://api.example.test?auth=raw_secret_value", "https://api.example.test#raw_secret_value"]) {
+      try {
+        readExternalApiConnectorsFromEnv({
+          NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{ connector_id: "bad-base-url", title: "Bad base URL", base_url, allowed_hosts: ["api.example.test"], allowed_methods: ["GET"], timeout_ms: 1, max_response_bytes: 1, created_at: "now", updated_at: "now" }]),
+        })
+        throw new Error("expected base URL query/fragment validation failure")
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        expect(message).toContain("connector[0].base_url must not include query or fragment")
+        expect(message).not.toContain("raw_secret_value")
+      }
+    }
     for (const headerName of ["Authorization", "authorization", "Cookie", "X-Api-Key", "X-Custom-Token"]) {
       expect(() => readExternalApiConnectorsFromEnv({
         NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connectorWithDefaultHeader(headerName)]),
