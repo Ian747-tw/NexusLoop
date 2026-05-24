@@ -3031,6 +3031,17 @@ describe("RuntimeServer core", () => {
       max_response_bytes: 4096,
       created_at: "1970-01-01T00:00:00.000Z",
       updated_at: "1970-01-01T00:00:00.000Z",
+    }, {
+      connector_id: "local-http-test",
+      title: "Local HTTP test",
+      base_url: "http://localhost",
+      allowed_hosts: ["localhost"],
+      allowed_methods: ["GET"],
+      allow_local_http: true,
+      timeout_ms: 5000,
+      max_response_bytes: 4096,
+      created_at: "1970-01-01T00:00:00.000Z",
+      updated_at: "1970-01-01T00:00:00.000Z",
     }])
     let resolvedAddress: string | null = "127.0.0.2"
     const server = new RuntimeServer({
@@ -3065,6 +3076,16 @@ describe("RuntimeServer core", () => {
     })).rejects.toThrow("host resolution returned no addresses")
     expect(transport.requests).toHaveLength(0)
 
+    const localResult = await server.command("runtime.execute_external_api_request", {
+      connectorId: "local-http-test",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { ok: boolean }
+    expect(localResult.ok).toBe(true)
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].allow_local_test_host).toBe(true)
+
     resolvedAddress = "93.184.216.34"
     const result = await server.command("runtime.execute_external_api_request", {
       connectorId: "public-dns",
@@ -3073,7 +3094,7 @@ describe("RuntimeServer core", () => {
       requestedBy: "operator",
     }) as { ok: boolean }
     expect(result.ok).toBe(true)
-    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests).toHaveLength(2)
     await server.shutdown()
   })
 
@@ -3141,7 +3162,7 @@ describe("RuntimeServer core", () => {
         streamCanceled = true
       },
     })
-    const responses: Array<string | ReadableStream<Uint8Array>> = ["日本語abc", "😀abc", stream]
+    const responses: Array<string | ReadableStream<Uint8Array>> = ["local-ok", "日本語abc", "😀abc", stream]
     globalThis.fetch = (async () => {
       fetchCalled = true
       return new Response(responses.shift() ?? "", { status: 200 })
@@ -3206,6 +3227,16 @@ describe("RuntimeServer core", () => {
         max_response_bytes: 6,
       })).rejects.toThrow("host resolution returned no addresses")
       expect(fetchCalled).toBe(false)
+      const localTestTransport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "127.0.0.1" }] })
+      const localTest = await localTestTransport.request({
+        method: "GET",
+        url: "http://localhost/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 16,
+        allow_local_test_host: true,
+      })
+      expect(localTest.status_code).toBe(200)
       const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
       const result = await transport.request({
         method: "GET",

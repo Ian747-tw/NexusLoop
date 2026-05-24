@@ -84,7 +84,7 @@ export class ExternalApiRequestService {
     }
     if (this.options.resolveHostAddresses || this.options.transport.requiresResolvedHostValidation === true) {
       try {
-        await validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses)
+        await validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses, { allowLocalTestHost: built.allowedLocalHttp })
       } catch (error) {
         const result = this.result({
           requestId,
@@ -108,6 +108,7 @@ export class ExternalApiRequestService {
         body: built.body,
         timeout_ms: built.connector.timeout_ms,
         max_response_bytes: built.connector.max_response_bytes,
+        allow_local_test_host: built.allowedLocalHttp,
       })
       const bodyBytes = byteLength(response.body)
       if (bodyBytes > built.connector.max_response_bytes) throw new Error(`response exceeded max_response_bytes: ${built.connector.max_response_bytes}`)
@@ -223,6 +224,7 @@ export class ExternalApiRequestService {
       body: input.body,
       blockers,
       credentialRefsUsed: credentialRefsUsed.map(redactText),
+      allowedLocalHttp,
     }
   }
 
@@ -283,6 +285,7 @@ interface BuiltRequest {
   body?: string
   blockers: string[]
   credentialRefsUsed: string[]
+  allowedLocalHttp: boolean
 }
 
 function resolveRequestUrl(connector: ExternalApiConnector, path: string): URL {

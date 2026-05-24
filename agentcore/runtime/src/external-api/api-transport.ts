@@ -9,6 +9,7 @@ export interface ExternalApiTransportRequest {
   body?: string
   timeout_ms: number
   max_response_bytes: number
+  allow_local_test_host?: boolean
 }
 
 export interface ExternalApiTransportResult {
@@ -35,7 +36,10 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
   constructor(private readonly options: { resolveHostAddresses?: ExternalApiHostResolver } = {}) {}
 
   async request(input: ExternalApiTransportRequest): Promise<ExternalApiTransportResult> {
-    await validateResolvedHost(new URL(input.url).hostname, this.options.resolveHostAddresses)
+    const url = new URL(input.url)
+    await validateResolvedHost(url.hostname, this.options.resolveHostAddresses, {
+      allowLocalTestHost: input.allow_local_test_host === true && url.protocol === "http:" && isLocalTestHost(url.hostname),
+    })
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), input.timeout_ms)
     try {
@@ -57,10 +61,15 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
   }
 }
 
-export async function validateResolvedHost(hostname: string, resolver: ExternalApiHostResolver = defaultResolveHostAddresses): Promise<void> {
+export interface ExternalApiResolvedHostValidationOptions {
+  allowLocalTestHost?: boolean
+}
+
+export async function validateResolvedHost(hostname: string, resolver: ExternalApiHostResolver = defaultResolveHostAddresses, options: ExternalApiResolvedHostValidationOptions = {}): Promise<void> {
   const addresses = await resolver(hostname)
   if (addresses.length === 0) throw new Error(`host resolution returned no addresses: ${hostname}`)
   for (const address of addresses) {
+    if (options.allowLocalTestHost === true && isLocalTestHost(hostname)) continue
     if (isPrivateOrLocalExternalApiAddress(address.address)) throw new Error(`resolved host is local/private: ${hostname}`)
   }
 }
@@ -84,6 +93,11 @@ export function isPrivateOrLocalExternalApiAddress(address: string): boolean {
     normalized.startsWith("169.254.") ||
     normalized.startsWith("192.168.") ||
     /^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized))
+}
+
+function isLocalTestHost(host: string): boolean {
+  const normalized = normalizeHost(host)
+  return normalized === "localhost" || normalized.endsWith(".test")
 }
 
 function mappedIpv4Address(normalized: string): string | null {
