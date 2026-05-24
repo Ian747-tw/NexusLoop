@@ -2859,6 +2859,26 @@ describe("RuntimeServer core", () => {
         created_at: "1970-01-01T00:00:00.000Z",
         updated_at: "1970-01-01T00:00:00.000Z",
       }, {
+        connector_id: "unspecified-ipv4",
+        title: "Unspecified IPv4",
+        base_url: "https://0.0.0.0",
+        allowed_hosts: ["0.0.0.0"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "unspecified-ipv6",
+        title: "Unspecified IPv6",
+        base_url: "https://[::]",
+        allowed_hosts: ["[::]"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
         connector_id: "mixed-case-host",
         title: "Mixed case host",
         base_url: "https://API.EXAMPLE.TEST",
@@ -2924,6 +2944,22 @@ describe("RuntimeServer core", () => {
     }) as { allowed: boolean; blockers: string[] }
     expect(blockedLinkLocal.allowed).toBe(false)
     expect(blockedLinkLocal.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedUnspecifiedIpv4 = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "unspecified-ipv4",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedUnspecifiedIpv4.allowed).toBe(false)
+    expect(blockedUnspecifiedIpv4.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedUnspecifiedIpv6 = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "unspecified-ipv6",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedUnspecifiedIpv6.allowed).toBe(false)
+    expect(blockedUnspecifiedIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
     const allowedMixedCaseHost = await loopbackServer.command("runtime.preview_external_api_request", {
       connectorId: "mixed-case-host",
       method: "GET",
@@ -2996,14 +3032,17 @@ describe("RuntimeServer core", () => {
       created_at: "1970-01-01T00:00:00.000Z",
       updated_at: "1970-01-01T00:00:00.000Z",
     }])
-    let resolvedAddress = "127.0.0.2"
+    let resolvedAddress: string | null = "127.0.0.2"
     const server = new RuntimeServer({
       projectDir: dir,
       mode: "active",
       researchProjectionMode: "disabled",
       externalApiConnectorRegistry: registry,
       externalApiTransport: transport,
-      externalApiResolveHostAddresses: async (hostname) => [{ address: hostname === "api.public.example" ? resolvedAddress : hostname }],
+      externalApiResolveHostAddresses: async (hostname) => {
+        if (hostname === "api.public.example" && resolvedAddress === null) return []
+        return [{ address: hostname === "api.public.example" ? resolvedAddress ?? hostname : hostname }]
+      },
     })
     await server.start()
     await expect(server.command("runtime.execute_external_api_request", {
@@ -3016,6 +3055,15 @@ describe("RuntimeServer core", () => {
     const failedAudit = await server.command("runtime.list_external_api_audit") as Array<{ ok: boolean; error?: string }>
     expect(failedAudit[0]).toMatchObject({ ok: false })
     expect(failedAudit[0].error).toContain("resolved host is local/private")
+
+    resolvedAddress = null
+    await expect(server.command("runtime.execute_external_api_request", {
+      connectorId: "public-dns",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    })).rejects.toThrow("host resolution returned no addresses")
+    expect(transport.requests).toHaveLength(0)
 
     resolvedAddress = "93.184.216.34"
     const result = await server.command("runtime.execute_external_api_request", {
@@ -3136,6 +3184,27 @@ describe("RuntimeServer core", () => {
         timeout_ms: 1000,
         max_response_bytes: 6,
       })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "0.0.0.0" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "::" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("host resolution returned no addresses")
       expect(fetchCalled).toBe(false)
       const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
       const result = await transport.request({

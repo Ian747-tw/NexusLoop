@@ -59,6 +59,7 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
 
 export async function validateResolvedHost(hostname: string, resolver: ExternalApiHostResolver = defaultResolveHostAddresses): Promise<void> {
   const addresses = await resolver(hostname)
+  if (addresses.length === 0) throw new Error(`host resolution returned no addresses: ${hostname}`)
   for (const address of addresses) {
     if (isPrivateOrLocalExternalApiAddress(address.address)) throw new Error(`resolved host is local/private: ${hostname}`)
   }
@@ -77,7 +78,7 @@ export function isPrivateOrLocalExternalApiAddress(address: string): boolean {
   const mappedIpv4 = mappedIpv4Address(normalized)
   if (mappedIpv4) return isPrivateOrLocalExternalApiAddress(mappedIpv4)
   const ipFamily = isIP(normalized)
-  if (normalized === "localhost" || normalized === "::1" || (ipFamily === 4 && normalized.startsWith("127."))) return true
+  if (normalized === "localhost" || normalized === "::1" || normalized === "::" || normalized === "0.0.0.0" || (ipFamily === 4 && normalized.startsWith("127."))) return true
   if (/^f[cd][0-9a-f]{2}:/.test(normalized) || /^fe[89ab][0-9a-f]:/.test(normalized)) return true
   return ipFamily === 4 && (normalized.startsWith("10.") ||
     normalized.startsWith("169.254.") ||
