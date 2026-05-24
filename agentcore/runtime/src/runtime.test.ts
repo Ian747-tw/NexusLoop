@@ -2877,6 +2877,54 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("external API execute validates resolved hosts before dispatch", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport()
+    const registry = new ExternalApiConnectorRegistry([{
+      connector_id: "public-dns",
+      title: "Public DNS",
+      base_url: "https://api.public.example",
+      allowed_hosts: ["api.public.example"],
+      allowed_methods: ["GET"],
+      timeout_ms: 5000,
+      max_response_bytes: 4096,
+      created_at: "1970-01-01T00:00:00.000Z",
+      updated_at: "1970-01-01T00:00:00.000Z",
+    }])
+    let resolvedAddress = "127.0.0.2"
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: registry,
+      externalApiTransport: transport,
+      externalApiResolveHostAddresses: async (hostname) => [{ address: hostname === "api.public.example" ? resolvedAddress : hostname }],
+    })
+    await server.start()
+    await expect(server.command("runtime.execute_external_api_request", {
+      connectorId: "public-dns",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    })).rejects.toThrow("resolved host is local/private")
+    expect(transport.requests).toHaveLength(0)
+    const failedAudit = await server.command("runtime.list_external_api_audit") as Array<{ ok: boolean; error?: string }>
+    expect(failedAudit[0]).toMatchObject({ ok: false })
+    expect(failedAudit[0].error).toContain("resolved host is local/private")
+
+    resolvedAddress = "93.184.216.34"
+    const result = await server.command("runtime.execute_external_api_request", {
+      connectorId: "public-dns",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { ok: boolean }
+    expect(result.ok).toBe(true)
+    expect(transport.requests).toHaveLength(1)
+    await server.shutdown()
+  })
+
   test("external API connector env config validation fails clearly", () => {
     expect(() => readExternalApiConnectorsFromEnv({ NXL_EXTERNAL_API_CONNECTORS_JSON: "not-json" })).toThrow("must be valid JSON")
     expect(() => readExternalApiConnectorsFromEnv({
@@ -2887,6 +2935,7 @@ describe("RuntimeServer core", () => {
   test("fetch external API transport enforces response max bytes for multibyte text", async () => {
     const originalFetch = globalThis.fetch
     let streamCanceled = false
+    let fetchCalled = false
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         const encoder = new TextEncoder()
@@ -2898,8 +2947,20 @@ describe("RuntimeServer core", () => {
       },
     })
     const responses: Array<string | ReadableStream<Uint8Array>> = ["日本語abc", "😀abc", stream]
-    globalThis.fetch = (async () => new Response(responses.shift() ?? "", { status: 200 })) as unknown as typeof fetch
+    globalThis.fetch = (async () => {
+      fetchCalled = true
+      return new Response(responses.shift() ?? "", { status: 200 })
+    }) as unknown as typeof fetch
     try {
+      const guardedTransport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "127.0.0.2" }] })
+      await expect(guardedTransport.request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      expect(fetchCalled).toBe(false)
       const transport = new FetchExternalApiTransport()
       const result = await transport.request({
         method: "GET",

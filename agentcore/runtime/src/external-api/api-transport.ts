@@ -1,3 +1,5 @@
+import { lookup as dnsLookup } from "node:dns/promises"
+import { isIP } from "node:net"
 import type { ExternalApiMethod } from "./api-connector-types"
 
 export interface ExternalApiTransportRequest {
@@ -19,8 +21,18 @@ export interface ExternalApiTransport {
   request(input: ExternalApiTransportRequest): Promise<ExternalApiTransportResult>
 }
 
+export interface ExternalApiResolvedAddress {
+  address: string
+  family?: number
+}
+
+export type ExternalApiHostResolver = (hostname: string) => Promise<ExternalApiResolvedAddress[]>
+
 export class FetchExternalApiTransport implements ExternalApiTransport {
+  constructor(private readonly options: { resolveHostAddresses?: ExternalApiHostResolver } = {}) {}
+
   async request(input: ExternalApiTransportRequest): Promise<ExternalApiTransportResult> {
+    await validateResolvedHost(new URL(input.url).hostname, this.options.resolveHostAddresses)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), input.timeout_ms)
     try {
@@ -40,6 +52,34 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
       clearTimeout(timeout)
     }
   }
+}
+
+export async function validateResolvedHost(hostname: string, resolver: ExternalApiHostResolver = defaultResolveHostAddresses): Promise<void> {
+  const addresses = await resolver(hostname)
+  for (const address of addresses) {
+    if (isPrivateOrLocalAddress(address.address)) throw new Error(`resolved host is local/private: ${hostname}`)
+  }
+}
+
+export async function defaultResolveHostAddresses(hostname: string): Promise<ExternalApiResolvedAddress[]> {
+  const normalized = normalizeHost(hostname)
+  if (normalized === "localhost" || normalized.endsWith(".test")) return []
+  const ipFamily = isIP(normalized)
+  if (ipFamily !== 0) return [{ address: normalized, family: ipFamily }]
+  return dnsLookup(normalized, { all: true, verbatim: true })
+}
+
+function isPrivateOrLocalAddress(address: string): boolean {
+  const normalized = normalizeHost(address)
+  if (normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.")) return true
+  if (/^f[cd][0-9a-f]{2}:/.test(normalized) || /^fe[89ab][0-9a-f]:/.test(normalized)) return true
+  return normalized.startsWith("10.") ||
+    normalized.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
+}
+
+function normalizeHost(host: string): string {
+  return host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "")
 }
 
 async function readBoundedBody(response: Response, maxBytes: number): Promise<string> {

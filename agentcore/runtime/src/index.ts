@@ -129,7 +129,7 @@ export type {
   ExternalApiRequestPreview,
   ExternalApiRequestResult,
 } from "./external-api/api-connector-types"
-export type { ExternalApiTransport, ExternalApiTransportRequest, ExternalApiTransportResult } from "./external-api/api-transport"
+export type { ExternalApiHostResolver, ExternalApiResolvedAddress, ExternalApiTransport, ExternalApiTransportRequest, ExternalApiTransportResult } from "./external-api/api-transport"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"

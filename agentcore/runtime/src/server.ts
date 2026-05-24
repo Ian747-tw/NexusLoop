@@ -31,7 +31,7 @@ import type { CommanderTargetContext } from "./missions/commander-target-context
 import type { ExternalApiAuditRecord, ExternalApiConnector, ExternalApiRequestInput, ExternalApiRequestPreview, ExternalApiRequestResult } from "./external-api/api-connector-types"
 import { ExternalApiConnectorRegistry } from "./external-api/api-connector-registry"
 import { ExternalApiRequestService } from "./external-api/api-request-service"
-import { FetchExternalApiTransport, type ExternalApiTransport } from "./external-api/api-transport"
+import { FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "./external-api/api-transport"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -66,6 +66,7 @@ export interface RuntimeServerOptions {
   externalApiConnectors?: ExternalApiConnector[]
   externalApiTransport?: ExternalApiTransport
   externalApiEnv?: Record<string, string | undefined>
+  externalApiResolveHostAddresses?: ExternalApiHostResolver
   externalApiNow?: () => Date
   externalApiRequestId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
@@ -106,6 +107,7 @@ export class RuntimeServer {
   private readonly runLock: RunLock
   private readonly externalApiTransport: ExternalApiTransport
   private readonly externalApiEnv: Record<string, string | undefined>
+  private readonly externalApiResolveHostAddresses?: ExternalApiHostResolver
   private readonly externalApiNow?: () => Date
   private readonly externalApiRequestId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
@@ -137,6 +139,7 @@ export class RuntimeServer {
     this.externalApiConnectorRegistry = options.externalApiConnectorRegistry ?? new ExternalApiConnectorRegistry(options.externalApiConnectors)
     this.externalApiTransport = options.externalApiTransport ?? new FetchExternalApiTransport()
     this.externalApiEnv = options.externalApiEnv ?? {}
+    this.externalApiResolveHostAddresses = options.externalApiResolveHostAddresses
     this.externalApiNow = options.externalApiNow
     this.externalApiRequestId = options.externalApiRequestId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
@@ -1152,6 +1155,7 @@ export class RuntimeServer {
       transport: this.externalApiTransport,
       eventStore: this.eventStore,
       env: this.externalApiEnv,
+      resolveHostAddresses: this.externalApiResolveHostAddresses,
       now: this.externalApiNow,
       requestId: this.externalApiRequestId,
     })

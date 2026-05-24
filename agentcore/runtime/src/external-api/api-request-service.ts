@@ -10,7 +10,7 @@ import type {
   ExternalApiRequestResult,
 } from "./api-connector-types"
 import type { ExternalApiConnectorRegistry } from "./api-connector-registry"
-import type { ExternalApiTransport } from "./api-transport"
+import { validateResolvedHost, type ExternalApiHostResolver, type ExternalApiTransport } from "./api-transport"
 
 const MAX_BODY_BYTES = 64 * 1024
 const PREVIEW_BYTES = 512
@@ -21,6 +21,7 @@ export interface ExternalApiRequestServiceOptions {
   transport: ExternalApiTransport
   eventStore: EventStore
   env?: Record<string, string | undefined>
+  resolveHostAddresses?: ExternalApiHostResolver
   now?: () => Date
   requestId?: () => string
 }
@@ -80,6 +81,22 @@ export class ExternalApiRequestService {
         createdAt,
         responsePreview: "dry run: transport not called",
       })
+    }
+    try {
+      await validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses)
+    } catch (error) {
+      const result = this.result({
+        requestId,
+        connectorId: built.connector.connector_id,
+        method: built.method,
+        url: built.redactedUrl,
+        ok: false,
+        dryRun: false,
+        createdAt,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      await this.writeAudit("external_api_request_failed", result, input.requested_by)
+      throw new Error(result.error ?? "external API request blocked")
     }
     try {
       const response = await this.options.transport.request({
