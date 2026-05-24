@@ -103,10 +103,16 @@ function isLocalTestHost(host: string): boolean {
 function mappedIpv4Address(normalized: string): string | null {
   const dotted = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
   if (dotted) return dotted[1] ?? null
+  const expanded = normalized.match(/^0{1,4}:0{1,4}:0{1,4}:0{1,4}:0{1,4}:ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  if (expanded) return mappedIpv4HexAddress(expanded[1] ?? "", expanded[2] ?? "")
   const hex = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
   if (!hex) return null
-  const high = Number.parseInt(hex[1] ?? "", 16)
-  const low = Number.parseInt(hex[2] ?? "", 16)
+  return mappedIpv4HexAddress(hex[1] ?? "", hex[2] ?? "")
+}
+
+function mappedIpv4HexAddress(highHex: string, lowHex: string): string | null {
+  const high = Number.parseInt(highHex, 16)
+  const low = Number.parseInt(lowHex, 16)
   if (!Number.isInteger(high) || !Number.isInteger(low) || high < 0 || high > 0xffff || low < 0 || low > 0xffff) return null
   return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`
 }
