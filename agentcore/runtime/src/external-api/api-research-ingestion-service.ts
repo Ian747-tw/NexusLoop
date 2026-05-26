@@ -117,25 +117,28 @@ export class ExternalApiResearchIngestionService {
         content: noteContent(normalized, requestResult.url, requestResult.status_code, responsePreview, responseHash),
         tags: ["external-api", ...(normalized.tags ?? [])],
       })
+      const artifactContent = JSON.stringify({
+        connector_id: normalized.connector_id,
+        request_id: requestResult.request_id,
+        audit_request_id: requestResult.request_id,
+        method: normalized.method,
+        url: requestResult.url,
+        status_code: requestResult.status_code,
+        response_preview: responsePreview,
+        response_sha256: responseHash,
+        ingested_bytes: ingestedBytes,
+        requested_by: redactText(normalized.requested_by),
+        created_at: createdAt,
+      })
+      const artifactHash = sha256(artifactContent)
+      const artifactBytes = byteLength(artifactContent)
       const artifact = this.options.researchDb.addArtifact({
         topic_id: normalized.topic_id,
         kind: "snapshot",
         artifact_type: "snapshot",
-        content: JSON.stringify({
-          connector_id: normalized.connector_id,
-          request_id: requestResult.request_id,
-          audit_request_id: requestResult.request_id,
-          method: normalized.method,
-          url: requestResult.url,
-          status_code: requestResult.status_code,
-          response_preview: responsePreview,
-          response_sha256: responseHash,
-          ingested_bytes: ingestedBytes,
-          requested_by: redactText(normalized.requested_by),
-          created_at: createdAt,
-        }),
-        sha256: responseHash,
-        size_bytes: ingestedBytes,
+        content: artifactContent,
+        sha256: artifactHash,
+        size_bytes: artifactBytes,
         description: `External API response preview from ${normalized.connector_id}`,
       })
       const result: ExternalApiResearchIngestionResult = redactValue({
@@ -295,10 +298,10 @@ function cleanTags(value: string[] | undefined): string[] {
   return value.map((tag, index) => requiredString(tag, `tags[${index}]`)).map(redactText)
 }
 
-function readResponseSelector(value: unknown): "body_preview" | "json" | "text" {
+function readResponseSelector(value: unknown): "body_preview" {
   if (value === undefined) return "body_preview"
-  if (value === "body_preview" || value === "json" || value === "text") return value
-  throw new Error("response_selector must be body_preview, json, or text")
+  if (value === "body_preview") return value
+  throw new Error("response_selector currently supports body_preview only")
 }
 
 function requiredString(value: unknown, field: string): string {

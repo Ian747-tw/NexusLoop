@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
@@ -3116,6 +3117,7 @@ describe("RuntimeServer core", () => {
       query: { q: "token=query-secret" },
       topicId: "topic_api",
       sourceTitle: "Mock source",
+      responseSelector: "body_preview",
       requestedBy: "operator",
     }) as { allowed: boolean; url: string; blockers: string[]; max_ingested_bytes: number; would_create_source: boolean; would_create_note: boolean }
     expect(preview.allowed).toBe(true)
@@ -3143,6 +3145,7 @@ describe("RuntimeServer core", () => {
       topicId: "topic_api",
       sourceTitle: "Mock source",
       noteTitle: "Mock note",
+      responseSelector: "body_preview",
       tags: ["api"],
       requestedBy: "operator token=requester-secret",
     }) as { ok: boolean; source_id: string; note_id: string; artifact_id: string; response_preview: string; ingested_bytes: number; audit_request_id: string }
@@ -3159,6 +3162,14 @@ describe("RuntimeServer core", () => {
     expect(snapshot?.stats.source_count).toBe(1)
     expect(snapshot?.stats.note_count).toBe(1)
     expect(snapshot?.stats.artifact_count).toBe(1)
+    const artifact = snapshot?.artifacts.find((item) => item.id === result.artifact_id)
+    expect(artifact?.content).toBeTruthy()
+    const artifactContent = artifact?.content ?? ""
+    const artifactPayload = JSON.parse(artifactContent) as { response_preview: string; response_sha256: string; ingested_bytes: number }
+    expect(artifact?.sha256).toBe(createHash("sha256").update(artifactContent).digest("hex"))
+    expect(artifact?.size_bytes).toBe(new TextEncoder().encode(artifactContent).byteLength)
+    expect(artifactPayload.response_sha256).toBe(createHash("sha256").update(artifactPayload.response_preview).digest("hex"))
+    expect(artifactPayload.ingested_bytes).toBe(new TextEncoder().encode(artifactPayload.response_preview).byteLength)
     expect(JSON.stringify(snapshot)).not.toContain("response-secret")
     expect(JSON.stringify(snapshot)).not.toContain("requester-secret")
 
@@ -3168,6 +3179,54 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(events)).not.toContain("requester-secret")
     const records = await server.command("runtime.list_external_api_research_ingestions") as Array<{ ingestion_id: string; ok: boolean; audit_request_id: string }>
     expect(records[0]).toMatchObject({ ok: true, audit_request_id: "api_req_ingest" })
+    await server.shutdown()
+  })
+
+  test("external API research ingestion rejects unsupported response selectors before transport or events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const seed = ResearchDb.open(dir)
+    seed.createTopic({ id: "topic_api", title: "API evidence", status: "active" })
+    seed.close()
+    const transport = new FakeExternalApiTransport()
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled", externalApiTransport: transport })
+
+    await expect(server.command("runtime.preview_external_api_research_ingestion", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/search",
+      topicId: "topic_api",
+      sourceTitle: "Mock source",
+      responseSelector: "json",
+      requestedBy: "operator",
+    })).rejects.toThrow("response_selector currently supports body_preview only")
+
+    await server.start()
+    await expect(server.command("runtime.execute_external_api_research_ingestion", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/search",
+      topicId: "topic_api",
+      sourceTitle: "Mock source",
+      responseSelector: "json",
+      requestedBy: "operator",
+    })).rejects.toThrow("response_selector currently supports body_preview only")
+    await expect(server.command("runtime.execute_external_api_research_ingestion", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/search",
+      topicId: "topic_api",
+      sourceTitle: "Mock source",
+      responseSelector: "text",
+      requestedBy: "operator",
+    })).rejects.toThrow("response_selector currently supports body_preview only")
+
+    expect(transport.requests).toHaveLength(0)
+    expect(server.getResearchTopicSnapshot("topic_api")?.stats.source_count).toBe(0)
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).not.toContain("external_api_request_executed")
+    expect(events.map((event) => event.kind)).not.toContain("external_api_research_ingestion_succeeded")
+    expect(events.map((event) => event.kind)).not.toContain("external_api_research_ingestion_failed")
     await server.shutdown()
   })
 
