@@ -31,6 +31,8 @@ import type { CommanderTargetContext } from "./missions/commander-target-context
 import type { ExternalApiAuditRecord, ExternalApiConnector, ExternalApiRequestInput, ExternalApiRequestPreview, ExternalApiRequestResult } from "./external-api/api-connector-types"
 import { ExternalApiConnectorRegistry } from "./external-api/api-connector-registry"
 import { ExternalApiRequestService } from "./external-api/api-request-service"
+import { ExternalApiResearchIngestionService, type ExternalApiResearchDbWriter } from "./external-api/api-research-ingestion-service"
+import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPreview, ExternalApiResearchIngestionRecord, ExternalApiResearchIngestionResult } from "./external-api/api-research-ingestion-types"
 import { FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "./external-api/api-transport"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
@@ -88,6 +90,10 @@ export interface RuntimeResearchDbProjection extends RuntimeResearchDbReader {
   checkProjectionIntegrity(eventsPath?: string): ResearchProjectionIntegrity
   rebuildFromEvents(eventsPath?: string): void
   getProjectionStatus(): ResearchProjectionStatus
+  getTopic(id: string): Topic | null
+  addSource(input: Parameters<ExternalApiResearchDbWriter["addSource"]>[0]): ReturnType<ExternalApiResearchDbWriter["addSource"]>
+  addNote(input: Parameters<ExternalApiResearchDbWriter["addNote"]>[0]): ReturnType<ExternalApiResearchDbWriter["addNote"]>
+  addArtifact(input: Parameters<ExternalApiResearchDbWriter["addArtifact"]>[0]): ReturnType<ExternalApiResearchDbWriter["addArtifact"]>
 }
 
 export class RuntimeServer {
@@ -474,6 +480,12 @@ export class RuntimeServer {
         return this.executeExternalApiRequest(readExternalApiRequestInput(payload))
       case "runtime.list_external_api_audit":
         return this.listExternalApiAudit(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.preview_external_api_research_ingestion":
+        return this.previewExternalApiResearchIngestion(readExternalApiResearchIngestionInput(payload))
+      case "runtime.execute_external_api_research_ingestion":
+        return this.executeExternalApiResearchIngestion(readExternalApiResearchIngestionInput(payload))
+      case "runtime.list_external_api_research_ingestions":
+        return this.listExternalApiResearchIngestions(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -825,6 +837,21 @@ export class RuntimeServer {
     return this.externalApiRequestService().listAudit(limit)
   }
 
+  previewExternalApiResearchIngestion(input: ExternalApiResearchIngestionInput): ExternalApiResearchIngestionPreview {
+    this.ensureResearchProjectionUsable("read")
+    return this.externalApiResearchIngestionService().preview(input)
+  }
+
+  async executeExternalApiResearchIngestion(input: ExternalApiResearchIngestionInput): Promise<ExternalApiResearchIngestionResult> {
+    this.requireExternalApiResearchWriteRuntime("runtime.execute_external_api_research_ingestion")
+    this.ensureResearchProjectionUsable("read")
+    return this.externalApiResearchIngestionService().execute(input)
+  }
+
+  async listExternalApiResearchIngestions(limit = 20): Promise<ExternalApiResearchIngestionRecord[]> {
+    return this.externalApiResearchIngestionService().list(limit)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1112,6 +1139,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before external API requests")
   }
 
+  private requireExternalApiResearchWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before external API research ingestion writes")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1158,6 +1190,17 @@ export class RuntimeServer {
       resolveHostAddresses: this.externalApiResolveHostAddresses,
       now: this.externalApiNow,
       requestId: this.externalApiRequestId,
+    })
+  }
+
+  private externalApiResearchIngestionService(): ExternalApiResearchIngestionService {
+    return new ExternalApiResearchIngestionService({
+      registry: this.externalApiConnectorRegistry,
+      requestService: this.externalApiRequestService(),
+      eventStore: this.eventStore,
+      researchDb: this.getResearchDb(),
+      now: this.externalApiNow,
+      ingestionId: this.externalApiRequestId ? () => `ingest_${this.externalApiRequestId?.()}` : undefined,
     })
   }
 }
@@ -1249,6 +1292,24 @@ function readExternalApiRequestInput(payload: Record<string, unknown>): External
     body: optionalRawString(payload.body, "body"),
     dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
     requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+  }
+}
+
+function readExternalApiResearchIngestionInput(payload: Record<string, unknown>): ExternalApiResearchIngestionInput {
+  return {
+    connector_id: requiredString(payload.connectorId ?? payload.connector_id, "connectorId"),
+    method: requiredString(payload.method, "method").toUpperCase() as ExternalApiResearchIngestionInput["method"],
+    path: requiredString(payload.path, "path"),
+    query: optionalRawStringRecord(payload.query, "query"),
+    headers: optionalRawStringRecord(payload.headers, "headers"),
+    body: optionalRawString(payload.body, "body"),
+    topic_id: requiredString(payload.topicId ?? payload.topic_id, "topicId"),
+    source_title: requiredString(payload.sourceTitle ?? payload.source_title, "sourceTitle"),
+    note_title: optionalString(payload.noteTitle ?? payload.note_title, "noteTitle"),
+    requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+    response_selector: optionalString(payload.responseSelector ?? payload.response_selector, "responseSelector") as ExternalApiResearchIngestionInput["response_selector"],
+    tags: optionalStringArray(payload.tags, "tags"),
+    dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
   }
 }
 

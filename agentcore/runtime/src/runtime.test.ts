@@ -362,6 +362,22 @@ class TrackingResearchDb implements RuntimeResearchDbProjection {
     return this.db.getTopicSnapshot(topicId)
   }
 
+  getTopic(id: string): Topic | null {
+    return this.db.getTopic(id)
+  }
+
+  addSource(input: Parameters<RuntimeResearchDbProjection["addSource"]>[0]): ReturnType<RuntimeResearchDbProjection["addSource"]> {
+    return this.db.addSource(input)
+  }
+
+  addNote(input: Parameters<RuntimeResearchDbProjection["addNote"]>[0]): ReturnType<RuntimeResearchDbProjection["addNote"]> {
+    return this.db.addNote(input)
+  }
+
+  addArtifact(input: Parameters<RuntimeResearchDbProjection["addArtifact"]>[0]): ReturnType<RuntimeResearchDbProjection["addArtifact"]> {
+    return this.db.addArtifact(input)
+  }
+
   listResearchEvents(options?: ListResearchEventsOptions): ResearchEvent[] {
     return this.db.listResearchEvents(options)
   }
@@ -385,6 +401,12 @@ class TrackingResearchDb implements RuntimeResearchDbProjection {
   close(): void {
     this.closeCalls += 1
     this.db.close()
+  }
+}
+
+class FailingAddSourceResearchDb extends TrackingResearchDb {
+  override addSource(_input: Parameters<RuntimeResearchDbProjection["addSource"]>[0]): ReturnType<RuntimeResearchDbProjection["addSource"]> {
+    throw new Error("ResearchDb source write failed token=research-secret")
   }
 }
 
@@ -3069,6 +3091,162 @@ describe("RuntimeServer core", () => {
     expect(transport.requests).toHaveLength(0)
     expect(await server.command("runtime.list_external_api_audit")).toEqual([])
     await server.shutdown()
+  })
+
+  test("external API research ingestion previews and writes bounded ResearchDb evidence with provenance", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const seed = ResearchDb.open(dir, { now: () => new Date("2026-05-24T00:00:00.000Z"), idFactory: () => "seed_unused" })
+    seed.createTopic({ id: "topic_api", title: "API evidence", status: "active" })
+    seed.close()
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "token=response-secret value=ok" }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiTransport: transport,
+      externalApiRequestId: () => "api_req_ingest",
+      externalApiNow: () => new Date("2026-05-24T00:00:00.000Z"),
+    })
+
+    const preview = await server.command("runtime.preview_external_api_research_ingestion", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/search",
+      query: { q: "token=query-secret" },
+      topicId: "topic_api",
+      sourceTitle: "Mock source",
+      requestedBy: "operator",
+    }) as { allowed: boolean; url: string; blockers: string[]; max_ingested_bytes: number; would_create_source: boolean; would_create_note: boolean }
+    expect(preview.allowed).toBe(true)
+    expect(preview.blockers).toEqual([])
+    expect(preview.would_create_source).toBe(true)
+    expect(preview.would_create_note).toBe(true)
+    expect(preview.max_ingested_bytes).toBe(4096)
+    expect(preview.url).not.toContain("query-secret")
+    expect(transport.requests).toHaveLength(0)
+
+    await expect(server.command("runtime.execute_external_api_research_ingestion", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/search",
+      topicId: "topic_api",
+      sourceTitle: "Mock source",
+      requestedBy: "operator",
+    })).rejects.toThrow("runtime must be started before external API research ingestion writes")
+
+    await server.start()
+    const result = await server.command("runtime.execute_external_api_research_ingestion", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/search",
+      topicId: "topic_api",
+      sourceTitle: "Mock source",
+      noteTitle: "Mock note",
+      tags: ["api"],
+      requestedBy: "operator token=requester-secret",
+    }) as { ok: boolean; source_id: string; note_id: string; artifact_id: string; response_preview: string; ingested_bytes: number; audit_request_id: string }
+    expect(result.ok).toBe(true)
+    expect(result.source_id).toBeTruthy()
+    expect(result.note_id).toBeTruthy()
+    expect(result.artifact_id).toBeTruthy()
+    expect(result.audit_request_id).toBe("api_req_ingest")
+    expect(result.response_preview).not.toContain("response-secret")
+    expect(result.ingested_bytes).toBeLessThanOrEqual(512)
+    expect(transport.requests).toHaveLength(1)
+
+    const snapshot = server.getResearchTopicSnapshot("topic_api")
+    expect(snapshot?.stats.source_count).toBe(1)
+    expect(snapshot?.stats.note_count).toBe(1)
+    expect(snapshot?.stats.artifact_count).toBe(1)
+    expect(JSON.stringify(snapshot)).not.toContain("response-secret")
+    expect(JSON.stringify(snapshot)).not.toContain("requester-secret")
+
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("external_api_research_ingestion_succeeded")
+    expect(JSON.stringify(events)).not.toContain("response-secret")
+    expect(JSON.stringify(events)).not.toContain("requester-secret")
+    const records = await server.command("runtime.list_external_api_research_ingestions") as Array<{ ingestion_id: string; ok: boolean; audit_request_id: string }>
+    expect(records[0]).toMatchObject({ ok: true, audit_request_id: "api_req_ingest" })
+    await server.shutdown()
+  })
+
+  test("external API research ingestion dry-run and request failure do not create ResearchDb evidence", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const seed = ResearchDb.open(dir)
+    seed.createTopic({ id: "topic_api", title: "API evidence", status: "active" })
+    seed.close()
+    const transport = new FakeExternalApiTransport([{ status_code: 500, body: "token=response-secret fail" }])
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled", externalApiTransport: transport })
+    await server.start()
+
+    const dryRun = await server.command("runtime.execute_external_api_research_ingestion", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/search",
+      topicId: "topic_api",
+      sourceTitle: "Dry source",
+      dryRun: true,
+      requestedBy: "operator",
+    }) as { ok: boolean; dry_run: boolean; ingested_bytes: number }
+    expect(dryRun).toMatchObject({ ok: true, dry_run: true, ingested_bytes: 0 })
+    expect(transport.requests).toHaveLength(0)
+    expect(server.getResearchTopicSnapshot("topic_api")?.stats.source_count).toBe(0)
+
+    await expect(server.command("runtime.execute_external_api_research_ingestion", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/fail",
+      topicId: "topic_api",
+      sourceTitle: "Fail source",
+      requestedBy: "operator",
+    })).rejects.toThrow("external API research ingestion failed")
+    expect(transport.requests).toHaveLength(1)
+    expect(server.getResearchTopicSnapshot("topic_api")?.stats.source_count).toBe(0)
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("external_api_research_ingestion_failed")
+    expect(JSON.stringify(events)).not.toContain("response-secret")
+    await server.shutdown()
+  })
+
+  test("external API research ingestion records failure when ResearchDb write fails after API audit", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const rawDb = ResearchDb.open(dir)
+    rawDb.createTopic({ id: "topic_api", title: "API evidence", status: "active" })
+    const researchDb = new FailingAddSourceResearchDb(rawDb)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "token=response-secret value=ok" }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      researchDb,
+      externalApiTransport: transport,
+      externalApiRequestId: () => "api_req_write_fail",
+    })
+    await server.start()
+
+    await expect(server.command("runtime.execute_external_api_research_ingestion", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/write-fails",
+      topicId: "topic_api",
+      sourceTitle: "Write failure source",
+      requestedBy: "operator",
+    })).rejects.toThrow("external API research ingestion write failed")
+
+    const events = await readJsonlEvents(dir)
+    const kinds = events.map((event) => event.kind)
+    expect(kinds).toContain("external_api_request_executed")
+    expect(kinds).toContain("external_api_research_ingestion_failed")
+    expect(JSON.stringify(events)).not.toContain("response-secret")
+    expect(JSON.stringify(events)).not.toContain("research-secret")
+    const records = await server.command("runtime.list_external_api_research_ingestions") as Array<{ ok: boolean; audit_request_id?: string; error?: string }>
+    expect(records[0]).toMatchObject({ ok: false, audit_request_id: "api_req_write_fail" })
+    expect(records[0].error).toContain("[REDACTED]")
+    await server.shutdown()
+    researchDb.close()
   })
 
   test("external API execute validates resolved hosts before dispatch", async () => {

@@ -115,6 +115,23 @@ describe("TUI keyboard command model", () => {
     ])
   })
 
+  test("external API research ingestion slash command routes only exact whitelist command", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/api-ingest-preview mock-research-api GET /search topic=topic-1 source=API",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("api-ingest-preview")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "api-ingest-preview", args: ["mock-research-api", "GET", "/search", "topic=topic-1", "source=API"] },
+    ])
+  })
+
   test("path-like API text remains a user message unless whitelisted exactly", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -126,6 +143,16 @@ describe("TUI keyboard command model", () => {
     const result = applyKeyCommandWithEffects(state, { type: "submit" })
 
     expect(result.effects).toEqual([{ type: "send-user-message", message: "/api.example.test/path" }])
+
+    const dotState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: ".api-ingest mock-research-api GET /search topic=topic-1 source=API",
+    }
+    expect(applyKeyCommandWithEffects(dotState, { type: "submit" }).effects).toEqual([
+      { type: "send-user-message", message: ".api-ingest mock-research-api GET /search topic=topic-1 source=API" },
+    ])
   })
 
   test("mission execution slash commands route through whitelisted runtime command effects with args", () => {

@@ -10,6 +10,7 @@ import type { CommanderAuditEventKind, CommanderAuditTimeline, CommanderAuthorit
 import type { CommanderQueueKind, CommanderQueueResult, CommanderQueueSummary } from "../missions/commander-queue-types"
 import type { CommanderTargetContext, CommanderTargetType } from "../missions/commander-target-context-types"
 import type { ExternalApiAuditRecord, ExternalApiConnectorSummary, ExternalApiRequestInput, ExternalApiRequestPreview, ExternalApiRequestResult } from "../external-api/api-connector-types"
+import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPreview, ExternalApiResearchIngestionRecord, ExternalApiResearchIngestionResult } from "../external-api/api-research-ingestion-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -104,6 +105,37 @@ export interface RuntimeClient {
     requestedBy: string
   }): Promise<ExternalApiRequestResult>
   command(name: "runtime.list_external_api_audit", payload?: { limit?: number }): Promise<ExternalApiAuditRecord[]>
+  command(name: "runtime.preview_external_api_research_ingestion", payload: ExternalApiResearchIngestionInput | {
+    connectorId: string
+    method: ExternalApiResearchIngestionInput["method"]
+    path: string
+    query?: Record<string, string>
+    headers?: Record<string, string>
+    body?: string
+    topicId: string
+    sourceTitle: string
+    noteTitle?: string
+    requestedBy: string
+    responseSelector?: ExternalApiResearchIngestionInput["response_selector"]
+    tags?: string[]
+    dryRun?: boolean
+  }): Promise<ExternalApiResearchIngestionPreview>
+  command(name: "runtime.execute_external_api_research_ingestion", payload: ExternalApiResearchIngestionInput | {
+    connectorId: string
+    method: ExternalApiResearchIngestionInput["method"]
+    path: string
+    query?: Record<string, string>
+    headers?: Record<string, string>
+    body?: string
+    topicId: string
+    sourceTitle: string
+    noteTitle?: string
+    requestedBy: string
+    responseSelector?: ExternalApiResearchIngestionInput["response_selector"]
+    tags?: string[]
+    dryRun?: boolean
+  }): Promise<ExternalApiResearchIngestionResult>
+  command(name: "runtime.list_external_api_research_ingestions", payload?: { limit?: number }): Promise<ExternalApiResearchIngestionRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -177,6 +209,9 @@ export interface RuntimeCommandEnvelope {
     | "runtime.preview_external_api_request"
     | "runtime.execute_external_api_request"
     | "runtime.list_external_api_audit"
+    | "runtime.preview_external_api_research_ingestion"
+    | "runtime.execute_external_api_research_ingestion"
+    | "runtime.list_external_api_research_ingestions"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

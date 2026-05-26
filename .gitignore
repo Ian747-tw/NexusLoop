@@ -13,3 +13,8 @@ htmlcov/
 events.jsonl
 state.json
 .worktrees/
+
+# Local secrets / gated smoke config
+.nxl/local/
+*.env.local
+minimax.env

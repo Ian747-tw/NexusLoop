@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -44,6 +44,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly playbookDrafts: CommanderWorkbenchDraftSummary[] = []
   private readonly externalApiConnectors: ExternalApiConnectorSummary[] = fakeExternalApiConnectors()
   private readonly externalApiAudit: ExternalApiAuditRecordSummary[] = []
+  private readonly externalApiResearchIngestions: ExternalApiResearchIngestionRecordSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -282,6 +283,12 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.executeExternalApiRequest(payload)
       case "runtime.list_external_api_audit":
         return this.externalApiAudit.slice(0, readLimit(payload.limit, 20))
+      case "runtime.preview_external_api_research_ingestion":
+        return this.previewExternalApiResearchIngestion(payload)
+      case "runtime.execute_external_api_research_ingestion":
+        return this.executeExternalApiResearchIngestion(payload)
+      case "runtime.list_external_api_research_ingestions":
+        return this.externalApiResearchIngestions.slice(0, readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -370,6 +377,66 @@ export class FakeRuntimeClient implements RuntimeClient {
       })
     }
     if (!result.ok) throw new Error(result.error ?? "external API request blocked")
+    return result
+  }
+
+  private previewExternalApiResearchIngestion(payload: Record<string, unknown>): ExternalApiResearchIngestionPreviewSummary {
+    const requestPreview = this.previewExternalApiRequest(payload)
+    const topicId = requiredString(String(payload.topicId ?? payload.topic_id ?? ""), "topicId")
+    const sourceTitle = requiredString(String(payload.sourceTitle ?? payload.source_title ?? ""), "sourceTitle")
+    const blockers = [...requestPreview.blockers]
+    if (!this.researchTopics().some((topic) => topic.id === topicId)) blockers.push(`topic not found: ${redactText(topicId)}`)
+    return {
+      connector_id: requestPreview.connector_id,
+      topic_id: redactText(topicId),
+      method: requestPreview.method,
+      url: requestPreview.url,
+      allowed: requestPreview.allowed && blockers.length === 0,
+      blockers: blockers.map(redactText),
+      would_create_source: blockers.length === 0 && sourceTitle.length > 0,
+      would_create_note: blockers.length === 0 && sourceTitle.length > 0,
+      max_ingested_bytes: 4096,
+      credential_refs_used: requestPreview.credential_refs_used,
+      redacted_headers: requestPreview.redacted_headers,
+    }
+  }
+
+  private executeExternalApiResearchIngestion(payload: Record<string, unknown>): ExternalApiResearchIngestionResultSummary {
+    const ingestPreview = this.previewExternalApiResearchIngestion(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    this.sequence += 1
+    const result: ExternalApiResearchIngestionResultSummary = {
+      ingestion_id: `fake-api-ingestion-${this.sequence}`,
+      request_id: dryRun ? undefined : `fake-api-request-${this.sequence}`,
+      connector_id: ingestPreview.connector_id,
+      topic_id: ingestPreview.topic_id,
+      source_id: dryRun ? undefined : `fake-source-${this.sequence}`,
+      note_id: dryRun ? undefined : `fake-note-${this.sequence}`,
+      artifact_id: dryRun ? undefined : `fake-artifact-${this.sequence}`,
+      audit_request_id: dryRun ? undefined : `fake-api-request-${this.sequence}`,
+      ok: ingestPreview.allowed,
+      dry_run: dryRun,
+      ingested_bytes: dryRun ? 0 : 28,
+      response_preview: dryRun ? "dry run: transport not called and ResearchDb not written" : "{\"ok\":true,\"value\":\"fake\"}",
+      error: ingestPreview.allowed ? undefined : ingestPreview.blockers.join("; "),
+      created_at: new Date(0).toISOString(),
+    }
+    if (!result.ok) throw new Error(result.error ?? "external API research ingestion blocked")
+    if (!dryRun) {
+      this.externalApiResearchIngestions.unshift({
+        ingestion_id: result.ingestion_id,
+        connector_id: result.connector_id,
+        topic_id: result.topic_id,
+        source_id: result.source_id,
+        note_id: result.note_id,
+        artifact_id: result.artifact_id,
+        audit_request_id: result.audit_request_id,
+        ok: true,
+        dry_run: false,
+        requested_by: redactText(String(payload.requestedBy ?? payload.requested_by ?? "operator")),
+        created_at: result.created_at,
+      })
+    }
     return result
   }
 
