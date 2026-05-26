@@ -35,6 +35,11 @@ import type {
   CommanderWorkbenchReadinessSummary,
   CommanderWorkbenchState,
   CommanderWorkbenchStatusSummary,
+  ExternalApiAuditRecordSummary,
+  ExternalApiConnectorSummary,
+  ExternalApiRequestPreviewSummary,
+  ExternalApiRequestResultSummary,
+  ExternalApiState,
   ResearchEventSummary,
   ResearchNoteSummary,
   ResearchProjectionSummary,
@@ -70,6 +75,7 @@ const PLAYBOOK_LIMIT = 10
 const WORKBENCH_DRAFT_LIMIT = 10
 const AUDIT_LIMIT = 20
 const QUEUE_LIMIT = 20
+const EXTERNAL_API_LIMIT = 20
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -131,6 +137,11 @@ export type RuntimeUiEffect =
   | { type: "load-commander-queues"; queue?: CommanderQueueKind; limit?: number; staleAfterMs?: number }
   | { type: "load-commander-queue"; queue: CommanderQueueKind; limit?: number; staleAfterMs?: number }
   | { type: "load-commander-target-context"; targetType: CommanderTargetType; targetId: string }
+  | { type: "load-external-api-connectors"; limit?: number }
+  | { type: "load-external-api-connector"; connectorId: string }
+  | { type: "preview-external-api-request"; connectorId: string; method: "GET" | "POST"; path: string; query?: Record<string, string> }
+  | { type: "execute-external-api-request"; connectorId: string; method: "GET" | "POST"; path: string; query?: Record<string, string>; dryRun?: boolean }
+  | { type: "load-external-api-audit"; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -455,6 +466,41 @@ export async function applyRuntimeUiEffect(
           state,
           await runtime.command("runtime.commander_target_context", { targetType: effect.targetType, targetId: effect.targetId }),
         )
+      case "load-external-api-connectors":
+        return await loadExternalApiConnectors(state, runtime, effect.limit ?? EXTERNAL_API_LIMIT)
+      case "load-external-api-connector":
+        return applyExternalApiConnector(
+          state,
+          await runtime.command("runtime.get_external_api_connector", { connectorId: effect.connectorId }),
+          effect.connectorId,
+        )
+      case "preview-external-api-request":
+        return applyExternalApiPreview(
+          state,
+          await runtime.command("runtime.preview_external_api_request", {
+            connectorId: effect.connectorId,
+            method: effect.method,
+            path: effect.path,
+            query: effect.query,
+            requestedBy: "operator",
+          }),
+        )
+      case "execute-external-api-request": {
+        const next = applyExternalApiResult(
+          state,
+          await runtime.command("runtime.execute_external_api_request", {
+            connectorId: effect.connectorId,
+            method: effect.method,
+            path: effect.path,
+            query: effect.query,
+            dryRun: effect.dryRun,
+            requestedBy: "operator",
+          }),
+        )
+        return effect.dryRun ? next : await loadExternalApiAudit(next, runtime, EXTERNAL_API_LIMIT)
+      }
+      case "load-external-api-audit":
+        return await loadExternalApiAudit(state, runtime, effect.limit ?? EXTERNAL_API_LIMIT)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -477,6 +523,7 @@ export async function applyRuntimeUiEffect(
     if (isCommanderAuditEffect(effect)) return recordCommanderAuditCommandError(state, error)
     if (isCommanderQueueEffect(effect)) return recordCommanderQueueCommandError(state, error)
     if (isCommanderNavigationEffect(effect)) return recordCommanderNavigationCommandError(state, error)
+    if (isExternalApiEffect(effect)) return recordExternalApiCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -725,6 +772,75 @@ async function loadCommanderQueue(state: UiState, runtime: RuntimeClient, queue:
   }
 }
 
+async function loadExternalApiConnectors(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const connectors = readExternalApiConnectorList(await runtime.command("runtime.list_external_api_connectors"), "runtime.list_external_api_connectors", limit)
+  const next = {
+    ...state,
+    externalApi: {
+      ...externalApiState(state),
+      connectors,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "external API connectors loaded", detail: `connectors=${connectors.length}`, status: "loaded" }].slice(-12),
+  }
+  return await loadExternalApiAudit(next, runtime, EXTERNAL_API_LIMIT)
+}
+
+async function loadExternalApiAudit(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const audit = readExternalApiAuditList(await runtime.command("runtime.list_external_api_audit", { limit }), "runtime.list_external_api_audit", limit)
+  return {
+    ...state,
+    externalApi: {
+      ...externalApiState(state),
+      audit,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "external API audit loaded", detail: `records=${audit.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyExternalApiConnector(state: UiState, value: unknown, connectorId: string): UiState {
+  const connector = readExternalApiConnector(value)
+  if (!connector && value !== null) throw new Error("runtime.get_external_api_connector returned invalid connector")
+  const selectedConnectorId = connector?.connector_id ?? redactText(connectorId)
+  return {
+    ...state,
+    externalApi: {
+      ...externalApiState(state),
+      selectedConnector: connector,
+      connectors: connector ? [connector, ...externalApiState(state).connectors.filter((item) => item.connector_id !== connector.connector_id)].slice(0, EXTERNAL_API_LIMIT) : externalApiState(state).connectors,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "external API connector selected", detail: `connector_id=${selectedConnectorId}`, status: connector ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyExternalApiPreview(state: UiState, value: unknown): UiState {
+  const requestPreview = readExternalApiPreview(value)
+  return {
+    ...state,
+    externalApi: {
+      ...externalApiState(state),
+      preview: requestPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "external API preview", detail: requestPreview.url, status: requestPreview.allowed ? "allowed" : "blocked" }].slice(-12),
+  }
+}
+
+function applyExternalApiResult(state: UiState, value: unknown): UiState {
+  const result = readExternalApiResult(value)
+  return {
+    ...state,
+    externalApi: {
+      ...externalApiState(state),
+      lastResult: result,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "external API result", detail: `${result.connector_id} ${result.status_code ?? "no-status"}`, status: result.ok ? "ok" : "failed" }].slice(-12),
+  }
+}
+
 function applyCommanderTargetContext(state: UiState, value: unknown): UiState {
   const context = readCommanderTargetContext(value)
   return {
@@ -894,6 +1010,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (commanderAuditCommands.has(command)) return state.commanderAudit?.commandError
   if (commanderQueueCommands.has(command)) return state.commanderQueues?.commandError
   if (commanderNavigationCommands.has(command)) return state.commanderNavigation?.commandError
+  if (externalApiCommands.has(command)) return state.externalApi?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
 }
@@ -909,6 +1026,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (commanderAuditCommands.has(command)) return { ...state, commanderAudit: { ...commanderAuditState(state), commandError: undefined } }
   if (commanderQueueCommands.has(command)) return { ...state, commanderQueues: { ...commanderQueuesState(state), commandError: undefined } }
   if (commanderNavigationCommands.has(command)) return { ...state, commanderNavigation: { ...commanderNavigationState(state), commandError: undefined } }
+  if (externalApiCommands.has(command)) return { ...state, externalApi: { ...externalApiState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
 }
@@ -927,6 +1045,20 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "run-staged":
     case "execute-staged":
       return runStagedOperatorCommand(commandState, runtime)
+    case "apis":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-external-api-connectors", limit: EXTERNAL_API_LIMIT })
+    case "api":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-external-api-connector", connectorId: requiredArg(args, 0, "connectorId") })
+    case "api-preview":
+      return applyRuntimeUiEffect(commandState, runtime, externalApiRequestEffect("preview-external-api-request", args))
+    case "api-call":
+      return applyRuntimeUiEffect(commandState, runtime, externalApiRequestEffect("execute-external-api-request", args))
+    case "api-dry-run": {
+      const effect = externalApiExecuteEffect(args)
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "api-audit":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-external-api-audit", limit: EXTERNAL_API_LIMIT })
     case "status":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-status" })
     case "missions":
@@ -1321,6 +1453,11 @@ function isCommanderNavigationEffect(effect: RuntimeUiEffect): boolean {
   return commanderNavigationCommands.has(effect.command)
 }
 
+function isExternalApiEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return externalApiEffectTypes.has(effect.type)
+  return externalApiCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -1403,6 +1540,23 @@ const commanderNavigationCommands = new Set([
   "open-draft",
   "open-review",
   "open-mission",
+])
+
+const externalApiCommands = new Set([
+  "apis",
+  "api",
+  "api-preview",
+  "api-call",
+  "api-dry-run",
+  "api-audit",
+])
+
+const externalApiEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-external-api-connectors",
+  "load-external-api-connector",
+  "preview-external-api-request",
+  "execute-external-api-request",
+  "load-external-api-audit",
 ])
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
@@ -2017,6 +2171,18 @@ function recordOperatorActionCommandError(state: UiState, error: unknown): UiSta
   }
 }
 
+function recordExternalApiCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    externalApi: {
+      ...externalApiState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "external API command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -2025,6 +2191,95 @@ function readResearchProjection(value: unknown): ResearchProjectionSummary | und
     stale: readBoolean(value.stale),
     reason: typeof value.reason === "string" ? redactText(value.reason) : undefined,
     pending_count: readNumber(value.pending_count, 0),
+  }
+}
+
+function readExternalApiConnectorList(value: unknown, commandName: string, limit: number): ExternalApiConnectorSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readExternalApiConnector).filter((connector): connector is ExternalApiConnectorSummary => connector !== null).slice(0, limit)
+}
+
+function readExternalApiConnector(value: unknown): ExternalApiConnectorSummary | null {
+  if (!isRecord(value) || typeof value.connector_id !== "string") return null
+  return {
+    connector_id: redactText(value.connector_id),
+    title: preview(readString(value.title, "")),
+    description: typeof value.description === "string" ? preview(readString(value.description, "")) : undefined,
+    base_url: redactText(readString(value.base_url, "")),
+    allowed_hosts: readStringList(value.allowed_hosts, 20),
+    allowed_methods: readStringList(value.allowed_methods, 10),
+    timeout_ms: readNumber(value.timeout_ms, 0),
+    max_response_bytes: readNumber(value.max_response_bytes, 0),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : undefined,
+    updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : undefined,
+    credential_refs: Array.isArray(value.credential_refs)
+      ? value.credential_refs.map(readExternalApiCredentialRef).filter((ref): ref is NonNullable<ExternalApiConnectorSummary["credential_refs"]>[number] => ref !== null).slice(0, 10)
+      : undefined,
+  }
+}
+
+function readExternalApiCredentialRef(value: unknown): NonNullable<ExternalApiConnectorSummary["credential_refs"]>[number] | null {
+  if (!isRecord(value) || typeof value.name !== "string") return null
+  return {
+    name: redactText(value.name),
+    source: readString(value.source, "env"),
+    inject_as: readString(value.inject_as, "header"),
+    target_name: redactText(readString(value.target_name, "")),
+    prefix: typeof value.prefix === "string" ? redactText(value.prefix) : undefined,
+    env_name: typeof value.env_name === "string" ? redactText(value.env_name) : undefined,
+  }
+}
+
+function readExternalApiPreview(value: unknown): ExternalApiRequestPreviewSummary {
+  if (!isRecord(value) || typeof value.connector_id !== "string" || typeof value.url !== "string") throw new Error("runtime.preview_external_api_request returned invalid preview")
+  return {
+    connector_id: redactText(value.connector_id),
+    method: readString(value.method, "GET"),
+    url: preview(redactText(value.url)),
+    allowed: readBoolean(value.allowed),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    redacted_headers: readStringMap(value.redacted_headers, 20),
+    has_body: readBoolean(value.has_body),
+    body_bytes: readNumber(value.body_bytes, 0),
+    credential_refs_used: readStringList(value.credential_refs_used, 10),
+  }
+}
+
+function readExternalApiResult(value: unknown): ExternalApiRequestResultSummary {
+  if (!isRecord(value) || typeof value.request_id !== "string" || typeof value.connector_id !== "string" || typeof value.url !== "string") throw new Error("runtime.execute_external_api_request returned invalid result")
+  return {
+    request_id: redactText(value.request_id),
+    connector_id: redactText(value.connector_id),
+    method: readString(value.method, "GET"),
+    url: preview(redactText(value.url)),
+    status_code: typeof value.status_code === "number" ? value.status_code : undefined,
+    ok: readBoolean(value.ok),
+    response_bytes: typeof value.response_bytes === "number" ? value.response_bytes : undefined,
+    response_preview: typeof value.response_preview === "string" ? preview(redactText(value.response_preview)) : undefined,
+    error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
+    dry_run: readBoolean(value.dry_run),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+  }
+}
+
+function readExternalApiAuditList(value: unknown, commandName: string, limit: number): ExternalApiAuditRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readExternalApiAuditRecord).filter((record): record is ExternalApiAuditRecordSummary => record !== null).slice(0, limit)
+}
+
+function readExternalApiAuditRecord(value: unknown): ExternalApiAuditRecordSummary | null {
+  if (!isRecord(value) || typeof value.request_id !== "string" || typeof value.connector_id !== "string") return null
+  return {
+    request_id: redactText(value.request_id),
+    connector_id: redactText(value.connector_id),
+    method: readString(value.method, "GET"),
+    url: preview(redactText(readString(value.url, ""))),
+    status_code: typeof value.status_code === "number" ? value.status_code : undefined,
+    ok: readBoolean(value.ok),
+    dry_run: readBoolean(value.dry_run),
+    requested_by: readString(value.requested_by, "unknown"),
+    error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
   }
 }
 
@@ -2434,6 +2689,15 @@ function readStringList(value: unknown, limit: number): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map(redactText).slice(0, limit) : []
 }
 
+function readStringMap(value: unknown, limit: number): Record<string, string> {
+  if (!isRecord(value)) return {}
+  const out: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(value).slice(0, limit)) {
+    if (typeof raw === "string") out[redactText(key)] = preview(redactText(raw))
+  }
+  return out
+}
+
 function readQueueKind(value: string): CommanderQueueKind {
   if (value === "needs_review" ||
     value === "ready_to_apply" ||
@@ -2619,6 +2883,10 @@ function commanderNavigationState(state: UiState): CommanderNavigationState {
 
 function operatorActionsState(state: UiState): OperatorActionsState {
   return state.operatorActions ?? { staged: null, lastResult: null }
+}
+
+function externalApiState(state: UiState): ExternalApiState {
+  return state.externalApi ?? { connectors: [], selectedConnector: null, preview: null, lastResult: null, audit: [] }
 }
 
 function missionExecutionState(state: UiState): MissionExecutionState {
@@ -2862,6 +3130,34 @@ function targetContextAliasEffect(targetType: CommanderTargetType, args: string[
     targetType,
     targetId: requiredArg(args, 0, "targetId"),
   }
+}
+
+function externalApiRequestEffect(type: "preview-external-api-request" | "execute-external-api-request", args: string[]): Extract<RuntimeUiEffect, { type: "preview-external-api-request" | "execute-external-api-request" }> {
+  const connectorId = requiredArg(args, 0, "connectorId")
+  const method = requiredArg(args, 1, "method").toUpperCase()
+  if (method !== "GET" && method !== "POST") throw new Error("method must be GET or POST")
+  const path = requiredArg(args, 2, "path")
+  const query = queryArgs(args.slice(3))
+  return { type, connectorId, method, path, ...(Object.keys(query).length > 0 ? { query } : {}) }
+}
+
+function externalApiExecuteEffect(args: string[]): Extract<RuntimeUiEffect, { type: "execute-external-api-request" }> {
+  const effect = externalApiRequestEffect("execute-external-api-request", args)
+  if (effect.type !== "execute-external-api-request") throw new Error("external API execute effect is required")
+  return effect
+}
+
+function queryArgs(args: string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const arg of args) {
+    const index = arg.indexOf("=")
+    if (index <= 0) throw new Error("query args must be key=value")
+    const key = arg.slice(0, index).trim()
+    const value = arg.slice(index + 1)
+    if (!key) throw new Error("query key is required")
+    out[key] = value
+  }
+  return out
 }
 
 function requiredArg(args: string[], index: number, field: string): string {

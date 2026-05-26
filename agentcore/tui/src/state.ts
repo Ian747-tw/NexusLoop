@@ -500,6 +500,75 @@ export type OperatorActionsState = {
   commandError?: string
 }
 
+export type ExternalApiConnectorSummary = {
+  connector_id: string
+  title: string
+  description?: string
+  base_url: string
+  allowed_hosts: string[]
+  allowed_methods: string[]
+  timeout_ms: number
+  max_response_bytes: number
+  created_at?: string
+  updated_at?: string
+  credential_refs?: Array<{
+    name: string
+    source: string
+    inject_as: string
+    target_name: string
+    prefix?: string
+    env_name?: string
+  }>
+}
+
+export type ExternalApiRequestPreviewSummary = {
+  connector_id: string
+  method: string
+  url: string
+  allowed: boolean
+  blockers: string[]
+  redacted_headers: Record<string, string>
+  has_body: boolean
+  body_bytes: number
+  credential_refs_used: string[]
+}
+
+export type ExternalApiRequestResultSummary = {
+  request_id: string
+  connector_id: string
+  method: string
+  url: string
+  status_code?: number
+  ok: boolean
+  response_bytes?: number
+  response_preview?: string
+  error?: string
+  dry_run: boolean
+  created_at: string
+}
+
+export type ExternalApiAuditRecordSummary = {
+  request_id: string
+  connector_id: string
+  method: string
+  url: string
+  status_code?: number
+  ok: boolean
+  dry_run: boolean
+  requested_by: string
+  error?: string
+  created_at: string
+}
+
+export type ExternalApiState = {
+  connectors: ExternalApiConnectorSummary[]
+  selectedConnector?: ExternalApiConnectorSummary | null
+  preview?: ExternalApiRequestPreviewSummary | null
+  lastResult?: ExternalApiRequestResultSummary | null
+  audit: ExternalApiAuditRecordSummary[]
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -589,6 +658,7 @@ export type UiState = {
   commanderQueues?: CommanderQueuesState
   commanderNavigation?: CommanderNavigationState
   operatorActions?: OperatorActionsState
+  externalApi?: ExternalApiState
 }
 
 export function initialState(projectDir: string): UiState {

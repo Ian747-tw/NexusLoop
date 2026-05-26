@@ -98,6 +98,36 @@ describe("TUI keyboard command model", () => {
     expect(result.effects).toEqual([{ type: "send-command", command: "notes", args: ["topic-1", "runtime", "projection"] }])
   })
 
+  test("external API slash commands route through whitelisted runtime command effects with args", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/api-preview mock-research-api GET /search q=test",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("api-preview")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "api-preview", args: ["mock-research-api", "GET", "/search", "q=test"] },
+    ])
+  })
+
+  test("path-like API text remains a user message unless whitelisted exactly", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/api.example.test/path",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.effects).toEqual([{ type: "send-user-message", message: "/api.example.test/path" }])
+  })
+
   test("mission execution slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

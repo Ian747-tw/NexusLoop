@@ -309,6 +309,30 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("review:fake-review-1 [pending]")
   })
 
+  test("default fake headless snapshot renders external API surface", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/apis" },
+      { type: "submit" },
+      { type: "insert", text: "/api-dry-run mock-research-api GET /status q=token=api-secret" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("External API")
+    expect(snapshot).toContain("mock-research-api")
+    expect(snapshot).toContain("last_result=fake-api-request")
+    expect(snapshot).not.toContain("api-secret")
+  })
+
   test("real headless runtime client loads projection and topics through research command", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)

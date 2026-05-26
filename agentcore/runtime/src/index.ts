@@ -27,6 +27,9 @@ export { CommanderApplyService } from "./missions/commander-apply-service"
 export { CommanderAuditService } from "./missions/commander-audit-service"
 export { CommanderQueueService, COMMANDER_QUEUE_KINDS } from "./missions/commander-queue-service"
 export { CommanderTargetContextService } from "./missions/commander-target-context-service"
+export { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
+export { ExternalApiRequestService } from "./external-api/api-request-service"
+export { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"
 export { MISSION_PROTOCOL_VERSION } from "./missions/mission-types"
@@ -116,6 +119,17 @@ export type {
   CommanderTargetContext,
   CommanderTargetType,
 } from "./missions/commander-target-context-types"
+export type {
+  ExternalApiAuditRecord,
+  ExternalApiConnector,
+  ExternalApiConnectorSummary,
+  ExternalApiCredentialRef,
+  ExternalApiMethod,
+  ExternalApiRequestInput,
+  ExternalApiRequestPreview,
+  ExternalApiRequestResult,
+} from "./external-api/api-connector-types"
+export type { ExternalApiHostResolver, ExternalApiResolvedAddress, ExternalApiTransport, ExternalApiTransportRequest, ExternalApiTransportResult } from "./external-api/api-transport"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"

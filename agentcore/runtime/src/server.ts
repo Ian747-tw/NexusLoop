@@ -28,6 +28,10 @@ import { CommanderQueueService, readCommanderQueueKind, readCommanderQueueLimit,
 import type { CommanderQueueKind, CommanderQueueResult, CommanderQueueSummary } from "./missions/commander-queue-types"
 import { CommanderTargetContextService } from "./missions/commander-target-context-service"
 import type { CommanderTargetContext } from "./missions/commander-target-context-types"
+import type { ExternalApiAuditRecord, ExternalApiConnector, ExternalApiRequestInput, ExternalApiRequestPreview, ExternalApiRequestResult } from "./external-api/api-connector-types"
+import { ExternalApiConnectorRegistry } from "./external-api/api-connector-registry"
+import { ExternalApiRequestService } from "./external-api/api-request-service"
+import { FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "./external-api/api-transport"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -58,6 +62,13 @@ export interface RuntimeServerOptions {
   proposalRegistry?: ProposalRegistry
   proposalBundleRegistry?: ProposalBundleRegistry
   commanderPlaybookDraftRegistry?: CommanderPlaybookDraftRegistry
+  externalApiConnectorRegistry?: ExternalApiConnectorRegistry
+  externalApiConnectors?: ExternalApiConnector[]
+  externalApiTransport?: ExternalApiTransport
+  externalApiEnv?: Record<string, string | undefined>
+  externalApiResolveHostAddresses?: ExternalApiHostResolver
+  externalApiNow?: () => Date
+  externalApiRequestId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -92,7 +103,13 @@ export class RuntimeServer {
   readonly proposalRegistry: ProposalRegistry
   readonly proposalBundleRegistry: ProposalBundleRegistry
   readonly commanderPlaybookDraftRegistry: CommanderPlaybookDraftRegistry
+  readonly externalApiConnectorRegistry: ExternalApiConnectorRegistry
   private readonly runLock: RunLock
+  private readonly externalApiTransport: ExternalApiTransport
+  private readonly externalApiEnv: Record<string, string | undefined>
+  private readonly externalApiResolveHostAddresses?: ExternalApiHostResolver
+  private readonly externalApiNow?: () => Date
+  private readonly externalApiRequestId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -119,6 +136,12 @@ export class RuntimeServer {
     this.proposalRegistry = options.proposalRegistry ?? new ProposalRegistry({ eventStore: this.eventStore, missionRegistry: this.missionRegistry, reviewRegistry: this.reviewRegistry })
     this.proposalBundleRegistry = options.proposalBundleRegistry ?? new ProposalBundleRegistry({ eventStore: this.eventStore, proposalRegistry: this.proposalRegistry })
     this.commanderPlaybookDraftRegistry = options.commanderPlaybookDraftRegistry ?? new CommanderPlaybookDraftRegistry({ eventStore: this.eventStore, proposalRegistry: this.proposalRegistry, proposalBundleRegistry: this.proposalBundleRegistry, reviewRegistry: this.reviewRegistry })
+    this.externalApiConnectorRegistry = options.externalApiConnectorRegistry ?? new ExternalApiConnectorRegistry(options.externalApiConnectors)
+    this.externalApiTransport = options.externalApiTransport ?? new FetchExternalApiTransport({ resolveHostAddresses: options.externalApiResolveHostAddresses })
+    this.externalApiEnv = options.externalApiEnv ?? {}
+    this.externalApiResolveHostAddresses = options.externalApiResolveHostAddresses
+    this.externalApiNow = options.externalApiNow
+    this.externalApiRequestId = options.externalApiRequestId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -441,6 +464,16 @@ export class RuntimeServer {
         })
       case "runtime.commander_target_context":
         return this.commanderTargetContext(requiredString(payload.targetType ?? payload.target_type, "targetType"), requiredString(payload.targetId ?? payload.target_id, "targetId"))
+      case "runtime.list_external_api_connectors":
+        return this.listExternalApiConnectors()
+      case "runtime.get_external_api_connector":
+        return this.getExternalApiConnector(requiredString(payload.connectorId ?? payload.connector_id, "connectorId"))
+      case "runtime.preview_external_api_request":
+        return this.previewExternalApiRequest(readExternalApiRequestInput(payload))
+      case "runtime.execute_external_api_request":
+        return this.executeExternalApiRequest(readExternalApiRequestInput(payload))
+      case "runtime.list_external_api_audit":
+        return this.listExternalApiAudit(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -771,6 +804,27 @@ export class RuntimeServer {
     return this.commanderTargetContextService().context(targetType, targetId)
   }
 
+  listExternalApiConnectors(): ReturnType<ExternalApiConnectorRegistry["list"]> {
+    return this.externalApiConnectorRegistry.list()
+  }
+
+  getExternalApiConnector(connectorId: string): ReturnType<ExternalApiConnectorRegistry["getSummary"]> {
+    return this.externalApiConnectorRegistry.getSummary(connectorId)
+  }
+
+  previewExternalApiRequest(input: ExternalApiRequestInput): ExternalApiRequestPreview {
+    return this.externalApiRequestService().preview(input)
+  }
+
+  async executeExternalApiRequest(input: ExternalApiRequestInput): Promise<ExternalApiRequestResult> {
+    this.requireExternalApiWriteRuntime("runtime.execute_external_api_request")
+    return this.externalApiRequestService().execute(input)
+  }
+
+  async listExternalApiAudit(limit = 20): Promise<ExternalApiAuditRecord[]> {
+    return this.externalApiRequestService().listAudit(limit)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1053,6 +1107,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before commander apply writes")
   }
 
+  private requireExternalApiWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before external API requests")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1089,6 +1148,18 @@ export class RuntimeServer {
       runtimeStatus: this.status.bind(this),
     })
   }
+
+  private externalApiRequestService(): ExternalApiRequestService {
+    return new ExternalApiRequestService({
+      registry: this.externalApiConnectorRegistry,
+      transport: this.externalApiTransport,
+      eventStore: this.eventStore,
+      env: this.externalApiEnv,
+      resolveHostAddresses: this.externalApiResolveHostAddresses,
+      now: this.externalApiNow,
+      requestId: this.externalApiRequestId,
+    })
+  }
 }
 
 type ResearchProjectionRuntimeEventType = Extract<RuntimeEvent, { type: `ResearchProjection${string}` }>["type"]
@@ -1115,6 +1186,12 @@ function optionalString(value: unknown, field: string): string | undefined {
   if (typeof value !== "string") throw new Error(`${field} must be a string`)
   if (!value.trim()) throw new Error(`${field} must be nonblank`)
   return value.trim()
+}
+
+function optionalRawString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "string") throw new Error(`${field} must be a string`)
+  return value
 }
 
 function optionalPositiveInteger(value: unknown, field: string, max = 1000): number | undefined {
@@ -1162,11 +1239,44 @@ function readCommanderApplyTarget(payload: Record<string, unknown>): { target_ty
   }
 }
 
+function readExternalApiRequestInput(payload: Record<string, unknown>): ExternalApiRequestInput {
+  return {
+    connector_id: requiredString(payload.connectorId ?? payload.connector_id, "connectorId"),
+    method: requiredString(payload.method, "method").toUpperCase() as ExternalApiRequestInput["method"],
+    path: requiredString(payload.path, "path"),
+    query: optionalRawStringRecord(payload.query, "query"),
+    headers: optionalRawStringRecord(payload.headers, "headers"),
+    body: optionalRawString(payload.body, "body"),
+    dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
+    requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+  }
+}
+
 function stringRecord(value: unknown, field: string): Record<string, string> {
   if (!isRecord(value)) throw new Error(`${field} must be an object`)
   const out: Record<string, string> = {}
   for (const [key, raw] of Object.entries(value)) out[requiredString(key, `${field} key`)] = requiredString(raw, key)
   return out
+}
+
+function optionalStringRecord(value: unknown, field: string): Record<string, string> | undefined {
+  if (value === undefined) return undefined
+  return stringRecord(value, field)
+}
+
+function rawStringRecord(value: unknown, field: string): Record<string, string> {
+  if (!isRecord(value)) throw new Error(`${field} must be an object`)
+  const out: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw !== "string") throw new Error(`${key} must be a string`)
+    out[requiredString(key, `${field} key`)] = raw
+  }
+  return out
+}
+
+function optionalRawStringRecord(value: unknown, field: string): Record<string, string> | undefined {
+  if (value === undefined) return undefined
+  return rawStringRecord(value, field)
 }
 
 function readResearchEventsOptions(value: unknown): ListResearchEventsOptions | undefined {

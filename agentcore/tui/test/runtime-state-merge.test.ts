@@ -387,4 +387,47 @@ describe("interactive runtime effect state merge", () => {
     expect(merged.missionExecution?.selectedMissionId).toBe("mission-b")
     expect(merged.header.activeMissionId).toBe("mission-b")
   })
+
+  test("preserves newer external API state through older effect merges", () => {
+    const baseline: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      externalApi: {
+        connectors: [],
+        selectedConnector: null,
+        preview: null,
+        lastResult: null,
+        audit: [],
+      },
+    }
+    const current: UiState = {
+      ...baseline,
+      externalApi: {
+        ...baseline.externalApi!,
+        preview: {
+          connector_id: "mock-research-api",
+          method: "GET",
+          url: "https://api.example.test/new",
+          allowed: true,
+          blockers: [],
+          redacted_headers: {},
+          has_body: false,
+          body_bytes: 0,
+          credential_refs_used: [],
+        },
+      },
+    }
+    const effectResult: UiState = {
+      ...baseline,
+      externalApi: {
+        ...baseline.externalApi!,
+        connectors: [{ connector_id: "mock-research-api", title: "Mock", base_url: "https://api.example.test", allowed_hosts: ["api.example.test"], allowed_methods: ["GET"], timeout_ms: 5000, max_response_bytes: 4096 }],
+      },
+    }
+
+    const merged = mergeRuntimeEffectState(current, effectResult, baseline.systemActions.length, baseline)
+
+    expect(merged.externalApi?.preview?.url).toBe("https://api.example.test/new")
+    expect(merged.externalApi?.connectors).toEqual([])
+  })
 })

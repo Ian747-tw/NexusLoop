@@ -231,6 +231,53 @@ describe("TUI runtime client factory", () => {
     })).toThrow("NXL_OPENCODE_ARGS_JSON must be valid JSON")
   })
 
+  test("invalid external API env config fails clearly without leaking default header secrets", async () => {
+    const dir = await tempProject()
+    expect(() => createTuiRuntimeClient({
+      projectDir: dir,
+      env: {
+        NXL_RUNTIME_CLIENT: "real",
+        NXL_OPENCODE_ADAPTER: "fake",
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{
+          connector_id: "bad-default-header",
+          title: "Bad default header",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET"],
+          default_headers: { Authorization: "Bearer default-header-secret" },
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        }]),
+      },
+    })).toThrow("connector[0].default_headers.Authorization must use credential_refs")
+    try {
+      createTuiRuntimeClient({
+        projectDir: dir,
+        env: {
+          NXL_RUNTIME_CLIENT: "real",
+          NXL_OPENCODE_ADAPTER: "fake",
+          NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{
+            connector_id: "bad-default-header",
+            title: "Bad default header",
+            base_url: "https://api.example.test",
+            allowed_hosts: ["api.example.test"],
+            allowed_methods: ["GET"],
+            default_headers: { Authorization: "Bearer default-header-secret" },
+            timeout_ms: 5000,
+            max_response_bytes: 4096,
+            created_at: "1970-01-01T00:00:00.000Z",
+            updated_at: "1970-01-01T00:00:00.000Z",
+          }]),
+        },
+      })
+      throw new Error("expected invalid external API config")
+    } catch (error) {
+      expect(error instanceof Error ? error.message : String(error)).not.toContain("default-header-secret")
+    }
+  })
+
   test("direct injected client wins over env", async () => {
     const dir = await tempProject()
     const injected = new FakeRuntimeClient(dir, "injected")
@@ -561,6 +608,28 @@ describe("TUI runtime client factory", () => {
     expect(state.operatorActions?.lastResult).toMatchObject({ ok: false, command: `/apply-target proposal ${proposal.proposal_id}` })
     expect(state.operatorActions?.staged?.command).toBe(`/apply-target proposal ${proposal.proposal_id}`)
     expect(state.operatorActions?.commandError).toContain("not ready")
+
+    await client.runtime.shutdown()
+  })
+
+  test("real runtime client path exercises external API preview and dry-run without network", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    let state = await applyRuntimeUiEffect(initialState(dir), client, { type: "send-command", command: "apis" })
+    expect(state.externalApi?.connectors.map((connector) => connector.connector_id)).toContain("mock-research-api")
+
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "api-preview", args: ["mock-research-api", "GET", "/research", "q=token=api-secret"] })
+    expect(state.externalApi?.preview).toMatchObject({ connector_id: "mock-research-api", allowed: true })
+    expect(JSON.stringify(state)).not.toContain("api-secret")
+
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "api-dry-run", args: ["mock-research-api", "GET", "/research"] })
+    expect(state.externalApi?.lastResult).toMatchObject({ ok: true, dry_run: true })
+    expect(state.externalApi?.audit).toEqual([])
 
     await client.runtime.shutdown()
   })

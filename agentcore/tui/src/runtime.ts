@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -42,6 +42,8 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly proposalBundles: CommanderProposalBundleSummary[] = []
   private readonly playbooks: CommanderPlaybookSummary[] = fakeCommanderPlaybooks()
   private readonly playbookDrafts: CommanderWorkbenchDraftSummary[] = []
+  private readonly externalApiConnectors: ExternalApiConnectorSummary[] = fakeExternalApiConnectors()
+  private readonly externalApiAudit: ExternalApiAuditRecordSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -270,6 +272,16 @@ export class FakeRuntimeClient implements RuntimeClient {
         )
       case "runtime.commander_target_context":
         return this.commanderTargetContext(String(payload.targetType ?? payload.target_type ?? ""), String(payload.targetId ?? payload.target_id ?? ""))
+      case "runtime.list_external_api_connectors":
+        return this.externalApiConnectors
+      case "runtime.get_external_api_connector":
+        return this.getExternalApiConnector(String(payload.connectorId ?? payload.connector_id ?? ""))
+      case "runtime.preview_external_api_request":
+        return this.previewExternalApiRequest(payload)
+      case "runtime.execute_external_api_request":
+        return this.executeExternalApiRequest(payload)
+      case "runtime.list_external_api_audit":
+        return this.externalApiAudit.slice(0, readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -293,6 +305,78 @@ export class FakeRuntimeClient implements RuntimeClient {
       default:
         throw new Error(`unknown runtime command: ${redactText(name)}`)
     }
+  }
+
+  private getExternalApiConnector(connectorId: string): ExternalApiConnectorSummary | null {
+    const id = requiredString(connectorId, "connectorId")
+    return this.externalApiConnectors.find((connector) => connector.connector_id === id) ?? null
+  }
+
+  private previewExternalApiRequest(payload: Record<string, unknown>): ExternalApiRequestPreviewSummary {
+    const connector = this.requireExternalApiConnector(String(payload.connectorId ?? payload.connector_id ?? ""))
+    const method = readExternalApiMethod(String(payload.method ?? ""))
+    const path = requiredString(String(payload.path ?? ""), "path")
+    const query = isRecord(payload.query) ? payload.query as Record<string, unknown> : {}
+    const url = new URL(path, connector.base_url)
+    const blockers: string[] = []
+    if (!connector.allowed_methods.includes(method)) blockers.push(`method not allowed: ${method}`)
+    if (!connector.allowed_hosts.includes(url.hostname)) blockers.push(`host not allowed: ${url.hostname}`)
+    for (const [key, value] of Object.entries(query)) {
+      if (typeof value !== "string") blockers.push(`query value must be string: ${key}`)
+      else url.searchParams.set(key, redactText(value))
+    }
+    return {
+      connector_id: connector.connector_id,
+      method,
+      url: redactText(url.toString()),
+      allowed: blockers.length === 0,
+      blockers: blockers.map(redactText),
+      redacted_headers: {},
+      has_body: false,
+      body_bytes: 0,
+      credential_refs_used: connector.credential_refs?.map((ref) => ref.name) ?? [],
+    }
+  }
+
+  private executeExternalApiRequest(payload: Record<string, unknown>): ExternalApiRequestResultSummary {
+    const preview = this.previewExternalApiRequest(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    this.sequence += 1
+    const result: ExternalApiRequestResultSummary = {
+      request_id: `fake-api-request-${this.sequence}`,
+      connector_id: preview.connector_id,
+      method: preview.method,
+      url: preview.url,
+      status_code: dryRun ? undefined : 200,
+      ok: preview.allowed,
+      response_bytes: dryRun ? undefined : 28,
+      response_preview: dryRun ? "dry run: transport not called" : "{\"ok\":true,\"value\":\"fake\"}",
+      error: preview.allowed ? undefined : preview.blockers.join("; "),
+      dry_run: dryRun,
+      created_at: new Date(0).toISOString(),
+    }
+    if (!dryRun) {
+      this.externalApiAudit.unshift({
+        request_id: result.request_id,
+        connector_id: result.connector_id,
+        method: result.method,
+        url: result.url,
+        status_code: result.status_code,
+        ok: result.ok,
+        dry_run: false,
+        requested_by: redactText(String(payload.requestedBy ?? payload.requested_by ?? "operator")),
+        error: result.error,
+        created_at: result.created_at,
+      })
+    }
+    if (!result.ok) throw new Error(result.error ?? "external API request blocked")
+    return result
+  }
+
+  private requireExternalApiConnector(connectorId: string): ExternalApiConnectorSummary {
+    const connector = this.getExternalApiConnector(connectorId)
+    if (!connector) throw new Error(`external API connector not found: ${redactText(connectorId)}`)
+    return connector
   }
 
   private createMission(message: string): SubmitUserMessageResult {
@@ -1450,6 +1534,12 @@ function readQueueKind(value: string): CommanderQueueKind {
   throw new Error("commander queue kind is invalid")
 }
 
+function readExternalApiMethod(value: string): "GET" | "POST" {
+  const method = value.toUpperCase()
+  if (method === "GET" || method === "POST") return method
+  throw new Error("method must be GET or POST")
+}
+
 function isCommanderQueueKind(value: string): value is CommanderQueueKind {
   return value === "needs_review" ||
     value === "ready_to_apply" ||
@@ -1873,6 +1963,37 @@ function fakeCommanderPlaybooks(): CommanderPlaybookSummary[] {
       required_fields: playbookFields(["claim_id", "reason", "title"]),
       generated_action_kinds: ["release_claim"],
       creates_bundle: false,
+    },
+  ]
+}
+
+function fakeExternalApiConnectors(): ExternalApiConnectorSummary[] {
+  return [
+    {
+      connector_id: "generic-http-readonly",
+      title: "Generic HTTP read-only",
+      description: "Disabled placeholder until explicitly configured",
+      base_url: "https://disabled.example.invalid",
+      allowed_hosts: [],
+      allowed_methods: ["GET"],
+      timeout_ms: 5000,
+      max_response_bytes: 4096,
+      created_at: new Date(0).toISOString(),
+      updated_at: new Date(0).toISOString(),
+      credential_refs: [],
+    },
+    {
+      connector_id: "mock-research-api",
+      title: "Mock research API",
+      description: "Deterministic connector for fake transport and tests",
+      base_url: "https://api.example.test",
+      allowed_hosts: ["api.example.test"],
+      allowed_methods: ["GET", "POST"],
+      timeout_ms: 5000,
+      max_response_bytes: 4096,
+      created_at: new Date(0).toISOString(),
+      updated_at: new Date(0).toISOString(),
+      credential_refs: [],
     },
   ]
 }

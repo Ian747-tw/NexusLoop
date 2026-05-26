@@ -18,6 +18,8 @@ import { CommanderPlaybookDraftRegistry } from "./missions/commander-playbook-dr
 import { CommanderQueueService } from "./missions/commander-queue-service"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
+import { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
+import { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
@@ -2603,6 +2605,841 @@ describe("RuntimeServer core", () => {
     expect(server.eventBus.snapshot().map((event) => event.type)).toContain("ResearchProjectionStale")
     await server.shutdown()
   })
+
+  test("external API connectors preview, execute, audit, and redact secrets", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: "token=response-secret api_key=response-key value=ok" },
+      { status_code: 200, body: "{\"ok\":true}" },
+      { status_code: 200, body: "語".repeat(600) },
+    ])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_TEST_API_KEY: "raw-secret-token" },
+      externalApiRequestId: () => "api_req_test",
+      externalApiNow: () => new Date("2026-05-24T00:00:00.000Z"),
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([
+        {
+          connector_id: "with-credential",
+          title: "With credential token=title-secret",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET", "POST"],
+          credential_refs: [{ name: "test-key", source: "env", env_name: "NXL_TEST_API_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }],
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        },
+        {
+          connector_id: "with-custom-credential-header",
+          title: "With custom credential header",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET"],
+          credential_refs: [{ name: "custom-key", source: "env", env_name: "NXL_TEST_API_KEY", inject_as: "header", target_name: "X-Api-Key" }],
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        },
+        {
+          connector_id: "with-safe-default-headers",
+          title: "With safe default headers",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET"],
+          default_headers: {
+            Accept: "application/json token=default-header-secret",
+            "Content-Type": "application/json",
+            "User-Agent": "NexusLoop",
+            "X-Client-Version": "branch-6w",
+          },
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        },
+      ]),
+    })
+
+    const connectors = await server.command("runtime.list_external_api_connectors") as Array<{ connector_id: string; title: string; default_headers?: Record<string, string> }>
+    expect(connectors).toHaveLength(3)
+    expect(JSON.stringify(connectors)).not.toContain("title-secret")
+    expect(JSON.stringify(connectors)).not.toContain("default-header-secret")
+    expect(connectors.find((connector) => connector.connector_id === "with-safe-default-headers")?.default_headers).toMatchObject({
+      Accept: "application/json [REDACTED]",
+      "Content-Type": "application/json",
+      "User-Agent": "NexusLoop",
+      "X-Client-Version": "branch-6w",
+    })
+
+    const preview = await server.command("runtime.preview_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/search",
+      query: { q: "token=query-secret" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; url: string; redacted_headers: Record<string, string>; credential_refs_used: string[] }
+    expect(preview.allowed).toBe(true)
+    expect(preview.url).not.toContain("query-secret")
+    expect(preview.redacted_headers.Authorization).toBe("[REDACTED]")
+    expect(preview.credential_refs_used).toEqual(["test-key"])
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).not.toContain("external_api_request_executed")
+
+    const blockedCredentialHeader = await server.command("runtime.preview_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/search",
+      headers: { authorization: "Bearer user-secret-token" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedCredentialHeader.allowed).toBe(false)
+    expect(blockedCredentialHeader.blockers.join(" ")).toContain("header is not allowed")
+    expect(JSON.stringify(blockedCredentialHeader)).not.toContain("user-secret-token")
+
+    const blockedCustomCredentialHeader = await server.command("runtime.preview_external_api_request", {
+      connectorId: "with-custom-credential-header",
+      method: "GET",
+      path: "/search",
+      headers: { "x-api-key": "user-secret-token" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedCustomCredentialHeader.allowed).toBe(false)
+    expect(blockedCustomCredentialHeader.blockers.join(" ")).toContain("credential header is not allowed")
+    expect(JSON.stringify(blockedCustomCredentialHeader)).not.toContain("user-secret-token")
+
+    await expect(server.command("runtime.execute_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/search",
+      requestedBy: "operator",
+    })).rejects.toThrow("runtime must be started before external API requests")
+
+    await server.start()
+    const result = await server.command("runtime.execute_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/search",
+      requestedBy: "operator token=requester-secret",
+    }) as { ok: boolean; response_preview: string }
+    expect(result.ok).toBe(true)
+    expect(result.response_preview).not.toContain("response-secret")
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].headers.Authorization).toBe("Bearer raw-secret-token")
+
+    await server.command("runtime.execute_external_api_request", {
+      connectorId: "with-credential",
+      method: "POST",
+      path: "/submit",
+      body: "  exact body\n",
+      requestedBy: "operator",
+    })
+    expect(transport.requests[1].body).toBe("  exact body\n")
+
+    const longPreview = await server.command("runtime.execute_external_api_request", {
+      connectorId: "with-credential",
+      method: "GET",
+      path: "/long",
+      requestedBy: "operator",
+    }) as { response_preview: string }
+    expect(new TextEncoder().encode(longPreview.response_preview).byteLength).toBeLessThanOrEqual(512)
+
+    const audit = await server.command("runtime.list_external_api_audit") as Array<{ request_id: string; requested_by: string; ok: boolean }>
+    expect(audit).toContainEqual(expect.objectContaining({ request_id: "api_req_test", ok: true }))
+    expect(new TextEncoder().encode(JSON.stringify(audit)).byteLength).toBeLessThan(4096)
+    expect(JSON.stringify(audit)).not.toContain("requester-secret")
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("raw-secret-token")
+    await server.shutdown()
+  })
+
+  test("external API safety rejects disallowed requests and dry-run skips transport", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport()
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled", externalApiTransport: transport })
+
+    const blocked = await server.command("runtime.preview_external_api_request", {
+      connectorId: "mock-research-api",
+      method: "POST",
+      path: "https://evil.example.test/data",
+      headers: { Authorization: "Bearer secret-token" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blocked.allowed).toBe(false)
+    expect(blocked.blockers.join(" ")).toContain("host not allowed")
+    expect(blocked.blockers.join(" ")).toContain("header is not allowed")
+
+    const emptyValues = await server.command("runtime.preview_external_api_request", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/empty",
+      query: { flag: "" },
+      headers: { "X-Empty": "" },
+      requestedBy: "operator",
+    }) as { allowed: boolean; url: string; redacted_headers: Record<string, string> }
+    expect(emptyValues.allowed).toBe(true)
+    expect(emptyValues.url).toContain("flag=")
+    expect(emptyValues.redacted_headers["X-Empty"]).toBe("")
+
+    const ipv6Server = new RuntimeServer({
+      projectDir: dir,
+      mode: "view-records",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{
+        connector_id: "ipv6-local",
+        title: "IPv6 local",
+        base_url: "https://[::1]",
+        allowed_hosts: ["[::1]"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }]),
+      externalApiTransport: new FakeExternalApiTransport(),
+    })
+    const blockedIpv6 = await ipv6Server.command("runtime.preview_external_api_request", {
+      connectorId: "ipv6-local",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedIpv6.allowed).toBe(false)
+    expect(blockedIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
+    await ipv6Server.shutdown()
+
+    const loopbackServer = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{
+        connector_id: "loopback-range",
+        title: "Loopback range",
+        base_url: "https://127.0.0.2",
+        allowed_hosts: ["127.0.0.2"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "private-with-local-http",
+        title: "Private with local HTTP",
+        base_url: "https://10.1.2.3",
+        allowed_hosts: ["10.1.2.3"],
+        allowed_methods: ["GET"],
+        allow_local_http: true,
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "mapped-ipv6-private",
+        title: "Mapped IPv6 private",
+        base_url: "https://[::ffff:a00:5]",
+        allowed_hosts: ["[::ffff:a00:5]"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "link-local",
+        title: "Link local",
+        base_url: "https://169.254.169.254",
+        allowed_hosts: ["169.254.169.254"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "unspecified-ipv4",
+        title: "Unspecified IPv4",
+        base_url: "https://0.0.0.0",
+        allowed_hosts: ["0.0.0.0"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "unspecified-ipv6",
+        title: "Unspecified IPv6",
+        base_url: "https://[::]",
+        allowed_hosts: ["[::]"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "compressed-private-ipv6",
+        title: "Compressed private IPv6",
+        base_url: "https://[fc::1]",
+        allowed_hosts: ["[fc::1]"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "compressed-link-local-ipv6",
+        title: "Compressed link local IPv6",
+        base_url: "https://[fe8::1]",
+        allowed_hosts: ["[fe8::1]"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "mixed-case-host",
+        title: "Mixed case host",
+        base_url: "https://API.EXAMPLE.TEST",
+        allowed_hosts: ["API.EXAMPLE.TEST"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "dns-like-private-prefix",
+        title: "DNS-like private prefix",
+        base_url: "https://10.example.com",
+        allowed_hosts: ["10.example.com"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "public-default-port",
+        title: "Public default port",
+        base_url: "https://api.example.com",
+        allowed_hosts: ["api.example.com"],
+        allowed_methods: ["GET"],
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }, {
+        connector_id: "localhost-http-test",
+        title: "Localhost HTTP test",
+        base_url: "http://localhost",
+        allowed_hosts: ["localhost"],
+        allowed_methods: ["GET"],
+        allow_local_http: true,
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }]),
+      externalApiTransport: new FakeExternalApiTransport(),
+    })
+    const blockedLoopbackRange = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "loopback-range",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedLoopbackRange.allowed).toBe(false)
+    expect(blockedLoopbackRange.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedPrivateWithLocalHttp = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "private-with-local-http",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedPrivateWithLocalHttp.allowed).toBe(false)
+    expect(blockedPrivateWithLocalHttp.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedMappedIpv6 = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "mapped-ipv6-private",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedMappedIpv6.allowed).toBe(false)
+    expect(blockedMappedIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedLinkLocal = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "link-local",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedLinkLocal.allowed).toBe(false)
+    expect(blockedLinkLocal.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedUnspecifiedIpv4 = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "unspecified-ipv4",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedUnspecifiedIpv4.allowed).toBe(false)
+    expect(blockedUnspecifiedIpv4.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedUnspecifiedIpv6 = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "unspecified-ipv6",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedUnspecifiedIpv6.allowed).toBe(false)
+    expect(blockedUnspecifiedIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedCompressedPrivateIpv6 = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "compressed-private-ipv6",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedCompressedPrivateIpv6.allowed).toBe(false)
+    expect(blockedCompressedPrivateIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
+    const blockedCompressedLinkLocalIpv6 = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "compressed-link-local-ipv6",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedCompressedLinkLocalIpv6.allowed).toBe(false)
+    expect(blockedCompressedLinkLocalIpv6.blockers.join(" ")).toContain("local/private host is not allowed")
+    const allowedMixedCaseHost = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "mixed-case-host",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(allowedMixedCaseHost.allowed).toBe(true)
+    expect(allowedMixedCaseHost.blockers).toEqual([])
+    const allowedDnsLikePrivatePrefix = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "dns-like-private-prefix",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(allowedDnsLikePrivatePrefix.allowed).toBe(true)
+    expect(allowedDnsLikePrivatePrefix.blockers).toEqual([])
+    const blockedPortOverride = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "public-default-port",
+      method: "GET",
+      path: "https://api.example.com:8443/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(blockedPortOverride.allowed).toBe(false)
+    expect(blockedPortOverride.blockers.join(" ")).toContain("port not allowed")
+    await loopbackServer.start()
+    await expect(loopbackServer.command("runtime.execute_external_api_request", {
+      connectorId: "mapped-ipv6-private",
+      method: "GET",
+      path: "/status",
+      dryRun: true,
+      requestedBy: "operator",
+    })).rejects.toThrow("local/private host is not allowed")
+    const allowedLocalhostHttp = await loopbackServer.command("runtime.preview_external_api_request", {
+      connectorId: "localhost-http-test",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; blockers: string[] }
+    expect(allowedLocalhostHttp.allowed).toBe(true)
+    expect(allowedLocalhostHttp.blockers).toEqual([])
+    await loopbackServer.shutdown()
+
+    await server.start()
+    const dryRun = await server.command("runtime.execute_external_api_request", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "/dry",
+      dryRun: true,
+      requestedBy: "operator",
+    }) as { ok: boolean; dry_run: boolean }
+    expect(dryRun).toMatchObject({ ok: true, dry_run: true })
+    expect(transport.requests).toHaveLength(0)
+    expect(await server.command("runtime.list_external_api_audit")).toEqual([])
+    await expect(server.command("runtime.execute_external_api_request", {
+      connectorId: "mock-research-api",
+      method: "GET",
+      path: "https://evil.example.test/dry",
+      dryRun: true,
+      requestedBy: "operator",
+    })).rejects.toThrow("host not allowed")
+    expect(transport.requests).toHaveLength(0)
+    expect(await server.command("runtime.list_external_api_audit")).toEqual([])
+    await server.shutdown()
+  })
+
+  test("external API execute validates resolved hosts before dispatch", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport()
+    const registry = new ExternalApiConnectorRegistry([{
+      connector_id: "public-dns",
+      title: "Public DNS",
+      base_url: "https://api.public.example",
+      allowed_hosts: ["api.public.example"],
+      allowed_methods: ["GET"],
+      timeout_ms: 5000,
+      max_response_bytes: 4096,
+      created_at: "1970-01-01T00:00:00.000Z",
+      updated_at: "1970-01-01T00:00:00.000Z",
+    }, {
+      connector_id: "local-http-test",
+      title: "Local HTTP test",
+      base_url: "http://localhost",
+      allowed_hosts: ["localhost"],
+      allowed_methods: ["GET"],
+      allow_local_http: true,
+      timeout_ms: 5000,
+      max_response_bytes: 4096,
+      created_at: "1970-01-01T00:00:00.000Z",
+      updated_at: "1970-01-01T00:00:00.000Z",
+    }])
+    let resolvedAddress: string | null = "127.0.0.2"
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: registry,
+      externalApiTransport: transport,
+      externalApiResolveHostAddresses: async (hostname) => {
+        if (hostname === "api.public.example" && resolvedAddress === null) return []
+        return [{ address: hostname === "api.public.example" ? resolvedAddress ?? hostname : hostname }]
+      },
+    })
+    await server.start()
+    await expect(server.command("runtime.execute_external_api_request", {
+      connectorId: "public-dns",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    })).rejects.toThrow("resolved host is local/private")
+    expect(transport.requests).toHaveLength(0)
+    const failedAudit = await server.command("runtime.list_external_api_audit") as Array<{ ok: boolean; error?: string }>
+    expect(failedAudit[0]).toMatchObject({ ok: false })
+    expect(failedAudit[0].error).toContain("resolved host is local/private")
+
+    resolvedAddress = null
+    await expect(server.command("runtime.execute_external_api_request", {
+      connectorId: "public-dns",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    })).rejects.toThrow("host resolution returned no addresses")
+    expect(transport.requests).toHaveLength(0)
+
+    const localResult = await server.command("runtime.execute_external_api_request", {
+      connectorId: "local-http-test",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { ok: boolean }
+    expect(localResult.ok).toBe(true)
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].allow_local_test_host).toBe(true)
+
+    resolvedAddress = "93.184.216.34"
+    const result = await server.command("runtime.execute_external_api_request", {
+      connectorId: "public-dns",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { ok: boolean }
+    expect(result.ok).toBe(true)
+    expect(transport.requests).toHaveLength(2)
+    await server.shutdown()
+  })
+
+  test("external API default fetch transport uses configured host resolver", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const originalFetch = globalThis.fetch
+    let fetchCalled = false
+    let resolverCalls = 0
+    globalThis.fetch = (async () => {
+      fetchCalled = true
+      return new Response("{\"ok\":true}", { status: 200 })
+    }) as unknown as typeof fetch
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{
+        connector_id: "default-fetch-custom-resolver",
+        title: "Default fetch custom resolver",
+        base_url: "https://api.default-fetch.example",
+        allowed_hosts: ["api.default-fetch.example"],
+        allowed_methods: ["GET"],
+        timeout_ms: 1000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }]),
+      externalApiResolveHostAddresses: async () => {
+        resolverCalls += 1
+        return [{ address: "93.184.216.34" }]
+      },
+    })
+    try {
+      await server.start()
+      const result = await server.command("runtime.execute_external_api_request", {
+        connectorId: "default-fetch-custom-resolver",
+        method: "GET",
+        path: "/status",
+        requestedBy: "operator",
+      }) as { ok: boolean }
+      expect(result.ok).toBe(true)
+      expect(fetchCalled).toBe(true)
+      expect(resolverCalls).toBeGreaterThanOrEqual(2)
+    } finally {
+      await server.shutdown()
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("external API connector env config validation fails clearly", () => {
+    const connectorWithDefaultHeader = (headerName: string): Record<string, unknown> => ({
+      connector_id: "bad-default-header",
+      title: "Bad default header",
+      base_url: "https://api.example.test",
+      allowed_hosts: ["api.example.test"],
+      allowed_methods: ["GET"],
+      default_headers: { [headerName]: "raw-secret-value" },
+      timeout_ms: 5000,
+      max_response_bytes: 4096,
+      created_at: "1970-01-01T00:00:00.000Z",
+      updated_at: "1970-01-01T00:00:00.000Z",
+    })
+    expect(() => readExternalApiConnectorsFromEnv({ NXL_EXTERNAL_API_CONNECTORS_JSON: "not-json" })).toThrow("must be valid JSON")
+    expect(() => readExternalApiConnectorsFromEnv({
+      NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{ connector_id: "bad", title: "Bad", base_url: "ftp://example.test", allowed_hosts: ["example.test"], allowed_methods: ["GET"], timeout_ms: 1, max_response_bytes: 1, created_at: "now", updated_at: "now" }]),
+    })).toThrow("base_url must use https")
+    try {
+      readExternalApiConnectorsFromEnv({
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{ connector_id: "bad-url", title: "Bad URL", base_url: "https://api.example.test:secret_token_raw/status", allowed_hosts: ["api.example.test"], allowed_methods: ["GET"], timeout_ms: 1, max_response_bytes: 1, created_at: "now", updated_at: "now" }]),
+      })
+      throw new Error("expected base URL validation failure")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      expect(message).toContain("connector[0].base_url must be a valid URL")
+      expect(message).not.toContain("secret_token_raw")
+    }
+    for (const base_url of ["https://api.example.test?auth=raw_secret_value", "https://api.example.test#raw_secret_value"]) {
+      try {
+        readExternalApiConnectorsFromEnv({
+          NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{ connector_id: "bad-base-url", title: "Bad base URL", base_url, allowed_hosts: ["api.example.test"], allowed_methods: ["GET"], timeout_ms: 1, max_response_bytes: 1, created_at: "now", updated_at: "now" }]),
+        })
+        throw new Error("expected base URL query/fragment validation failure")
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        expect(message).toContain("connector[0].base_url must not include query or fragment")
+        expect(message).not.toContain("raw_secret_value")
+      }
+    }
+    for (const headerName of ["Authorization", "authorization", "Cookie", "X-Api-Key", "X-Custom-Token"]) {
+      expect(() => readExternalApiConnectorsFromEnv({
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connectorWithDefaultHeader(headerName)]),
+      })).toThrow(`connector[0].default_headers.${headerName} must use credential_refs`)
+    }
+    expect(() => readExternalApiConnectorsFromEnv({
+      NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connectorWithDefaultHeader("X-Secret-Thing")]),
+    })).toThrow("must use credential_refs")
+    try {
+      readExternalApiConnectorsFromEnv({
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connectorWithDefaultHeader("Authorization")]),
+      })
+      throw new Error("expected default header validation failure")
+    } catch (error) {
+      expect(error instanceof Error ? error.message : String(error)).not.toContain("raw-secret-value")
+    }
+    const safe = readExternalApiConnectorsFromEnv({
+      NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{
+        connector_id: "safe-default-headers",
+        title: "Safe default headers",
+        base_url: "https://api.example.test",
+        allowed_hosts: ["api.example.test"],
+        allowed_methods: ["GET"],
+        default_headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "NexusLoop", "X-Client-Version": "branch-6w" },
+        timeout_ms: 5000,
+        max_response_bytes: 4096,
+        created_at: "1970-01-01T00:00:00.000Z",
+        updated_at: "1970-01-01T00:00:00.000Z",
+      }]),
+    })
+    expect(safe[0].default_headers).toMatchObject({ Accept: "application/json", "Content-Type": "application/json", "User-Agent": "NexusLoop", "X-Client-Version": "branch-6w" })
+  })
+
+  test("fetch external API transport enforces response max bytes for multibyte text", async () => {
+    const originalFetch = globalThis.fetch
+    let streamCanceled = false
+    let fetchCalled = false
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder()
+        controller.enqueue(encoder.encode("abc"))
+        controller.enqueue(encoder.encode("def"))
+      },
+      cancel() {
+        streamCanceled = true
+      },
+    })
+    const responses: Array<string | ReadableStream<Uint8Array>> = ["local-ok", "日本語abc", "😀abc", stream]
+    globalThis.fetch = (async () => {
+      fetchCalled = true
+      return new Response(responses.shift() ?? "", { status: 200 })
+    }) as unknown as typeof fetch
+    try {
+      const guardedTransport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "127.0.0.2" }] })
+      await expect(guardedTransport.request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      expect(fetchCalled).toBe(false)
+      await expect(guardedTransport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "::ffff:10.0.0.5" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "::ffff:a00:5" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "0:0:0:0:0:ffff:7f00:1" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "0:0:0:0:0:ffff:127.0.0.1" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "0000:0000:0000:0000:0000:ffff:10.0.0.5" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "0000:0000:0000:0000:0000:ffff:c0a8:0001" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "169.254.169.254" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "0.0.0.0" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "::" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "fc::1" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "fd::1" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "fe8::1" }] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("resolved host is local/private")
+      await expect(new FetchExternalApiTransport({ resolveHostAddresses: async () => [] }).request({
+        method: "GET",
+        url: "https://api.public.example/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("host resolution returned no addresses")
+      expect(fetchCalled).toBe(false)
+      const localTestTransport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "127.0.0.1" }] })
+      const localTest = await localTestTransport.request({
+        method: "GET",
+        url: "http://localhost/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 16,
+        allow_local_test_host: true,
+      })
+      expect(localTest.status_code).toBe(200)
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
+      const result = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })
+      expect(new TextEncoder().encode(result.body).byteLength).toBeLessThanOrEqual(6)
+      const splitCodepoint = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/emoji",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 1,
+      })
+      expect(splitCodepoint.body).toBe("")
+      expect(new TextEncoder().encode(splitCodepoint.body).byteLength).toBeLessThanOrEqual(1)
+      const streamed = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/stream",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+      })
+      expect(streamed.body).toBe("abc")
+      expect(streamCanceled).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 })
 
 describe("RunLock", () => {
@@ -4241,6 +5078,52 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
 
     expect(server.adapter).toBeInstanceOf(ProcessOpenCodeAdapter)
     expect(spawnCalls).toBe(0)
+  })
+
+  test("env external API config and credentials are wired through launch boundary", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "{\"ok\":true}" }])
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      mode: "active",
+      env: {
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([{
+          connector_id: "env-api",
+          title: "Env API",
+          base_url: "https://api.example.test",
+          allowed_hosts: ["api.example.test"],
+          allowed_methods: ["GET"],
+          credential_refs: [{ name: "env-key", source: "env", env_name: "NXL_ENV_API_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }],
+          timeout_ms: 5000,
+          max_response_bytes: 4096,
+          created_at: "1970-01-01T00:00:00.000Z",
+          updated_at: "1970-01-01T00:00:00.000Z",
+        }]),
+        NXL_ENV_API_KEY: "raw-env-launch-secret",
+      },
+      externalApiTransport: transport,
+    })
+
+    expect(await server.command("runtime.list_external_api_connectors")).toContainEqual(expect.objectContaining({ connector_id: "env-api" }))
+    const preview = await server.command("runtime.preview_external_api_request", {
+      connectorId: "env-api",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    }) as { allowed: boolean; redacted_headers: Record<string, string> }
+    expect(preview).toMatchObject({ allowed: true, redacted_headers: { Authorization: "[REDACTED]" } })
+
+    await server.start()
+    await server.command("runtime.execute_external_api_request", {
+      connectorId: "env-api",
+      method: "GET",
+      path: "/status",
+      requestedBy: "operator",
+    })
+    expect(transport.requests[0].headers.Authorization).toBe("Bearer raw-env-launch-secret")
+    expect(JSON.stringify(await server.command("runtime.list_external_api_audit"))).not.toContain("raw-env-launch-secret")
+    await server.shutdown()
   })
 
   test("env process config starts runtime with fake spawn and writes session start", async () => {

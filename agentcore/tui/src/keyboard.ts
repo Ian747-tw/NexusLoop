@@ -250,4 +250,10 @@ const runtimeCommands = new Set([
   "run-staged",
   "execute-staged",
   "stage-preview",
+  "apis",
+  "api",
+  "api-preview",
+  "api-call",
+  "api-dry-run",
+  "api-audit",
 ])
