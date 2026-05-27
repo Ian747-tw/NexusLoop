@@ -118,21 +118,19 @@ export class ResearchSynthesisService {
       confidence: output.confidence,
     }
     const outputHash = sha256(JSON.stringify(outputPayload))
+    let result: ResearchSynthesisResult
     try {
       const note = this.options.researchDb.addNote({
         topic_id: normalized.topic_id,
         content: synthesisNoteContent(synthesisId, normalized, built.preview.included_evidence_ids, output, contextHash, outputHash),
         tags: ["research-synthesis"],
       })
-      const proposalIds = normalized.create_proposals
-        ? await this.createProposals(synthesisId, normalized, output.recommended_actions)
-        : []
       const artifactContent = JSON.stringify({
         synthesis_id: synthesisId,
         topic_id: normalized.topic_id,
         provider_id: this.provider.provider_id,
         source_note_id: note.id,
-        proposal_ids: proposalIds,
+        proposal_ids: [],
         objective: normalized.objective,
         evidence_ids: built.preview.included_evidence_ids,
         excluded_evidence_count: built.preview.excluded_evidence_count,
@@ -151,13 +149,13 @@ export class ResearchSynthesisService {
         size_bytes: byteLength(artifactContent),
         description: `Research synthesis ${synthesisId}`,
       })
-      const result: ResearchSynthesisResult = redactValue({
+      result = redactValue({
         synthesis_id: synthesisId,
         topic_id: normalized.topic_id,
         provider_id: this.provider.provider_id,
         source_note_id: note.id,
         artifact_id: artifact.id,
-        proposal_ids: proposalIds,
+        proposal_ids: [],
         title: output.title,
         summary: output.summary,
         findings: output.findings,
@@ -170,11 +168,19 @@ export class ResearchSynthesisService {
         requested_by: redactText(normalized.requested_by),
       })
       await this.writeSuccess(result)
-      return result
     } catch (error) {
-      const result = this.failureResult(synthesisId, normalized, createdAt, errorMessage(error), contextHash)
-      await this.writeFailure(result)
-      throw new Error(`research synthesis write failed: ${result.error}`)
+      const failure = this.failureResult(synthesisId, normalized, createdAt, errorMessage(error), contextHash)
+      await this.writeFailure(failure)
+      throw new Error(`research synthesis write failed: ${failure.error}`)
+    }
+    if (!normalized.create_proposals) return result
+    try {
+      const proposalIds = await this.createProposals(synthesisId, normalized, output.recommended_actions)
+      const resultWithProposals = { ...result, proposal_ids: proposalIds }
+      await this.writeProposalLinks(resultWithProposals)
+      return resultWithProposals
+    } catch (error) {
+      throw new Error(`research synthesis proposal drafting failed: ${errorMessage(error)}`)
     }
   }
 
@@ -182,11 +188,13 @@ export class ResearchSynthesisService {
     const id = requiredString(synthesisId, "synthesis_id")
     const events = await this.options.eventStore.readAll()
     const event = events.find((item) => item.kind === "research_synthesis_created" && item.synthesis_id === id)
-    return event ? readResultFromEvent(event) : null
+    if (!event) return null
+    return withProposalIds(readResultFromEvent(event), proposalIdsFor(events, id))
   }
 
   async list(limit = DEFAULT_LIST_LIMIT): Promise<ResearchSynthesisRecord[]> {
     const events = await this.options.eventStore.readAll()
+    const proposalIdsBySynthesis = proposalIdsBySynthesisId(events)
     return events
       .filter((event) => event.kind === "research_synthesis_created")
       .reverse()
@@ -197,7 +205,7 @@ export class ResearchSynthesisService {
         provider_id: String(event.provider_id ?? ""),
         source_note_id: optionalEventString(event.source_note_id),
         artifact_id: optionalEventString(event.artifact_id),
-        proposal_ids: eventStringArray(event.proposal_ids),
+        proposal_ids: proposalIdsBySynthesis.get(String(event.synthesis_id ?? "")) ?? eventStringArray(event.proposal_ids),
         title: String(event.title ?? ""),
         summary_preview: boundedText(String(event.summary ?? ""), SUMMARY_PREVIEW_BYTES),
         created_at: String(event.created_at ?? event.timestamp ?? ""),
@@ -307,6 +315,22 @@ export class ResearchSynthesisService {
       risks: result.risks,
       open_questions: result.open_questions,
       recommended_actions: result.recommended_actions,
+      context_hash: result.context_hash,
+      output_hash: result.output_hash,
+      created_at: result.created_at,
+      requested_by: result.requested_by,
+    }))
+  }
+
+  private async writeProposalLinks(result: ResearchSynthesisResult): Promise<void> {
+    await this.options.eventStore.append(redactValue({
+      kind: "research_synthesis_proposals_created",
+      synthesis_id: result.synthesis_id,
+      topic_id: result.topic_id,
+      provider_id: result.provider_id,
+      source_note_id: result.source_note_id,
+      artifact_id: result.artifact_id,
+      proposal_ids: result.proposal_ids ?? [],
       context_hash: result.context_hash,
       output_hash: result.output_hash,
       created_at: result.created_at,
@@ -473,6 +497,25 @@ function readResultFromEvent(event: Record<string, unknown>): ResearchSynthesisR
     created_at: String(event.created_at ?? event.timestamp ?? ""),
     requested_by: String(event.requested_by ?? "unknown"),
   }) as ResearchSynthesisResult
+}
+
+function withProposalIds(result: ResearchSynthesisResult, proposalIds: string[]): ResearchSynthesisResult {
+  return proposalIds.length > 0 ? { ...result, proposal_ids: proposalIds } : result
+}
+
+function proposalIdsBySynthesisId(events: Record<string, unknown>[]): Map<string, string[]> {
+  const bySynthesisId = new Map<string, string[]>()
+  for (const event of events) {
+    if (event.kind !== "research_synthesis_proposals_created") continue
+    const synthesisId = String(event.synthesis_id ?? "")
+    if (!synthesisId) continue
+    bySynthesisId.set(synthesisId, eventStringArray(event.proposal_ids))
+  }
+  return bySynthesisId
+}
+
+function proposalIdsFor(events: Record<string, unknown>[], synthesisId: string): string[] {
+  return proposalIdsBySynthesisId(events).get(synthesisId) ?? []
 }
 
 function clampBytes(value: unknown, fallback: number, max: number, field: string): number {

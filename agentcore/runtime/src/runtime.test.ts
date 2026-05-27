@@ -412,6 +412,12 @@ class FailingAddSourceResearchDb extends TrackingResearchDb {
   }
 }
 
+class FailingAddArtifactResearchDb extends TrackingResearchDb {
+  override addArtifact(_input: Parameters<RuntimeResearchDbProjection["addArtifact"]>[0]): ReturnType<RuntimeResearchDbProjection["addArtifact"]> {
+    throw new Error("ResearchDb artifact write failed token=artifact-secret")
+  }
+}
+
 class CountingSynthesisProvider implements ResearchSynthesisProvider {
   readonly provider_id = "counting-synthesis"
   calls = 0
@@ -3507,10 +3513,48 @@ describe("RuntimeServer core", () => {
     expect(proposal.summary).toContain("synthesis_id: synth_props")
     expect(proposal.action_payload.synthesis_id).toBe("synth_props")
     const events = await readJsonlEvents(dir)
-    expect(events.find((event) => event.kind === "research_synthesis_created")).toMatchObject({ proposal_ids: result.proposal_ids })
+    expect(events.find((event) => event.kind === "research_synthesis_created")).toMatchObject({ proposal_ids: [] })
+    expect(events.find((event) => event.kind === "research_synthesis_proposals_created")).toMatchObject({ synthesis_id: "synth_props", proposal_ids: result.proposal_ids })
+    const listed = await server.command("runtime.list_research_syntheses") as Array<{ synthesis_id: string; proposal_ids: string[] }>
+    expect(listed[0]).toMatchObject({ synthesis_id: "synth_props", proposal_ids: result.proposal_ids })
+    const fetched = await server.command("runtime.get_research_synthesis", { synthesisId: "synth_props" }) as { proposal_ids: string[] }
+    expect(fetched.proposal_ids).toEqual(result.proposal_ids)
     expect(events.map((event) => event.kind)).not.toContain("commander_proposal_review_requested")
     expect(events.map((event) => event.kind)).not.toContain("commander_proposal_applied")
     await server.shutdown()
+  })
+
+  test("research synthesis drafts proposals only after durable synthesis commit", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const rawDb = ResearchDb.open(dir)
+    rawDb.createTopic({ id: "topic_synth", title: "Synthesis topic", status: "active" })
+    rawDb.addNote({ id: "note_synth", topic_id: "topic_synth", content: "source note value", tags: ["evidence"] })
+    const researchDb = new FailingAddArtifactResearchDb(rawDb)
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      researchDb,
+      researchSynthesisId: () => "synth_write_fail",
+      researchSynthesisNow: () => new Date("2026-05-25T00:00:00.000Z"),
+    })
+    await server.start()
+
+    await expect(server.command("runtime.execute_research_synthesis", {
+      topicId: "topic_synth",
+      createProposals: true,
+      requestedBy: "operator",
+    })).rejects.toThrow("research synthesis write failed")
+
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("research_synthesis_failed")
+    expect(events.map((event) => event.kind)).not.toContain("research_synthesis_created")
+    expect(events.map((event) => event.kind)).not.toContain("research_synthesis_proposals_created")
+    expect(events.map((event) => event.kind)).not.toContain("commander_proposal_created")
+    expect(JSON.stringify(events)).not.toContain("artifact-secret")
+    await server.shutdown()
+    researchDb.close()
   })
 
   test("research synthesis empty evidence and provider errors fail closed without proposals", async () => {
