@@ -249,6 +249,34 @@ export class ProposalRegistry {
     })
   }
 
+  async applyApprovedProposalExternalAction(proposalId: string, operation: () => Promise<string>): Promise<CommanderProposal> {
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const proposal = this.requireProposal(cleanRequiredString(proposalId, "proposal_id"))
+      if (proposal.status === "applied") return redactValue(proposal)
+      if (proposal.status === "rejected" || proposal.status === "cancelled") throw new Error(`terminal proposal cannot apply: ${proposal.proposal_id}`)
+      const reviewId = cleanRequiredString(proposal.review_id, "review_id")
+      const review = await this.reviewRegistry.getReviewRequest(reviewId)
+      if (!review || review.status !== "approved") throw new Error(`proposal requires an approved linked review before apply: ${proposal.proposal_id}`)
+      if (proposal.status !== "approved") {
+        await this.appendAndApply({
+          kind: "commander_proposal_approved",
+          proposal_id: proposal.proposal_id,
+          review_id: review.review_id,
+          approved_at: review.decision_at ?? this.isoNow(),
+        })
+      }
+      const applicationResult = redactText(cleanRequiredString(await operation(), "application_result"))
+      await this.appendAndApply({
+        kind: "commander_proposal_applied",
+        proposal_id: proposal.proposal_id,
+        applied_at: this.isoNow(),
+        application_result: applicationResult,
+      })
+      return redactValue(this.requireProposal(proposal.proposal_id))
+    })
+  }
+
   async syncReviewDecision(reviewId: string): Promise<CommanderProposal[]> {
     return this.serializeMutation(async () => {
       await this.hydrate()

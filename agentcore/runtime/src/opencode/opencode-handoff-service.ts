@@ -139,40 +139,44 @@ export class OpenCodeHandoffService {
       source_synthesis_id: payload.source_synthesis_id,
       evidence_ids: payload.evidence_ids,
     })
-    let mission: { mission_id: string; intent_id: string } | null = null
-    try {
-      mission = await this.sendMission(buildMissionObjective(payload))
-    } catch (error) {
-      const failureReason = redactText(error instanceof Error ? error.message : String(error))
-      await this.appendAndApply({
-        kind: "opencode_handoff_failed",
+    let result: OpenCodeHandoffResult | null = null
+    await this.proposalRegistry.applyApprovedProposalExternalAction(proposal.proposal_id, async () => {
+      let mission: { mission_id: string; intent_id: string } | null = null
+      try {
+        mission = await this.sendMission(buildMissionObjective(payload))
+      } catch (error) {
+        const failureReason = redactText(error instanceof Error ? error.message : String(error))
+        await this.appendAndApply({
+          kind: "opencode_handoff_failed",
+          handoff_id: handoffId,
+          proposal_id: proposal.proposal_id,
+          review_id: proposal.review_id,
+          failure_reason: failureReason,
+          failed_at: this.now().toISOString(),
+          requested_by: requestedBy,
+        })
+        throw new Error(`opencode handoff failed: ${failureReason}`)
+      }
+
+      result = {
         handoff_id: handoffId,
         proposal_id: proposal.proposal_id,
         review_id: proposal.review_id,
-        failure_reason: failureReason,
-        failed_at: this.now().toISOString(),
+        mission_id: mission.mission_id,
+        intent_id: mission.intent_id,
+        objective_preview: previewText(payload.objective),
+        sent: true,
+        dry_run: false,
+        created_at: createdAt,
         requested_by: requestedBy,
-      })
-      throw new Error(`opencode handoff failed: ${failureReason}`)
-    }
-
-    const result: OpenCodeHandoffResult = {
-      handoff_id: handoffId,
-      proposal_id: proposal.proposal_id,
-      review_id: proposal.review_id,
-      mission_id: mission.mission_id,
-      intent_id: mission.intent_id,
-      objective_preview: previewText(payload.objective),
-      sent: true,
-      dry_run: false,
-      created_at: createdAt,
-      requested_by: requestedBy,
-      source_cycle_id: payload.source_cycle_id,
-      source_synthesis_id: payload.source_synthesis_id,
-      evidence_ids: payload.evidence_ids,
-    }
-    await this.appendAndApply({ kind: "opencode_handoff_created", handoff: result })
-    await this.proposalRegistry.markProposalApplied(proposal.proposal_id, `opencode_handoff:${handoffId}:mission:${mission.mission_id}`)
+        source_cycle_id: payload.source_cycle_id,
+        source_synthesis_id: payload.source_synthesis_id,
+        evidence_ids: payload.evidence_ids,
+      }
+      await this.appendAndApply({ kind: "opencode_handoff_created", handoff: result })
+      return `opencode_handoff:${handoffId}:mission:${mission.mission_id}`
+    })
+    if (!result) throw new Error("opencode handoff failed before mission result was recorded")
     return redactValue(result)
   }
 

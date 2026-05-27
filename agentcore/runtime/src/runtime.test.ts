@@ -168,6 +168,31 @@ class ThrowingMissionAdapter extends LongLivedAdapter {
   }
 }
 
+class BlockingMissionAdapter extends LongLivedAdapter {
+  readonly sendStarted: Promise<void>
+  private resolveSendStarted!: () => void
+  private releaseSend!: () => void
+
+  constructor() {
+    super()
+    this.sendStarted = new Promise((resolve) => {
+      this.resolveSendStarted = resolve
+    })
+  }
+
+  override async sendMissionPacket(packet: MissionPacket): Promise<void> {
+    this.resolveSendStarted()
+    await new Promise<void>((resolve) => {
+      this.releaseSend = resolve
+    })
+    await super.sendMissionPacket(packet)
+  }
+
+  release(): void {
+    this.releaseSend()
+  }
+}
+
 class DelayedShutdownEventAdapter implements OpenCodeRuntimeAdapter {
   private shutdownStarted: Promise<void>
   private releaseShutdown!: () => void
@@ -1483,6 +1508,41 @@ describe("RuntimeServer core", () => {
     expect(adapter.packets).toHaveLength(1)
     expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_handoff_started")).toHaveLength(1)
     expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_handoff_created")).toHaveLength(1)
+    await server.shutdown()
+  })
+
+  test("opencode handoff execute blocks concurrent proposal cancellation until applied", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new BlockingMissionAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_cancel_race",
+    })
+
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff cancel race",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "send before cancel" },
+    }) as { proposal_id: string }
+    const reviewed = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+
+    const handoffTask = server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" })
+    await adapter.sendStarted
+    const cancelTask = server.command("runtime.cancel_commander_proposal", { proposalId: proposal.proposal_id, reason: "too late" })
+    await expect(Promise.race([cancelTask.then(() => "cancelled"), timeout(25)])).resolves.toBe("timeout")
+    adapter.release()
+
+    await expect(handoffTask).resolves.toMatchObject({ handoff_id: "handoff_cancel_race", sent: true })
+    await expect(cancelTask).rejects.toThrow("terminal proposal cannot cancel")
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({ status: "applied" })
+    expect(adapter.packets).toHaveLength(1)
     await server.shutdown()
   })
 
