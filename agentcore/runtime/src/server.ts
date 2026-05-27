@@ -42,6 +42,8 @@ import { FakeCommanderCycleProvider, type CommanderCycleProvider } from "./comma
 import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, CommanderCycleResult } from "./commander-cycle/commander-cycle-types"
 import { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
 import { defaultReasoningProviderConfig, reasoningProviderStatus, validateReasoningProviderConfig, type ReasoningProviderConfig, type ReasoningProviderStatus } from "./reasoning/reasoning-provider-config"
+import { ReasoningProviderHealthService } from "./reasoning/reasoning-health-service"
+import type { ReasoningProviderHealth, ReasoningProviderSmokeInput, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "./reasoning/reasoning-health-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -312,6 +314,12 @@ export class RuntimeServer {
         return this.status()
       case "runtime.reasoning_provider_status":
         return this.reasoningProviderStatus()
+      case "runtime.reasoning_provider_health":
+        return this.reasoningProviderHealth()
+      case "runtime.preview_reasoning_provider_smoke":
+        return this.previewReasoningProviderSmoke(readReasoningProviderSmokeInput(payload))
+      case "runtime.execute_reasoning_provider_smoke":
+        return this.executeReasoningProviderSmoke(readReasoningProviderSmokeInput(payload))
       case "runtime.resume":
         return this.resume()
       case "runtime.start_new_session":
@@ -890,6 +898,19 @@ export class RuntimeServer {
     return this.externalApiRequestService().listAudit(limit)
   }
 
+  reasoningProviderHealth(): ReasoningProviderHealth {
+    return this.reasoningProviderHealthService().health()
+  }
+
+  previewReasoningProviderSmoke(input: ReasoningProviderSmokeInput = {}): ReasoningProviderSmokePreview {
+    return this.reasoningProviderHealthService().preview(input)
+  }
+
+  async executeReasoningProviderSmoke(input: ReasoningProviderSmokeInput = {}): Promise<ReasoningProviderSmokeResult> {
+    this.requireReasoningProviderSmokeRuntime("runtime.execute_reasoning_provider_smoke")
+    return this.reasoningProviderHealthService().execute(input)
+  }
+
   previewExternalApiResearchIngestion(input: ExternalApiResearchIngestionInput): ExternalApiResearchIngestionPreview {
     this.ensureResearchProjectionUsable("read")
     return this.externalApiResearchIngestionService().preview(input)
@@ -1245,6 +1266,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before commander cycle writes")
   }
 
+  private requireReasoningProviderSmokeRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before reasoning provider smoke")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1294,16 +1320,27 @@ export class RuntimeServer {
     })
   }
 
-  private createMiniMaxReasoningProvider(): MiniMaxReasoningProvider {
+  private createMiniMaxReasoningProvider(): ResearchSynthesisProvider & CommanderCycleProvider {
     const connectorId = this.reasoningProviderConfig.connector_id
     const connector = connectorId ? this.externalApiConnectorRegistry.get(connectorId) : null
     if (!connectorId || !connector) {
-      throw new Error(`MiniMax reasoning provider connector not found: ${redactText(connectorId ?? "missing")}`)
+      return new UnavailableReasoningProvider(this.reasoningProviderConfig.provider_id, `MiniMax reasoning provider connector not found: ${redactText(connectorId ?? "missing")}`)
     }
     return new MiniMaxReasoningProvider({
       config: this.reasoningProviderConfig,
       requestService: this.externalApiRequestService(),
       connector,
+    })
+  }
+
+  private reasoningProviderHealthService(): ReasoningProviderHealthService {
+    return new ReasoningProviderHealthService({
+      config: this.reasoningProviderConfig,
+      registry: this.externalApiConnectorRegistry,
+      requestService: this.externalApiRequestService(),
+      eventStore: this.eventStore,
+      env: this.externalApiEnv,
+      now: this.externalApiNow,
     })
   }
 
@@ -1340,6 +1377,18 @@ export class RuntimeServer {
       now: this.commanderCycleNow,
       cycleId: this.commanderCycleId,
     })
+  }
+}
+
+class UnavailableReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider {
+  constructor(readonly provider_id: string, private readonly reason: string) {}
+
+  async synthesize(): Promise<never> {
+    throw new Error(this.reason)
+  }
+
+  async run(): Promise<never> {
+    throw new Error(this.reason)
   }
 }
 
@@ -1386,6 +1435,14 @@ function optionalBoolean(value: unknown, field: string): boolean | undefined {
   if (value === undefined) return undefined
   if (typeof value !== "boolean") throw new Error(`${field} must be a boolean`)
   return value
+}
+
+function readReasoningProviderSmokeInput(value: Record<string, unknown>): ReasoningProviderSmokeInput {
+  return {
+    surface: optionalString(value.surface, "surface") as ReasoningProviderSmokeInput["surface"],
+    dry_run: optionalBoolean(value.dryRun ?? value.dry_run, "dryRun"),
+    requested_by: optionalString(value.requestedBy ?? value.requested_by, "requestedBy"),
+  }
 }
 
 function optionalStringArray(value: unknown, field: string): string[] | undefined {

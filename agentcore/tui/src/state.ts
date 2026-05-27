@@ -101,6 +101,63 @@ export type ReasoningProviderStatusSummary = {
   enabled_for: string[]
 }
 
+export type ReasoningProviderHealthCheckSummary = {
+  name: string
+  ok: boolean
+  severity: "info" | "warning" | "error" | string
+  summary: string
+  redacted_detail?: string
+}
+
+export type ReasoningProviderHealthSummary = {
+  provider_id: string
+  kind: "fake" | "minimax" | string
+  status: "ok" | "degraded" | "blocked" | string
+  enabled_for: string[]
+  connector_id?: string
+  model?: string
+  max_input_bytes: number
+  max_output_bytes: number
+  timeout_ms?: number
+  checks: ReasoningProviderHealthCheckSummary[]
+  last_checked_at: string
+}
+
+export type ReasoningProviderSmokePreviewSummary = {
+  provider_id: string
+  kind: "fake" | "minimax" | string
+  surface: string
+  would_call_network: boolean
+  connector_id?: string
+  model?: string
+  prompt_bytes: number
+  max_output_bytes: number
+  blockers: string[]
+  redacted_request_preview: string
+}
+
+export type ReasoningProviderSmokeResultSummary = {
+  provider_id: string
+  kind: "fake" | "minimax" | string
+  surface: string
+  ok: boolean
+  dry_run: boolean
+  connector_id?: string
+  model?: string
+  request_id?: string
+  parsed: boolean
+  summary: string
+  error?: string
+  created_at: string
+}
+
+export type ReasoningProviderState = ReasoningProviderStatusSummary & {
+  health?: ReasoningProviderHealthSummary
+  smokePreview?: ReasoningProviderSmokePreviewSummary
+  lastSmoke?: ReasoningProviderSmokeResultSummary
+  commandError?: string
+}
+
 export type MissionRecord = {
   mission_id: string
   intent_id?: string
@@ -844,7 +901,7 @@ export type UiState = {
   lastCommand?: string
   runtimeStatus?: RuntimeStatusSummary
   adapterStatus?: Record<string, unknown>
-  reasoningProvider?: ReasoningProviderStatusSummary
+  reasoningProvider?: ReasoningProviderState
   researchProjection?: ResearchProjectionSummary
   missions?: MissionSummaryState
   missionExecution?: MissionExecutionState

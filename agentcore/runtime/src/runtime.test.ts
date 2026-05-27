@@ -4134,10 +4134,10 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(config)).not.toContain("NXL_MINIMAX_API_KEY")
   })
 
-  test("minimax launch config creates providers through external API boundary and fails clearly without connector", async () => {
+  test("minimax launch config exposes blocked health without connector and uses external API boundary when configured", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
-    expect(() => createRuntimeServerFromLaunchConfig({
+    const missingConnectorServer = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: {
         NXL_REASONING_PROVIDER_KIND: "minimax",
@@ -4145,7 +4145,16 @@ describe("RuntimeServer core", () => {
         NXL_REASONING_CONNECTOR_ID: "missing-minimax",
         NXL_REASONING_MODEL: "MiniMax-M2.7",
       },
-    })).toThrow("MiniMax reasoning provider connector not found")
+      researchProjectionMode: "disabled",
+    })
+    const missingHealth = missingConnectorServer.reasoningProviderHealth()
+    expect(missingHealth.status).toBe("blocked")
+    expect(JSON.stringify(missingHealth)).toContain("configured external API connector is missing")
+    await expect(missingConnectorServer.command("runtime.execute_research_synthesis", {
+      topicId: "topic_missing",
+      requestedBy: "operator",
+    })).rejects.toThrow("runtime must be started before research synthesis writes")
+    await missingConnectorServer.shutdown()
 
     const transport = new FakeExternalApiTransport([minimaxEnvelope(minimaxSynthesisPayload())].map((body) => ({ status_code: 200, body })))
     const server = createRuntimeServerFromLaunchConfig({
@@ -4172,6 +4181,181 @@ describe("RuntimeServer core", () => {
     })
     expect(JSON.stringify(await server.command("runtime.status"))).not.toContain("raw-minimax-secret")
     await server.shutdown()
+  })
+
+  test("reasoning provider health and smoke are bounded, gated, and redacted", async () => {
+    const fakeDir = await tempProject()
+    await makeProject(fakeDir, { approvedSpec: true })
+    const fakeServer = new RuntimeServer({ projectDir: fakeDir, mode: "view-records", researchProjectionMode: "disabled" })
+    const fakeHealth = await fakeServer.command("runtime.reasoning_provider_health")
+    expect(fakeHealth).toMatchObject({ kind: "fake", status: "ok" })
+    const fakePreview = await fakeServer.command("runtime.preview_reasoning_provider_smoke", { surface: "research" })
+    expect(fakePreview).toMatchObject({ kind: "fake", surface: "research_synthesis", would_call_network: false })
+    await fakeServer.shutdown()
+
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const missingCredentialServer = new RuntimeServer({
+      projectDir: dir,
+      mode: "view-records",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiEnv: { NXL_REASONING_PROVIDER_KIND: "minimax" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-m2-7",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis", "commander_cycle"],
+      },
+      researchProjectionMode: "disabled",
+    })
+    const missingCredentialHealth = await missingCredentialServer.command("runtime.reasoning_provider_health")
+    expect(missingCredentialHealth).toMatchObject({ kind: "minimax", status: "blocked" })
+    expect(JSON.stringify(missingCredentialHealth)).not.toContain("raw-minimax-secret")
+    await missingCredentialServer.shutdown()
+
+    const smokeTransport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(["smoke_evidence"])) }])
+    const smokeDir = await tempProject()
+    await makeProject(smokeDir, { approvedSpec: true })
+    const smokeServer = new RuntimeServer({
+      projectDir: smokeDir,
+      mode: "active",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: smokeTransport,
+      externalApiEnv: {
+        NXL_MINIMAX_API_KEY: "raw-minimax-secret",
+        NXL_REAL_REASONING_PROVIDER_SMOKE: "1",
+      },
+      externalApiRequestId: () => "api_smoke",
+      externalApiNow: () => new Date("2026-01-01T00:00:00.000Z"),
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-m2-7",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis", "commander_cycle"],
+      },
+      researchProjectionMode: "disabled",
+    })
+    const smokeHealth = await smokeServer.command("runtime.reasoning_provider_health")
+    expect(smokeHealth).toMatchObject({ kind: "minimax", status: "ok" })
+    const preview = await smokeServer.command("runtime.preview_reasoning_provider_smoke", { surface: "research_synthesis" })
+    expect(preview).toMatchObject({ kind: "minimax", surface: "research_synthesis", would_call_network: true, blockers: [] })
+    expect(smokeTransport.requests).toHaveLength(0)
+    await smokeServer.start()
+    const dryRun = await smokeServer.command("runtime.execute_reasoning_provider_smoke", { surface: "cycle", dryRun: true, requestedBy: "operator" })
+    expect(dryRun).toMatchObject({ ok: true, dry_run: true, parsed: false })
+    expect(smokeTransport.requests).toHaveLength(0)
+    const result = await smokeServer.command("runtime.execute_reasoning_provider_smoke", { surface: "research", requestedBy: "operator" })
+    expect(result).toMatchObject({ ok: true, parsed: true, request_id: "api_smoke" })
+    expect(smokeTransport.requests).toHaveLength(1)
+    expect(smokeTransport.requests[0].url).toContain("/anthropic/v1/messages")
+    const events = await readJsonlEvents(smokeDir)
+    expect(JSON.stringify(events)).not.toContain("raw-minimax-secret")
+    const auditEvent = events.find((event) => event.kind === "external_api_request_executed")
+    expect(auditEvent?.response_preview).toBe("[internal response preview omitted]")
+    expect(events.some((event) => event.kind === "reasoning_provider_smoke_succeeded")).toBe(true)
+    await smokeServer.shutdown()
+
+    const blockedTransport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(["smoke_evidence"])) }])
+    const blockedDir = await tempProject()
+    await makeProject(blockedDir, { approvedSpec: true })
+    const blockedServer = new RuntimeServer({
+      projectDir: blockedDir,
+      mode: "active",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: blockedTransport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-m2-7",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis", "commander_cycle"],
+      },
+      researchProjectionMode: "disabled",
+    })
+    await blockedServer.start()
+    const ungatedDryRun = await blockedServer.command("runtime.execute_reasoning_provider_smoke", { surface: "research", dryRun: true, requestedBy: "operator" })
+    expect(ungatedDryRun).toMatchObject({ ok: true, dry_run: true, parsed: false })
+    expect(blockedTransport.requests).toHaveLength(0)
+    const blocked = await blockedServer.command("runtime.execute_reasoning_provider_smoke", { surface: "research", requestedBy: "operator" })
+    expect(blocked).toMatchObject({ ok: false, parsed: false })
+    expect(JSON.stringify(blocked)).toContain("NXL_REAL_REASONING_PROVIDER_SMOKE=1 is required")
+    expect(blockedTransport.requests).toHaveLength(0)
+    await blockedServer.shutdown()
+
+    const malformedTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ content: [{ type: "text", text: "not json token=malformed-secret" }] }) }])
+    const malformedDir = await tempProject()
+    await makeProject(malformedDir, { approvedSpec: true })
+    const malformedServer = new RuntimeServer({
+      projectDir: malformedDir,
+      mode: "active",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: malformedTransport,
+      externalApiEnv: {
+        NXL_MINIMAX_API_KEY: "raw-minimax-secret",
+        NXL_REAL_REASONING_PROVIDER_SMOKE: "1",
+      },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-m2-7",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis", "commander_cycle"],
+      },
+      researchProjectionMode: "disabled",
+    })
+    await malformedServer.start()
+    const malformed = await malformedServer.command("runtime.execute_reasoning_provider_smoke", { surface: "research", requestedBy: "operator" })
+    expect(malformed).toMatchObject({ ok: false, parsed: false })
+    expect(JSON.stringify(malformed)).not.toContain("malformed-secret")
+    expect((await readEventKinds(malformedDir))).toContain("reasoning_provider_smoke_failed")
+    await malformedServer.shutdown()
+
+    const policyTransport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(["smoke_evidence"])) }])
+    const policyDir = await tempProject()
+    await makeProject(policyDir, { approvedSpec: true })
+    const policyServer = new RuntimeServer({
+      projectDir: policyDir,
+      mode: "active",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{ ...minimaxConnector(), allowed_methods: ["GET"] }]),
+      externalApiTransport: policyTransport,
+      externalApiEnv: {
+        NXL_MINIMAX_API_KEY: "raw-minimax-secret",
+        NXL_REAL_REASONING_PROVIDER_SMOKE: "1",
+      },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-m2-7",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis", "commander_cycle"],
+      },
+      researchProjectionMode: "disabled",
+    })
+    const policyHealth = await policyServer.command("runtime.reasoning_provider_health")
+    expect(policyHealth).toMatchObject({ status: "blocked" })
+    expect(JSON.stringify(policyHealth)).toContain("method not allowed: POST")
+    const policyPreview = await policyServer.command("runtime.preview_reasoning_provider_smoke", { surface: "research" })
+    expect(policyPreview).toMatchObject({ kind: "minimax" })
+    expect(JSON.stringify(policyPreview)).toContain("method not allowed: POST")
+    await policyServer.start()
+    const policyDryRun = await policyServer.command("runtime.execute_reasoning_provider_smoke", { surface: "research", dryRun: true })
+    expect(policyDryRun).toMatchObject({ ok: false, dry_run: true })
+    expect(JSON.stringify(policyDryRun)).toContain("method not allowed: POST")
+    expect(policyTransport.requests).toHaveLength(0)
+    await policyServer.shutdown()
   })
 
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {

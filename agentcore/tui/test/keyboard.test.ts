@@ -231,6 +231,31 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("reasoning provider slash commands route only exact whitelist commands", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/reasoning-smoke-preview research",
+    }
+
+    let result = applyKeyCommandWithEffects(state, { type: "submit" })
+    expect(result.state.lastCommand).toBe("reasoning-smoke-preview")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "reasoning-smoke-preview", args: ["research"] },
+    ])
+
+    for (const message of ["/tmp/repro/reasoning", "/path/reasoning", ".reasoning", ":reasoning-smoke"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("mission execution slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

@@ -152,6 +152,12 @@ export class FakeRuntimeClient implements RuntimeClient {
         }
       case "runtime.reasoning_provider_status":
         return this.reasoningProviderStatus()
+      case "runtime.reasoning_provider_health":
+        return this.reasoningProviderHealth()
+      case "runtime.preview_reasoning_provider_smoke":
+        return this.previewReasoningProviderSmoke(payload)
+      case "runtime.execute_reasoning_provider_smoke":
+        return this.executeReasoningProviderSmoke(payload)
       case "runtime.list_recent_missions":
         return this.missions.slice(0, readLimit(payload.limit, 5))
       case "runtime.get_mission":
@@ -347,6 +353,50 @@ export class FakeRuntimeClient implements RuntimeClient {
       max_input_bytes: 32768,
       max_output_bytes: 16384,
       enabled_for: ["research_synthesis", "commander_cycle"],
+    }
+  }
+
+  private reasoningProviderHealth(): Record<string, unknown> {
+    return {
+      provider_id: "fake-reasoning",
+      kind: "fake",
+      status: "ok",
+      enabled_for: ["research_synthesis", "commander_cycle"],
+      max_input_bytes: 32768,
+      max_output_bytes: 16384,
+      checks: [
+        { name: "config", ok: true, severity: "info", summary: "fake reasoning provider configured" },
+        { name: "network", ok: true, severity: "info", summary: "fake provider performs no network calls" },
+      ],
+      last_checked_at: "1970-01-01T00:00:00.000Z",
+    }
+  }
+
+  private previewReasoningProviderSmoke(payload: Record<string, unknown>): Record<string, unknown> {
+    const surface = readReasoningSurface(payload.surface)
+    return {
+      provider_id: "fake-reasoning",
+      kind: "fake",
+      surface,
+      would_call_network: false,
+      prompt_bytes: 64,
+      max_output_bytes: 16384,
+      blockers: [],
+      redacted_request_preview: `fake reasoning smoke request for ${surface}`,
+    }
+  }
+
+  private executeReasoningProviderSmoke(payload: Record<string, unknown>): Record<string, unknown> {
+    const surface = readReasoningSurface(payload.surface)
+    return {
+      provider_id: "fake-reasoning",
+      kind: "fake",
+      surface,
+      ok: true,
+      dry_run: payload.dryRun === true || payload.dry_run === true,
+      parsed: payload.dryRun === true || payload.dry_run === true ? false : true,
+      summary: payload.dryRun === true || payload.dry_run === true ? "fake reasoning smoke dry-run passed" : `fake ${surface} smoke parsed deterministic provider output`,
+      created_at: "1970-01-01T00:00:00.000Z",
     }
   }
 
@@ -2311,6 +2361,12 @@ function readStringFields(value: unknown): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [key, raw] of Object.entries(value)) out[requiredString(key, "field name")] = requiredString(String(raw ?? ""), key)
   return out
+}
+
+function readReasoningSurface(value: unknown): "research_synthesis" | "commander_cycle" {
+  if (value === undefined || value === "research" || value === "research_synthesis") return "research_synthesis"
+  if (value === "cycle" || value === "commander_cycle") return "commander_cycle"
+  throw new Error("reasoning smoke surface must be research_synthesis or commander_cycle")
 }
 
 function proposalPayloadsForPlaybook(playbookId: string, fields: Record<string, string>, proposedBy: string): Record<string, unknown>[] {

@@ -68,6 +68,10 @@ import type {
   ProposalBundleStatusSummary,
   ProposalsState,
   ProposalStatusSummary,
+  ReasoningProviderHealthCheckSummary,
+  ReasoningProviderHealthSummary,
+  ReasoningProviderSmokePreviewSummary,
+  ReasoningProviderSmokeResultSummary,
   ReviewRequestSummary,
   ReviewsState,
   ReviewStatusSummary,
@@ -97,6 +101,9 @@ export type RuntimeUiEffect =
   | KeySideEffect
   | { type: "load-runtime-status" }
   | { type: "load-reasoning-provider-status" }
+  | { type: "load-reasoning-provider-health" }
+  | { type: "preview-reasoning-provider-smoke"; surface?: string }
+  | { type: "execute-reasoning-provider-smoke"; surface?: string; dryRun?: boolean }
   | { type: "load-recent-missions"; limit?: number }
   | { type: "refresh-runtime-records" }
   | { type: "load-research-topics"; query?: string; limit?: number }
@@ -181,6 +188,12 @@ export async function applyRuntimeUiEffect(
         return applyRuntimeStatus(state, await runtime.command("runtime.status"))
       case "load-reasoning-provider-status":
         return applyReasoningProviderStatus(state, await runtime.command("runtime.reasoning_provider_status"))
+      case "load-reasoning-provider-health":
+        return applyReasoningProviderHealth(state, await runtime.command("runtime.reasoning_provider_health"))
+      case "preview-reasoning-provider-smoke":
+        return applyReasoningProviderSmokePreview(state, await runtime.command("runtime.preview_reasoning_provider_smoke", { surface: effect.surface, requestedBy: "tui" }))
+      case "execute-reasoning-provider-smoke":
+        return applyReasoningProviderSmokeResult(state, await runtime.command("runtime.execute_reasoning_provider_smoke", { surface: effect.surface, dryRun: effect.dryRun === true, requestedBy: "tui" }))
       case "load-recent-missions":
         return applyRecentMissions(state, await runtime.command("runtime.list_recent_missions", { limit: effect.limit ?? 5 }))
       case "refresh-runtime-records":
@@ -656,6 +669,7 @@ export async function applyRuntimeUiEffect(
     if (isExternalApiEffect(effect)) return recordExternalApiCommandError(state, error)
     if (isResearchSynthesisEffect(effect)) return recordResearchSynthesisCommandError(state, error)
     if (isCommanderCycleEffect(effect)) return recordCommanderCycleCommandError(state, error)
+    if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -1284,6 +1298,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (externalApiCommands.has(command)) return state.externalApi?.commandError
   if (researchSynthesisCommands.has(command)) return state.researchSynthesis?.commandError
   if (commanderCycleCommands.has(command)) return state.commanderCycle?.commandError
+  if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
 }
@@ -1302,6 +1317,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (externalApiCommands.has(command)) return { ...state, externalApi: { ...externalApiState(state), commandError: undefined } }
   if (researchSynthesisCommands.has(command)) return { ...state, researchSynthesis: { ...researchSynthesisState(state), commandError: undefined } }
   if (commanderCycleCommands.has(command)) return { ...state, commanderCycle: { ...commanderCycleState(state), commandError: undefined } }
+  if (reasoningProviderCommands.has(command)) return { ...state, reasoningProvider: { ...reasoningProviderState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
 }
@@ -1375,6 +1391,17 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-cycles", limit: CYCLE_LIMIT })
     case "cycle-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-cycle", cycleId: requiredArg(args, 0, "cycleId") })
+    case "reasoning":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-status" })
+        .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-reasoning-provider-health" }))
+    case "reasoning-health":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-health" })
+    case "reasoning-smoke-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-reasoning-provider-smoke", surface: optionalSurfaceArg(args) })
+    case "reasoning-smoke":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-reasoning-provider-smoke", surface: optionalSurfaceArg(args) })
+    case "reasoning-smoke-dry-run":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-reasoning-provider-smoke", surface: optionalSurfaceArg(args), dryRun: true })
     case "status":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-status" })
     case "missions":
@@ -1784,6 +1811,11 @@ function isCommanderCycleEffect(effect: RuntimeUiEffect): boolean {
   return commanderCycleCommands.has(effect.command)
 }
 
+function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return reasoningProviderEffectTypes.has(effect.type)
+  return reasoningProviderCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -1898,6 +1930,14 @@ const commanderCycleCommands = new Set([
   "cycle-show",
 ])
 
+const reasoningProviderCommands = new Set([
+  "reasoning",
+  "reasoning-health",
+  "reasoning-smoke-preview",
+  "reasoning-smoke",
+  "reasoning-smoke-dry-run",
+])
+
 const externalApiEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-external-api-connectors",
   "load-external-api-connector",
@@ -1923,6 +1963,13 @@ const commanderCycleEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-commander-cycles",
 ])
 
+const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-reasoning-provider-status",
+  "load-reasoning-provider-health",
+  "preview-reasoning-provider-smoke",
+  "execute-reasoning-provider-smoke",
+])
+
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   if (!isRecord(value)) throw new Error("runtime.status returned non-object result")
   const runtimeStatus: RuntimeStatusSummary = {
@@ -1943,7 +1990,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
     ...state,
     runtimeStatus,
     adapterStatus: isRecord(value.adapterStatus) ? redactUnknown(value.adapterStatus) : state.adapterStatus,
-    reasoningProvider: reasoningProvider ?? state.reasoningProvider,
+    reasoningProvider: reasoningProvider ? { ...reasoningProviderState(state), ...reasoningProvider } : state.reasoningProvider,
     researchProjection: researchProjection ?? state.researchProjection,
     missions: missions ?? state.missions,
     reviews: reviewSummary ? { ...reviewsState(state), summary: reviewSummary } : state.reviews,
@@ -1965,7 +2012,71 @@ function applyReasoningProviderStatus(state: UiState, value: unknown): UiState {
   if (!reasoningProvider) throw new Error("runtime.reasoning_provider_status returned invalid result")
   return {
     ...state,
-    reasoningProvider,
+    reasoningProvider: { ...reasoningProviderState(state), ...reasoningProvider, commandError: undefined },
+    runtimeCommandError: undefined,
+  }
+}
+
+function applyReasoningProviderHealth(state: UiState, value: unknown): UiState {
+  const health = readReasoningProviderHealth(value)
+  if (!health) throw new Error("runtime.reasoning_provider_health returned invalid result")
+  return {
+    ...state,
+    reasoningProvider: {
+      ...reasoningProviderState(state),
+      kind: health.kind,
+      provider_id: health.provider_id,
+      connector_id: health.connector_id,
+      model: health.model,
+      max_input_bytes: health.max_input_bytes,
+      max_output_bytes: health.max_output_bytes,
+      timeout_ms: health.timeout_ms,
+      enabled_for: health.enabled_for,
+      health,
+      commandError: undefined,
+    },
+    runtimeCommandError: undefined,
+  }
+}
+
+function applyReasoningProviderSmokePreview(state: UiState, value: unknown): UiState {
+  const smokePreview = readReasoningProviderSmokePreview(value)
+  if (!smokePreview) throw new Error("runtime.preview_reasoning_provider_smoke returned invalid result")
+  return {
+    ...state,
+    reasoningProvider: {
+      ...reasoningProviderState(state),
+      kind: smokePreview.kind,
+      provider_id: smokePreview.provider_id,
+      connector_id: smokePreview.connector_id,
+      model: smokePreview.model,
+      max_input_bytes: state.reasoningProvider?.max_input_bytes ?? 0,
+      max_output_bytes: smokePreview.max_output_bytes,
+      enabled_for: state.reasoningProvider?.enabled_for ?? [],
+      smokePreview,
+      commandError: undefined,
+    },
+    runtimeCommandError: undefined,
+  }
+}
+
+function applyReasoningProviderSmokeResult(state: UiState, value: unknown): UiState {
+  const lastSmoke = readReasoningProviderSmokeResult(value)
+  if (!lastSmoke) throw new Error("runtime.execute_reasoning_provider_smoke returned invalid result")
+  return {
+    ...state,
+    reasoningProvider: {
+      ...reasoningProviderState(state),
+      kind: lastSmoke.kind,
+      provider_id: lastSmoke.provider_id,
+      connector_id: lastSmoke.connector_id,
+      model: lastSmoke.model,
+      max_input_bytes: state.reasoningProvider?.max_input_bytes ?? 0,
+      max_output_bytes: state.reasoningProvider?.max_output_bytes ?? 0,
+      enabled_for: state.reasoningProvider?.enabled_for ?? [],
+      lastSmoke,
+      commandError: undefined,
+    },
     runtimeCommandError: undefined,
   }
 }
@@ -2412,6 +2523,18 @@ function recordResearchCommandError(state: UiState, error: unknown): UiState {
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "research command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordReasoningProviderCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    reasoningProvider: {
+      ...reasoningProviderState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "reasoning provider command error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
@@ -2974,6 +3097,68 @@ function readReasoningProviderStatus(value: unknown): ReasoningProviderStatusSum
     timeout_ms: typeof value.timeout_ms === "number" ? value.timeout_ms : undefined,
     system_prompt_version: typeof value.system_prompt_version === "string" ? redactText(value.system_prompt_version) : undefined,
     enabled_for: Array.isArray(value.enabled_for) ? value.enabled_for.filter((item): item is string => typeof item === "string").map(redactText) : [],
+  }
+}
+
+function readReasoningProviderHealth(value: unknown): ReasoningProviderHealthSummary | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    provider_id: readString(value.provider_id, "unknown"),
+    kind: readString(value.kind, "fake"),
+    status: readString(value.status, "blocked"),
+    enabled_for: readStringList(value.enabled_for, 10),
+    connector_id: typeof value.connector_id === "string" ? redactText(value.connector_id) : undefined,
+    model: typeof value.model === "string" ? redactText(value.model) : undefined,
+    max_input_bytes: readNumber(value.max_input_bytes, 0),
+    max_output_bytes: readNumber(value.max_output_bytes, 0),
+    timeout_ms: typeof value.timeout_ms === "number" ? value.timeout_ms : undefined,
+    checks: Array.isArray(value.checks) ? value.checks.map(readReasoningProviderHealthCheck).filter((check): check is NonNullable<ReturnType<typeof readReasoningProviderHealthCheck>> => check !== null).slice(0, 20) : [],
+    last_checked_at: readString(value.last_checked_at, ""),
+  }
+}
+
+function readReasoningProviderHealthCheck(value: unknown): ReasoningProviderHealthCheckSummary | null {
+  if (!isRecord(value)) return null
+  return {
+    name: readString(value.name, "check"),
+    ok: readBoolean(value.ok),
+    severity: readString(value.severity, "info"),
+    summary: preview(readString(value.summary, "")),
+    redacted_detail: typeof value.redacted_detail === "string" ? preview(redactText(value.redacted_detail)) : undefined,
+  }
+}
+
+function readReasoningProviderSmokePreview(value: unknown): ReasoningProviderSmokePreviewSummary | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    provider_id: readString(value.provider_id, "unknown"),
+    kind: readString(value.kind, "fake"),
+    surface: readString(value.surface, "research_synthesis"),
+    would_call_network: readBoolean(value.would_call_network),
+    connector_id: typeof value.connector_id === "string" ? redactText(value.connector_id) : undefined,
+    model: typeof value.model === "string" ? redactText(value.model) : undefined,
+    prompt_bytes: readNumber(value.prompt_bytes, 0),
+    max_output_bytes: readNumber(value.max_output_bytes, 0),
+    blockers: readStringList(value.blockers, 20),
+    redacted_request_preview: preview(readString(value.redacted_request_preview, "")),
+  }
+}
+
+function readReasoningProviderSmokeResult(value: unknown): ReasoningProviderSmokeResultSummary | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    provider_id: readString(value.provider_id, "unknown"),
+    kind: readString(value.kind, "fake"),
+    surface: readString(value.surface, "research_synthesis"),
+    ok: readBoolean(value.ok),
+    dry_run: readBoolean(value.dry_run),
+    connector_id: typeof value.connector_id === "string" ? redactText(value.connector_id) : undefined,
+    model: typeof value.model === "string" ? redactText(value.model) : undefined,
+    request_id: typeof value.request_id === "string" ? redactText(value.request_id) : undefined,
+    parsed: readBoolean(value.parsed),
+    summary: preview(readString(value.summary, "")),
+    error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
+    created_at: readString(value.created_at, ""),
   }
 }
 
@@ -3570,6 +3755,16 @@ function commanderCycleState(state: UiState): CommanderCycleState {
   return state.commanderCycle ?? { preview: null, selected: null, recent: [] }
 }
 
+function reasoningProviderState(state: UiState) {
+  return state.reasoningProvider ?? {
+    kind: "fake",
+    provider_id: "unknown",
+    max_input_bytes: 0,
+    max_output_bytes: 0,
+    enabled_for: [],
+  }
+}
+
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
 }
@@ -3937,6 +4132,14 @@ function requiredRest(args: string[], index: number, field: string): string {
   const value = args.slice(index).join(" ").trim()
   if (!value) throw new Error(`${field} is required`)
   return value
+}
+
+function optionalSurfaceArg(args: string[]): string | undefined {
+  if (args.length === 0) return undefined
+  if (args.length > 1) throw new Error("reasoning smoke accepts one optional surface")
+  const value = args[0]
+  if (value === "research" || value === "research_synthesis" || value === "cycle" || value === "commander_cycle") return value
+  throw new Error("reasoning smoke surface must be research_synthesis or commander_cycle")
 }
 
 function optionalRest(args: string[], index: number): string | undefined {
