@@ -22,12 +22,14 @@ import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
 import { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 import type { ResearchSynthesisProvider, ResearchSynthesisProviderInput, ResearchSynthesisProviderResult } from "./research-synthesis/research-synthesis-provider"
+import type { CommanderCycleProvider, CommanderCycleProviderInput, CommanderCycleProviderResult } from "./commander-cycle/commander-cycle-provider"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
 import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCodeAdapterConfig, validateOpenCodeAdapterConfig } from "./opencode/adapter-config"
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import type { MissionPacket } from "./missions/mission-types"
+import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
 import type { ExecutorToolHandler, ExecutorToolHandlerAdapter, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
 import { makeProject } from "./test/fixtures"
 import { RunLock } from "./project/run-lock"
@@ -470,6 +472,74 @@ class InventingEvidenceSynthesisProvider implements ResearchSynthesisProvider {
       }],
       confidence: "low",
     }
+  }
+}
+
+class CountingCommanderCycleProvider implements CommanderCycleProvider {
+  readonly provider_id = "counting-cycle"
+  calls = 0
+  lastInput: CommanderCycleProviderInput | null = null
+
+  async run(input: CommanderCycleProviderInput): Promise<CommanderCycleProviderResult> {
+    this.calls += 1
+    this.lastInput = input
+    const evidenceIds = [...input.sources, ...input.notes, ...input.artifacts].map((item) => item.evidence_id)
+    const synthesisIds = input.syntheses.map((item) => item.synthesis_id)
+    return {
+      title: "Counted cycle token=provider-secret",
+      summary: `Cycle summary for ${input.topic_id ?? input.mission_id} token=cycle-summary-secret`,
+      findings: [`cycle finding over ${evidenceIds.length} evidence records token=cycle-finding-secret`],
+      risks: ["cycle risk is bounded"],
+      recommended_actions: [{
+        title: "Cycle checkpoint",
+        summary: "Operator cycle action",
+        action_kind: "operator_checkpoint",
+        rationale: "Inspect commander cycle output",
+        evidence_ids: evidenceIds.slice(0, 3),
+        synthesis_ids: synthesisIds.slice(0, 3),
+        related_target_type: input.topic_id ? "topic" : "mission",
+        related_target_id: input.topic_id ?? input.mission_id,
+      }],
+      should_create_proposals: true,
+      confidence: "medium",
+    }
+  }
+}
+
+class ThrowingCommanderCycleProvider implements CommanderCycleProvider {
+  readonly provider_id = "throwing-cycle"
+  calls = 0
+
+  async run(_input: CommanderCycleProviderInput): Promise<CommanderCycleProviderResult> {
+    this.calls += 1
+    throw new Error("cycle provider failed token=cycle-provider-secret")
+  }
+}
+
+class InventingCommanderCycleProvider implements CommanderCycleProvider {
+  readonly provider_id = "inventing-cycle"
+
+  async run(_input: CommanderCycleProviderInput): Promise<CommanderCycleProviderResult> {
+    return {
+      title: "Inventing cycle",
+      summary: "Summary",
+      findings: ["finding"],
+      risks: [],
+      recommended_actions: [{
+        title: "Bad action",
+        summary: "Uses missing evidence",
+        action_kind: "operator_checkpoint",
+        rationale: "bad citation",
+        evidence_ids: ["missing-evidence-id"],
+      }],
+      confidence: "low",
+    }
+  }
+}
+
+class FailingProposalRegistry extends ProposalRegistry {
+  override async createProposal(_input: CommanderProposalInput): Promise<CommanderProposal> {
+    throw new Error("proposal write failed token=proposal-secret")
   }
 }
 
@@ -3657,6 +3727,313 @@ describe("RuntimeServer core", () => {
     expect(events.map((event) => event.kind)).not.toContain("research_synthesis_created")
     expect(events.map((event) => event.kind)).not.toContain("research_synthesis_failed")
     await server.shutdown()
+  })
+
+  test("commander cycle previews bounded context from research topic and synthesis records", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_cycle", title: "Cycle topic", status: "active" })
+    db.createTopic({ id: "topic_empty", title: "Empty topic", status: "active" })
+    db.addSource({ id: "source_cycle", topic_id: "topic_cycle", locator: "file://cycle", title: "Cycle source", source_type: "file", status: "reviewed" })
+    db.addNote({ id: "note_cycle", topic_id: "topic_cycle", source_id: "source_cycle", content: "cycle note token=cycle-note-secret", tags: ["evidence"] })
+    db.close()
+    await appendJsonlLine(dir, {
+      kind: "research_synthesis_created",
+      synthesis_id: "synth_cycle",
+      topic_id: "topic_cycle",
+      provider_id: "fake",
+      title: "Cycle synthesis",
+      summary: "Synthesis summary token=synth-secret",
+      findings: [],
+      risks: [],
+      open_questions: [],
+      recommended_actions: [],
+      context_hash: "context",
+      output_hash: "output",
+      created_at: "2026-05-25T00:00:00.000Z",
+      requested_by: "operator",
+    })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+
+    const preview = await server.command("runtime.preview_commander_cycle", {
+      topicId: "topic_cycle",
+      objective: "inspect token=objective-secret",
+      requestedBy: "operator",
+      maxContextBytes: 4096,
+    }) as { context_counts: Record<string, number>; included_evidence_ids: string[]; included_synthesis_ids: string[]; blockers: string[]; redacted_context_preview: string }
+    expect(preview.context_counts).toMatchObject({ sources: 1, notes: 1, artifacts: 0, syntheses: 1 })
+    expect(preview.included_evidence_ids).toEqual(expect.arrayContaining(["source_cycle", "note_cycle"]))
+    expect(preview.included_synthesis_ids).toEqual(["synth_cycle"])
+    expect(preview.blockers).toEqual([])
+    expect(JSON.stringify(preview)).not.toContain("objective-secret")
+    expect(JSON.stringify(preview)).not.toContain("cycle-note-secret")
+    expect(JSON.stringify(preview)).not.toContain("synth-secret")
+
+    await expect(server.command("runtime.preview_commander_cycle", { topicId: "missing", requestedBy: "operator" })).rejects.toThrow("topic not found")
+    const empty = await server.command("runtime.preview_commander_cycle", { topicId: "topic_empty", requestedBy: "operator" }) as { blockers: string[] }
+    expect(empty.blockers).toContain("topic has no evidence or syntheses for commander cycle")
+  })
+
+  test("commander cycle does not include unrelated syntheses for mission-only context", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await appendJsonlLine(dir, {
+      kind: "research_synthesis_created",
+      synthesis_id: "synth_unrelated",
+      topic_id: "topic_unrelated",
+      provider_id: "fake",
+      title: "Unrelated synthesis",
+      summary: "Unrelated summary",
+      findings: [],
+      risks: [],
+      open_questions: [],
+      recommended_actions: [],
+      context_hash: "context",
+      output_hash: "output",
+      created_at: "2026-05-25T00:00:00.000Z",
+      requested_by: "operator",
+    })
+    const provider = new CountingCommanderCycleProvider()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      commanderCycleProvider: provider,
+      commanderCycleId: () => "cycle_mission_only",
+    })
+    await server.start()
+    const created = await server.submitUserMessage("mission-only cycle objective")
+    const missionId = created.missionId
+
+    const preview = await server.command("runtime.preview_commander_cycle", {
+      missionId,
+      requestedBy: "operator",
+    }) as { context_counts: Record<string, number>; included_synthesis_ids: string[]; redacted_context_preview: string }
+    expect(preview.context_counts.syntheses).toBe(0)
+    expect(preview.included_synthesis_ids).toEqual([])
+    expect(preview.redacted_context_preview).not.toContain("synth_unrelated")
+
+    const result = await server.command("runtime.execute_commander_cycle", {
+      missionId,
+      requestedBy: "operator",
+    }) as { recommended_actions: Array<{ synthesis_ids?: string[] }> }
+    expect(provider.lastInput?.syntheses).toEqual([])
+    expect(provider.lastInput?.mission_objective).toBe("mission-only cycle objective")
+    expect(provider.lastInput?.mission_status).toBe("sent")
+    expect(result.recommended_actions[0]?.synthesis_ids ?? []).toEqual([])
+    await server.shutdown()
+  })
+
+  test("commander cycle caps base objective and mission context before provider input", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const provider = new CountingCommanderCycleProvider()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      commanderCycleProvider: provider,
+      commanderCycleId: () => "cycle_context_cap",
+    })
+    await server.start()
+    const maxContextBytes = 64
+    const preview = await server.command("runtime.preview_commander_cycle", {
+      objective: `inspect ${"x".repeat(1000)}`,
+      requestedBy: "operator",
+      maxContextBytes,
+    }) as { context_bytes: number; max_context_bytes: number; redacted_context_preview: string }
+    expect(preview.max_context_bytes).toBe(maxContextBytes)
+    expect(preview.context_bytes).toBeLessThanOrEqual(maxContextBytes)
+    expect(new TextEncoder().encode(preview.redacted_context_preview).byteLength).toBeLessThanOrEqual(2048)
+
+    await server.command("runtime.execute_commander_cycle", {
+      objective: `inspect ${"y".repeat(1000)}`,
+      requestedBy: "operator",
+      maxContextBytes,
+    })
+    expect(new TextEncoder().encode(provider.lastInput?.objective ?? "").byteLength).toBeLessThanOrEqual(maxContextBytes)
+
+    const created = await server.submitUserMessage(`mission seed ${"z".repeat(1000)}`)
+    const missionPreview = await server.command("runtime.preview_commander_cycle", {
+      missionId: created.missionId,
+      requestedBy: "operator",
+      maxContextBytes,
+    }) as { context_bytes: number; max_context_bytes: number }
+    expect(missionPreview.max_context_bytes).toBe(maxContextBytes)
+    expect(missionPreview.context_bytes).toBeLessThanOrEqual(maxContextBytes)
+    await server.command("runtime.execute_commander_cycle", {
+      missionId: created.missionId,
+      requestedBy: "operator",
+      maxContextBytes,
+    })
+    expect(new TextEncoder().encode(provider.lastInput?.mission_objective ?? "").byteLength).toBeLessThanOrEqual(maxContextBytes)
+    await server.shutdown()
+  })
+
+  test("commander cycle executes fake provider and writes completed event without proposals by default", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_cycle", title: "Cycle topic", status: "active" })
+    db.addNote({ id: "note_cycle", topic_id: "topic_cycle", content: "cycle note value", tags: ["evidence"] })
+    db.close()
+    const provider = new CountingCommanderCycleProvider()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      commanderCycleProvider: provider,
+      commanderCycleId: () => "cycle_test",
+      commanderCycleNow: () => new Date("2026-05-26T00:00:00.000Z"),
+    })
+
+    await expect(server.command("runtime.execute_commander_cycle", {
+      topicId: "topic_cycle",
+      requestedBy: "operator",
+    })).rejects.toThrow("runtime must be started before commander cycle writes")
+
+    await server.start()
+    const result = await server.command("runtime.execute_commander_cycle", {
+      topicId: "topic_cycle",
+      objective: "decide next step token=cycle-objective-secret",
+      requestedBy: "operator token=cycle-requester-secret",
+    }) as { cycle_id: string; proposal_ids: string[]; output_hash: string; context_hash: string; summary: string }
+    expect(result.cycle_id).toBe("cycle_test")
+    expect(result.proposal_ids).toEqual([])
+    expect(provider.calls).toBe(1)
+    expect(JSON.stringify(result)).not.toContain("cycle-summary-secret")
+    expect(JSON.stringify(result)).not.toContain("cycle-requester-secret")
+
+    const events = await readJsonlEvents(dir)
+    const cycleEvent = events.find((event) => event.kind === "commander_cycle_completed")
+    expect(cycleEvent).toMatchObject({
+      cycle_id: "cycle_test",
+      topic_id: "topic_cycle",
+      provider_id: "counting-cycle",
+      proposal_ids: [],
+      context_hash: result.context_hash,
+      output_hash: result.output_hash,
+    })
+    expect(events.map((event) => event.kind)).not.toContain("commander_proposal_created")
+    const listed = await server.command("runtime.list_commander_cycles") as Array<{ cycle_id: string }>
+    expect(listed[0]?.cycle_id).toBe("cycle_test")
+    const fetched = await server.command("runtime.get_commander_cycle", { cycleId: "cycle_test" }) as { cycle_id: string }
+    expect(fetched.cycle_id).toBe("cycle_test")
+    await server.shutdown()
+  })
+
+  test("commander cycle drafts proposals and bundles only after durable cycle event", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_cycle", title: "Cycle topic", status: "active" })
+    db.addNote({ id: "note_cycle", topic_id: "topic_cycle", content: "cycle note value", tags: ["evidence"] })
+    db.close()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      commanderCycleId: () => "cycle_bundle",
+      commanderCycleNow: () => new Date("2026-05-26T00:00:00.000Z"),
+    })
+    await server.start()
+
+    const result = await server.command("runtime.execute_commander_cycle", {
+      topicId: "topic_cycle",
+      createProposals: true,
+      createBundle: true,
+      requestedBy: "operator",
+    }) as { cycle_id: string; proposal_ids: string[]; bundle_id?: string }
+    expect(result.proposal_ids).toHaveLength(1)
+    expect(result.bundle_id).toBeTruthy()
+    const proposal = await server.command("runtime.get_commander_proposal", { proposalId: result.proposal_ids[0] }) as { status: string; summary: string; action_payload: Record<string, unknown>; review_id?: string; applied_at?: string }
+    expect(proposal.status).toBe("proposed")
+    expect(proposal.review_id).toBeUndefined()
+    expect(proposal.applied_at).toBeUndefined()
+    expect(proposal.summary).toContain("cycle_id: cycle_bundle")
+    expect(proposal.action_payload.cycle_id).toBe("cycle_bundle")
+    const bundle = await server.command("runtime.get_proposal_bundle", { bundleId: result.bundle_id }) as { proposal_ids: string[]; status: string }
+    expect(bundle.proposal_ids).toEqual(result.proposal_ids)
+    expect(bundle.status).toBe("open")
+
+    const events = await readJsonlEvents(dir)
+    const kinds = events.map((event) => event.kind)
+    expect(kinds.indexOf("commander_cycle_completed")).toBeLessThan(kinds.indexOf("commander_proposal_created"))
+    expect(kinds.indexOf("commander_cycle_completed")).toBeLessThan(kinds.indexOf("commander_cycle_proposals_created"))
+    expect(kinds.indexOf("commander_cycle_proposals_created")).toBeLessThan(kinds.indexOf("commander_cycle_bundle_created"))
+    expect(kinds).not.toContain("commander_proposal_review_requested")
+    expect(kinds).not.toContain("commander_proposal_applied")
+    const listed = await server.command("runtime.list_commander_cycles") as Array<{ cycle_id: string; proposal_ids: string[]; bundle_id?: string }>
+    expect(listed[0]).toMatchObject({ cycle_id: "cycle_bundle", proposal_ids: result.proposal_ids, bundle_id: result.bundle_id })
+    await server.shutdown()
+  })
+
+  test("commander cycle provider failures invalid citations and proposal draft failures fail closed", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_cycle", title: "Cycle topic", status: "active" })
+    db.addNote({ id: "note_cycle", topic_id: "topic_cycle", content: "cycle note value", tags: ["evidence"] })
+    db.close()
+    const throwing = new ThrowingCommanderCycleProvider()
+    const throwingServer = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      commanderCycleProvider: throwing,
+      commanderCycleId: () => "cycle_fail",
+    })
+    await throwingServer.start()
+    await expect(throwingServer.command("runtime.execute_commander_cycle", {
+      topicId: "topic_cycle",
+      createProposals: true,
+      requestedBy: "operator",
+    })).rejects.toThrow("commander cycle failed")
+    expect(throwing.calls).toBe(1)
+    await throwingServer.shutdown()
+
+    const inventingServer = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      commanderCycleProvider: new InventingCommanderCycleProvider(),
+      commanderCycleId: () => "cycle_invent",
+    })
+    await inventingServer.start()
+    await expect(inventingServer.command("runtime.execute_commander_cycle", {
+      topicId: "topic_cycle",
+      createProposals: true,
+      requestedBy: "operator",
+    })).rejects.toThrow("commander cycle failed")
+    await inventingServer.shutdown()
+
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const missionRegistry = new MissionRegistry({ eventStore, projectDir: dir })
+    const reviewRegistry = new ReviewRegistry({ eventStore, missionRegistry })
+    const failingProposalRegistry = new FailingProposalRegistry({ eventStore, missionRegistry, reviewRegistry })
+    const proposalBundleRegistry = new ProposalBundleRegistry({ eventStore, proposalRegistry: failingProposalRegistry })
+    const proposalFailServer = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      missionRegistry,
+      reviewRegistry,
+      proposalRegistry: failingProposalRegistry,
+      proposalBundleRegistry,
+      commanderCycleId: () => "cycle_proposal_fail",
+    })
+    await proposalFailServer.start()
+    await expect(proposalFailServer.command("runtime.execute_commander_cycle", {
+      topicId: "topic_cycle",
+      createProposals: true,
+      requestedBy: "operator",
+    })).rejects.toThrow("commander cycle proposal drafting failed")
+    const events = await readJsonlEvents(dir)
+    expect(events.find((event) => event.kind === "commander_cycle_completed" && event.cycle_id === "cycle_proposal_fail")).toBeTruthy()
+    expect(events.find((event) => event.kind === "commander_cycle_drafting_failed" && event.cycle_id === "cycle_proposal_fail")).toBeTruthy()
+    expect(JSON.stringify(events)).not.toContain("proposal-secret")
+    await proposalFailServer.shutdown()
   })
 
   test("external API execute validates resolved hosts before dispatch", async () => {

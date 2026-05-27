@@ -75,6 +75,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...operatorActionLines(state))
   out.push(...externalApiLines(state))
   out.push(...researchSynthesisLines(state))
+  out.push(...commanderCycleLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -637,6 +638,46 @@ function researchSynthesisLines(state: UiState): string[] {
     }))
   }
   if (synthesis.commandError) out.push(`  command_error=${redactText(synthesis.commandError)}`)
+  return out
+}
+
+function commanderCycleLines(state: UiState): string[] {
+  const cycle = state.commanderCycle
+  const out = ["Commander cycle"]
+  if (!cycle) {
+    out.push("  cycles=0")
+    return out
+  }
+  if (cycle.preview) {
+    const previewResult = cycle.preview
+    if (previewResult.topic_id) out.push(`  preview_topic=${previewResult.topic_id}`)
+    if (previewResult.mission_id) out.push(`  preview_mission=${previewResult.mission_id}`)
+    out.push(`  context sources=${previewResult.context_counts.sources} notes=${previewResult.context_counts.notes} artifacts=${previewResult.context_counts.artifacts} syntheses=${previewResult.context_counts.syntheses} proposals=${previewResult.context_counts.proposals}`)
+    out.push(`  context_bytes=${previewResult.context_bytes}/${previewResult.max_context_bytes}`)
+    if (previewResult.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewResult.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  }
+  if (cycle.selected) {
+    const selected = cycle.selected
+    out.push(`  selected_cycle=${selected.cycle_id} provider=${selected.provider_id} topic=${selected.topic_id ?? "none"} mission=${selected.mission_id ?? "none"}`)
+    out.push(`  proposals=${selected.proposal_ids?.join(",") || "none"} bundle=${selected.bundle_id ?? "none"}`)
+    out.push(`  title=${preview(redactText(selected.title))}`)
+    out.push(`  summary=${preview(redactText(selected.summary))}`)
+    if (selected.findings.length > 0) out.push(...selected.findings.slice(0, 5).map((finding) => `  - finding ${preview(redactText(finding))}`))
+    if (selected.risks.length > 0) out.push(...selected.risks.slice(0, 5).map((risk) => `  - risk ${preview(redactText(risk))}`))
+    if (selected.recommended_actions.length > 0) out.push(...selected.recommended_actions.slice(0, 5).map((action) => `  - action ${preview(redactText(action.title))}`))
+  } else {
+    out.push("  selected_cycle=none")
+  }
+  out.push(`  cycles=${cycle.recent.length}`)
+  if (cycle.recent.length > 0) {
+    out.push(...cycle.recent.slice(0, 10).map((record) => {
+      return `  - ${record.cycle_id} provider=${record.provider_id} topic=${record.topic_id ?? "none"} mission=${record.mission_id ?? "none"}: ${preview(redactText(record.title))}`
+    }))
+  }
+  if (cycle.commandError) out.push(`  command_error=${redactText(cycle.commandError)}`)
   return out
 }
 

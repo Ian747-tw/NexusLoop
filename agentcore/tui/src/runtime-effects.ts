@@ -26,6 +26,10 @@ import type {
   CommanderQueueKind,
   CommanderQueuesState,
   CommanderQueueSummary,
+  CommanderCyclePreviewSummary,
+  CommanderCycleRecordSummary,
+  CommanderCycleResultSummary,
+  CommanderCycleState,
   CommanderNavigationState,
   OperatorActionsState,
   CommanderSuggestedCommandSummary,
@@ -85,6 +89,7 @@ const AUDIT_LIMIT = 20
 const QUEUE_LIMIT = 20
 const EXTERNAL_API_LIMIT = 20
 const SYNTHESIS_LIMIT = 20
+const CYCLE_LIMIT = 20
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -158,6 +163,10 @@ export type RuntimeUiEffect =
   | { type: "execute-research-synthesis"; topicId: string; objective?: string; createProposals?: boolean }
   | { type: "load-research-synthesis"; synthesisId: string }
   | { type: "load-research-syntheses"; limit?: number }
+  | { type: "preview-commander-cycle"; topicId?: string; missionId?: string; objective?: string }
+  | { type: "execute-commander-cycle"; topicId?: string; missionId?: string; objective?: string; createProposals?: boolean; createBundle?: boolean }
+  | { type: "load-commander-cycle"; cycleId: string }
+  | { type: "load-commander-cycles"; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -583,6 +592,41 @@ export async function applyRuntimeUiEffect(
         )
       case "load-research-syntheses":
         return await loadResearchSyntheses(state, runtime, effect.limit ?? SYNTHESIS_LIMIT)
+      case "preview-commander-cycle":
+        return applyCommanderCyclePreview(
+          state,
+          await runtime.command("runtime.preview_commander_cycle", {
+            topicId: effect.topicId,
+            missionId: effect.missionId,
+            objective: effect.objective,
+            requestedBy: "operator",
+          }),
+        )
+      case "execute-commander-cycle": {
+        const next = applyCommanderCycleResult(
+          state,
+          await runtime.command("runtime.execute_commander_cycle", {
+            topicId: effect.topicId,
+            missionId: effect.missionId,
+            objective: effect.objective,
+            createProposals: effect.createProposals,
+            createBundle: effect.createBundle,
+            requestedBy: "operator",
+          }),
+        )
+        let refreshed = await loadCommanderCycles(next, runtime, CYCLE_LIMIT)
+        if (effect.createProposals || effect.createBundle) refreshed = await loadProposals(refreshed, runtime, PROPOSAL_LIMIT)
+        if (effect.createBundle) refreshed = await loadProposalBundles(refreshed, runtime, PROPOSAL_BUNDLE_LIMIT)
+        return refreshed
+      }
+      case "load-commander-cycle":
+        return applyCommanderCycleResult(
+          state,
+          await runtime.command("runtime.get_commander_cycle", { cycleId: effect.cycleId }),
+          effect.cycleId,
+        )
+      case "load-commander-cycles":
+        return await loadCommanderCycles(state, runtime, effect.limit ?? CYCLE_LIMIT)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -607,6 +651,7 @@ export async function applyRuntimeUiEffect(
     if (isCommanderNavigationEffect(effect)) return recordCommanderNavigationCommandError(state, error)
     if (isExternalApiEffect(effect)) return recordExternalApiCommandError(state, error)
     if (isResearchSynthesisEffect(effect)) return recordResearchSynthesisCommandError(state, error)
+    if (isCommanderCycleEffect(effect)) return recordCommanderCycleCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -912,6 +957,19 @@ async function loadResearchSyntheses(state: UiState, runtime: RuntimeClient, lim
   }
 }
 
+async function loadCommanderCycles(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const recent = readCommanderCycleRecordList(await runtime.command("runtime.list_commander_cycles", { limit }), "runtime.list_commander_cycles", limit)
+  return {
+    ...state,
+    commanderCycle: {
+      ...commanderCycleState(state),
+      recent,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander cycles loaded", detail: `records=${recent.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyExternalApiConnector(state: UiState, value: unknown, connectorId: string): UiState {
   const connector = readExternalApiConnector(value)
   if (!connector && value !== null) throw new Error("runtime.get_external_api_connector returned invalid connector")
@@ -998,6 +1056,37 @@ function applyResearchSynthesisPreview(state: UiState, value: unknown): UiState 
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "research synthesis preview", detail: `topic=${synthPreview.topic_id}`, status: synthPreview.blockers.length === 0 ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyCommanderCyclePreview(state: UiState, value: unknown): UiState {
+  const cyclePreview = readCommanderCyclePreview(value)
+  return {
+    ...state,
+    commanderCycle: {
+      ...commanderCycleState(state),
+      preview: cyclePreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander cycle preview", detail: cyclePreview.topic_id ? `topic=${cyclePreview.topic_id}` : `mission=${cyclePreview.mission_id ?? "none"}`, status: cyclePreview.blockers.length === 0 ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyCommanderCycleResult(state: UiState, value: unknown, cycleId?: string): UiState {
+  const result = readCommanderCycleResult(value)
+  if (!result && value !== null) throw new Error("runtime.get_commander_cycle returned invalid result")
+  const selectedId = result?.cycle_id ?? (cycleId ? redactText(cycleId) : undefined)
+  return {
+    ...state,
+    commanderCycle: {
+      ...commanderCycleState(state),
+      selected: result,
+      recent: result ? [recordFromCommanderCycleResult(result), ...commanderCycleState(state).recent.filter((item) => item.cycle_id !== result.cycle_id)].slice(0, CYCLE_LIMIT) : commanderCycleState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "commander cycle selected", detail: `cycle_id=${selectedId}`, status: result ? "loaded" : "missing" }].slice(-12)
+      : state.systemActions,
   }
 }
 
@@ -1190,6 +1279,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (commanderNavigationCommands.has(command)) return state.commanderNavigation?.commandError
   if (externalApiCommands.has(command)) return state.externalApi?.commandError
   if (researchSynthesisCommands.has(command)) return state.researchSynthesis?.commandError
+  if (commanderCycleCommands.has(command)) return state.commanderCycle?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
 }
@@ -1207,6 +1297,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (commanderNavigationCommands.has(command)) return { ...state, commanderNavigation: { ...commanderNavigationState(state), commandError: undefined } }
   if (externalApiCommands.has(command)) return { ...state, externalApi: { ...externalApiState(state), commandError: undefined } }
   if (researchSynthesisCommands.has(command)) return { ...state, researchSynthesis: { ...researchSynthesisState(state), commandError: undefined } }
+  if (commanderCycleCommands.has(command)) return { ...state, commanderCycle: { ...commanderCycleState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
 }
@@ -1262,6 +1353,24 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-syntheses", limit: SYNTHESIS_LIMIT })
     case "synthesis":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-synthesis", synthesisId: requiredArg(args, 0, "synthesisId") })
+    case "cycle-preview":
+      return applyRuntimeUiEffect(commandState, runtime, commanderCycleEffect("preview-commander-cycle", args))
+    case "cycle":
+      return applyRuntimeUiEffect(commandState, runtime, commanderCycleEffect("execute-commander-cycle", args))
+    case "cycle-proposals": {
+      const effect = commanderCycleEffect("execute-commander-cycle", args)
+      if (effect.type !== "execute-commander-cycle") throw new Error("commander cycle execute effect is required")
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, createProposals: true })
+    }
+    case "cycle-bundle": {
+      const effect = commanderCycleEffect("execute-commander-cycle", args)
+      if (effect.type !== "execute-commander-cycle") throw new Error("commander cycle execute effect is required")
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, createProposals: true, createBundle: true })
+    }
+    case "cycles":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-cycles", limit: CYCLE_LIMIT })
+    case "cycle-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-cycle", cycleId: requiredArg(args, 0, "cycleId") })
     case "status":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-status" })
     case "missions":
@@ -1666,6 +1775,11 @@ function isResearchSynthesisEffect(effect: RuntimeUiEffect): boolean {
   return researchSynthesisCommands.has(effect.command)
 }
 
+function isCommanderCycleEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return commanderCycleEffectTypes.has(effect.type)
+  return commanderCycleCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -1771,6 +1885,15 @@ const researchSynthesisCommands = new Set([
   "synthesis",
 ])
 
+const commanderCycleCommands = new Set([
+  "cycle-preview",
+  "cycle",
+  "cycle-proposals",
+  "cycle-bundle",
+  "cycles",
+  "cycle-show",
+])
+
 const externalApiEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-external-api-connectors",
   "load-external-api-connector",
@@ -1787,6 +1910,13 @@ const researchSynthesisEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "execute-research-synthesis",
   "load-research-synthesis",
   "load-research-syntheses",
+])
+
+const commanderCycleEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-commander-cycle",
+  "execute-commander-cycle",
+  "load-commander-cycle",
+  "load-commander-cycles",
 ])
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
@@ -2425,6 +2555,18 @@ function recordResearchSynthesisCommandError(state: UiState, error: unknown): Ui
   }
 }
 
+function recordCommanderCycleCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderCycle: {
+      ...commanderCycleState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "commander cycle command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -2672,6 +2814,108 @@ function recordFromSynthesisResult(result: ResearchSynthesisResultSummary): Rese
     proposal_ids: result.proposal_ids,
     title: result.title,
     summary_preview: preview(result.summary),
+    created_at: result.created_at,
+    requested_by: result.requested_by,
+  }
+}
+
+function readCommanderCyclePreview(value: unknown): CommanderCyclePreviewSummary {
+  if (!isRecord(value) || !isRecord(value.context_counts)) throw new Error("runtime.preview_commander_cycle returned invalid preview")
+  const counts = value.context_counts
+  return {
+    objective: typeof value.objective === "string" ? preview(redactText(value.objective)) : undefined,
+    topic_id: typeof value.topic_id === "string" ? redactText(value.topic_id) : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    context_counts: {
+      sources: readNumber(counts.sources, 0),
+      notes: readNumber(counts.notes, 0),
+      artifacts: readNumber(counts.artifacts, 0),
+      syntheses: readNumber(counts.syntheses, 0),
+      proposals: readNumber(counts.proposals, 0),
+      reviews: readNumber(counts.reviews, 0),
+      queues: readNumber(counts.queues, 0),
+    },
+    context_bytes: readNumber(value.context_bytes, 0),
+    max_context_bytes: readNumber(value.max_context_bytes, 0),
+    included_evidence_ids: readStringList(value.included_evidence_ids, 20),
+    included_synthesis_ids: readStringList(value.included_synthesis_ids, 20),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    redacted_context_preview: typeof value.redacted_context_preview === "string" ? preview(redactText(value.redacted_context_preview)) : "",
+  }
+}
+
+function readCommanderCycleResult(value: unknown): CommanderCycleResultSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.cycle_id !== "string") throw new Error("runtime.get_commander_cycle returned invalid result")
+  return {
+    cycle_id: redactText(value.cycle_id),
+    provider_id: readString(value.provider_id, "unknown"),
+    objective: typeof value.objective === "string" ? preview(redactText(value.objective)) : undefined,
+    topic_id: typeof value.topic_id === "string" ? redactText(value.topic_id) : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    findings: readStringList(value.findings, 10).map(preview),
+    risks: readStringList(value.risks, 10).map(preview),
+    recommended_actions: Array.isArray(value.recommended_actions)
+      ? value.recommended_actions.map(readCommanderCycleAction).filter((item): item is CommanderCycleResultSummary["recommended_actions"][number] => item !== null).slice(0, 10)
+      : [],
+    proposal_ids: readStringList(value.proposal_ids, 20),
+    bundle_id: typeof value.bundle_id === "string" ? redactText(value.bundle_id) : undefined,
+    context_hash: readString(value.context_hash, ""),
+    output_hash: readString(value.output_hash, ""),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+    requested_by: readString(value.requested_by, "unknown"),
+  }
+}
+
+function readCommanderCycleAction(value: unknown): CommanderCycleResultSummary["recommended_actions"][number] | null {
+  if (!isRecord(value) || typeof value.title !== "string") return null
+  return {
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    action_kind: readString(value.action_kind, "other"),
+    rationale: preview(readString(value.rationale, "")),
+    evidence_ids: readStringList(value.evidence_ids, 20),
+    synthesis_ids: readStringList(value.synthesis_ids, 20),
+    related_target_type: typeof value.related_target_type === "string" ? redactText(value.related_target_type) : undefined,
+    related_target_id: typeof value.related_target_id === "string" ? redactText(value.related_target_id) : undefined,
+  }
+}
+
+function readCommanderCycleRecordList(value: unknown, commandName: string, limit: number): CommanderCycleRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readCommanderCycleRecord).filter((record): record is CommanderCycleRecordSummary => record !== null).slice(0, limit)
+}
+
+function readCommanderCycleRecord(value: unknown): CommanderCycleRecordSummary | null {
+  if (!isRecord(value) || typeof value.cycle_id !== "string") return null
+  return {
+    cycle_id: redactText(value.cycle_id),
+    provider_id: readString(value.provider_id, "unknown"),
+    objective_preview: typeof value.objective_preview === "string" ? preview(redactText(value.objective_preview)) : undefined,
+    topic_id: typeof value.topic_id === "string" ? redactText(value.topic_id) : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    title: preview(readString(value.title, "")),
+    summary_preview: preview(readString(value.summary_preview, "")),
+    proposal_ids: readStringList(value.proposal_ids, 20),
+    bundle_id: typeof value.bundle_id === "string" ? redactText(value.bundle_id) : undefined,
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+    requested_by: readString(value.requested_by, "unknown"),
+  }
+}
+
+function recordFromCommanderCycleResult(result: CommanderCycleResultSummary): CommanderCycleRecordSummary {
+  return {
+    cycle_id: result.cycle_id,
+    provider_id: result.provider_id,
+    objective_preview: result.objective ? preview(result.objective) : undefined,
+    topic_id: result.topic_id,
+    mission_id: result.mission_id,
+    title: result.title,
+    summary_preview: preview(result.summary),
+    proposal_ids: result.proposal_ids,
+    bundle_id: result.bundle_id,
     created_at: result.created_at,
     requested_by: result.requested_by,
   }
@@ -3291,6 +3535,10 @@ function researchSynthesisState(state: UiState): ResearchSynthesisState {
   return state.researchSynthesis ?? { preview: null, selected: null, recent: [] }
 }
 
+function commanderCycleState(state: UiState): CommanderCycleState {
+  return state.commanderCycle ?? { preview: null, selected: null, recent: [] }
+}
+
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
 }
@@ -3580,6 +3828,31 @@ function synthesisEffect(type: "preview-research-synthesis" | "execute-research-
   const topicId = requiredArg(args, 0, "topicId")
   const objective = optionalRest(args, 1)
   return { type, topicId, ...(objective ? { objective } : {}) }
+}
+
+function commanderCycleEffect(type: "preview-commander-cycle" | "execute-commander-cycle", args: string[]): Extract<RuntimeUiEffect, { type: "preview-commander-cycle" | "execute-commander-cycle" }> {
+  const parsed = cycleArgs(args)
+  return { type, ...parsed }
+}
+
+function cycleArgs(args: string[]): { topicId?: string; missionId?: string; objective?: string } {
+  let topicId: string | undefined
+  let missionId: string | undefined
+  const objective: string[] = []
+  for (const arg of args) {
+    if (arg.startsWith("topic=")) {
+      topicId = arg.slice("topic=".length).trim()
+      if (!topicId) throw new Error("topic is required")
+    } else if (arg.startsWith("mission=")) {
+      missionId = arg.slice("mission=".length).trim()
+      if (!missionId) throw new Error("mission is required")
+    } else {
+      objective.push(arg)
+    }
+  }
+  const objectiveText = objective.join(" ").trim()
+  if (!topicId && !missionId && !objectiveText) throw new Error("topic, mission, or objective is required")
+  return { topicId, missionId, ...(objectiveText ? { objective: objectiveText } : {}) }
 }
 
 function ingestionArgs(args: string[]): { topicId?: string; sourceTitle?: string; noteTitle?: string; tags: string[]; query: Record<string, string> } {

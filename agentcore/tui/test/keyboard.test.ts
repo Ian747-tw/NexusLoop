@@ -192,6 +192,45 @@ describe("TUI keyboard command model", () => {
     ])
   })
 
+  test("commander cycle slash commands route only exact whitelist commands", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/cycle-preview topic=topic-1 inspect evidence",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("cycle-preview")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "cycle-preview", args: ["topic=topic-1", "inspect", "evidence"] },
+    ])
+
+    const objectiveOnlyState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/cycle inspect next step",
+    }
+    expect(applyKeyCommandWithEffects(objectiveOnlyState, { type: "submit" }).effects).toEqual([
+      { type: "send-command", command: "cycle", args: ["inspect", "next", "step"] },
+    ])
+
+    for (const message of ["/tmp/repro/cycle", "/path/cycle", ".cycle topic=topic-1", ":cycle-show cycle-1"]) {
+      const pathState: UiState = {
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }
+      expect(applyKeyCommandWithEffects(pathState, { type: "submit" }).effects).toEqual([
+        { type: "send-user-message", message },
+      ])
+    }
+  })
+
   test("mission execution slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

@@ -265,4 +265,10 @@ const runtimeCommands = new Set([
   "synthesize-proposals",
   "syntheses",
   "synthesis",
+  "cycle-preview",
+  "cycle",
+  "cycle-proposals",
+  "cycle-bundle",
+  "cycles",
+  "cycle-show",
 ])

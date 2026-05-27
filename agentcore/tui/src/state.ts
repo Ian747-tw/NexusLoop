@@ -686,6 +686,78 @@ export type ResearchSynthesisState = {
   commandError?: string
 }
 
+export type CommanderCycleRecommendedActionSummary = {
+  title: string
+  summary: string
+  action_kind: string
+  rationale: string
+  evidence_ids?: string[]
+  synthesis_ids?: string[]
+  related_target_type?: string
+  related_target_id?: string
+}
+
+export type CommanderCyclePreviewSummary = {
+  objective?: string
+  topic_id?: string
+  mission_id?: string
+  context_counts: {
+    sources: number
+    notes: number
+    artifacts: number
+    syntheses: number
+    proposals: number
+    reviews: number
+    queues: number
+  }
+  context_bytes: number
+  max_context_bytes: number
+  included_evidence_ids: string[]
+  included_synthesis_ids: string[]
+  blockers: string[]
+  redacted_context_preview: string
+}
+
+export type CommanderCycleResultSummary = {
+  cycle_id: string
+  provider_id: string
+  objective?: string
+  topic_id?: string
+  mission_id?: string
+  title: string
+  summary: string
+  findings: string[]
+  risks: string[]
+  recommended_actions: CommanderCycleRecommendedActionSummary[]
+  proposal_ids?: string[]
+  bundle_id?: string
+  context_hash: string
+  output_hash: string
+  created_at: string
+  requested_by: string
+}
+
+export type CommanderCycleRecordSummary = {
+  cycle_id: string
+  provider_id: string
+  objective_preview?: string
+  topic_id?: string
+  mission_id?: string
+  title: string
+  summary_preview: string
+  proposal_ids?: string[]
+  bundle_id?: string
+  created_at: string
+  requested_by: string
+}
+
+export type CommanderCycleState = {
+  preview?: CommanderCyclePreviewSummary | null
+  selected?: CommanderCycleResultSummary | null
+  recent: CommanderCycleRecordSummary[]
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -777,6 +849,7 @@ export type UiState = {
   operatorActions?: OperatorActionsState
   externalApi?: ExternalApiState
   researchSynthesis?: ResearchSynthesisState
+  commanderCycle?: CommanderCycleState
 }
 
 export function initialState(projectDir: string): UiState {
@@ -896,6 +969,11 @@ export function initialState(projectDir: string): UiState {
     },
     commanderNavigation: {
       selected: null,
+    },
+    commanderCycle: {
+      preview: null,
+      selected: null,
+      recent: [],
     },
   }
 }

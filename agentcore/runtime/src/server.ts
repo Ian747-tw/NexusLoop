@@ -37,6 +37,9 @@ import { FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalA
 import { ResearchSynthesisService, type ResearchSynthesisDbWriter } from "./research-synthesis/research-synthesis-service"
 import { FakeResearchSynthesisProvider, type ResearchSynthesisProvider } from "./research-synthesis/research-synthesis-provider"
 import type { ResearchSynthesisInput, ResearchSynthesisPreview, ResearchSynthesisRecord, ResearchSynthesisResult } from "./research-synthesis/research-synthesis-types"
+import { CommanderCycleService } from "./commander-cycle/commander-cycle-service"
+import { FakeCommanderCycleProvider, type CommanderCycleProvider } from "./commander-cycle/commander-cycle-provider"
+import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, CommanderCycleResult } from "./commander-cycle/commander-cycle-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -77,6 +80,9 @@ export interface RuntimeServerOptions {
   researchSynthesisProvider?: ResearchSynthesisProvider
   researchSynthesisNow?: () => Date
   researchSynthesisId?: () => string
+  commanderCycleProvider?: CommanderCycleProvider
+  commanderCycleNow?: () => Date
+  commanderCycleId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -125,6 +131,9 @@ export class RuntimeServer {
   private readonly researchSynthesisProvider: ResearchSynthesisProvider
   private readonly researchSynthesisNow?: () => Date
   private readonly researchSynthesisId?: () => string
+  private readonly commanderCycleProvider: CommanderCycleProvider
+  private readonly commanderCycleNow?: () => Date
+  private readonly commanderCycleId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -160,6 +169,9 @@ export class RuntimeServer {
     this.researchSynthesisProvider = options.researchSynthesisProvider ?? new FakeResearchSynthesisProvider()
     this.researchSynthesisNow = options.researchSynthesisNow
     this.researchSynthesisId = options.researchSynthesisId
+    this.commanderCycleProvider = options.commanderCycleProvider ?? new FakeCommanderCycleProvider()
+    this.commanderCycleNow = options.commanderCycleNow
+    this.commanderCycleId = options.commanderCycleId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -506,6 +518,14 @@ export class RuntimeServer {
         return this.getResearchSynthesis(requiredString(payload.synthesisId ?? payload.synthesis_id, "synthesisId"))
       case "runtime.list_research_syntheses":
         return this.listResearchSyntheses(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.preview_commander_cycle":
+        return this.previewCommanderCycle(readCommanderCycleInput(payload))
+      case "runtime.execute_commander_cycle":
+        return this.executeCommanderCycle(readCommanderCycleInput(payload))
+      case "runtime.get_commander_cycle":
+        return this.getCommanderCycle(requiredString(payload.cycleId ?? payload.cycle_id, "cycleId"))
+      case "runtime.list_commander_cycles":
+        return this.listCommanderCycles(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -891,6 +911,25 @@ export class RuntimeServer {
     return this.researchSynthesisService().list(limit)
   }
 
+  async previewCommanderCycle(input: CommanderCycleInput): Promise<CommanderCyclePreview> {
+    this.ensureResearchProjectionUsable("read")
+    return this.commanderCycleService().preview(input)
+  }
+
+  async executeCommanderCycle(input: CommanderCycleInput): Promise<CommanderCycleResult> {
+    this.requireCommanderCycleWriteRuntime("runtime.execute_commander_cycle")
+    this.ensureResearchProjectionUsable("read")
+    return this.commanderCycleService().execute(input)
+  }
+
+  async getCommanderCycle(cycleId: string): Promise<CommanderCycleResult | null> {
+    return this.commanderCycleService().get(cycleId)
+  }
+
+  async listCommanderCycles(limit = 20): Promise<CommanderCycleRecord[]> {
+    return this.commanderCycleService().list(limit)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1188,6 +1227,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before research synthesis writes")
   }
 
+  private requireCommanderCycleWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before commander cycle writes")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1256,6 +1300,19 @@ export class RuntimeServer {
       provider: this.researchSynthesisProvider,
       now: this.researchSynthesisNow,
       synthesisId: this.researchSynthesisId,
+    })
+  }
+
+  private commanderCycleService(): CommanderCycleService {
+    return new CommanderCycleService({
+      eventStore: this.eventStore,
+      researchDb: this.getResearchDb(),
+      missionRegistry: this.missionRegistry,
+      proposalRegistry: this.proposalRegistry,
+      proposalBundleRegistry: this.proposalBundleRegistry,
+      provider: this.commanderCycleProvider,
+      now: this.commanderCycleNow,
+      cycleId: this.commanderCycleId,
     })
   }
 }
@@ -1376,6 +1433,20 @@ function readResearchSynthesisInput(payload: Record<string, unknown>): ResearchS
     create_proposals: optionalBoolean(payload.createProposals ?? payload.create_proposals, "createProposals"),
     requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
     max_context_bytes: optionalPositiveInteger(payload.maxContextBytes ?? payload.max_context_bytes, "maxContextBytes", 64 * 1024),
+    max_output_bytes: optionalPositiveInteger(payload.maxOutputBytes ?? payload.max_output_bytes, "maxOutputBytes", 32 * 1024),
+  }
+}
+
+function readCommanderCycleInput(payload: Record<string, unknown>): CommanderCycleInput {
+  return {
+    objective: optionalString(payload.objective, "objective"),
+    topic_id: optionalString(payload.topicId ?? payload.topic_id, "topicId"),
+    mission_id: optionalString(payload.missionId ?? payload.mission_id, "missionId"),
+    provider_id: optionalString(payload.providerId ?? payload.provider_id, "providerId"),
+    create_proposals: optionalBoolean(payload.createProposals ?? payload.create_proposals, "createProposals"),
+    create_bundle: optionalBoolean(payload.createBundle ?? payload.create_bundle, "createBundle"),
+    requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+    max_context_bytes: optionalPositiveInteger(payload.maxContextBytes ?? payload.max_context_bytes, "maxContextBytes", 96 * 1024),
     max_output_bytes: optionalPositiveInteger(payload.maxOutputBytes ?? payload.max_output_bytes, "maxOutputBytes", 32 * 1024),
   }
 }

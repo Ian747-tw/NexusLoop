@@ -651,6 +651,14 @@ describe("TUI runtime client factory", () => {
     expect(state.researchSynthesis?.selected?.synthesis_id).toBeTruthy()
     expect(state.researchSynthesis?.selected?.proposal_ids).toEqual([])
 
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "cycle-preview", args: ["topic=topic-api", "inspect", "bounded", "context"] })
+    expect(state.commanderCycle?.preview).toMatchObject({ topic_id: "topic-api" })
+    expect(JSON.stringify(state)).not.toContain("synth-secret")
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "cycle-proposals", args: ["topic=topic-api"] })
+    expect(state.commanderCycle?.selected?.cycle_id).toBeTruthy()
+    expect(state.commanderCycle?.selected?.proposal_ids?.length).toBe(1)
+    expect(state.proposals?.recent.at(0)?.status).toBe("proposed")
+
     await client.runtime.shutdown()
   })
 })

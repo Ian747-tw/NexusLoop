@@ -363,6 +363,33 @@ describe("TUI launch boundary", () => {
     expect(snapshot).not.toContain("secret")
   })
 
+  test("default fake headless snapshot renders commander cycle surface", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/cycle-preview topic=fake-topic-1 inspect evidence token=cycle-secret" },
+      { type: "submit" },
+      { type: "insert", text: "/cycle-bundle topic=fake-topic-1" },
+      { type: "submit" },
+      { type: "insert", text: "/cycles" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Commander cycle")
+    expect(snapshot).toContain("selected_cycle=fake-cycle")
+    expect(snapshot).toContain("proposals=fake-proposal")
+    expect(snapshot).toContain("bundle=fake-bundle")
+    expect(snapshot).not.toContain("cycle-secret")
+  })
+
   test("real headless runtime client loads projection and topics through research command", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
