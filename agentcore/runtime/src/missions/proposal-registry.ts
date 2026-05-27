@@ -37,6 +37,10 @@ const ACTION_KINDS = new Set<ProposalActionKind>([
 
 const TERMINAL_STATUSES = new Set<ProposalStatus>(["rejected", "cancelled", "applied"])
 
+export function isGenericProposalApplyActionKind(actionKind: ProposalActionKind): boolean {
+  return actionKind !== "opencode_handoff"
+}
+
 export class ProposalRegistry {
   private readonly eventStore: EventStore
   private readonly missionRegistry: MissionRegistry

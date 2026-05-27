@@ -13,6 +13,18 @@ const MAX_ARRAY_ITEMS = 20
 const MAX_ARRAY_TEXT = 300
 
 type HandoffEvent =
+  | {
+      kind: "opencode_handoff_started"
+      handoff_id: string
+      proposal_id: string
+      review_id?: string
+      objective_preview: string
+      started_at: string
+      requested_by: string
+      source_cycle_id?: string
+      source_synthesis_id?: string
+      evidence_ids: string[]
+    }
   | { kind: "opencode_handoff_created"; handoff: OpenCodeHandoffResult }
   | {
       kind: "opencode_handoff_failed"
@@ -77,7 +89,15 @@ export class OpenCodeHandoffService {
     const proposal = await this.proposalRegistry.getProposal(normalized.proposal_id)
     if (!proposal) throw new Error(`commander proposal not found: ${redactText(normalized.proposal_id)}`)
     const existing = await this.existingResultForProposal(proposal.proposal_id)
-    if (existing && normalized.dry_run !== true) return redactValue(existing)
+    if (existing && normalized.dry_run !== true) {
+      const missionId = cleanRequiredString(existing.mission_id, "mission_id")
+      await this.proposalRegistry.markProposalApplied(proposal.proposal_id, `opencode_handoff:${existing.handoff_id}:mission:${missionId}`)
+      return redactValue(existing)
+    }
+    const incompleteStarted = normalized.dry_run === true ? null : await this.incompleteStartedForProposal(proposal.proposal_id)
+    if (incompleteStarted) {
+      throw new Error(`opencode handoff already started without completion record: ${redactText(incompleteStarted.handoff_id)}`)
+    }
 
     const preview = await this.previewForProposal(proposal)
     if (!preview.eligible) throw new Error(`opencode handoff is not eligible: ${preview.blockers.join("; ")}`)
@@ -102,6 +122,18 @@ export class OpenCodeHandoffService {
     }
 
     const handoffId = this.idFactory("handoff")
+    await this.appendAndApply({
+      kind: "opencode_handoff_started",
+      handoff_id: handoffId,
+      proposal_id: proposal.proposal_id,
+      review_id: proposal.review_id,
+      objective_preview: previewText(payload.objective),
+      started_at: createdAt,
+      requested_by: requestedBy,
+      source_cycle_id: payload.source_cycle_id,
+      source_synthesis_id: payload.source_synthesis_id,
+      evidence_ids: payload.evidence_ids,
+    })
     let mission: { mission_id: string; intent_id: string } | null = null
     try {
       mission = await this.sendMission(buildMissionObjective(payload))
@@ -164,6 +196,8 @@ export class OpenCodeHandoffService {
     if (review && review.status !== "approved") blockers.push("linked review must be approved")
     if (proposal.status !== "approved" && proposal.status !== "applied") blockers.push("proposal must be approved before handoff")
     if (proposal.status === "applied" && !(await this.existingResultForProposal(proposal.proposal_id))) blockers.push("proposal is applied without recorded opencode handoff")
+    const incompleteStarted = await this.incompleteStartedForProposal(proposal.proposal_id)
+    if (incompleteStarted) blockers.push(`opencode handoff already started without completion record: ${incompleteStarted.handoff_id}`)
     return {
       proposal_id: proposal.proposal_id,
       eligible: blockers.length === 0,
@@ -183,6 +217,24 @@ export class OpenCodeHandoffService {
 
   private async existingResultForProposal(proposalId: string): Promise<OpenCodeHandoffResult | null> {
     return (await this.results()).find((item) => item.proposal_id === proposalId && item.sent) ?? null
+  }
+
+  private async incompleteStartedForProposal(proposalId: string): Promise<{ handoff_id: string } | null> {
+    const terminals = new Set<string>()
+    const started: Array<{ handoff_id: string; proposal_id: string }> = []
+    for (const event of await this.eventStore.readAll()) {
+      if (event.kind === "opencode_handoff_started") {
+        started.push({
+          handoff_id: cleanRequiredString(event.handoff_id, "handoff_id"),
+          proposal_id: cleanRequiredString(event.proposal_id, "proposal_id"),
+        })
+      } else if (event.kind === "opencode_handoff_created" && isRecord(event.handoff)) {
+        terminals.add(cleanRequiredString(event.handoff.handoff_id, "handoff_id"))
+      } else if (event.kind === "opencode_handoff_failed") {
+        terminals.add(cleanRequiredString(event.handoff_id, "handoff_id"))
+      }
+    }
+    return started.find((item) => item.proposal_id === proposalId && !terminals.has(item.handoff_id)) ?? null
   }
 
   private async results(): Promise<OpenCodeHandoffResult[]> {

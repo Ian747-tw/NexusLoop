@@ -1344,6 +1344,17 @@ describe("RuntimeServer core", () => {
       would_create_mission: true,
       would_send_to_adapter: true,
     })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "proposal", targetId: handoffProposal.proposal_id })).resolves.toMatchObject({
+      ready_to_apply: false,
+      would_apply: [],
+      blockers: expect.arrayContaining([expect.stringContaining("must use its dedicated command")]),
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "ready_to_apply", limit: 20 })).resolves.toMatchObject({
+      items: [],
+    })
+    await expect(server.command("runtime.commander_queue", { queue: "blocked", limit: 20 })).resolves.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ target_type: "proposal", target_id: handoffProposal.proposal_id })]),
+    })
     await server.shutdown()
   })
 
@@ -1400,6 +1411,7 @@ describe("RuntimeServer core", () => {
     expect(repeated).toMatchObject({ handoff_id: "handoff_1", mission_id: result.mission_id })
     expect(adapter.packets).toHaveLength(1)
     const serialized = JSON.stringify({ status: await server.status(), events: await readJsonlEvents(dir), packets: adapter.packets })
+    expect((await readEventKinds(dir))).toEqual(expect.arrayContaining(["opencode_handoff_started", "opencode_handoff_created"]))
     expect(serialized).not.toContain("objective-secret")
     expect(serialized).not.toContain("constraint-secret")
     expect(serialized).not.toContain("title-secret")
@@ -1476,6 +1488,12 @@ describe("RuntimeServer core", () => {
     }
     await expect(server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" })).rejects.toThrow("handoff event append failed")
     expect(adapter.packets).toHaveLength(1)
+    await expect(server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" })).rejects.toThrow("already started without completion record")
+    expect(adapter.packets).toHaveLength(1)
+    await expect(server.command("runtime.preview_opencode_handoff", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      eligible: false,
+      blockers: expect.arrayContaining([expect.stringContaining("already started without completion record")]),
+    })
     await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({ status: "approved" })
     await server.shutdown()
   })

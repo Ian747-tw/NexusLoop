@@ -1211,8 +1211,12 @@ export class FakeRuntimeClient implements RuntimeClient {
     const blockers: string[] = []
     const proposals = bundle.proposal_ids.map((proposalId) => this.proposals.find((proposal) => proposal.proposal_id === proposalId))
     for (const [index, proposal] of proposals.entries()) {
-      if (!proposal) blockers.push(`missing proposal: ${bundle.proposal_ids[index]}`)
-      else if (proposal.status !== "approved" && proposal.status !== "applied") blockers.push(`proposal ${proposal.proposal_id} status is ${proposal.status}`)
+      if (!proposal) {
+        blockers.push(`missing proposal: ${bundle.proposal_ids[index]}`)
+      } else {
+        if (!isGenericFakeApplyActionKind(proposal.action_kind)) blockers.push(`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`)
+        if (proposal.status !== "approved" && proposal.status !== "applied") blockers.push(`proposal ${proposal.proposal_id} status is ${proposal.status}`)
+      }
     }
     if (bundle.status === "cancelled") blockers.push(`bundle ${bundle.bundle_id} is cancelled`)
     return {
@@ -1264,12 +1268,12 @@ export class FakeRuntimeClient implements RuntimeClient {
         skippedCount += 1
         continue
       }
-      if (proposal.status !== "approved") {
+      if (proposal.status !== "approved" || !isGenericFakeApplyActionKind(proposal.action_kind)) {
         if (allowPartial) {
           skippedCount += 1
           continue
         }
-        throw new Error(`proposal is not approved: ${redactText(proposal.proposal_id)}`)
+        throw new Error(`proposal is not ready for generic apply: ${redactText(proposal.proposal_id)}`)
       }
       this.applyProposal(proposal.proposal_id)
       appliedCount += 1
@@ -1488,7 +1492,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     } else {
       for (const proposalId of preview.proposal_ids) {
         const proposal = this.requireProposal(proposalId)
-        if (proposal.status === "approved") this.applyProposal(proposal.proposal_id)
+        if (proposal.status === "approved" && isGenericFakeApplyActionKind(proposal.action_kind)) this.applyProposal(proposal.proposal_id)
         else if (proposal.status !== "applied" && !allowPartial) throw new Error(`proposal is not approved: ${redactText(proposal.proposal_id)}`)
       }
     }
@@ -1518,7 +1522,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       blocked_count: blockers.length,
       blockers,
       apply_mode: "single",
-      would_apply: proposal.status === "approved" ? [proposal.proposal_id] : [],
+      would_apply: proposal.status === "approved" && blockers.length === 0 ? [proposal.proposal_id] : [],
       would_skip: proposal.status === "applied" ? [proposal.proposal_id] : [],
     }
   }
@@ -1538,7 +1542,10 @@ export class FakeRuntimeClient implements RuntimeClient {
       blocked_count: readiness.blocked_count,
       blockers: readiness.blockers,
       apply_mode: applyMode,
-      would_apply: bundle.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "approved"),
+      would_apply: bundle.proposal_ids.filter((proposalId) => {
+        const proposal = this.requireProposal(proposalId)
+        return proposal.status === "approved" && isGenericFakeApplyActionKind(proposal.action_kind)
+      }),
       would_skip: bundle.proposal_ids.filter((proposalId) => this.requireProposal(proposalId).status === "applied"),
     }
   }
@@ -2375,10 +2382,15 @@ function auditRelatedRecord(related: Set<string>): Record<string, string[]> {
 }
 
 function fakeProposalBlockers(proposal: CommanderProposalSummary): string[] {
+  if (!isGenericFakeApplyActionKind(proposal.action_kind)) return [`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`]
   if (proposal.status === "approved" || proposal.status === "applied") return []
   if (proposal.status === "rejected" || proposal.status === "cancelled") return [`proposal ${proposal.proposal_id} is ${proposal.status}`]
   if (!proposal.review_id) return [`proposal ${proposal.proposal_id} has no linked review`]
   return [`proposal ${proposal.proposal_id} status is ${proposal.status}`]
+}
+
+function isGenericFakeApplyActionKind(actionKind: string): boolean {
+  return actionKind !== "opencode_handoff"
 }
 
 function isTerminalFakeProposal(proposal: CommanderProposalSummary): boolean {
