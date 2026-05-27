@@ -3582,6 +3582,39 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("research synthesis rejects output caps too small for the validated result envelope", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_synth", title: "Synthesis topic", status: "active" })
+    db.addNote({ id: "note_synth", topic_id: "topic_synth", content: "source note value", tags: ["evidence"] })
+    db.close()
+    const provider = new CountingSynthesisProvider()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      researchSynthesisProvider: provider,
+    })
+    await server.start()
+
+    await expect(server.command("runtime.preview_research_synthesis", {
+      topicId: "topic_synth",
+      maxOutputBytes: 32,
+      requestedBy: "operator",
+    })).rejects.toThrow("max_output_bytes must be at least 512")
+    await expect(server.command("runtime.execute_research_synthesis", {
+      topicId: "topic_synth",
+      maxOutputBytes: 32,
+      requestedBy: "operator",
+    })).rejects.toThrow("max_output_bytes must be at least 512")
+    expect(provider.calls).toBe(0)
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).not.toContain("research_synthesis_created")
+    expect(events.map((event) => event.kind)).not.toContain("research_synthesis_failed")
+    await server.shutdown()
+  })
+
   test("external API execute validates resolved hosts before dispatch", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

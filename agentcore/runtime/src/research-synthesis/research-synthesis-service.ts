@@ -16,6 +16,7 @@ import type {
 const DEFAULT_MAX_CONTEXT_BYTES = 32 * 1024
 const HARD_MAX_CONTEXT_BYTES = 64 * 1024
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024
+const MIN_MAX_OUTPUT_BYTES = 512
 const HARD_MAX_OUTPUT_BYTES = 32 * 1024
 const CONTEXT_PREVIEW_BYTES = 2048
 const SUMMARY_PREVIEW_BYTES = 240
@@ -208,7 +209,7 @@ export class ResearchSynthesisService {
     const providerId = input.provider_id ?? this.provider.provider_id
     if (providerId !== this.provider.provider_id) throw new Error(`unknown research synthesis provider: ${redactText(providerId)}`)
     const maxContextBytes = clampBytes(input.max_context_bytes, DEFAULT_MAX_CONTEXT_BYTES, HARD_MAX_CONTEXT_BYTES, "max_context_bytes")
-    const maxOutputBytes = clampBytes(input.max_output_bytes, DEFAULT_MAX_OUTPUT_BYTES, HARD_MAX_OUTPUT_BYTES, "max_output_bytes")
+    const maxOutputBytes = clampOutputBytes(input.max_output_bytes)
     return {
       ...input,
       topic_id: requiredString(input.topic_id, "topic_id"),
@@ -398,6 +399,7 @@ function cleanProviderResult(result: ResearchSynthesisProviderResult, maxBytes: 
       break
     }
   }
+  if (byteLength(JSON.stringify(cleaned)) > maxBytes) throw new Error("provider output exceeds max_output_bytes")
   return redactValue(cleaned)
 }
 
@@ -477,6 +479,13 @@ function clampBytes(value: unknown, fallback: number, max: number, field: string
   if (value === undefined) return fallback
   if (!Number.isInteger(value) || Number(value) < 1) throw new Error(`${field} must be a positive integer`)
   return Math.min(Number(value), max)
+}
+
+function clampOutputBytes(value: unknown): number {
+  if (value === undefined) return DEFAULT_MAX_OUTPUT_BYTES
+  if (!Number.isInteger(value) || Number(value) < 1) throw new Error("max_output_bytes must be a positive integer")
+  if (Number(value) < MIN_MAX_OUTPUT_BYTES) throw new Error(`max_output_bytes must be at least ${MIN_MAX_OUTPUT_BYTES}`)
+  return Math.min(Number(value), HARD_MAX_OUTPUT_BYTES)
 }
 
 function requiredString(value: unknown, field: string): string {
