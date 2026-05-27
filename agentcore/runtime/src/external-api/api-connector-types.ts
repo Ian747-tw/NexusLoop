@@ -66,6 +66,10 @@ export interface ExternalApiRequestResult {
   created_at: string
 }
 
+export interface ExternalApiInternalRequestResult extends ExternalApiRequestResult {
+  response_body_for_internal_use?: string
+}
+
 export interface ExternalApiAuditRecord {
   request_id: string
   connector_id: string

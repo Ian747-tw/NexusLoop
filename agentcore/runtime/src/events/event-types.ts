@@ -113,6 +113,17 @@ export interface RuntimeStatus {
     cancelled_count: number
     last_draft_id?: string
   }
+  reasoningProvider?: {
+    kind: "fake" | "minimax"
+    provider_id: string
+    connector_id?: string
+    model?: string
+    max_input_bytes: number
+    max_output_bytes: number
+    timeout_ms?: number
+    system_prompt_version?: string
+    enabled_for: Array<"research_synthesis" | "commander_cycle">
+  }
   researchProjection: RuntimeResearchProjectionHealth
   policy: Record<string, unknown>
 }

@@ -4,6 +4,7 @@ import { redactText, redactValue } from "../security/redaction"
 import type {
   ExternalApiAuditRecord,
   ExternalApiConnector,
+  ExternalApiInternalRequestResult,
   ExternalApiMethod,
   ExternalApiRequestInput,
   ExternalApiRequestPreview,
@@ -53,6 +54,14 @@ export class ExternalApiRequestService {
   }
 
   async execute(input: ExternalApiRequestInput): Promise<ExternalApiRequestResult> {
+    return this.executeBuilt(input, false)
+  }
+
+  async executeForInternalUse(input: ExternalApiRequestInput): Promise<ExternalApiInternalRequestResult> {
+    return this.executeBuilt(input, true)
+  }
+
+  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean): Promise<ExternalApiInternalRequestResult> {
     const built = this.build(input)
     const createdAt = this.now().toISOString()
     const requestId = this.requestId()
@@ -123,6 +132,7 @@ export class ExternalApiRequestService {
         createdAt,
         responseBytes: bodyBytes,
         responsePreview: preview(response.body),
+        responseBodyForInternalUse: includeInternalBody ? internalBody(response.body, built.connector.max_response_bytes) : undefined,
       })
       await this.writeAudit(result.ok ? "external_api_request_executed" : "external_api_request_failed", result, input.requested_by)
       return result
@@ -241,8 +251,9 @@ export class ExternalApiRequestService {
     statusCode?: number
     responseBytes?: number
     responsePreview?: string
+    responseBodyForInternalUse?: string
     error?: string
-  }): ExternalApiRequestResult {
+  }): ExternalApiInternalRequestResult {
     return redactValue({
       request_id: input.requestId,
       connector_id: input.connectorId,
@@ -252,6 +263,7 @@ export class ExternalApiRequestService {
       ok: input.ok,
       response_bytes: input.responseBytes,
       response_preview: input.responsePreview ? preview(input.responsePreview) : undefined,
+      response_body_for_internal_use: input.responseBodyForInternalUse ? internalBody(input.responseBodyForInternalUse, MAX_BODY_BYTES) : undefined,
       error: input.error ? redactText(input.error) : undefined,
       dry_run: input.dryRun,
       created_at: input.createdAt,
@@ -353,6 +365,10 @@ function byteLength(value: string): number {
 function preview(value: string): string {
   const redacted = redactText(value)
   return truncateUtf8(redacted, PREVIEW_BYTES)
+}
+
+function internalBody(value: string, maxBytes: number): string {
+  return truncateUtf8(redactText(value), maxBytes)
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

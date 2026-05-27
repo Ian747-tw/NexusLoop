@@ -40,6 +40,8 @@ import type { ResearchSynthesisInput, ResearchSynthesisPreview, ResearchSynthesi
 import { CommanderCycleService } from "./commander-cycle/commander-cycle-service"
 import { FakeCommanderCycleProvider, type CommanderCycleProvider } from "./commander-cycle/commander-cycle-provider"
 import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, CommanderCycleResult } from "./commander-cycle/commander-cycle-types"
+import { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
+import { defaultReasoningProviderConfig, reasoningProviderStatus, validateReasoningProviderConfig, type ReasoningProviderConfig, type ReasoningProviderStatus } from "./reasoning/reasoning-provider-config"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -77,6 +79,7 @@ export interface RuntimeServerOptions {
   externalApiResolveHostAddresses?: ExternalApiHostResolver
   externalApiNow?: () => Date
   externalApiRequestId?: () => string
+  reasoningProviderConfig?: ReasoningProviderConfig
   researchSynthesisProvider?: ResearchSynthesisProvider
   researchSynthesisNow?: () => Date
   researchSynthesisId?: () => string
@@ -128,6 +131,7 @@ export class RuntimeServer {
   private readonly externalApiResolveHostAddresses?: ExternalApiHostResolver
   private readonly externalApiNow?: () => Date
   private readonly externalApiRequestId?: () => string
+  private readonly reasoningProviderConfig: ReasoningProviderConfig
   private readonly researchSynthesisProvider: ResearchSynthesisProvider
   private readonly researchSynthesisNow?: () => Date
   private readonly researchSynthesisId?: () => string
@@ -166,10 +170,12 @@ export class RuntimeServer {
     this.externalApiResolveHostAddresses = options.externalApiResolveHostAddresses
     this.externalApiNow = options.externalApiNow
     this.externalApiRequestId = options.externalApiRequestId
-    this.researchSynthesisProvider = options.researchSynthesisProvider ?? new FakeResearchSynthesisProvider()
+    this.reasoningProviderConfig = validateReasoningProviderConfig(options.reasoningProviderConfig ?? defaultReasoningProviderConfig())
+    const minimaxProvider = this.reasoningProviderConfig.kind === "minimax" ? this.createMiniMaxReasoningProvider() : null
+    this.researchSynthesisProvider = options.researchSynthesisProvider ?? (minimaxProvider && this.reasoningProviderConfig.enabled_for.includes("research_synthesis") ? minimaxProvider : new FakeResearchSynthesisProvider())
     this.researchSynthesisNow = options.researchSynthesisNow
     this.researchSynthesisId = options.researchSynthesisId
-    this.commanderCycleProvider = options.commanderCycleProvider ?? new FakeCommanderCycleProvider()
+    this.commanderCycleProvider = options.commanderCycleProvider ?? (minimaxProvider && this.reasoningProviderConfig.enabled_for.includes("commander_cycle") ? minimaxProvider : new FakeCommanderCycleProvider())
     this.commanderCycleNow = options.commanderCycleNow
     this.commanderCycleId = options.commanderCycleId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
@@ -304,6 +310,8 @@ export class RuntimeServer {
     switch (name) {
       case "runtime.status":
         return this.status()
+      case "runtime.reasoning_provider_status":
+        return this.reasoningProviderStatus()
       case "runtime.resume":
         return this.resume()
       case "runtime.start_new_session":
@@ -552,9 +560,14 @@ export class RuntimeServer {
       proposals: await this.proposalRegistry.statusSummary(),
       proposalBundles: await this.proposalBundleRegistry.statusSummary(),
       playbookDrafts: await this.commanderPlaybookDraftRegistry.statusSummary(),
+      reasoningProvider: this.reasoningProviderStatus(),
       researchProjection: this.researchProjectionHealth,
       policy,
     })
+  }
+
+  reasoningProviderStatus(): ReasoningProviderStatus {
+    return reasoningProviderStatus(this.reasoningProviderConfig)
   }
 
   async resume(): Promise<{ events: number }> {
@@ -1278,6 +1291,19 @@ export class RuntimeServer {
       resolveHostAddresses: this.externalApiResolveHostAddresses,
       now: this.externalApiNow,
       requestId: this.externalApiRequestId,
+    })
+  }
+
+  private createMiniMaxReasoningProvider(): MiniMaxReasoningProvider {
+    const connectorId = this.reasoningProviderConfig.connector_id
+    const connector = connectorId ? this.externalApiConnectorRegistry.get(connectorId) : null
+    if (!connectorId || !connector) {
+      throw new Error(`MiniMax reasoning provider connector not found: ${redactText(connectorId ?? "missing")}`)
+    }
+    return new MiniMaxReasoningProvider({
+      config: this.reasoningProviderConfig,
+      requestService: this.externalApiRequestService(),
+      connector,
     })
   }
 

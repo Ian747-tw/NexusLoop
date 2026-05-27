@@ -21,6 +21,8 @@ import { MissionToolRouter } from "./missions/mission-tool-router"
 import { MISSION_TOOL_NAMES } from "./missions/mission-tool-types"
 import { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
 import { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
+import type { ExternalApiConnector } from "./external-api/api-connector-types"
+import { readReasoningProviderConfigFromEnv } from "./reasoning/reasoning-provider-config"
 import type { ResearchSynthesisProvider, ResearchSynthesisProviderInput, ResearchSynthesisProviderResult } from "./research-synthesis/research-synthesis-provider"
 import type { CommanderCycleProvider, CommanderCycleProviderInput, CommanderCycleProviderResult } from "./commander-cycle/commander-cycle-provider"
 import { SpecService } from "./spec/spec-service"
@@ -540,6 +542,65 @@ class InventingCommanderCycleProvider implements CommanderCycleProvider {
 class FailingProposalRegistry extends ProposalRegistry {
   override async createProposal(_input: CommanderProposalInput): Promise<CommanderProposal> {
     throw new Error("proposal write failed token=proposal-secret")
+  }
+}
+
+function minimaxConnector(): ExternalApiConnector {
+  return {
+    connector_id: "minimax-anthropic",
+    title: "MiniMax Anthropic",
+    base_url: "https://api.minimax.io/anthropic",
+    allowed_hosts: ["api.minimax.io"],
+    allowed_methods: ["POST"],
+    default_headers: { "Content-Type": "application/json", Accept: "application/json" },
+    credential_refs: [{ name: "minimax-key", source: "env", env_name: "NXL_MINIMAX_API_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }],
+    timeout_ms: 5000,
+    max_response_bytes: 8192,
+    created_at: "1970-01-01T00:00:00.000Z",
+    updated_at: "1970-01-01T00:00:00.000Z",
+  }
+}
+
+function minimaxEnvelope(payload: Record<string, unknown>, fenced = false): string {
+  const text = JSON.stringify(payload)
+  return JSON.stringify({ id: "msg_fake", content: [{ type: "text", text: fenced ? `\`\`\`json\n${text}\n\`\`\`` : text }] })
+}
+
+function minimaxSynthesisPayload(evidenceIds: string[] = ["note_synth"]): Record<string, unknown> {
+  return {
+    title: "MiniMax synthesis",
+    summary: "MiniMax bounded synthesis summary",
+    findings: ["MiniMax finding"],
+    risks: ["MiniMax risk"],
+    open_questions: ["MiniMax open question"],
+    recommended_actions: [{
+      title: "MiniMax checkpoint",
+      summary: "Review MiniMax synthesis",
+      action_kind: "operator_checkpoint",
+      evidence_ids: evidenceIds,
+    }],
+    confidence: "medium",
+  }
+}
+
+function minimaxCyclePayload(evidenceIds: string[] = ["note_cycle"], synthesisIds: string[] = []): Record<string, unknown> {
+  return {
+    title: "MiniMax cycle",
+    summary: "MiniMax commander cycle summary",
+    findings: ["MiniMax cycle finding"],
+    risks: ["MiniMax cycle risk"],
+    recommended_actions: [{
+      title: "MiniMax cycle checkpoint",
+      summary: "Review MiniMax cycle recommendation",
+      action_kind: "operator_checkpoint",
+      rationale: "Provider recommends bounded operator review.",
+      evidence_ids: evidenceIds,
+      synthesis_ids: synthesisIds,
+      related_target_type: "topic",
+      related_target_id: "topic_cycle",
+    }],
+    should_create_proposals: false,
+    confidence: "medium",
   }
 }
 
@@ -4034,6 +4095,286 @@ describe("RuntimeServer core", () => {
     expect(events.find((event) => event.kind === "commander_cycle_drafting_failed" && event.cycle_id === "cycle_proposal_fail")).toBeTruthy()
     expect(JSON.stringify(events)).not.toContain("proposal-secret")
     await proposalFailServer.shutdown()
+  })
+
+  test("default and env reasoning provider config preserve fake default and expose redacted status", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const defaultServer = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    expect(defaultServer.reasoningProviderStatus()).toMatchObject({
+      kind: "fake",
+      provider_id: "fake-reasoning",
+      enabled_for: ["research_synthesis", "commander_cycle"],
+    })
+    await defaultServer.shutdown()
+
+    const config = readReasoningProviderConfigFromEnv({
+      NXL_REASONING_PROVIDER_KIND: "minimax",
+      NXL_REASONING_PROVIDER_ID: "minimax-m2-7",
+      NXL_REASONING_CONNECTOR_ID: "minimax-anthropic",
+      NXL_REASONING_MODEL: "MiniMax-M2.7",
+      NXL_REASONING_ENABLE_RESEARCH_SYNTHESIS: "1",
+      NXL_REASONING_MAX_INPUT_BYTES: "4096",
+      NXL_REASONING_MAX_OUTPUT_BYTES: "2048",
+    })
+    expect(config).toMatchObject({
+      kind: "minimax",
+      provider_id: "minimax-m2-7",
+      connector_id: "minimax-anthropic",
+      model: "MiniMax-M2.7",
+      enabled_for: ["research_synthesis"],
+    })
+    expect(JSON.stringify(config)).not.toContain("NXL_MINIMAX_API_KEY")
+  })
+
+  test("minimax launch config creates providers through external API boundary and fails clearly without connector", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        NXL_REASONING_PROVIDER_KIND: "minimax",
+        NXL_REASONING_PROVIDER_ID: "minimax-m2-7",
+        NXL_REASONING_CONNECTOR_ID: "missing-minimax",
+        NXL_REASONING_MODEL: "MiniMax-M2.7",
+      },
+    })).toThrow("MiniMax reasoning provider connector not found")
+
+    const transport = new FakeExternalApiTransport([minimaxEnvelope(minimaxSynthesisPayload())].map((body) => ({ status_code: 200, body })))
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      mode: "active",
+      env: {
+        NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([minimaxConnector()]),
+        NXL_MINIMAX_API_KEY: "raw-minimax-secret",
+        NXL_REASONING_PROVIDER_KIND: "minimax",
+        NXL_REASONING_PROVIDER_ID: "minimax-m2-7",
+        NXL_REASONING_CONNECTOR_ID: "minimax-anthropic",
+        NXL_REASONING_MODEL: "MiniMax-M2.7",
+        NXL_REASONING_ENABLE_RESEARCH_SYNTHESIS: "1",
+      },
+      externalApiTransport: transport,
+      researchProjectionMode: "disabled",
+    })
+    expect(server.reasoningProviderStatus()).toMatchObject({
+      kind: "minimax",
+      provider_id: "minimax-m2-7",
+      connector_id: "minimax-anthropic",
+      model: "MiniMax-M2.7",
+      enabled_for: ["research_synthesis"],
+    })
+    expect(JSON.stringify(await server.command("runtime.status"))).not.toContain("raw-minimax-secret")
+    await server.shutdown()
+  })
+
+  test("minimax research synthesis provider parses responses and writes evidence only through synthesis service", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_synth", title: "Synthesis topic", status: "active" })
+    db.addNote({ id: "note_synth", topic_id: "topic_synth", content: "source note value", tags: ["evidence"] })
+    db.close()
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(), true) }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-m2-7",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis"],
+      },
+      researchSynthesisId: () => "synth_minimax",
+    })
+    await server.start()
+
+    const result = await server.command("runtime.execute_research_synthesis", {
+      topicId: "topic_synth",
+      requestedBy: "operator",
+    }) as { synthesis_id: string; provider_id: string; source_note_id: string; artifact_id: string; title: string }
+    expect(result).toMatchObject({
+      synthesis_id: "synth_minimax",
+      provider_id: "minimax-m2-7",
+      title: "MiniMax synthesis",
+    })
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0]).toMatchObject({
+      method: "POST",
+      url: "https://api.minimax.io/anthropic/v1/messages",
+      max_response_bytes: 8192,
+    })
+    expect(transport.requests[0].headers.Authorization).toBe("Bearer raw-minimax-secret")
+    const requestBody = JSON.parse(transport.requests[0].body ?? "{}") as { model: string; messages: Array<{ content: string }> }
+    expect(requestBody.model).toBe("MiniMax-M2.7")
+    expect(requestBody.messages[0]?.content).toContain("note_synth")
+
+    const snapshot = server.getResearchTopicSnapshot("topic_synth")
+    expect(snapshot?.notes.some((note) => note.id === result.source_note_id)).toBe(true)
+    expect(snapshot?.artifacts.some((artifact) => artifact.id === result.artifact_id)).toBe(true)
+    const events = await readJsonlEvents(dir)
+    expect(events.find((event) => event.kind === "external_api_request_executed")).toMatchObject({ connector_id: "minimax-anthropic", ok: true })
+    expect(events.find((event) => event.kind === "research_synthesis_created")).toMatchObject({ provider_id: "minimax-m2-7" })
+    expect(JSON.stringify({ events, status: await server.status(), snapshot })).not.toContain("raw-minimax-secret")
+    await server.shutdown()
+  })
+
+  test("minimax commander cycle provider parses responses and drafts proposals through cycle service only", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_cycle", title: "Cycle topic", status: "active" })
+    db.addNote({ id: "note_cycle", topic_id: "topic_cycle", content: "cycle note value", tags: ["evidence"] })
+    db.close()
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxCyclePayload()) }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-cycle",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["commander_cycle"],
+      },
+      commanderCycleId: () => "cycle_minimax",
+    })
+    await server.start()
+
+    const result = await server.command("runtime.execute_commander_cycle", {
+      topicId: "topic_cycle",
+      createProposals: true,
+      requestedBy: "operator",
+    }) as { cycle_id: string; provider_id: string; proposal_ids: string[] }
+    expect(result).toMatchObject({ cycle_id: "cycle_minimax", provider_id: "minimax-cycle" })
+    expect(result.proposal_ids).toHaveLength(1)
+    const proposal = await server.command("runtime.get_commander_proposal", { proposalId: result.proposal_ids[0] }) as { status: string; review_id?: string; applied_at?: string }
+    expect(proposal.status).toBe("proposed")
+    expect(proposal.review_id).toBeUndefined()
+    expect(proposal.applied_at).toBeUndefined()
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].url).toBe("https://api.minimax.io/anthropic/v1/messages")
+    const events = await readJsonlEvents(dir)
+    expect(events.find((event) => event.kind === "commander_cycle_completed")).toMatchObject({ provider_id: "minimax-cycle" })
+    expect(events.map((event) => event.kind)).not.toContain("commander_proposal_review_requested")
+    expect(events.map((event) => event.kind)).not.toContain("commander_proposal_applied")
+    expect(JSON.stringify({ events, status: await server.status() })).not.toContain("raw-minimax-secret")
+    await server.shutdown()
+  })
+
+  test("minimax provider fails closed for caps malformed JSON and invented citations", async () => {
+    const cappedDir = await tempProject()
+    await makeProject(cappedDir, { approvedSpec: true })
+    let db = ResearchDb.open(cappedDir)
+    db.createTopic({ id: "topic_synth", title: "Synthesis topic", status: "active" })
+    db.addNote({ id: "note_synth", topic_id: "topic_synth", content: "source note value ".repeat(50), tags: ["evidence"] })
+    db.close()
+    const cappedTransport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload()) }])
+    const cappedServer = new RuntimeServer({
+      projectDir: cappedDir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: cappedTransport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-capped",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 256,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis"],
+      },
+    })
+    await cappedServer.start()
+    await expect(cappedServer.command("runtime.execute_research_synthesis", {
+      topicId: "topic_synth",
+      requestedBy: "operator",
+    })).rejects.toThrow("research synthesis failed")
+    expect(cappedTransport.requests).toHaveLength(0)
+    await cappedServer.shutdown()
+
+    const malformedDir = await tempProject()
+    await makeProject(malformedDir, { approvedSpec: true })
+    db = ResearchDb.open(malformedDir)
+    db.createTopic({ id: "topic_synth", title: "Synthesis topic", status: "active" })
+    db.addNote({ id: "note_synth", topic_id: "topic_synth", content: "source note value", tags: ["evidence"] })
+    db.close()
+    const malformedServer = new RuntimeServer({
+      projectDir: malformedDir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ content: [{ type: "text", text: "not json token=malformed-secret" }] }) }]),
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-malformed",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis"],
+      },
+    })
+    await malformedServer.start()
+    await expect(malformedServer.command("runtime.execute_research_synthesis", {
+      topicId: "topic_synth",
+      requestedBy: "operator",
+    })).rejects.toThrow("research synthesis failed")
+    const malformedEvents = await readJsonlEvents(malformedDir)
+    expect(malformedEvents.map((event) => event.kind)).toContain("research_synthesis_failed")
+    expect(malformedEvents.map((event) => event.kind)).not.toContain("research_synthesis_created")
+    expect(JSON.stringify(malformedEvents)).not.toContain("malformed-secret")
+    await malformedServer.shutdown()
+
+    const citationDir = await tempProject()
+    await makeProject(citationDir, { approvedSpec: true })
+    db = ResearchDb.open(citationDir)
+    db.createTopic({ id: "topic_synth", title: "Synthesis topic", status: "active" })
+    db.addNote({ id: "note_synth", topic_id: "topic_synth", content: "source note value", tags: ["evidence"] })
+    db.close()
+    const citationServer = new RuntimeServer({
+      projectDir: citationDir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(["invented-evidence"])) }]),
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-citation",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis"],
+      },
+    })
+    await citationServer.start()
+    await expect(citationServer.command("runtime.execute_research_synthesis", {
+      topicId: "topic_synth",
+      createProposals: true,
+      requestedBy: "operator",
+    })).rejects.toThrow("research synthesis failed")
+    expect(await citationServer.command("runtime.list_commander_proposals")).toEqual([])
+    const citationEvents = await readJsonlEvents(citationDir)
+    expect(citationEvents.map((event) => event.kind)).toContain("research_synthesis_failed")
+    expect(citationEvents.map((event) => event.kind)).not.toContain("research_synthesis_created")
+    await citationServer.shutdown()
   })
 
   test("external API execute validates resolved hosts before dispatch", async () => {

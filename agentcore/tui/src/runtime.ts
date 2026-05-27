@@ -147,8 +147,11 @@ export class FakeRuntimeClient implements RuntimeClient {
           proposals: this.proposalSummary(),
           proposalBundles: this.proposalBundleSummary(),
           playbookDrafts: this.playbookDraftSummary(),
+          reasoningProvider: this.reasoningProviderStatus(),
           researchProjection: { mode: "disabled", ok: true, stale: false, reason: "disabled", pending_count: 0 },
         }
+      case "runtime.reasoning_provider_status":
+        return this.reasoningProviderStatus()
       case "runtime.list_recent_missions":
         return this.missions.slice(0, readLimit(payload.limit, 5))
       case "runtime.get_mission":
@@ -335,6 +338,16 @@ export class FakeRuntimeClient implements RuntimeClient {
   private getExternalApiConnector(connectorId: string): ExternalApiConnectorSummary | null {
     const id = requiredString(connectorId, "connectorId")
     return this.externalApiConnectors.find((connector) => connector.connector_id === id) ?? null
+  }
+
+  private reasoningProviderStatus(): Record<string, unknown> {
+    return {
+      kind: "fake",
+      provider_id: "fake-reasoning",
+      max_input_bytes: 32768,
+      max_output_bytes: 16384,
+      enabled_for: ["research_synthesis", "commander_cycle"],
+    }
   }
 
   private previewExternalApiRequest(payload: Record<string, unknown>): ExternalApiRequestPreviewSummary {
