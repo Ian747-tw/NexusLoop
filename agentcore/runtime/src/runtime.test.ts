@@ -4282,6 +4282,9 @@ describe("RuntimeServer core", () => {
       researchProjectionMode: "disabled",
     })
     await blockedServer.start()
+    const ungatedDryRun = await blockedServer.command("runtime.execute_reasoning_provider_smoke", { surface: "research", dryRun: true, requestedBy: "operator" })
+    expect(ungatedDryRun).toMatchObject({ ok: true, dry_run: true, parsed: false })
+    expect(blockedTransport.requests).toHaveLength(0)
     const blocked = await blockedServer.command("runtime.execute_reasoning_provider_smoke", { surface: "research", requestedBy: "operator" })
     expect(blocked).toMatchObject({ ok: false, parsed: false })
     expect(JSON.stringify(blocked)).toContain("NXL_REAL_REASONING_PROVIDER_SMOKE=1 is required")

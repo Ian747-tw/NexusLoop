@@ -57,7 +57,7 @@ export class ReasoningProviderHealthService {
   preview(input: ReasoningProviderSmokeInput = {}): ReasoningProviderSmokePreview {
     const surface = readSurface(input.surface)
     if (this.options.config.kind === "fake") return this.fakePreview(surface)
-    return this.minimaxPreview(surface)
+    return this.minimaxPreview(surface, { includeGateBlocker: true })
   }
 
   async execute(input: ReasoningProviderSmokeInput = {}): Promise<ReasoningProviderSmokeResult> {
@@ -67,7 +67,7 @@ export class ReasoningProviderHealthService {
     if (this.options.config.kind === "fake") return this.fakeResult(surface, input.requested_by)
 
     const createdAt = this.now().toISOString()
-    const preview = this.minimaxPreview(surface)
+    const preview = this.minimaxPreview(surface, { includeGateBlocker: true })
     if (preview.blockers.length > 0) {
       const result = this.result({
         surface,
@@ -269,7 +269,7 @@ export class ReasoningProviderHealthService {
     })
   }
 
-  private minimaxPreview(surface: ReasoningProviderSurface): ReasoningProviderSmokePreview {
+  private minimaxPreview(surface: ReasoningProviderSurface, options: { includeGateBlocker: boolean }): ReasoningProviderSmokePreview {
     const connector = previewConnector(this.options.config, this.options.registry)
     const request = minimaxSmokeRequest(this.options.config, surface)
     const body = JSON.stringify(request)
@@ -298,7 +298,7 @@ export class ReasoningProviderHealthService {
         blockers.push(error instanceof Error ? error.message : String(error))
       }
     }
-    if (this.env[REAL_SMOKE_GATE] !== "1") blockers.push(`${REAL_SMOKE_GATE}=1 is required for real MiniMax smoke`)
+    if (options.includeGateBlocker && this.env[REAL_SMOKE_GATE] !== "1") blockers.push(`${REAL_SMOKE_GATE}=1 is required for real MiniMax smoke`)
     if (byteLength(body) > this.options.config.max_input_bytes) blockers.push(`smoke request exceeds max_input_bytes: ${this.options.config.max_input_bytes}`)
     const dedupedBlockers = [...new Set(blockers.map(redactText))]
     return redactValue({
@@ -316,7 +316,9 @@ export class ReasoningProviderHealthService {
   }
 
   private dryRunResult(surface: ReasoningProviderSurface, requestedBy: string | undefined): ReasoningProviderSmokeResult {
-    const preview = this.preview({ surface, requested_by: requestedBy })
+    const preview = this.options.config.kind === "minimax"
+      ? this.minimaxPreview(surface, { includeGateBlocker: false })
+      : this.preview({ surface, requested_by: requestedBy })
     return this.result({
       surface,
       ok: preview.blockers.length === 0,
