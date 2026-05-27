@@ -64,6 +64,7 @@ export class MiniMaxReasoningProvider implements ResearchSynthesisProvider, Comm
         requested_by: `reasoning-provider:${this.config.provider_id}`,
       }, {
         timeout_ms: this.config.timeout_ms,
+        redact_response_body: false,
       })
       if (!result.ok) throw new Error(result.error ?? "MiniMax reasoning request failed")
       const rawText = textFromAnthropicResponse(result.response_body_for_internal_use ?? result.response_preview ?? "")

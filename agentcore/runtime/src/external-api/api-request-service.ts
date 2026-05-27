@@ -57,11 +57,11 @@ export class ExternalApiRequestService {
     return this.executeBuilt(input, false, {})
   }
 
-  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number } = {}): Promise<ExternalApiInternalRequestResult> {
+  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number; redact_response_body?: boolean } = {}): Promise<ExternalApiInternalRequestResult> {
     return this.executeBuilt(input, true, options)
   }
 
-  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number }): Promise<ExternalApiInternalRequestResult> {
+  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number; redact_response_body?: boolean }): Promise<ExternalApiInternalRequestResult> {
     const built = this.build(input)
     const createdAt = this.now().toISOString()
     const requestId = this.requestId()
@@ -132,7 +132,8 @@ export class ExternalApiRequestService {
         createdAt,
         responseBytes: bodyBytes,
         responsePreview: preview(response.body),
-        responseBodyForInternalUse: includeInternalBody ? internalBody(response.body, built.connector.max_response_bytes) : undefined,
+        responseBodyForInternalUse: includeInternalBody ? internalBody(response.body, built.connector.max_response_bytes, options.redact_response_body !== false) : undefined,
+        redactResponseBodyForInternalUse: options.redact_response_body !== false,
       })
       await this.writeAudit(result.ok ? "external_api_request_executed" : "external_api_request_failed", result, input.requested_by)
       return result
@@ -252,9 +253,10 @@ export class ExternalApiRequestService {
     responseBytes?: number
     responsePreview?: string
     responseBodyForInternalUse?: string
+    redactResponseBodyForInternalUse?: boolean
     error?: string
   }): ExternalApiInternalRequestResult {
-    return redactValue({
+    const result: ExternalApiInternalRequestResult = redactValue({
       request_id: input.requestId,
       connector_id: input.connectorId,
       method: input.method,
@@ -263,11 +265,14 @@ export class ExternalApiRequestService {
       ok: input.ok,
       response_bytes: input.responseBytes,
       response_preview: input.responsePreview ? preview(input.responsePreview) : undefined,
-      response_body_for_internal_use: input.responseBodyForInternalUse ? internalBody(input.responseBodyForInternalUse, MAX_BODY_BYTES) : undefined,
       error: input.error ? redactText(input.error) : undefined,
       dry_run: input.dryRun,
       created_at: input.createdAt,
     })
+    if (input.responseBodyForInternalUse) {
+      result.response_body_for_internal_use = internalBody(input.responseBodyForInternalUse, MAX_BODY_BYTES, input.redactResponseBodyForInternalUse !== false)
+    }
+    return result
   }
 
   private async writeAudit(kind: "external_api_request_executed" | "external_api_request_failed", result: ExternalApiRequestResult, requestedBy: string): Promise<void> {
@@ -367,8 +372,8 @@ function preview(value: string): string {
   return truncateUtf8(redacted, PREVIEW_BYTES)
 }
 
-function internalBody(value: string, maxBytes: number): string {
-  return truncateUtf8(redactText(value), maxBytes)
+function internalBody(value: string, maxBytes: number, redact: boolean): string {
+  return truncateUtf8(redact ? redactText(value) : value, maxBytes)
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

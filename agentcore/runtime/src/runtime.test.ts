@@ -4174,7 +4174,7 @@ describe("RuntimeServer core", () => {
     db.createTopic({ id: "topic_synth", title: "Synthesis topic", status: "active" })
     db.addNote({ id: "note_synth", topic_id: "topic_synth", content: "source note value", tags: ["evidence"] })
     db.close()
-    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(), true) }])
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope({ ...minimaxSynthesisPayload(), summary: "token: expired" }, true) }])
     const server = new RuntimeServer({
       projectDir: dir,
       mode: "active",
@@ -4205,6 +4205,7 @@ describe("RuntimeServer core", () => {
       provider_id: "minimax-m2-7",
       title: "MiniMax synthesis",
     })
+    expect(JSON.stringify(result)).not.toContain("expired")
     expect(transport.requests).toHaveLength(1)
     expect(transport.requests[0]).toMatchObject({
       method: "POST",
