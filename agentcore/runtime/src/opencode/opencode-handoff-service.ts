@@ -55,6 +55,7 @@ export class OpenCodeHandoffService {
   private readonly idFactory: (prefix: "handoff") => string
   private readonly now: () => Date
   private generatedIds = 0
+  private mutationTask: Promise<unknown> = Promise.resolve()
 
   constructor(options: OpenCodeHandoffServiceOptions) {
     this.eventStore = options.eventStore
@@ -85,6 +86,10 @@ export class OpenCodeHandoffService {
   }
 
   async execute(input: OpenCodeHandoffInput): Promise<OpenCodeHandoffResult> {
+    return this.serializeMutation(() => this.executeUnlocked(input))
+  }
+
+  private async executeUnlocked(input: OpenCodeHandoffInput): Promise<OpenCodeHandoffResult> {
     const normalized = normalizeInput(input)
     const proposal = await this.proposalRegistry.getProposal(normalized.proposal_id)
     if (!proposal) throw new Error(`commander proposal not found: ${redactText(normalized.proposal_id)}`)
@@ -169,6 +174,15 @@ export class OpenCodeHandoffService {
     await this.appendAndApply({ kind: "opencode_handoff_created", handoff: result })
     await this.proposalRegistry.markProposalApplied(proposal.proposal_id, `opencode_handoff:${handoffId}:mission:${mission.mission_id}`)
     return redactValue(result)
+  }
+
+  private async serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.mutationTask.catch(() => undefined).then(operation)
+    this.mutationTask = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
   }
 
   async get(handoffId: string): Promise<OpenCodeHandoffResult | null> {

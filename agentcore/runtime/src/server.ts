@@ -151,6 +151,7 @@ export class RuntimeServer {
   private readonly commanderQueueNow?: () => Date
   private readonly ownsResearchDb: boolean
   private researchDb: RuntimeResearchDbProjection | null = null
+  private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -1338,7 +1339,7 @@ export class RuntimeServer {
   }
 
   private opencodeHandoffService(): OpenCodeHandoffService {
-    return new OpenCodeHandoffService({
+    this.opencodeHandoffServiceInstance ??= new OpenCodeHandoffService({
       eventStore: this.eventStore,
       proposalRegistry: this.proposalRegistry,
       reviewRegistry: this.reviewRegistry,
@@ -1346,6 +1347,7 @@ export class RuntimeServer {
       now: this.opencodeHandoffNow,
       idFactory: this.opencodeHandoffId ? () => this.opencodeHandoffId!() : undefined,
     })
+    return this.opencodeHandoffServiceInstance
   }
 
   private commanderTargetContextService(): CommanderTargetContextService {

@@ -1419,6 +1419,47 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("opencode handoff execute serializes concurrent requests for one proposal", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    let nextHandoff = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => `handoff_concurrent_${++nextHandoff}`,
+    })
+
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff concurrent",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "only one mission" },
+    }) as { proposal_id: string }
+    const reviewed = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+
+    const append = server.eventStore.append.bind(server.eventStore)
+    server.eventStore.append = async (event) => {
+      if (event.kind === "opencode_handoff_started") await new Promise((resolve) => setTimeout(resolve, 25))
+      return append(event)
+    }
+
+    const results = await Promise.all([
+      server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator-a" }),
+      server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator-b" }),
+    ]) as Array<{ handoff_id: string; mission_id: string }>
+    expect(results[0]).toMatchObject({ handoff_id: "handoff_concurrent_1" })
+    expect(results[1]).toMatchObject({ handoff_id: "handoff_concurrent_1", mission_id: results[0].mission_id })
+    expect(adapter.packets).toHaveLength(1)
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_handoff_started")).toHaveLength(1)
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_handoff_created")).toHaveLength(1)
+    await server.shutdown()
+  })
+
   test("opencode handoff dry-run and adapter failure do not mark proposal applied", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
