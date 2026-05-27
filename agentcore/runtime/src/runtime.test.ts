@@ -3823,6 +3823,46 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("commander cycle caps base objective and mission context before provider input", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const provider = new CountingCommanderCycleProvider()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      commanderCycleProvider: provider,
+      commanderCycleId: () => "cycle_context_cap",
+    })
+    await server.start()
+    const maxContextBytes = 64
+    const preview = await server.command("runtime.preview_commander_cycle", {
+      objective: `inspect ${"x".repeat(1000)}`,
+      requestedBy: "operator",
+      maxContextBytes,
+    }) as { context_bytes: number; max_context_bytes: number; redacted_context_preview: string }
+    expect(preview.max_context_bytes).toBe(maxContextBytes)
+    expect(preview.context_bytes).toBeLessThanOrEqual(maxContextBytes)
+    expect(new TextEncoder().encode(preview.redacted_context_preview).byteLength).toBeLessThanOrEqual(2048)
+
+    await server.command("runtime.execute_commander_cycle", {
+      objective: `inspect ${"y".repeat(1000)}`,
+      requestedBy: "operator",
+      maxContextBytes,
+    })
+    expect(new TextEncoder().encode(provider.lastInput?.objective ?? "").byteLength).toBeLessThanOrEqual(maxContextBytes)
+
+    const created = await server.submitUserMessage(`mission seed ${"z".repeat(1000)}`)
+    const missionPreview = await server.command("runtime.preview_commander_cycle", {
+      missionId: created.missionId,
+      requestedBy: "operator",
+      maxContextBytes,
+    }) as { context_bytes: number; max_context_bytes: number }
+    expect(missionPreview.max_context_bytes).toBe(maxContextBytes)
+    expect(missionPreview.context_bytes).toBeLessThanOrEqual(maxContextBytes)
+    await server.shutdown()
+  })
+
   test("commander cycle executes fake provider and writes completed event without proposals by default", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

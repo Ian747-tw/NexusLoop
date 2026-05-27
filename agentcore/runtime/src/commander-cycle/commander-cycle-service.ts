@@ -197,7 +197,8 @@ export class CommanderCycleService {
   private normalize(input: CommanderCycleInput): NormalizedInput {
     const providerId = input.provider_id ?? this.provider.provider_id
     if (providerId !== this.provider.provider_id) throw new Error(`unknown commander cycle provider: ${redactText(providerId)}`)
-    const objective = input.objective === undefined ? undefined : boundedText(requiredString(input.objective, "objective"), 2048)
+    const maxContextBytes = clampBytes(input.max_context_bytes, DEFAULT_MAX_CONTEXT_BYTES, HARD_MAX_CONTEXT_BYTES, "max_context_bytes")
+    const objective = input.objective === undefined ? undefined : boundedText(requiredString(input.objective, "objective"), Math.min(2048, maxContextBytes))
     const topicId = input.topic_id === undefined ? undefined : requiredString(input.topic_id, "topic_id")
     const missionId = input.mission_id === undefined ? undefined : requiredString(input.mission_id, "mission_id")
     if (!topicId && !missionId && !objective) throw new Error("topic_id or mission_id is required")
@@ -210,7 +211,7 @@ export class CommanderCycleService {
       requested_by: requiredString(input.requested_by, "requested_by"),
       create_proposals: input.create_proposals === true || input.create_bundle === true,
       create_bundle: input.create_bundle === true,
-      max_context_bytes: clampBytes(input.max_context_bytes, DEFAULT_MAX_CONTEXT_BYTES, HARD_MAX_CONTEXT_BYTES, "max_context_bytes"),
+      max_context_bytes: maxContextBytes,
       max_output_bytes: clampOutputBytes(input.max_output_bytes),
     }
   }
@@ -262,7 +263,7 @@ export class CommanderCycleService {
     const includedEvidence: CommanderCycleProviderEvidence[] = []
     const includedSyntheses: CommanderCycleProviderSynthesis[] = []
     const includedQueueItems: CommanderCycleProviderQueueItem[] = []
-    let context = redactText(`${contextParts.join("\n")}\n`)
+    let context = boundedText(`${contextParts.join("\n")}\n`, input.max_context_bytes)
     for (const row of evidenceRows) {
       const block = evidenceBlock(row)
       if (byteLength(context + block) > input.max_context_bytes) continue
