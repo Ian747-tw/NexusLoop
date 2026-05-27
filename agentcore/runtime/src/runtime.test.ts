@@ -1546,6 +1546,66 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("opencode handoff records failure when cancellation wins before mission send", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_cancel_before_send",
+    })
+
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff cancel before send",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "must not send after cancel" },
+    }) as { proposal_id: string }
+    const reviewed = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+
+    const append = server.eventStore.append.bind(server.eventStore)
+    let resolveStartedAppend!: () => void
+    let releaseStartedAppend!: () => void
+    const startedAppendReached = new Promise<void>((resolve) => {
+      resolveStartedAppend = resolve
+    })
+    const releaseStartedAppendPromise = new Promise<void>((resolve) => {
+      releaseStartedAppend = resolve
+    })
+    let startedAppendBlocked = false
+    server.eventStore.append = async (event) => {
+      if (event.kind === "opencode_handoff_started" && !startedAppendBlocked) {
+        startedAppendBlocked = true
+        resolveStartedAppend()
+        await releaseStartedAppendPromise
+      }
+      return append(event)
+    }
+
+    const handoffTask = server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" })
+    await startedAppendReached
+    await expect(server.command("runtime.cancel_commander_proposal", { proposalId: proposal.proposal_id, reason: "cancel before send" })).resolves.toMatchObject({ status: "cancelled" })
+    releaseStartedAppend()
+
+    await expect(handoffTask).rejects.toThrow("terminal proposal cannot apply")
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({ status: "cancelled" })
+    const preview = await server.command("runtime.preview_opencode_handoff", { proposalId: proposal.proposal_id }) as { blockers: string[] }
+    expect(preview.blockers).toContain("proposal must be approved before handoff")
+    expect(preview.blockers.join("\n")).not.toContain("already started without completion record")
+    expect(adapter.packets).toHaveLength(0)
+    const eventKinds = await readEventKinds(dir)
+    expect(eventKinds.filter((kind) => kind === "opencode_handoff_started")).toHaveLength(1)
+    expect(eventKinds.filter((kind) => kind === "opencode_handoff_failed")).toHaveLength(1)
+    expect(eventKinds).not.toContain("opencode_handoff_created")
+    expect(eventKinds).not.toContain("work_intent_created")
+    await server.shutdown()
+  })
+
   test("opencode handoff dry-run and adapter failure do not mark proposal applied", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
