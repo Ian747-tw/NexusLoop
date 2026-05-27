@@ -641,6 +641,16 @@ describe("TUI runtime client factory", () => {
     expect(state.externalApi?.research?.lastResult).toMatchObject({ ok: true, dry_run: true, ingested_bytes: 0 })
     expect(state.externalApi?.research?.ingestions ?? []).toEqual([])
 
+    const synthDb = ResearchDb.open(dir)
+    synthDb.addNote({ id: "note-synth", topic_id: "topic-api", content: "bounded synthesis evidence token=synth-secret", tags: ["evidence"] })
+    synthDb.close()
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "synthesize-preview", args: ["topic-api", "summarize", "evidence"] })
+    expect(state.researchSynthesis?.preview).toMatchObject({ topic_id: "topic-api" })
+    expect(JSON.stringify(state)).not.toContain("synth-secret")
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "synthesize", args: ["topic-api"] })
+    expect(state.researchSynthesis?.selected?.synthesis_id).toBeTruthy()
+    expect(state.researchSynthesis?.selected?.proposal_ids).toEqual([])
+
     await client.runtime.shutdown()
   })
 })

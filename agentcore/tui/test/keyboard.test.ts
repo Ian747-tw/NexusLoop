@@ -155,6 +155,43 @@ describe("TUI keyboard command model", () => {
     ])
   })
 
+  test("research synthesis slash commands route only exact whitelist commands", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/synthesize-preview topic-1 summarize current evidence",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("synthesize-preview")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "synthesize-preview", args: ["topic-1", "summarize", "current", "evidence"] },
+    ])
+
+    const pathState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/tmp/repro/synthesize",
+    }
+    expect(applyKeyCommandWithEffects(pathState, { type: "submit" }).effects).toEqual([
+      { type: "send-user-message", message: "/tmp/repro/synthesize" },
+    ])
+
+    const colonState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: ":synthesis synthesis-1",
+    }
+    expect(applyKeyCommandWithEffects(colonState, { type: "submit" }).effects).toEqual([
+      { type: "send-user-message", message: ":synthesis synthesis-1" },
+    ])
+  })
+
   test("mission execution slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

@@ -260,4 +260,9 @@ const runtimeCommands = new Set([
   "api-ingest",
   "api-ingest-dry-run",
   "api-ingestions",
+  "synthesize-preview",
+  "synthesize",
+  "synthesize-proposals",
+  "syntheses",
+  "synthesis",
 ])

@@ -30,6 +30,8 @@ export { CommanderTargetContextService } from "./missions/commander-target-conte
 export { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
 export { ExternalApiRequestService } from "./external-api/api-request-service"
 export { ExternalApiResearchIngestionService } from "./external-api/api-research-ingestion-service"
+export { FakeResearchSynthesisProvider } from "./research-synthesis/research-synthesis-provider"
+export { ResearchSynthesisService } from "./research-synthesis/research-synthesis-service"
 export { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"
@@ -137,6 +139,22 @@ export type {
   ExternalApiResearchIngestionResult,
   ExternalApiResearchResponseSelector,
 } from "./external-api/api-research-ingestion-types"
+export type {
+  ResearchSynthesisProvider,
+  ResearchSynthesisProviderEvidence,
+  ResearchSynthesisProviderInput,
+  ResearchSynthesisProviderResult,
+} from "./research-synthesis/research-synthesis-provider"
+export type {
+  ResearchSynthesisActionKind,
+  ResearchSynthesisConfidence,
+  ResearchSynthesisEvidenceCounts,
+  ResearchSynthesisInput,
+  ResearchSynthesisPreview,
+  ResearchSynthesisRecommendedAction,
+  ResearchSynthesisRecord,
+  ResearchSynthesisResult,
+} from "./research-synthesis/research-synthesis-types"
 export type { ExternalApiHostResolver, ExternalApiResolvedAddress, ExternalApiTransport, ExternalApiTransportRequest, ExternalApiTransportResult } from "./external-api/api-transport"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"

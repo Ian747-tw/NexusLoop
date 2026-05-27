@@ -342,6 +342,95 @@ class ExternalApiRuntime implements RuntimeClient {
   }
 }
 
+class ResearchSynthesisRuntime implements RuntimeClient {
+  readonly calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+  private readonly syntheses: unknown[] = []
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+    this.calls.push({ name, payload })
+    switch (name) {
+      case "runtime.preview_research_synthesis":
+        return {
+          topic_id: payload?.topicId,
+          topic_title: "Topic token=topic-secret",
+          evidence_counts: { sources: 1, notes: 1, artifacts: 1, ingestions: 1 },
+          context_bytes: 128,
+          max_context_bytes: 32768,
+          included_evidence_ids: ["source-1", "note-1", "artifact-1", "ingest-1"],
+          excluded_evidence_count: 0,
+          blockers: [],
+          redacted_context_preview: "context token=context-secret",
+        }
+      case "runtime.execute_research_synthesis": {
+        const result = {
+          synthesis_id: "synthesis-1",
+          topic_id: payload?.topicId,
+          provider_id: "fake-research-synthesis",
+          source_note_id: "note-synth-1",
+          artifact_id: "artifact-synth-1",
+          proposal_ids: payload?.createProposals ? ["proposal-synth-1"] : [],
+          title: "Synthesis token=title-secret",
+          summary: "summary token=summary-secret",
+          findings: ["finding token=finding-secret"],
+          risks: ["bounded risk"],
+          open_questions: ["open question"],
+          recommended_actions: [{ title: "Checkpoint", summary: "operator checkpoint", action_kind: "operator_checkpoint", evidence_ids: ["note-1"] }],
+          context_hash: "context-hash",
+          output_hash: "output-hash",
+          created_at: "1970-01-01T00:00:00.000Z",
+          requested_by: "operator token=requester-secret",
+        }
+        this.syntheses.unshift({
+          synthesis_id: result.synthesis_id,
+          topic_id: result.topic_id,
+          provider_id: result.provider_id,
+          source_note_id: result.source_note_id,
+          artifact_id: result.artifact_id,
+          proposal_ids: result.proposal_ids,
+          title: result.title,
+          summary_preview: result.summary,
+          created_at: result.created_at,
+          requested_by: result.requested_by,
+        })
+        return result
+      }
+      case "runtime.get_research_synthesis":
+        return this.syntheses.length > 0
+          ? {
+            synthesis_id: payload?.synthesisId,
+            topic_id: "topic-1",
+            provider_id: "fake-research-synthesis",
+            source_note_id: "note-synth-1",
+            artifact_id: "artifact-synth-1",
+            proposal_ids: ["proposal-synth-1"],
+            title: "Loaded synthesis",
+            summary: "loaded summary",
+            findings: ["loaded finding"],
+            risks: [],
+            open_questions: [],
+            recommended_actions: [],
+            context_hash: "context-hash",
+            output_hash: "output-hash",
+            created_at: "1970-01-01T00:00:00.000Z",
+            requested_by: "operator",
+          }
+          : null
+      case "runtime.list_research_syntheses":
+        return this.syntheses
+      case "runtime.proposal_status":
+        return { proposed_count: 1, review_requested_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0, applied_count: 0, last_proposal_id: "proposal-synth-1" }
+      case "runtime.list_commander_proposals":
+        return payload?.limit ? [{ proposal_id: "proposal-synth-1", action_kind: "operator_checkpoint", title: "Checkpoint", summary: "proposal", proposed_by: "operator", status: "proposed", created_at: "1970-01-01T00:00:00.000Z", updated_at: "1970-01-01T00:00:00.000Z" }] : []
+      default:
+        return { ok: true }
+    }
+  }
+}
+
 class FailingResearchRuntime extends ResearchRuntime {
   async command(name: string): Promise<unknown> {
     if (name.startsWith("research.")) throw new Error("research failed token=research-secret")
@@ -2345,5 +2434,59 @@ describe("runtime UI effects", () => {
 
     expect(state.externalApi?.commandError).toContain("topic is required")
     expect(JSON.stringify(state)).not.toContain("source-secret")
+  })
+
+  test("research synthesis slash commands render preview result proposals and recent rows", async () => {
+    const runtime = new ResearchSynthesisRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "synthesize-preview",
+      args: ["topic-1", "objective", "token=objective-secret"],
+    })
+    expect(state.researchSynthesis?.preview).toMatchObject({ topic_id: "topic-1", context_bytes: 128 })
+    expect(JSON.stringify(state)).not.toContain("context-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "synthesize",
+      args: ["topic-1", "summarize"],
+    })
+    expect(state.researchSynthesis?.selected).toMatchObject({ synthesis_id: "synthesis-1", source_note_id: "note-synth-1", artifact_id: "artifact-synth-1" })
+    expect(state.researchSynthesis?.recent.at(0)).toMatchObject({ synthesis_id: "synthesis-1" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Research synthesis")
+    expect(snapshot).toContain("selected_synthesis=synthesis-1")
+    expect(snapshot).not.toContain("summary-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "synthesize-proposals",
+      args: ["topic-1"],
+    })
+    expect(state.researchSynthesis?.selected?.proposal_ids).toEqual(["proposal-synth-1"])
+    expect(state.proposals?.recent.at(0)).toMatchObject({ proposal_id: "proposal-synth-1", status: "proposed" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "syntheses" })
+    expect(state.researchSynthesis?.recent.at(0)).toMatchObject({ synthesis_id: "synthesis-1" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "synthesis", args: ["synthesis-1"] })
+    expect(state.researchSynthesis?.selected).toMatchObject({ synthesis_id: "synthesis-1" })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("proposals=proposal-synth-1")
+  })
+
+  test("research synthesis missing args and secret-looking output are redacted", async () => {
+    const runtime = new ResearchSynthesisRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "synthesize-preview" })
+    expect(state.researchSynthesis?.commandError).toContain("topicId is required")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "synthesize", args: ["topic-1"] })
+    expect(JSON.stringify(state)).not.toContain("title-secret")
+    expect(JSON.stringify(state)).not.toContain("summary-secret")
+    expect(JSON.stringify(state)).not.toContain("finding-secret")
+    expect(JSON.stringify(state)).not.toContain("requester-secret")
   })
 })

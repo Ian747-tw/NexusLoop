@@ -623,6 +623,69 @@ export type ExternalApiState = {
   commandError?: string
 }
 
+export type ResearchSynthesisRecommendedActionSummary = {
+  title: string
+  summary: string
+  action_kind: string
+  evidence_ids: string[]
+}
+
+export type ResearchSynthesisPreviewSummary = {
+  topic_id: string
+  topic_title: string
+  evidence_counts: {
+    sources: number
+    notes: number
+    artifacts: number
+    ingestions: number
+  }
+  context_bytes: number
+  max_context_bytes: number
+  included_evidence_ids: string[]
+  excluded_evidence_count: number
+  blockers: string[]
+  redacted_context_preview: string
+}
+
+export type ResearchSynthesisResultSummary = {
+  synthesis_id: string
+  topic_id: string
+  provider_id: string
+  source_note_id?: string
+  artifact_id?: string
+  proposal_ids?: string[]
+  title: string
+  summary: string
+  findings: string[]
+  risks: string[]
+  open_questions: string[]
+  recommended_actions: ResearchSynthesisRecommendedActionSummary[]
+  context_hash: string
+  output_hash: string
+  created_at: string
+  requested_by: string
+}
+
+export type ResearchSynthesisRecordSummary = {
+  synthesis_id: string
+  topic_id: string
+  provider_id: string
+  source_note_id?: string
+  artifact_id?: string
+  proposal_ids?: string[]
+  title: string
+  summary_preview: string
+  created_at: string
+  requested_by: string
+}
+
+export type ResearchSynthesisState = {
+  preview?: ResearchSynthesisPreviewSummary | null
+  selected?: ResearchSynthesisResultSummary | null
+  recent: ResearchSynthesisRecordSummary[]
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -713,6 +776,7 @@ export type UiState = {
   commanderNavigation?: CommanderNavigationState
   operatorActions?: OperatorActionsState
   externalApi?: ExternalApiState
+  researchSynthesis?: ResearchSynthesisState
 }
 
 export function initialState(projectDir: string): UiState {

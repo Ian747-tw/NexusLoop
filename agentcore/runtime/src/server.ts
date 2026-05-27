@@ -34,6 +34,9 @@ import { ExternalApiRequestService } from "./external-api/api-request-service"
 import { ExternalApiResearchIngestionService, type ExternalApiResearchDbWriter } from "./external-api/api-research-ingestion-service"
 import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPreview, ExternalApiResearchIngestionRecord, ExternalApiResearchIngestionResult } from "./external-api/api-research-ingestion-types"
 import { FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "./external-api/api-transport"
+import { ResearchSynthesisService, type ResearchSynthesisDbWriter } from "./research-synthesis/research-synthesis-service"
+import { FakeResearchSynthesisProvider, type ResearchSynthesisProvider } from "./research-synthesis/research-synthesis-provider"
+import type { ResearchSynthesisInput, ResearchSynthesisPreview, ResearchSynthesisRecord, ResearchSynthesisResult } from "./research-synthesis/research-synthesis-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -71,6 +74,9 @@ export interface RuntimeServerOptions {
   externalApiResolveHostAddresses?: ExternalApiHostResolver
   externalApiNow?: () => Date
   externalApiRequestId?: () => string
+  researchSynthesisProvider?: ResearchSynthesisProvider
+  researchSynthesisNow?: () => Date
+  researchSynthesisId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -116,6 +122,9 @@ export class RuntimeServer {
   private readonly externalApiResolveHostAddresses?: ExternalApiHostResolver
   private readonly externalApiNow?: () => Date
   private readonly externalApiRequestId?: () => string
+  private readonly researchSynthesisProvider: ResearchSynthesisProvider
+  private readonly researchSynthesisNow?: () => Date
+  private readonly researchSynthesisId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -148,6 +157,9 @@ export class RuntimeServer {
     this.externalApiResolveHostAddresses = options.externalApiResolveHostAddresses
     this.externalApiNow = options.externalApiNow
     this.externalApiRequestId = options.externalApiRequestId
+    this.researchSynthesisProvider = options.researchSynthesisProvider ?? new FakeResearchSynthesisProvider()
+    this.researchSynthesisNow = options.researchSynthesisNow
+    this.researchSynthesisId = options.researchSynthesisId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -486,6 +498,14 @@ export class RuntimeServer {
         return this.executeExternalApiResearchIngestion(readExternalApiResearchIngestionInput(payload))
       case "runtime.list_external_api_research_ingestions":
         return this.listExternalApiResearchIngestions(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.preview_research_synthesis":
+        return this.previewResearchSynthesis(readResearchSynthesisInput(payload))
+      case "runtime.execute_research_synthesis":
+        return this.executeResearchSynthesis(readResearchSynthesisInput(payload))
+      case "runtime.get_research_synthesis":
+        return this.getResearchSynthesis(requiredString(payload.synthesisId ?? payload.synthesis_id, "synthesisId"))
+      case "runtime.list_research_syntheses":
+        return this.listResearchSyntheses(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -852,6 +872,25 @@ export class RuntimeServer {
     return this.externalApiResearchIngestionService().list(limit)
   }
 
+  async previewResearchSynthesis(input: ResearchSynthesisInput): Promise<ResearchSynthesisPreview> {
+    this.ensureResearchProjectionUsable("read")
+    return this.researchSynthesisService().preview(input)
+  }
+
+  async executeResearchSynthesis(input: ResearchSynthesisInput): Promise<ResearchSynthesisResult> {
+    this.requireResearchSynthesisWriteRuntime("runtime.execute_research_synthesis")
+    this.ensureResearchProjectionUsable("read")
+    return this.researchSynthesisService().execute(input)
+  }
+
+  async getResearchSynthesis(synthesisId: string): Promise<ResearchSynthesisResult | null> {
+    return this.researchSynthesisService().get(synthesisId)
+  }
+
+  async listResearchSyntheses(limit = 20): Promise<ResearchSynthesisRecord[]> {
+    return this.researchSynthesisService().list(limit)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1144,6 +1183,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before external API research ingestion writes")
   }
 
+  private requireResearchSynthesisWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before research synthesis writes")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1201,6 +1245,17 @@ export class RuntimeServer {
       researchDb: this.getResearchDb(),
       now: this.externalApiNow,
       ingestionId: this.externalApiRequestId ? () => `ingest_${this.externalApiRequestId?.()}` : undefined,
+    })
+  }
+
+  private researchSynthesisService(): ResearchSynthesisService {
+    return new ResearchSynthesisService({
+      eventStore: this.eventStore,
+      researchDb: this.getResearchDb() as ResearchSynthesisDbWriter,
+      proposalRegistry: this.proposalRegistry,
+      provider: this.researchSynthesisProvider,
+      now: this.researchSynthesisNow,
+      synthesisId: this.researchSynthesisId,
     })
   }
 }
@@ -1310,6 +1365,18 @@ function readExternalApiResearchIngestionInput(payload: Record<string, unknown>)
     response_selector: optionalString(payload.responseSelector ?? payload.response_selector, "responseSelector") as ExternalApiResearchIngestionInput["response_selector"],
     tags: optionalStringArray(payload.tags, "tags"),
     dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
+  }
+}
+
+function readResearchSynthesisInput(payload: Record<string, unknown>): ResearchSynthesisInput {
+  return {
+    topic_id: requiredString(payload.topicId ?? payload.topic_id, "topicId"),
+    objective: optionalString(payload.objective, "objective"),
+    provider_id: optionalString(payload.providerId ?? payload.provider_id, "providerId"),
+    create_proposals: optionalBoolean(payload.createProposals ?? payload.create_proposals, "createProposals"),
+    requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+    max_context_bytes: optionalPositiveInteger(payload.maxContextBytes ?? payload.max_context_bytes, "maxContextBytes", 64 * 1024),
+    max_output_bytes: optionalPositiveInteger(payload.maxOutputBytes ?? payload.max_output_bytes, "maxOutputBytes", 32 * 1024),
   }
 }
 

@@ -49,6 +49,10 @@ import type {
   ResearchProjectionSummary,
   ResearchProjectionUiSummary,
   ResearchRecordsState,
+  ResearchSynthesisPreviewSummary,
+  ResearchSynthesisRecordSummary,
+  ResearchSynthesisResultSummary,
+  ResearchSynthesisState,
   CommanderProposalSummary,
   CommanderPlaybookDraftSummary,
   CommanderPlaybooksState,
@@ -80,6 +84,7 @@ const WORKBENCH_DRAFT_LIMIT = 10
 const AUDIT_LIMIT = 20
 const QUEUE_LIMIT = 20
 const EXTERNAL_API_LIMIT = 20
+const SYNTHESIS_LIMIT = 20
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -149,6 +154,10 @@ export type RuntimeUiEffect =
   | { type: "preview-external-api-research-ingestion"; connectorId: string; method: "GET" | "POST"; path: string; topicId: string; sourceTitle: string; noteTitle?: string; query?: Record<string, string>; tags?: string[] }
   | { type: "execute-external-api-research-ingestion"; connectorId: string; method: "GET" | "POST"; path: string; topicId: string; sourceTitle: string; noteTitle?: string; query?: Record<string, string>; tags?: string[]; dryRun?: boolean }
   | { type: "load-external-api-research-ingestions"; limit?: number }
+  | { type: "preview-research-synthesis"; topicId: string; objective?: string }
+  | { type: "execute-research-synthesis"; topicId: string; objective?: string; createProposals?: boolean }
+  | { type: "load-research-synthesis"; synthesisId: string }
+  | { type: "load-research-syntheses"; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -543,6 +552,37 @@ export async function applyRuntimeUiEffect(
       }
       case "load-external-api-research-ingestions":
         return await loadExternalApiResearchIngestions(state, runtime, effect.limit ?? EXTERNAL_API_LIMIT)
+      case "preview-research-synthesis":
+        return applyResearchSynthesisPreview(
+          state,
+          await runtime.command("runtime.preview_research_synthesis", {
+            topicId: effect.topicId,
+            objective: effect.objective,
+            requestedBy: "operator",
+          }),
+        )
+      case "execute-research-synthesis": {
+        const next = applyResearchSynthesisResult(
+          state,
+          await runtime.command("runtime.execute_research_synthesis", {
+            topicId: effect.topicId,
+            objective: effect.objective,
+            createProposals: effect.createProposals,
+            requestedBy: "operator",
+          }),
+        )
+        let refreshed = await loadResearchSyntheses(next, runtime, SYNTHESIS_LIMIT)
+        if (effect.createProposals) refreshed = await loadProposals(refreshed, runtime, PROPOSAL_LIMIT)
+        return refreshed
+      }
+      case "load-research-synthesis":
+        return applyResearchSynthesisResult(
+          state,
+          await runtime.command("runtime.get_research_synthesis", { synthesisId: effect.synthesisId }),
+          effect.synthesisId,
+        )
+      case "load-research-syntheses":
+        return await loadResearchSyntheses(state, runtime, effect.limit ?? SYNTHESIS_LIMIT)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -566,6 +606,7 @@ export async function applyRuntimeUiEffect(
     if (isCommanderQueueEffect(effect)) return recordCommanderQueueCommandError(state, error)
     if (isCommanderNavigationEffect(effect)) return recordCommanderNavigationCommandError(state, error)
     if (isExternalApiEffect(effect)) return recordExternalApiCommandError(state, error)
+    if (isResearchSynthesisEffect(effect)) return recordResearchSynthesisCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
   }
@@ -858,6 +899,19 @@ async function loadExternalApiResearchIngestions(state: UiState, runtime: Runtim
   }
 }
 
+async function loadResearchSyntheses(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const recent = readResearchSynthesisRecordList(await runtime.command("runtime.list_research_syntheses", { limit }), "runtime.list_research_syntheses", limit)
+  return {
+    ...state,
+    researchSynthesis: {
+      ...researchSynthesisState(state),
+      recent,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "research syntheses loaded", detail: `records=${recent.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyExternalApiConnector(state: UiState, value: unknown, connectorId: string): UiState {
   const connector = readExternalApiConnector(value)
   if (!connector && value !== null) throw new Error("runtime.get_external_api_connector returned invalid connector")
@@ -931,6 +985,37 @@ function applyExternalApiResearchResult(state: UiState, value: unknown): UiState
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "external API research ingest result", detail: `${result.connector_id} topic=${result.topic_id}`, status: result.ok ? "ok" : "failed" }].slice(-12),
+  }
+}
+
+function applyResearchSynthesisPreview(state: UiState, value: unknown): UiState {
+  const synthPreview = readResearchSynthesisPreview(value)
+  return {
+    ...state,
+    researchSynthesis: {
+      ...researchSynthesisState(state),
+      preview: synthPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "research synthesis preview", detail: `topic=${synthPreview.topic_id}`, status: synthPreview.blockers.length === 0 ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
+  const result = readResearchSynthesisResult(value)
+  if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
+  const selectedId = result?.synthesis_id ?? (synthesisId ? redactText(synthesisId) : undefined)
+  return {
+    ...state,
+    researchSynthesis: {
+      ...researchSynthesisState(state),
+      selected: result,
+      recent: result ? [recordFromSynthesisResult(result), ...researchSynthesisState(state).recent.filter((item) => item.synthesis_id !== result.synthesis_id)].slice(0, SYNTHESIS_LIMIT) : researchSynthesisState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "research synthesis selected", detail: `synthesis_id=${selectedId}`, status: result ? "loaded" : "missing" }].slice(-12)
+      : state.systemActions,
   }
 }
 
@@ -1104,6 +1189,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (commanderQueueCommands.has(command)) return state.commanderQueues?.commandError
   if (commanderNavigationCommands.has(command)) return state.commanderNavigation?.commandError
   if (externalApiCommands.has(command)) return state.externalApi?.commandError
+  if (researchSynthesisCommands.has(command)) return state.researchSynthesis?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
 }
@@ -1120,6 +1206,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (commanderQueueCommands.has(command)) return { ...state, commanderQueues: { ...commanderQueuesState(state), commandError: undefined } }
   if (commanderNavigationCommands.has(command)) return { ...state, commanderNavigation: { ...commanderNavigationState(state), commandError: undefined } }
   if (externalApiCommands.has(command)) return { ...state, externalApi: { ...externalApiState(state), commandError: undefined } }
+  if (researchSynthesisCommands.has(command)) return { ...state, researchSynthesis: { ...researchSynthesisState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
 }
@@ -1162,6 +1249,19 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     }
     case "api-ingestions":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-external-api-research-ingestions", limit: EXTERNAL_API_LIMIT })
+    case "synthesize-preview":
+      return applyRuntimeUiEffect(commandState, runtime, synthesisEffect("preview-research-synthesis", args))
+    case "synthesize":
+      return applyRuntimeUiEffect(commandState, runtime, synthesisEffect("execute-research-synthesis", args))
+    case "synthesize-proposals": {
+      const effect = synthesisEffect("execute-research-synthesis", args)
+      if (effect.type !== "execute-research-synthesis") throw new Error("research synthesis execute effect is required")
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, createProposals: true })
+    }
+    case "syntheses":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-syntheses", limit: SYNTHESIS_LIMIT })
+    case "synthesis":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-synthesis", synthesisId: requiredArg(args, 0, "synthesisId") })
     case "status":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-status" })
     case "missions":
@@ -1561,6 +1661,11 @@ function isExternalApiEffect(effect: RuntimeUiEffect): boolean {
   return externalApiCommands.has(effect.command)
 }
 
+function isResearchSynthesisEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return researchSynthesisEffectTypes.has(effect.type)
+  return researchSynthesisCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -1658,6 +1763,14 @@ const externalApiCommands = new Set([
   "api-ingestions",
 ])
 
+const researchSynthesisCommands = new Set([
+  "synthesize-preview",
+  "synthesize",
+  "synthesize-proposals",
+  "syntheses",
+  "synthesis",
+])
+
 const externalApiEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-external-api-connectors",
   "load-external-api-connector",
@@ -1667,6 +1780,13 @@ const externalApiEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "preview-external-api-research-ingestion",
   "execute-external-api-research-ingestion",
   "load-external-api-research-ingestions",
+])
+
+const researchSynthesisEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-research-synthesis",
+  "execute-research-synthesis",
+  "load-research-synthesis",
+  "load-research-syntheses",
 ])
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
@@ -2293,6 +2413,18 @@ function recordExternalApiCommandError(state: UiState, error: unknown): UiState 
   }
 }
 
+function recordResearchSynthesisCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    researchSynthesis: {
+      ...researchSynthesisState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "research synthesis command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -2450,6 +2582,98 @@ function readExternalApiResearchIngestionRecord(value: unknown): ExternalApiRese
     requested_by: readString(value.requested_by, "unknown"),
     error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
     created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+  }
+}
+
+function readResearchSynthesisPreview(value: unknown): ResearchSynthesisPreviewSummary {
+  if (!isRecord(value) || typeof value.topic_id !== "string" || typeof value.topic_title !== "string") throw new Error("runtime.preview_research_synthesis returned invalid preview")
+  const counts = isRecord(value.evidence_counts) ? value.evidence_counts : {}
+  return {
+    topic_id: redactText(value.topic_id),
+    topic_title: preview(readString(value.topic_title, "")),
+    evidence_counts: {
+      sources: readNumber(counts.sources, 0),
+      notes: readNumber(counts.notes, 0),
+      artifacts: readNumber(counts.artifacts, 0),
+      ingestions: readNumber(counts.ingestions, 0),
+    },
+    context_bytes: readNumber(value.context_bytes, 0),
+    max_context_bytes: readNumber(value.max_context_bytes, 0),
+    included_evidence_ids: readStringList(value.included_evidence_ids, 20),
+    excluded_evidence_count: readNumber(value.excluded_evidence_count, 0),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    redacted_context_preview: typeof value.redacted_context_preview === "string" ? preview(redactText(value.redacted_context_preview)) : "",
+  }
+}
+
+function readResearchSynthesisResult(value: unknown): ResearchSynthesisResultSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.synthesis_id !== "string" || typeof value.topic_id !== "string") throw new Error("runtime.get_research_synthesis returned invalid result")
+  return {
+    synthesis_id: redactText(value.synthesis_id),
+    topic_id: redactText(value.topic_id),
+    provider_id: readString(value.provider_id, "unknown"),
+    source_note_id: typeof value.source_note_id === "string" ? redactText(value.source_note_id) : undefined,
+    artifact_id: typeof value.artifact_id === "string" ? redactText(value.artifact_id) : undefined,
+    proposal_ids: readStringList(value.proposal_ids, 20),
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    findings: readStringList(value.findings, 10).map(preview),
+    risks: readStringList(value.risks, 10).map(preview),
+    open_questions: readStringList(value.open_questions, 10).map(preview),
+    recommended_actions: Array.isArray(value.recommended_actions)
+      ? value.recommended_actions.map(readResearchSynthesisAction).filter((item): item is ResearchSynthesisResultSummary["recommended_actions"][number] => item !== null).slice(0, 10)
+      : [],
+    context_hash: readString(value.context_hash, ""),
+    output_hash: readString(value.output_hash, ""),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+    requested_by: readString(value.requested_by, "unknown"),
+  }
+}
+
+function readResearchSynthesisAction(value: unknown): ResearchSynthesisResultSummary["recommended_actions"][number] | null {
+  if (!isRecord(value) || typeof value.title !== "string") return null
+  return {
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    action_kind: readString(value.action_kind, "other"),
+    evidence_ids: readStringList(value.evidence_ids, 20),
+  }
+}
+
+function readResearchSynthesisRecordList(value: unknown, commandName: string, limit: number): ResearchSynthesisRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readResearchSynthesisRecord).filter((record): record is ResearchSynthesisRecordSummary => record !== null).slice(0, limit)
+}
+
+function readResearchSynthesisRecord(value: unknown): ResearchSynthesisRecordSummary | null {
+  if (!isRecord(value) || typeof value.synthesis_id !== "string" || typeof value.topic_id !== "string") return null
+  return {
+    synthesis_id: redactText(value.synthesis_id),
+    topic_id: redactText(value.topic_id),
+    provider_id: readString(value.provider_id, "unknown"),
+    source_note_id: typeof value.source_note_id === "string" ? redactText(value.source_note_id) : undefined,
+    artifact_id: typeof value.artifact_id === "string" ? redactText(value.artifact_id) : undefined,
+    proposal_ids: readStringList(value.proposal_ids, 20),
+    title: preview(readString(value.title, "")),
+    summary_preview: preview(readString(value.summary_preview, "")),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+    requested_by: readString(value.requested_by, "unknown"),
+  }
+}
+
+function recordFromSynthesisResult(result: ResearchSynthesisResultSummary): ResearchSynthesisRecordSummary {
+  return {
+    synthesis_id: result.synthesis_id,
+    topic_id: result.topic_id,
+    provider_id: result.provider_id,
+    source_note_id: result.source_note_id,
+    artifact_id: result.artifact_id,
+    proposal_ids: result.proposal_ids,
+    title: result.title,
+    summary_preview: preview(result.summary),
+    created_at: result.created_at,
+    requested_by: result.requested_by,
   }
 }
 
@@ -3063,6 +3287,10 @@ function externalApiResearchState(state: UiState): ExternalApiResearchState {
   return state.externalApi?.research ?? { preview: null, lastResult: null, ingestions: [] }
 }
 
+function researchSynthesisState(state: UiState): ResearchSynthesisState {
+  return state.researchSynthesis ?? { preview: null, selected: null, recent: [] }
+}
+
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
 }
@@ -3346,6 +3574,12 @@ function externalApiResearchExecuteIngestionEffect(args: string[]): Extract<Runt
   const effect = externalApiResearchIngestionEffect("execute-external-api-research-ingestion", args)
   if (effect.type !== "execute-external-api-research-ingestion") throw new Error("external API research ingestion execute effect is required")
   return effect
+}
+
+function synthesisEffect(type: "preview-research-synthesis" | "execute-research-synthesis", args: string[]): Extract<RuntimeUiEffect, { type: "preview-research-synthesis" | "execute-research-synthesis" }> {
+  const topicId = requiredArg(args, 0, "topicId")
+  const objective = optionalRest(args, 1)
+  return { type, topicId, ...(objective ? { objective } : {}) }
 }
 
 function ingestionArgs(args: string[]): { topicId?: string; sourceTitle?: string; noteTitle?: string; tags: string[]; query: Record<string, string> } {

@@ -337,6 +337,32 @@ describe("TUI launch boundary", () => {
     expect(snapshot).not.toContain("api-secret")
   })
 
+  test("default fake headless snapshot renders research synthesis surface", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/synthesize-preview fake-topic-1 summarize evidence" },
+      { type: "submit" },
+      { type: "insert", text: "/synthesize-proposals fake-topic-1" },
+      { type: "submit" },
+      { type: "insert", text: "/syntheses" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Research synthesis")
+    expect(snapshot).toContain("selected_synthesis=fake-synthesis")
+    expect(snapshot).toContain("proposals=fake-proposal")
+    expect(snapshot).not.toContain("secret")
+  })
+
   test("real headless runtime client loads projection and topics through research command", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
