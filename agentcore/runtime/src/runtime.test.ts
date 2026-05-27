@@ -3819,6 +3819,8 @@ describe("RuntimeServer core", () => {
       requestedBy: "operator",
     }) as { recommended_actions: Array<{ synthesis_ids?: string[] }> }
     expect(provider.lastInput?.syntheses).toEqual([])
+    expect(provider.lastInput?.mission_objective).toBe("mission-only cycle objective")
+    expect(provider.lastInput?.mission_status).toBe("sent")
     expect(result.recommended_actions[0]?.synthesis_ids ?? []).toEqual([])
     await server.shutdown()
   })
@@ -3860,6 +3862,12 @@ describe("RuntimeServer core", () => {
     }) as { context_bytes: number; max_context_bytes: number }
     expect(missionPreview.max_context_bytes).toBe(maxContextBytes)
     expect(missionPreview.context_bytes).toBeLessThanOrEqual(maxContextBytes)
+    await server.command("runtime.execute_commander_cycle", {
+      missionId: created.missionId,
+      requestedBy: "operator",
+      maxContextBytes,
+    })
+    expect(new TextEncoder().encode(provider.lastInput?.mission_objective ?? "").byteLength).toBeLessThanOrEqual(maxContextBytes)
     await server.shutdown()
   })
 

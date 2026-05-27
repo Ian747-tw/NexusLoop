@@ -30,6 +30,8 @@ export interface CommanderCycleProviderInput {
   topic_id?: string
   mission_id?: string
   topic_title?: string
+  mission_status?: string
+  mission_objective?: string
   sources: CommanderCycleProviderEvidence[]
   notes: CommanderCycleProviderEvidence[]
   artifacts: CommanderCycleProviderEvidence[]

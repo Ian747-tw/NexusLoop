@@ -48,6 +48,8 @@ interface BuiltContext {
   preview: CommanderCyclePreview
   context: string
   topicTitle?: string
+  missionStatus?: string
+  missionObjective?: string
   sources: CommanderCycleProviderEvidence[]
   notes: CommanderCycleProviderEvidence[]
   artifacts: CommanderCycleProviderEvidence[]
@@ -87,6 +89,8 @@ export class CommanderCycleService {
         topic_id: normalized.topic_id,
         mission_id: normalized.mission_id,
         topic_title: built.topicTitle,
+        mission_status: built.missionStatus,
+        mission_objective: built.missionObjective,
         sources: built.sources,
         notes: built.notes,
         artifacts: built.artifacts,
@@ -232,10 +236,14 @@ export class CommanderCycleService {
       artifacts = snapshot.artifacts.map((artifact) => evidenceRow("artifact", artifact.id, artifact.description ?? artifact.path ?? artifact.kind, artifact.content ?? artifact.path ?? "", artifact.created_at))
       contextParts.push(`# Topic ${snapshot.topic.id}: ${snapshot.topic.title}`)
     }
+    let missionStatus: string | undefined
+    let missionObjective: string | undefined
     if (input.mission_id) {
       const mission = await this.options.missionRegistry.getMission(input.mission_id)
       if (!mission) throw new Error(`mission not found: ${redactText(input.mission_id)}`)
-      contextParts.push(`# Mission ${mission.mission_id}: ${mission.status}\nobjective: ${mission.objective}`)
+      missionStatus = boundedText(mission.status, 128)
+      missionObjective = boundedText(mission.objective, input.max_context_bytes)
+      contextParts.push(`# Mission ${mission.mission_id}: ${missionStatus}\nobjective: ${missionObjective}`)
     }
     if (input.objective) contextParts.push(`# Objective\n${input.objective}`)
 
@@ -310,6 +318,8 @@ export class CommanderCycleService {
       },
       context,
       topicTitle,
+      missionStatus,
+      missionObjective,
       sources: includedEvidence.filter((row) => row.evidence_type === "source"),
       notes: includedEvidence.filter((row) => row.evidence_type === "note"),
       artifacts: includedEvidence.filter((row) => row.evidence_type === "artifact"),
