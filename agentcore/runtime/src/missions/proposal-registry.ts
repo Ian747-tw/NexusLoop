@@ -172,6 +172,7 @@ export class ProposalRegistry {
       const proposal = this.requireProposal(cleanRequiredString(proposalId, "proposal_id"))
       if (proposal.status === "applied") return redactValue(proposal)
       if (proposal.status === "rejected" || proposal.status === "cancelled") throw new Error(`terminal proposal cannot apply: ${proposal.proposal_id}`)
+      if (!isGenericProposalApplyActionKind(proposal.action_kind)) throw new Error(`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`)
       const reviewId = cleanRequiredString(proposal.review_id, "review_id")
       const review = await this.reviewRegistry.getReviewRequest(reviewId)
       if (!review) {

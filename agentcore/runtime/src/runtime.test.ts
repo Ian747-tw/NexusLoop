@@ -1411,6 +1411,8 @@ describe("RuntimeServer core", () => {
     }) as { proposal_id: string }
     const reviewed = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
     await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+    await expect(server.command("runtime.apply_commander_proposal", { proposalId: proposal.proposal_id })).rejects.toThrow("must use its dedicated command")
+    expect((await readEventKinds(dir)).filter((kind) => kind === "commander_proposal_apply_failed")).toHaveLength(0)
 
     const result = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { handoff_id: string; mission_id: string; intent_id: string }
     expect(result).toMatchObject({
