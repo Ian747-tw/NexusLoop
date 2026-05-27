@@ -29,6 +29,7 @@ export { CommanderQueueService, COMMANDER_QUEUE_KINDS } from "./missions/command
 export { CommanderTargetContextService } from "./missions/commander-target-context-service"
 export { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
 export { ExternalApiRequestService } from "./external-api/api-request-service"
+export { ExternalApiResearchIngestionService } from "./external-api/api-research-ingestion-service"
 export { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"
@@ -129,6 +130,13 @@ export type {
   ExternalApiRequestPreview,
   ExternalApiRequestResult,
 } from "./external-api/api-connector-types"
+export type {
+  ExternalApiResearchIngestionInput,
+  ExternalApiResearchIngestionPreview,
+  ExternalApiResearchIngestionRecord,
+  ExternalApiResearchIngestionResult,
+  ExternalApiResearchResponseSelector,
+} from "./external-api/api-research-ingestion-types"
 export type { ExternalApiHostResolver, ExternalApiResolvedAddress, ExternalApiTransport, ExternalApiTransportRequest, ExternalApiTransportResult } from "./external-api/api-transport"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"

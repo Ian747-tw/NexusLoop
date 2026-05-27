@@ -560,12 +560,66 @@ export type ExternalApiAuditRecordSummary = {
   created_at: string
 }
 
+export type ExternalApiResearchIngestionPreviewSummary = {
+  connector_id: string
+  topic_id: string
+  method: string
+  url: string
+  allowed: boolean
+  blockers: string[]
+  would_create_source: boolean
+  would_create_note: boolean
+  max_ingested_bytes: number
+  credential_refs_used: string[]
+  redacted_headers: Record<string, string>
+}
+
+export type ExternalApiResearchIngestionResultSummary = {
+  ingestion_id: string
+  request_id?: string
+  connector_id: string
+  topic_id: string
+  source_id?: string
+  note_id?: string
+  artifact_id?: string
+  audit_request_id?: string
+  ok: boolean
+  dry_run: boolean
+  ingested_bytes: number
+  response_preview: string
+  error?: string
+  created_at: string
+}
+
+export type ExternalApiResearchIngestionRecordSummary = {
+  ingestion_id: string
+  connector_id: string
+  topic_id: string
+  source_id?: string
+  note_id?: string
+  artifact_id?: string
+  audit_request_id?: string
+  ok: boolean
+  dry_run: boolean
+  requested_by: string
+  error?: string
+  created_at: string
+}
+
+export type ExternalApiResearchState = {
+  preview?: ExternalApiResearchIngestionPreviewSummary | null
+  lastResult?: ExternalApiResearchIngestionResultSummary | null
+  ingestions: ExternalApiResearchIngestionRecordSummary[]
+  commandError?: string
+}
+
 export type ExternalApiState = {
   connectors: ExternalApiConnectorSummary[]
   selectedConnector?: ExternalApiConnectorSummary | null
   preview?: ExternalApiRequestPreviewSummary | null
   lastResult?: ExternalApiRequestResultSummary | null
   audit: ExternalApiAuditRecordSummary[]
+  research?: ExternalApiResearchState
   commandError?: string
 }
 

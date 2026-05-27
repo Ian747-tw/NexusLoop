@@ -235,6 +235,7 @@ class ResearchRuntime implements RuntimeClient {
 class ExternalApiRuntime implements RuntimeClient {
   readonly calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
   private readonly audit: unknown[] = []
+  private readonly ingestions: unknown[] = []
 
   async *stream(): AsyncIterable<RuntimeEvent> {}
   async sendUserMessage(): Promise<void> {}
@@ -300,6 +301,41 @@ class ExternalApiRuntime implements RuntimeClient {
       }
       case "runtime.list_external_api_audit":
         return this.audit
+      case "runtime.preview_external_api_research_ingestion":
+        return {
+          connector_id: payload?.connectorId,
+          topic_id: payload?.topicId,
+          method: payload?.method,
+          url: `https://api.example.test${payload?.path}?token=query-secret`,
+          allowed: true,
+          blockers: [],
+          would_create_source: true,
+          would_create_note: true,
+          max_ingested_bytes: 4096,
+          credential_refs_used: ["test-key"],
+          redacted_headers: { Authorization: "[REDACTED]" },
+        }
+      case "runtime.execute_external_api_research_ingestion": {
+        const result = {
+          ingestion_id: "fake-api-ingestion-1",
+          request_id: payload?.dryRun ? undefined : "fake-api-request-1",
+          connector_id: payload?.connectorId,
+          topic_id: payload?.topicId,
+          source_id: payload?.dryRun ? undefined : "source-1",
+          note_id: payload?.dryRun ? undefined : "note-1",
+          artifact_id: payload?.dryRun ? undefined : "artifact-1",
+          audit_request_id: payload?.dryRun ? undefined : "fake-api-request-1",
+          ok: true,
+          dry_run: payload?.dryRun === true,
+          ingested_bytes: payload?.dryRun ? 0 : 32,
+          response_preview: payload?.dryRun ? "dry run: transport not called and ResearchDb not written" : "token=response-secret value=ok",
+          created_at: "1970-01-01T00:00:00.000Z",
+        }
+        if (!result.dry_run) this.ingestions.unshift({ ...result, requested_by: "operator" })
+        return result
+      }
+      case "runtime.list_external_api_research_ingestions":
+        return this.ingestions
       default:
         return { ok: true }
     }
@@ -2258,5 +2294,56 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api-preview", args: ["mock-research-api"] })
     expect(state.externalApi?.commandError).toContain("method is required")
+  })
+
+  test("external API research ingestion slash commands render bounded redacted state", async () => {
+    const runtime = new ExternalApiRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "api-ingest-preview",
+      args: ["mock-research-api", "GET", "/search", "topic=topic-1", "source=API Source", "q=token=query-secret", "tag=api"],
+    })
+    expect(state.externalApi?.research?.preview).toMatchObject({ connector_id: "mock-research-api", topic_id: "topic-1", allowed: true })
+    expect(JSON.stringify(state)).not.toContain("query-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "api-ingest",
+      args: ["mock-research-api", "GET", "/search", "topic=topic-1", "source=API Source"],
+    })
+    expect(state.externalApi?.research?.lastResult).toMatchObject({ ingestion_id: "fake-api-ingestion-1", source_id: "source-1", note_id: "note-1", artifact_id: "artifact-1" })
+    expect(state.externalApi?.research?.ingestions).toHaveLength(1)
+    expect(JSON.stringify(state)).not.toContain("response-secret")
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("External API research ingestion")
+    expect(snapshot).toContain("source=source-1 note=note-1")
+    expect(snapshot).not.toContain("response-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "api-ingest-dry-run",
+      args: ["mock-research-api", "GET", "/dry", "topic=topic-1", "source=Dry Source"],
+    })
+    expect(state.externalApi?.research?.lastResult).toMatchObject({ ok: true, dry_run: true, ingested_bytes: 0 })
+    expect(state.externalApi?.research?.ingestions).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "api-ingestions" })
+    expect(state.externalApi?.research?.ingestions.at(0)).toMatchObject({ ingestion_id: "fake-api-ingestion-1" })
+  })
+
+  test("external API research ingestion missing args produce redacted errors", async () => {
+    const runtime = new ExternalApiRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "api-ingest-preview",
+      args: ["mock-research-api", "GET", "/search", "source=token=source-secret"],
+    })
+
+    expect(state.externalApi?.commandError).toContain("topic is required")
+    expect(JSON.stringify(state)).not.toContain("source-secret")
   })
 })

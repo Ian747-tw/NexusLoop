@@ -318,6 +318,8 @@ describe("TUI launch boundary", () => {
       { type: "submit" },
       { type: "insert", text: "/api-dry-run mock-research-api GET /status q=token=api-secret" },
       { type: "submit" },
+      { type: "insert", text: "/api-ingest-dry-run mock-research-api GET /status topic=fake-topic-1 source=FakeAPI q=token=api-secret" },
+      { type: "submit" },
     ]
 
     await runTuiEntrypoint({
@@ -328,8 +330,10 @@ describe("TUI launch boundary", () => {
 
     const snapshot = output.join("\n")
     expect(snapshot).toContain("External API")
+    expect(snapshot).toContain("External API research ingestion")
     expect(snapshot).toContain("mock-research-api")
     expect(snapshot).toContain("last_result=fake-api-request")
+    expect(snapshot).toContain("ingest_last_result=fake-api-ingestion")
     expect(snapshot).not.toContain("api-secret")
   })
 

@@ -256,4 +256,8 @@ const runtimeCommands = new Set([
   "api-call",
   "api-dry-run",
   "api-audit",
+  "api-ingest-preview",
+  "api-ingest",
+  "api-ingest-dry-run",
+  "api-ingestions",
 ])

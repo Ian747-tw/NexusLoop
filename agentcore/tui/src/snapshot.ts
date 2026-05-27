@@ -530,6 +530,36 @@ function externalApiLines(state: UiState): string[] {
     }))
   }
   if (api.commandError) out.push(`  command_error=${redactText(api.commandError)}`)
+  const research = api.research
+  out.push("External API research ingestion")
+  if (!research) {
+    out.push("  ingestions=0")
+    return out
+  }
+  if (research.preview) {
+    const ingestPreview = research.preview
+    out.push(`  ingest_preview=${ingestPreview.connector_id} ${ingestPreview.method} topic=${ingestPreview.topic_id} allowed=${ingestPreview.allowed}`)
+    out.push(`  ingest_url=${preview(redactText(ingestPreview.url))}`)
+    out.push(`  would_create_source=${ingestPreview.would_create_source} would_create_note=${ingestPreview.would_create_note} max_bytes=${ingestPreview.max_ingested_bytes}`)
+    if (ingestPreview.blockers.length > 0) {
+      out.push("  ingest_blockers")
+      out.push(...ingestPreview.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  }
+  if (research.lastResult) {
+    const result = research.lastResult
+    out.push(`  ingest_last_result=${result.ingestion_id} ${result.ok ? "ok" : "failed"} dry_run=${result.dry_run} bytes=${result.ingested_bytes}`)
+    out.push(`  evidence source=${result.source_id ?? "none"} note=${result.note_id ?? "none"} artifact=${result.artifact_id ?? "none"}`)
+    if (result.response_preview) out.push(`  ingest_response=${preview(redactText(result.response_preview))}`)
+    if (result.error) out.push(`  ingest_error=${preview(redactText(result.error))}`)
+  }
+  out.push(`  ingestions=${research.ingestions.length}`)
+  if (research.ingestions.length > 0) {
+    out.push(...research.ingestions.slice(0, 10).map((record) => {
+      return `  - ${record.ingestion_id} ${record.connector_id} topic=${record.topic_id} ${record.ok ? "ok" : "failed"} dry_run=${record.dry_run} source=${record.source_id ?? "none"} note=${record.note_id ?? "none"}`
+    }))
+  }
+  if (research.commandError) out.push(`  ingest_command_error=${redactText(research.commandError)}`)
   return out
 }
 

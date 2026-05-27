@@ -6,7 +6,7 @@ import { FakeRuntimeClient } from "../src/runtime"
 import { reduceRuntimeEvent } from "../src/reducer"
 import { initialState } from "../src/state"
 import { createTuiRuntimeClient, isTuiRuntimeEvent, readRuntimeClientKind, TuiRuntimeServerClient } from "../src/runtime-client-factory"
-import { FakeOpenCodeAdapter, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
+import { FakeOpenCodeAdapter, ResearchDb, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 
 const cleanup: string[] = []
@@ -630,6 +630,16 @@ describe("TUI runtime client factory", () => {
     state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "api-dry-run", args: ["mock-research-api", "GET", "/research"] })
     expect(state.externalApi?.lastResult).toMatchObject({ ok: true, dry_run: true })
     expect(state.externalApi?.audit).toEqual([])
+
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic-api", title: "API ingestion topic", status: "active" })
+    db.close()
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "api-ingest-preview", args: ["mock-research-api", "GET", "/research", "topic=topic-api", "source=Mock API", "q=token=api-secret"] })
+    expect(state.externalApi?.research?.preview).toMatchObject({ connector_id: "mock-research-api", topic_id: "topic-api", allowed: true })
+    expect(JSON.stringify(state)).not.toContain("api-secret")
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "api-ingest-dry-run", args: ["mock-research-api", "GET", "/research", "topic=topic-api", "source=Mock API"] })
+    expect(state.externalApi?.research?.lastResult).toMatchObject({ ok: true, dry_run: true, ingested_bytes: 0 })
+    expect(state.externalApi?.research?.ingestions ?? []).toEqual([])
 
     await client.runtime.shutdown()
   })

@@ -37,6 +37,10 @@ import type {
   CommanderWorkbenchStatusSummary,
   ExternalApiAuditRecordSummary,
   ExternalApiConnectorSummary,
+  ExternalApiResearchIngestionPreviewSummary,
+  ExternalApiResearchIngestionRecordSummary,
+  ExternalApiResearchIngestionResultSummary,
+  ExternalApiResearchState,
   ExternalApiRequestPreviewSummary,
   ExternalApiRequestResultSummary,
   ExternalApiState,
@@ -142,6 +146,9 @@ export type RuntimeUiEffect =
   | { type: "preview-external-api-request"; connectorId: string; method: "GET" | "POST"; path: string; query?: Record<string, string> }
   | { type: "execute-external-api-request"; connectorId: string; method: "GET" | "POST"; path: string; query?: Record<string, string>; dryRun?: boolean }
   | { type: "load-external-api-audit"; limit?: number }
+  | { type: "preview-external-api-research-ingestion"; connectorId: string; method: "GET" | "POST"; path: string; topicId: string; sourceTitle: string; noteTitle?: string; query?: Record<string, string>; tags?: string[] }
+  | { type: "execute-external-api-research-ingestion"; connectorId: string; method: "GET" | "POST"; path: string; topicId: string; sourceTitle: string; noteTitle?: string; query?: Record<string, string>; tags?: string[]; dryRun?: boolean }
+  | { type: "load-external-api-research-ingestions"; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -501,6 +508,41 @@ export async function applyRuntimeUiEffect(
       }
       case "load-external-api-audit":
         return await loadExternalApiAudit(state, runtime, effect.limit ?? EXTERNAL_API_LIMIT)
+      case "preview-external-api-research-ingestion":
+        return applyExternalApiResearchPreview(
+          state,
+          await runtime.command("runtime.preview_external_api_research_ingestion", {
+            connectorId: effect.connectorId,
+            method: effect.method,
+            path: effect.path,
+            topicId: effect.topicId,
+            sourceTitle: effect.sourceTitle,
+            noteTitle: effect.noteTitle,
+            query: effect.query,
+            tags: effect.tags,
+            requestedBy: "operator",
+          }),
+        )
+      case "execute-external-api-research-ingestion": {
+        const next = applyExternalApiResearchResult(
+          state,
+          await runtime.command("runtime.execute_external_api_research_ingestion", {
+            connectorId: effect.connectorId,
+            method: effect.method,
+            path: effect.path,
+            topicId: effect.topicId,
+            sourceTitle: effect.sourceTitle,
+            noteTitle: effect.noteTitle,
+            query: effect.query,
+            tags: effect.tags,
+            dryRun: effect.dryRun,
+            requestedBy: "operator",
+          }),
+        )
+        return effect.dryRun ? next : await loadExternalApiResearchIngestions(next, runtime, EXTERNAL_API_LIMIT)
+      }
+      case "load-external-api-research-ingestions":
+        return await loadExternalApiResearchIngestions(state, runtime, effect.limit ?? EXTERNAL_API_LIMIT)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -799,6 +841,23 @@ async function loadExternalApiAudit(state: UiState, runtime: RuntimeClient, limi
   }
 }
 
+async function loadExternalApiResearchIngestions(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const ingestions = readExternalApiResearchIngestionList(await runtime.command("runtime.list_external_api_research_ingestions", { limit }), "runtime.list_external_api_research_ingestions", limit)
+  return {
+    ...state,
+    externalApi: {
+      ...externalApiState(state),
+      research: {
+        ...externalApiResearchState(state),
+        ingestions,
+        commandError: undefined,
+      },
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "external API research ingestions loaded", detail: `records=${ingestions.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyExternalApiConnector(state: UiState, value: unknown, connectorId: string): UiState {
   const connector = readExternalApiConnector(value)
   if (!connector && value !== null) throw new Error("runtime.get_external_api_connector returned invalid connector")
@@ -838,6 +897,40 @@ function applyExternalApiResult(state: UiState, value: unknown): UiState {
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "external API result", detail: `${result.connector_id} ${result.status_code ?? "no-status"}`, status: result.ok ? "ok" : "failed" }].slice(-12),
+  }
+}
+
+function applyExternalApiResearchPreview(state: UiState, value: unknown): UiState {
+  const ingestPreview = readExternalApiResearchIngestionPreview(value)
+  return {
+    ...state,
+    externalApi: {
+      ...externalApiState(state),
+      research: {
+        ...externalApiResearchState(state),
+        preview: ingestPreview,
+        commandError: undefined,
+      },
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "external API research ingest preview", detail: ingestPreview.url, status: ingestPreview.allowed ? "allowed" : "blocked" }].slice(-12),
+  }
+}
+
+function applyExternalApiResearchResult(state: UiState, value: unknown): UiState {
+  const result = readExternalApiResearchIngestionResult(value)
+  return {
+    ...state,
+    externalApi: {
+      ...externalApiState(state),
+      research: {
+        ...externalApiResearchState(state),
+        lastResult: result,
+        commandError: undefined,
+      },
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "external API research ingest result", detail: `${result.connector_id} topic=${result.topic_id}`, status: result.ok ? "ok" : "failed" }].slice(-12),
   }
 }
 
@@ -1059,6 +1152,16 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     }
     case "api-audit":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-external-api-audit", limit: EXTERNAL_API_LIMIT })
+    case "api-ingest-preview":
+      return applyRuntimeUiEffect(commandState, runtime, externalApiResearchIngestionEffect("preview-external-api-research-ingestion", args))
+    case "api-ingest":
+      return applyRuntimeUiEffect(commandState, runtime, externalApiResearchIngestionEffect("execute-external-api-research-ingestion", args))
+    case "api-ingest-dry-run": {
+      const effect = externalApiResearchExecuteIngestionEffect(args)
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "api-ingestions":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-external-api-research-ingestions", limit: EXTERNAL_API_LIMIT })
     case "status":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-status" })
     case "missions":
@@ -1549,6 +1652,10 @@ const externalApiCommands = new Set([
   "api-call",
   "api-dry-run",
   "api-audit",
+  "api-ingest-preview",
+  "api-ingest",
+  "api-ingest-dry-run",
+  "api-ingestions",
 ])
 
 const externalApiEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -1557,6 +1664,9 @@ const externalApiEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "preview-external-api-request",
   "execute-external-api-request",
   "load-external-api-audit",
+  "preview-external-api-research-ingestion",
+  "execute-external-api-research-ingestion",
+  "load-external-api-research-ingestions",
 ])
 
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
@@ -2283,6 +2393,66 @@ function readExternalApiAuditRecord(value: unknown): ExternalApiAuditRecordSumma
   }
 }
 
+function readExternalApiResearchIngestionPreview(value: unknown): ExternalApiResearchIngestionPreviewSummary {
+  if (!isRecord(value) || typeof value.connector_id !== "string" || typeof value.topic_id !== "string" || typeof value.url !== "string") throw new Error("runtime.preview_external_api_research_ingestion returned invalid preview")
+  return {
+    connector_id: redactText(value.connector_id),
+    topic_id: redactText(value.topic_id),
+    method: readString(value.method, "GET"),
+    url: preview(redactText(value.url)),
+    allowed: readBoolean(value.allowed),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    would_create_source: readBoolean(value.would_create_source),
+    would_create_note: readBoolean(value.would_create_note),
+    max_ingested_bytes: readNumber(value.max_ingested_bytes, 0),
+    credential_refs_used: readStringList(value.credential_refs_used, 10),
+    redacted_headers: readStringMap(value.redacted_headers, 20),
+  }
+}
+
+function readExternalApiResearchIngestionResult(value: unknown): ExternalApiResearchIngestionResultSummary {
+  if (!isRecord(value) || typeof value.ingestion_id !== "string" || typeof value.connector_id !== "string" || typeof value.topic_id !== "string") throw new Error("runtime.execute_external_api_research_ingestion returned invalid result")
+  return {
+    ingestion_id: redactText(value.ingestion_id),
+    request_id: typeof value.request_id === "string" ? redactText(value.request_id) : undefined,
+    connector_id: redactText(value.connector_id),
+    topic_id: redactText(value.topic_id),
+    source_id: typeof value.source_id === "string" ? redactText(value.source_id) : undefined,
+    note_id: typeof value.note_id === "string" ? redactText(value.note_id) : undefined,
+    artifact_id: typeof value.artifact_id === "string" ? redactText(value.artifact_id) : undefined,
+    audit_request_id: typeof value.audit_request_id === "string" ? redactText(value.audit_request_id) : undefined,
+    ok: readBoolean(value.ok),
+    dry_run: readBoolean(value.dry_run),
+    ingested_bytes: readNumber(value.ingested_bytes, 0),
+    response_preview: typeof value.response_preview === "string" ? preview(redactText(value.response_preview)) : "",
+    error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+  }
+}
+
+function readExternalApiResearchIngestionList(value: unknown, commandName: string, limit: number): ExternalApiResearchIngestionRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readExternalApiResearchIngestionRecord).filter((record): record is ExternalApiResearchIngestionRecordSummary => record !== null).slice(0, limit)
+}
+
+function readExternalApiResearchIngestionRecord(value: unknown): ExternalApiResearchIngestionRecordSummary | null {
+  if (!isRecord(value) || typeof value.ingestion_id !== "string" || typeof value.connector_id !== "string") return null
+  return {
+    ingestion_id: redactText(value.ingestion_id),
+    connector_id: redactText(value.connector_id),
+    topic_id: readString(value.topic_id, ""),
+    source_id: typeof value.source_id === "string" ? redactText(value.source_id) : undefined,
+    note_id: typeof value.note_id === "string" ? redactText(value.note_id) : undefined,
+    artifact_id: typeof value.artifact_id === "string" ? redactText(value.artifact_id) : undefined,
+    audit_request_id: typeof value.audit_request_id === "string" ? redactText(value.audit_request_id) : undefined,
+    ok: readBoolean(value.ok),
+    dry_run: readBoolean(value.dry_run),
+    requested_by: readString(value.requested_by, "unknown"),
+    error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+  }
+}
+
 function readResearchProjectionUi(value: unknown): ResearchProjectionUiSummary {
   if (!isRecord(value)) throw new Error("research.projection_status returned non-object result")
   return {
@@ -2889,6 +3059,10 @@ function externalApiState(state: UiState): ExternalApiState {
   return state.externalApi ?? { connectors: [], selectedConnector: null, preview: null, lastResult: null, audit: [] }
 }
 
+function externalApiResearchState(state: UiState): ExternalApiResearchState {
+  return state.externalApi?.research ?? { preview: null, lastResult: null, ingestions: [] }
+}
+
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
 }
@@ -3145,6 +3319,55 @@ function externalApiExecuteEffect(args: string[]): Extract<RuntimeUiEffect, { ty
   const effect = externalApiRequestEffect("execute-external-api-request", args)
   if (effect.type !== "execute-external-api-request") throw new Error("external API execute effect is required")
   return effect
+}
+
+function externalApiResearchIngestionEffect(type: "preview-external-api-research-ingestion" | "execute-external-api-research-ingestion", args: string[]): Extract<RuntimeUiEffect, { type: "preview-external-api-research-ingestion" | "execute-external-api-research-ingestion" }> {
+  const connectorId = requiredArg(args, 0, "connectorId")
+  const method = requiredArg(args, 1, "method").toUpperCase()
+  if (method !== "GET" && method !== "POST") throw new Error("method must be GET or POST")
+  const path = requiredArg(args, 2, "path")
+  const options = ingestionArgs(args.slice(3))
+  if (!options.topicId) throw new Error("topic is required")
+  if (!options.sourceTitle) throw new Error("source is required")
+  return {
+    type,
+    connectorId,
+    method,
+    path,
+    topicId: options.topicId,
+    sourceTitle: options.sourceTitle,
+    noteTitle: options.noteTitle,
+    ...(Object.keys(options.query).length > 0 ? { query: options.query } : {}),
+    ...(options.tags.length > 0 ? { tags: options.tags } : {}),
+  }
+}
+
+function externalApiResearchExecuteIngestionEffect(args: string[]): Extract<RuntimeUiEffect, { type: "execute-external-api-research-ingestion" }> {
+  const effect = externalApiResearchIngestionEffect("execute-external-api-research-ingestion", args)
+  if (effect.type !== "execute-external-api-research-ingestion") throw new Error("external API research ingestion execute effect is required")
+  return effect
+}
+
+function ingestionArgs(args: string[]): { topicId?: string; sourceTitle?: string; noteTitle?: string; tags: string[]; query: Record<string, string> } {
+  const query: Record<string, string> = {}
+  const tags: string[] = []
+  let topicId: string | undefined
+  let sourceTitle: string | undefined
+  let noteTitle: string | undefined
+  for (const arg of args) {
+    const index = arg.indexOf("=")
+    if (index <= 0) throw new Error("ingestion args must be key=value")
+    const key = arg.slice(0, index).trim()
+    const value = arg.slice(index + 1)
+    if (!key) throw new Error("ingestion arg key is required")
+    if (key === "topic") topicId = value
+    else if (key === "source") sourceTitle = value
+    else if (key === "note") noteTitle = value
+    else if (key === "tag") tags.push(value)
+    else if (key === "body") throw new Error("body is not supported by TUI API ingestion")
+    else query[key] = value
+  }
+  return { topicId, sourceTitle, noteTitle, tags, query }
 }
 
 function queryArgs(args: string[]): Record<string, string> {
