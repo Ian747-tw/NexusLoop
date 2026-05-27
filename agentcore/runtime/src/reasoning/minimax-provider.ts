@@ -84,6 +84,7 @@ export class MiniMaxReasoningProvider implements ResearchSynthesisProvider, Comm
     if (!this.options.connector) return MINIMAX_MESSAGES_PATH
     const base = new URL(this.options.connector.base_url)
     const prefix = base.pathname === "/" ? "" : base.pathname.replace(/\/$/, "")
+    if (prefix.endsWith("/v1")) return `${prefix}/messages`
     return `${prefix}${MINIMAX_MESSAGES_PATH}`
   }
 }

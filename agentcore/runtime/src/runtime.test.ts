@@ -4291,6 +4291,44 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("minimax provider accepts connector base URLs with or without v1", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_versioned", title: "Versioned MiniMax topic", status: "active" })
+    db.addNote({ id: "note_versioned", topic_id: "topic_versioned", content: "versioned base evidence", tags: ["evidence"] })
+    db.close()
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(["note_versioned"])) }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{ ...minimaxConnector(), base_url: "https://api.minimax.io/anthropic/v1" }]),
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-versioned-base",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis"],
+      },
+      researchSynthesisId: () => "synth_versioned_base",
+    })
+    await server.start()
+
+    await server.command("runtime.execute_research_synthesis", {
+      topicId: "topic_versioned",
+      requestedBy: "operator",
+    })
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0]?.url).toBe("https://api.minimax.io/anthropic/v1/messages")
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("raw-minimax-secret")
+    await server.shutdown()
+  })
+
   test("minimax commander cycle provider parses responses and drafts proposals through cycle service only", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
