@@ -1410,6 +1410,32 @@ describe("RuntimeServer core", () => {
     const repeated = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" })
     expect(repeated).toMatchObject({ handoff_id: "handoff_1", mission_id: result.mission_id })
     expect(adapter.packets).toHaveLength(1)
+    const bundleMission = await server.submitUserMessage("bundle after handoff")
+    const bundleClaim = await server.command("runtime.claim_mission", { missionId: bundleMission.missionId, executorId: "executor" }) as { claim_id: string }
+    const genericProposal = await server.command("runtime.create_commander_proposal", {
+      missionId: bundleMission.missionId,
+      claimId: bundleClaim.claim_id,
+      actionKind: "record_progress",
+      title: "generic after handoff",
+      summary: "summary",
+      proposedBy: "operator",
+      actionPayload: { mission_id: bundleMission.missionId, claim_id: bundleClaim.claim_id, message: "progress" },
+    }) as { proposal_id: string }
+    const genericReview = await server.command("runtime.request_proposal_review", { proposalId: genericProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: genericReview.review_id, decidedBy: "operator", reason: "ok" })
+    const bundle = await server.command("runtime.create_proposal_bundle", { title: "handoff skipped bundle", summary: "summary", createdBy: "operator" }) as { bundle_id: string }
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: genericProposal.proposal_id })
+    await server.command("runtime.add_proposal_to_bundle", { bundleId: bundle.bundle_id, proposalId: proposal.proposal_id })
+    await expect(server.command("runtime.commander_apply_preview", { targetType: "bundle", targetId: bundle.bundle_id })).resolves.toMatchObject({
+      ready_to_apply: true,
+      would_apply: [genericProposal.proposal_id],
+      would_skip: [proposal.proposal_id],
+    })
+    await expect(server.command("runtime.apply_commander_target", { targetType: "bundle", targetId: bundle.bundle_id })).resolves.toMatchObject({
+      applied: true,
+      applied_proposal_ids: [genericProposal.proposal_id],
+      skipped_proposal_ids: [proposal.proposal_id],
+    })
     const serialized = JSON.stringify({ status: await server.status(), events: await readJsonlEvents(dir), packets: adapter.packets })
     expect((await readEventKinds(dir))).toEqual(expect.arrayContaining(["opencode_handoff_started", "opencode_handoff_created"]))
     expect(serialized).not.toContain("objective-secret")

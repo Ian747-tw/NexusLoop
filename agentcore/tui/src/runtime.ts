@@ -1214,7 +1214,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       if (!proposal) {
         blockers.push(`missing proposal: ${bundle.proposal_ids[index]}`)
       } else {
-        if (!isGenericFakeApplyActionKind(proposal.action_kind)) blockers.push(`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`)
+        if (proposal.status !== "applied" && !isGenericFakeApplyActionKind(proposal.action_kind)) blockers.push(`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`)
         if (proposal.status !== "approved" && proposal.status !== "applied") blockers.push(`proposal ${proposal.proposal_id} status is ${proposal.status}`)
       }
     }
@@ -2382,8 +2382,9 @@ function auditRelatedRecord(related: Set<string>): Record<string, string[]> {
 }
 
 function fakeProposalBlockers(proposal: CommanderProposalSummary): string[] {
+  if (proposal.status === "applied") return []
   if (!isGenericFakeApplyActionKind(proposal.action_kind)) return [`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`]
-  if (proposal.status === "approved" || proposal.status === "applied") return []
+  if (proposal.status === "approved") return []
   if (proposal.status === "rejected" || proposal.status === "cancelled") return [`proposal ${proposal.proposal_id} is ${proposal.status}`]
   if (!proposal.review_id) return [`proposal ${proposal.proposal_id} has no linked review`]
   return [`proposal ${proposal.proposal_id} status is ${proposal.status}`]

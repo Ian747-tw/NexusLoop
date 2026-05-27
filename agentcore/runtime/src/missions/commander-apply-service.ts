@@ -211,8 +211,9 @@ export class CommanderApplyService {
 }
 
 function blockersForProposal(proposal: CommanderProposal): string[] {
+  if (proposal.status === "applied") return []
   if (!isGenericProposalApplyActionKind(proposal.action_kind)) return [`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`]
-  if (proposal.status === "approved" || proposal.status === "applied") return []
+  if (proposal.status === "approved") return []
   if (proposal.status === "rejected" || proposal.status === "cancelled") return [`proposal ${proposal.proposal_id} is ${proposal.status}`]
   if (!proposal.review_id) return [`proposal ${proposal.proposal_id} has no linked review`]
   return [`proposal ${proposal.proposal_id} status is ${proposal.status}`]

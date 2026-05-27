@@ -275,7 +275,7 @@ export class ProposalBundleRegistry {
         continue
       }
       statuses.push(proposal.status)
-      if (!isGenericProposalApplyActionKind(proposal.action_kind)) {
+      if (proposal.status !== "applied" && !isGenericProposalApplyActionKind(proposal.action_kind)) {
         blockers.push(`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`)
       }
       if (proposal.status !== "approved" && proposal.status !== "applied") {
