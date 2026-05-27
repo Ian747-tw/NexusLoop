@@ -4282,7 +4282,12 @@ describe("RuntimeServer core", () => {
       title: "MiniMax synthesis",
     })
     expect(transport.requests[0]?.max_response_bytes).toBe(96 * 1024)
-    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("raw-minimax-secret")
+    const events = await readJsonlEvents(dir)
+    expect(events.find((event) => event.kind === "external_api_request_executed")).toMatchObject({
+      response_preview: "[internal response preview omitted]",
+    })
+    expect(JSON.stringify(events)).not.toContain("thinking")
+    expect(JSON.stringify(events)).not.toContain("raw-minimax-secret")
     await server.shutdown()
   })
 

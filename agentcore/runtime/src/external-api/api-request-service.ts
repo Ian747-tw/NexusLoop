@@ -15,6 +15,7 @@ import { isPrivateOrLocalExternalApiAddress, validateResolvedHost, type External
 
 const MAX_BODY_BYTES = 64 * 1024
 const PREVIEW_BYTES = 512
+const OMITTED_INTERNAL_RESPONSE_PREVIEW = "[internal response preview omitted]"
 const DANGEROUS_USER_HEADERS = new Set(["authorization", "cookie", "set-cookie", "proxy-authorization"])
 
 export interface ExternalApiRequestServiceOptions {
@@ -57,11 +58,11 @@ export class ExternalApiRequestService {
     return this.executeBuilt(input, false, {})
   }
 
-  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number; redact_response_body?: boolean } = {}): Promise<ExternalApiInternalRequestResult> {
+  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean } = {}): Promise<ExternalApiInternalRequestResult> {
     return this.executeBuilt(input, true, options)
   }
 
-  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number; redact_response_body?: boolean }): Promise<ExternalApiInternalRequestResult> {
+  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean }): Promise<ExternalApiInternalRequestResult> {
     const built = this.build(input)
     const createdAt = this.now().toISOString()
     const requestId = this.requestId()
@@ -131,7 +132,7 @@ export class ExternalApiRequestService {
         dryRun: false,
         createdAt,
         responseBytes: bodyBytes,
-        responsePreview: preview(response.body),
+        responsePreview: options.omit_response_preview_from_audit === true ? OMITTED_INTERNAL_RESPONSE_PREVIEW : preview(response.body),
         responseBodyForInternalUse: includeInternalBody ? internalBody(response.body, built.connector.max_response_bytes, options.redact_response_body !== false) : undefined,
         responseBodyForInternalUseMaxBytes: built.connector.max_response_bytes,
         redactResponseBodyForInternalUse: options.redact_response_body !== false,
