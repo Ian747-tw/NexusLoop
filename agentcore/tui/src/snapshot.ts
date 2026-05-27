@@ -74,6 +74,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...navigationLines(state))
   out.push(...operatorActionLines(state))
   out.push(...externalApiLines(state))
+  out.push(...researchSynthesisLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -597,6 +598,45 @@ function researchLines(state: UiState): string[] {
     out.push(...research.events.map((event) => `  - event ${event.event_type} ${event.entity_type}/${event.entity_id} id=${event.event_id} time=${event.created_at ?? "unknown"}`))
   }
   if (research.commandError) out.push(`  command_error=${redactText(research.commandError)}`)
+  return out
+}
+
+function researchSynthesisLines(state: UiState): string[] {
+  const synthesis = state.researchSynthesis
+  const out = ["Research synthesis"]
+  if (!synthesis) {
+    out.push("  syntheses=0")
+    return out
+  }
+  if (synthesis.preview) {
+    const previewResult = synthesis.preview
+    out.push(`  preview_topic=${previewResult.topic_id}: ${preview(redactText(previewResult.topic_title))}`)
+    out.push(`  evidence sources=${previewResult.evidence_counts.sources} notes=${previewResult.evidence_counts.notes} artifacts=${previewResult.evidence_counts.artifacts} ingestions=${previewResult.evidence_counts.ingestions}`)
+    out.push(`  context_bytes=${previewResult.context_bytes}/${previewResult.max_context_bytes} excluded=${previewResult.excluded_evidence_count}`)
+    if (previewResult.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewResult.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  }
+  if (synthesis.selected) {
+    const selected = synthesis.selected
+    out.push(`  selected_synthesis=${selected.synthesis_id} provider=${selected.provider_id} topic=${selected.topic_id}`)
+    out.push(`  note=${selected.source_note_id ?? "none"} artifact=${selected.artifact_id ?? "none"} proposals=${selected.proposal_ids?.join(",") || "none"}`)
+    out.push(`  title=${preview(redactText(selected.title))}`)
+    out.push(`  summary=${preview(redactText(selected.summary))}`)
+    if (selected.findings.length > 0) out.push(...selected.findings.slice(0, 5).map((finding) => `  - finding ${preview(redactText(finding))}`))
+    if (selected.risks.length > 0) out.push(...selected.risks.slice(0, 5).map((risk) => `  - risk ${preview(redactText(risk))}`))
+    if (selected.open_questions.length > 0) out.push(...selected.open_questions.slice(0, 5).map((question) => `  - question ${preview(redactText(question))}`))
+  } else {
+    out.push("  selected_synthesis=none")
+  }
+  out.push(`  syntheses=${synthesis.recent.length}`)
+  if (synthesis.recent.length > 0) {
+    out.push(...synthesis.recent.slice(0, 10).map((record) => {
+      return `  - ${record.synthesis_id} provider=${record.provider_id} topic=${record.topic_id}: ${preview(redactText(record.title))}`
+    }))
+  }
+  if (synthesis.commandError) out.push(`  command_error=${redactText(synthesis.commandError)}`)
   return out
 }
 

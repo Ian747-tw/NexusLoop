@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -45,6 +45,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly externalApiConnectors: ExternalApiConnectorSummary[] = fakeExternalApiConnectors()
   private readonly externalApiAudit: ExternalApiAuditRecordSummary[] = []
   private readonly externalApiResearchIngestions: ExternalApiResearchIngestionRecordSummary[] = []
+  private readonly researchSyntheses: ResearchSynthesisResultSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -289,6 +290,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.executeExternalApiResearchIngestion(payload)
       case "runtime.list_external_api_research_ingestions":
         return this.externalApiResearchIngestions.slice(0, readLimit(payload.limit, 20))
+      case "runtime.preview_research_synthesis":
+        return this.previewResearchSynthesis(payload)
+      case "runtime.execute_research_synthesis":
+        return this.executeResearchSynthesis(payload)
+      case "runtime.get_research_synthesis":
+        return this.getResearchSynthesis(String(payload.synthesisId ?? payload.synthesis_id ?? ""))
+      case "runtime.list_research_syntheses":
+        return this.listResearchSyntheses(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -444,6 +453,94 @@ export class FakeRuntimeClient implements RuntimeClient {
     const connector = this.getExternalApiConnector(connectorId)
     if (!connector) throw new Error(`external API connector not found: ${redactText(connectorId)}`)
     return connector
+  }
+
+  private previewResearchSynthesis(payload: Record<string, unknown>): ResearchSynthesisPreviewSummary {
+    const topicId = requiredString(String(payload.topicId ?? payload.topic_id ?? ""), "topicId")
+    const topic = this.researchTopics().find((item) => item.id === topicId)
+    if (!topic) throw new Error(`topic not found: ${redactText(topicId)}`)
+    const notes = this.searchNotes(topicId, "")
+    const ingestions = this.externalApiResearchIngestions.filter((item) => item.topic_id === topicId)
+    const evidenceIds = [
+      "fake-source-1",
+      ...notes.map((note) => note.id),
+      ...ingestions.map((ingestion) => ingestion.ingestion_id),
+    ]
+    const context = redactText(`topic=${topic.title}\nnotes=${notes.map((note) => note.content).join("\n")}\ningestions=${ingestions.map((item) => item.ingestion_id).join(",")}`)
+    return {
+      topic_id: redactText(topicId),
+      topic_title: redactText(topic.title),
+      evidence_counts: { sources: 1, notes: notes.length, artifacts: 0, ingestions: ingestions.length },
+      context_bytes: new TextEncoder().encode(context).byteLength,
+      max_context_bytes: readNumber(payload.maxContextBytes ?? payload.max_context_bytes, 32768),
+      included_evidence_ids: evidenceIds.map(redactText),
+      excluded_evidence_count: 0,
+      blockers: evidenceIds.length === 0 ? ["topic has no evidence to synthesize"] : [],
+      redacted_context_preview: preview(context),
+    }
+  }
+
+  private executeResearchSynthesis(payload: Record<string, unknown>): ResearchSynthesisResultSummary {
+    const synthPreview = this.previewResearchSynthesis(payload)
+    if (synthPreview.blockers.length > 0) throw new Error(synthPreview.blockers.join("; "))
+    this.sequence += 1
+    const synthesisId = `fake-synthesis-${this.sequence}`
+    const action = {
+      title: "Operator checkpoint",
+      summary: `Review synthesis for topic ${synthPreview.topic_id}`,
+      action_kind: "operator_checkpoint",
+      evidence_ids: synthPreview.included_evidence_ids.slice(0, 3),
+    }
+    const result: ResearchSynthesisResultSummary = {
+      synthesis_id: synthesisId,
+      topic_id: synthPreview.topic_id,
+      provider_id: "fake-research-synthesis",
+      source_note_id: `fake-synthesis-note-${this.sequence}`,
+      artifact_id: `fake-synthesis-artifact-${this.sequence}`,
+      proposal_ids: [],
+      title: `Synthesis for ${synthPreview.topic_title}`,
+      summary: redactText(`Deterministic fake synthesis for ${synthPreview.included_evidence_ids.length} evidence records.`),
+      findings: [`Evidence records considered: ${synthPreview.included_evidence_ids.length}`],
+      risks: ["Fake provider does not make real-world claims."],
+      open_questions: ["Operator should review whether the evidence is sufficient."],
+      recommended_actions: [action],
+      context_hash: "fake-context-hash",
+      output_hash: "fake-output-hash",
+      created_at: new Date(0).toISOString(),
+      requested_by: redactText(String(payload.requestedBy ?? payload.requested_by ?? "operator")),
+    }
+    if (payload.createProposals === true || payload.create_proposals === true) {
+      const proposal = this.createProposal({
+        actionKind: "operator_checkpoint",
+        title: action.title,
+        summary: `${action.summary}\n\nsynthesis_id: ${synthesisId}\nevidence_ids: ${action.evidence_ids.join(", ") || "none"}`,
+        proposedBy: result.requested_by,
+        actionPayload: { synthesis_id: synthesisId, topic_id: result.topic_id, evidence_ids: action.evidence_ids },
+      })
+      result.proposal_ids = [proposal.proposal_id]
+    }
+    this.researchSyntheses.unshift(result)
+    return result
+  }
+
+  private getResearchSynthesis(synthesisId: string): ResearchSynthesisResultSummary | null {
+    const id = requiredString(synthesisId, "synthesisId")
+    return this.researchSyntheses.find((item) => item.synthesis_id === id) ?? null
+  }
+
+  private listResearchSyntheses(limit: number): ResearchSynthesisRecordSummary[] {
+    return this.researchSyntheses.slice(0, limit).map((item) => ({
+      synthesis_id: item.synthesis_id,
+      topic_id: item.topic_id,
+      provider_id: item.provider_id,
+      source_note_id: item.source_note_id,
+      artifact_id: item.artifact_id,
+      proposal_ids: item.proposal_ids,
+      title: item.title,
+      summary_preview: preview(item.summary),
+      created_at: item.created_at,
+      requested_by: item.requested_by,
+    }))
   }
 
   private createMission(message: string): SubmitUserMessageResult {
@@ -1622,6 +1719,10 @@ function readStaleAfterMs(value: unknown): number {
   if (value === undefined) return 7 * 24 * 60 * 60 * 1000
   if (!Number.isInteger(value) || Number(value) < 1) throw new Error("commander queue staleAfterMs must be a positive integer")
   return Number(value)
+}
+
+function readNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
 }
 
 function fakeNowIso(): string {
