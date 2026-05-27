@@ -29,7 +29,7 @@ export interface ReasoningProviderStatus {
 
 const DEFAULT_MAX_INPUT_BYTES = 32 * 1024
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024
-const HARD_MAX_INPUT_BYTES = 96 * 1024
+const HARD_MAX_INPUT_BYTES = 64 * 1024
 const HARD_MAX_OUTPUT_BYTES = 32 * 1024
 
 export function defaultReasoningProviderConfig(): ReasoningProviderConfig {

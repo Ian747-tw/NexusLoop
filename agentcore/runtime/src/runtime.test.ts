@@ -4122,8 +4122,15 @@ describe("RuntimeServer core", () => {
       provider_id: "minimax-m2-7",
       connector_id: "minimax-anthropic",
       model: "MiniMax-M2.7",
+      max_input_bytes: 4096,
       enabled_for: ["research_synthesis"],
     })
+    expect(readReasoningProviderConfigFromEnv({
+      NXL_REASONING_PROVIDER_KIND: "minimax",
+      NXL_REASONING_CONNECTOR_ID: "minimax-anthropic",
+      NXL_REASONING_MODEL: "MiniMax-M2.7",
+      NXL_REASONING_MAX_INPUT_BYTES: String(96 * 1024),
+    })?.max_input_bytes).toBe(64 * 1024)
     expect(JSON.stringify(config)).not.toContain("NXL_MINIMAX_API_KEY")
   })
 
@@ -4226,6 +4233,56 @@ describe("RuntimeServer core", () => {
     expect(events.find((event) => event.kind === "external_api_request_executed")).toMatchObject({ connector_id: "minimax-anthropic", ok: true })
     expect(events.find((event) => event.kind === "research_synthesis_created")).toMatchObject({ provider_id: "minimax-m2-7" })
     expect(JSON.stringify({ events, status: await server.status(), snapshot })).not.toContain("raw-minimax-secret")
+    await server.shutdown()
+  })
+
+  test("minimax provider preserves connector-sized response envelopes before parsing", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_large", title: "Large synthesis topic", status: "active" })
+    db.addNote({ id: "note_large", topic_id: "topic_large", content: "large response evidence", tags: ["evidence"] })
+    db.close()
+    const largeEnvelope = JSON.stringify({
+      id: "msg_large",
+      content: [
+        { type: "thinking", thinking: "x".repeat(70 * 1024) },
+        { type: "text", text: JSON.stringify(minimaxSynthesisPayload(["note_large"])) },
+      ],
+    })
+    expect(Buffer.byteLength(largeEnvelope, "utf8")).toBeGreaterThan(64 * 1024)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: largeEnvelope }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{ ...minimaxConnector(), max_response_bytes: 96 * 1024 }]),
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-large-envelope",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis"],
+      },
+      researchSynthesisId: () => "synth_large_envelope",
+    })
+    await server.start()
+
+    const result = await server.command("runtime.execute_research_synthesis", {
+      topicId: "topic_large",
+      requestedBy: "operator",
+    }) as { synthesis_id: string; provider_id: string; title: string }
+    expect(result).toMatchObject({
+      synthesis_id: "synth_large_envelope",
+      provider_id: "minimax-large-envelope",
+      title: "MiniMax synthesis",
+    })
+    expect(transport.requests[0]?.max_response_bytes).toBe(96 * 1024)
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("raw-minimax-secret")
     await server.shutdown()
   })
 

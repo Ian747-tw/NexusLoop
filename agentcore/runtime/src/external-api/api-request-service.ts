@@ -133,6 +133,7 @@ export class ExternalApiRequestService {
         responseBytes: bodyBytes,
         responsePreview: preview(response.body),
         responseBodyForInternalUse: includeInternalBody ? internalBody(response.body, built.connector.max_response_bytes, options.redact_response_body !== false) : undefined,
+        responseBodyForInternalUseMaxBytes: built.connector.max_response_bytes,
         redactResponseBodyForInternalUse: options.redact_response_body !== false,
       })
       await this.writeAudit(result.ok ? "external_api_request_executed" : "external_api_request_failed", result, input.requested_by)
@@ -253,6 +254,7 @@ export class ExternalApiRequestService {
     responseBytes?: number
     responsePreview?: string
     responseBodyForInternalUse?: string
+    responseBodyForInternalUseMaxBytes?: number
     redactResponseBodyForInternalUse?: boolean
     error?: string
   }): ExternalApiInternalRequestResult {
@@ -270,7 +272,11 @@ export class ExternalApiRequestService {
       created_at: input.createdAt,
     })
     if (input.responseBodyForInternalUse) {
-      result.response_body_for_internal_use = internalBody(input.responseBodyForInternalUse, MAX_BODY_BYTES, input.redactResponseBodyForInternalUse !== false)
+      result.response_body_for_internal_use = internalBody(
+        input.responseBodyForInternalUse,
+        input.responseBodyForInternalUseMaxBytes ?? MAX_BODY_BYTES,
+        input.redactResponseBodyForInternalUse !== false,
+      )
     }
     return result
   }
