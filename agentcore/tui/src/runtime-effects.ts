@@ -1379,6 +1379,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (externalApiCommands.has(command)) return state.externalApi?.commandError
   if (researchSynthesisCommands.has(command)) return state.researchSynthesis?.commandError
   if (commanderCycleCommands.has(command)) return state.commanderCycle?.commandError
+  if (opencodeHandoffCommands.has(command)) return state.opencodeHandoff?.commandError
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError

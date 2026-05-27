@@ -2588,6 +2588,13 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.lastResult).toMatchObject({ command: "/apply-target proposal missing-proposal", ok: false })
     expect(state.operatorActions?.commandError).toContain("not found")
     expect(state.operatorActions?.staged?.command).toBe("/apply-target proposal missing-proposal")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/handoff", "missing-proposal"] })
+    expect(state.operatorActions?.staged?.command).toBe("/handoff missing-proposal")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/handoff missing-proposal", ok: false })
+    expect(state.operatorActions?.commandError).toContain("not found")
+    expect(state.operatorActions?.staged?.command).toBe("/handoff missing-proposal")
   })
 
   test("fake commander queue ordering applies priority tie-break before target id", () => {
