@@ -2363,6 +2363,20 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("nav-title-secret")
     expect(JSON.stringify(state)).not.toContain("nav-summary-secret")
 
+    const handoffProposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff proposal",
+      summary: "handoff summary",
+      proposedBy: "operator",
+      actionPayload: { objective: "handoff objective" },
+    }) as { proposal_id: string }
+    const handoffReview = await runtime.command("runtime.request_proposal_review", { proposalId: handoffProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: handoffReview.review_id, decidedBy: "operator", reason: "ok" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "open", args: ["proposal", handoffProposal.proposal_id] })
+    expect(state.commanderNavigation?.selected?.suggested_commands).toContainEqual(expect.objectContaining({ command: `/handoff-preview ${handoffProposal.proposal_id}` }))
+    expect(state.commanderNavigation?.selected?.suggested_commands).toContainEqual(expect.objectContaining({ command: `/handoff ${handoffProposal.proposal_id}` }))
+    expect(state.commanderNavigation?.selected?.suggested_commands).not.toContainEqual(expect.objectContaining({ command: `/apply-target proposal ${handoffProposal.proposal_id}` }))
+
     for (const [command, args, targetType] of [
       ["open-bundle", [bundle.bundle_id], "bundle"],
       ["open-draft", [draft.draft_id], "draft"],

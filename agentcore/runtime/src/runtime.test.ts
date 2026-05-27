@@ -9224,6 +9224,20 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(proposalContext)).not.toContain("target-title-secret")
     expect(JSON.stringify(proposalContext)).not.toContain("target-summary-secret")
 
+    const handoffProposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff proposal",
+      summary: "handoff summary",
+      proposedBy: "operator",
+      actionPayload: { objective: "handoff objective" },
+    }) as { proposal_id: string }
+    const handoffReview = await server.command("runtime.request_proposal_review", { proposalId: handoffProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: handoffReview.review_id, decidedBy: "operator", reason: "ok" })
+    const handoffContext = await server.command("runtime.commander_target_context", { targetType: "proposal", targetId: handoffProposal.proposal_id }) as { suggested_commands: Array<{ command: string; command_type: string }> }
+    expect(handoffContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/handoff-preview ${handoffProposal.proposal_id}`, command_type: "read" }))
+    expect(handoffContext.suggested_commands).toContainEqual(expect.objectContaining({ command: `/handoff ${handoffProposal.proposal_id}`, command_type: "write" }))
+    expect(handoffContext.suggested_commands).not.toContainEqual(expect.objectContaining({ command: `/apply-target proposal ${handoffProposal.proposal_id}` }))
+
     const bundleContext = await server.command("runtime.commander_target_context", { target_type: "bundle", target_id: bundle.bundle_id }) as { target_type: string; related_ids: Record<string, string[]>; queue_membership: string[] }
     expect(bundleContext.target_type).toBe("bundle")
     expect(bundleContext.related_ids.proposal_id).toContain(proposal.proposal_id)

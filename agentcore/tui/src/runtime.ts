@@ -1652,7 +1652,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       queue_membership: queueMembership,
       audit_event_count: chain.events.length,
       recent_audit_events: chain.events.slice(-20).reverse(),
-      suggested_commands: fakeSuggestedCommands(target.targetType, target.targetId, record.status, queueMembership, related),
+      suggested_commands: fakeSuggestedCommands(target.targetType, target.targetId, record.status, queueMembership, related, record.action_kind),
       missing_links: [...record.missing_links, ...chain.missing_links].map(redactText).slice(0, 20),
     }
   }
@@ -1665,7 +1665,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     return out
   }
 
-  private fakeTargetRecord(targetType: CommanderTargetType, targetId: string): { found: boolean; title: string; summary: string; status?: string; record_kind?: string; related_ids: Record<string, string[]>; missing_links: string[] } {
+  private fakeTargetRecord(targetType: CommanderTargetType, targetId: string): { found: boolean; title: string; summary: string; status?: string; record_kind?: string; action_kind?: string; related_ids: Record<string, string[]>; missing_links: string[] } {
     if (targetType === "mission") {
       const mission = this.missions.find((item) => item.mission_id === targetId)
       if (!mission) return fakeMissingTarget(targetType, targetId)
@@ -1702,7 +1702,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (targetType === "proposal") {
       const proposal = this.proposals.find((item) => item.proposal_id === targetId)
       if (!proposal) return fakeMissingTarget(targetType, targetId)
-      return { found: true, title: proposal.title, summary: proposal.summary, status: proposal.status, record_kind: "commander_proposal", related_ids: { proposal_id: [proposal.proposal_id], review_id: proposal.review_id ? [proposal.review_id] : [], bundle_id: this.proposalBundles.filter((bundle) => bundle.proposal_ids.includes(proposal.proposal_id)).map((bundle) => bundle.bundle_id), draft_id: this.playbookDrafts.filter((draft) => draft.proposal_ids.includes(proposal.proposal_id)).map((draft) => draft.draft_id), mission_id: proposal.mission_id ? [proposal.mission_id] : [], claim_id: proposal.claim_id ? [proposal.claim_id] : [], result_id: proposal.result_id ? [proposal.result_id] : [] }, missing_links: [] }
+      return { found: true, title: proposal.title, summary: proposal.summary, status: proposal.status, record_kind: "commander_proposal", action_kind: proposal.action_kind, related_ids: { proposal_id: [proposal.proposal_id], review_id: proposal.review_id ? [proposal.review_id] : [], bundle_id: this.proposalBundles.filter((bundle) => bundle.proposal_ids.includes(proposal.proposal_id)).map((bundle) => bundle.bundle_id), draft_id: this.playbookDrafts.filter((draft) => draft.proposal_ids.includes(proposal.proposal_id)).map((draft) => draft.draft_id), mission_id: proposal.mission_id ? [proposal.mission_id] : [], claim_id: proposal.claim_id ? [proposal.claim_id] : [], result_id: proposal.result_id ? [proposal.result_id] : [] }, missing_links: [] }
     }
     if (targetType === "bundle") {
       const bundle = this.proposalBundles.find((item) => item.bundle_id === targetId)
@@ -2224,7 +2224,7 @@ function mergeRelatedIds(...records: Record<string, string[]>[]): Record<string,
   return Object.fromEntries(Object.entries(out).filter(([, values]) => values.length > 0).sort(([a], [b]) => a.localeCompare(b)))
 }
 
-function fakeSuggestedCommands(targetType: CommanderTargetType, targetId: string, status: string | undefined, queues: CommanderQueueKind[], relatedIds: Record<string, string[]>): CommanderTargetContextSummary["suggested_commands"] {
+function fakeSuggestedCommands(targetType: CommanderTargetType, targetId: string, status: string | undefined, queues: CommanderQueueKind[], relatedIds: Record<string, string[]>, actionKind?: string): CommanderTargetContextSummary["suggested_commands"] {
   const id = redactText(targetId)
   const missionId = relatedIds.mission_id?.[0] ?? id
   const commands: CommanderTargetContextSummary["suggested_commands"] = []
@@ -2244,8 +2244,13 @@ function fakeSuggestedCommands(targetType: CommanderTargetType, targetId: string
   } else if (targetType === "proposal") {
     add("Open proposal", `/proposal ${id}`)
     add("Request review", `/proposal-review ${id} <title> -- <summary>`, "write", true, true)
-    add("Preview apply", `/apply-preview proposal ${id}`)
-    if (status === "approved") add("Apply proposal", `/apply-target proposal ${id}`, "write", true, true)
+    if (actionKind === "opencode_handoff") {
+      add("Preview handoff", `/handoff-preview ${id}`)
+      if (status === "approved") add("Execute handoff", `/handoff ${id}`, "write", true, true)
+    } else {
+      add("Preview apply", `/apply-preview proposal ${id}`)
+      if (status === "approved") add("Apply proposal", `/apply-target proposal ${id}`, "write", true, true)
+    }
   } else if (targetType === "bundle") {
     add("Open bundle", `/bundle ${id}`)
     add("Check readiness", `/bundle-ready ${id}`)
