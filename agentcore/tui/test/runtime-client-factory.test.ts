@@ -678,6 +678,13 @@ describe("TUI runtime client factory", () => {
     expect(state.commanderCycle?.selected?.proposal_ids?.length).toBe(1)
     expect(state.proposals?.recent.at(0)?.status).toBe("proposed")
 
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "reasoning" })
+    expect(state.reasoningProvider?.health).toMatchObject({ kind: "fake", status: "ok" })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "reasoning-smoke-preview", args: ["research"] })
+    expect(state.reasoningProvider?.smokePreview).toMatchObject({ surface: "research_synthesis", would_call_network: false })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "reasoning-smoke-dry-run", args: ["cycle"] })
+    expect(state.reasoningProvider?.lastSmoke).toMatchObject({ surface: "commander_cycle", ok: true, dry_run: true })
+
     await client.runtime.shutdown()
   })
 

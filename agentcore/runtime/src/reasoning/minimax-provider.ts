@@ -81,12 +81,16 @@ export class MiniMaxReasoningProvider implements ResearchSynthesisProvider, Comm
   }
 
   private messagesPath(): string {
-    if (!this.options.connector) return MINIMAX_MESSAGES_PATH
-    const base = new URL(this.options.connector.base_url)
-    const prefix = base.pathname === "/" ? "" : base.pathname.replace(/\/$/, "")
-    if (prefix.endsWith("/v1")) return `${prefix}/messages`
-    return `${prefix}${MINIMAX_MESSAGES_PATH}`
+    return minimaxMessagesPath(this.options.connector)
   }
+}
+
+export function minimaxMessagesPath(connector?: Pick<ExternalApiConnector, "base_url">): string {
+  if (!connector) return MINIMAX_MESSAGES_PATH
+  const base = new URL(connector.base_url)
+  const prefix = base.pathname === "/" ? "" : base.pathname.replace(/\/$/, "")
+  if (prefix.endsWith("/v1")) return `${prefix}/messages`
+  return `${prefix}${MINIMAX_MESSAGES_PATH}`
 }
 
 function messageRequest(config: ReasoningProviderConfig, surface: string, prompt: Record<string, unknown>, maxOutputBytes: number): MiniMaxMessageRequest {

@@ -271,4 +271,9 @@ const runtimeCommands = new Set([
   "cycle-bundle",
   "cycles",
   "cycle-show",
+  "reasoning",
+  "reasoning-health",
+  "reasoning-smoke-preview",
+  "reasoning-smoke",
+  "reasoning-smoke-dry-run",
 ])

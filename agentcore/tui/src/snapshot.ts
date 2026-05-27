@@ -43,6 +43,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(`  obligations=${state.commander.obligations.join(", ") || "none"}`)
   out.push(`  candidates=${state.commander.candidates.join(", ") || "none"}`)
   out.push(...runtimeLines(state))
+  out.push(...reasoningProviderLines(state))
   out.push(...missionExecutionLines(state))
   out.push("Live system actions")
   out.push(...lines(state.systemActions))
@@ -116,6 +117,39 @@ function runtimeLines(state: UiState): string[] {
     else out.push(...state.missions.recent.map((mission) => `    - ${mission.mission_id} [${mission.status}]`))
   }
   if (state.runtimeCommandError) out.push(`  command_error=${redactText(state.runtimeCommandError)}`)
+  return out
+}
+
+function reasoningProviderLines(state: UiState): string[] {
+  const provider = state.reasoningProvider
+  const out = ["Reasoning provider"]
+  if (!provider) {
+    out.push("  status=unknown")
+    return out
+  }
+  out.push(`  provider=${provider.kind}:${provider.provider_id}`)
+  if (provider.model) out.push(`  model=${provider.model}`)
+  if (provider.connector_id) out.push(`  connector=${provider.connector_id}`)
+  out.push(`  enabled=${provider.enabled_for.join(",") || "none"}`)
+  if (provider.health) {
+    out.push(`  health=${provider.health.status}`)
+    for (const check of provider.health.checks.slice(0, 10)) {
+      out.push(`  check=${check.name} ${check.ok ? "ok" : "not-ok"} ${check.severity}: ${check.summary}`)
+    }
+  }
+  if (provider.smokePreview) {
+    const preview = provider.smokePreview
+    out.push(`  smoke_preview=${preview.surface} network=${preview.would_call_network ? "yes" : "no"} prompt_bytes=${preview.prompt_bytes}`)
+    out.push(`  smoke_blockers=${preview.blockers.join("; ") || "none"}`)
+  }
+  if (provider.lastSmoke) {
+    const smoke = provider.lastSmoke
+    out.push(`  smoke_result=${smoke.surface} ${smoke.ok ? "ok" : "failed"} dry_run=${smoke.dry_run} parsed=${smoke.parsed}`)
+    out.push(`  smoke_summary=${smoke.summary}`)
+    if (smoke.request_id) out.push(`  smoke_request=${smoke.request_id}`)
+    if (smoke.error) out.push(`  smoke_error=${smoke.error}`)
+  }
+  if (provider.commandError) out.push(`  command_error=${redactText(provider.commandError)}`)
   return out
 }
 

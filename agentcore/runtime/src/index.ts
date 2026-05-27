@@ -31,6 +31,7 @@ export { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "
 export { ExternalApiRequestService } from "./external-api/api-request-service"
 export { ExternalApiResearchIngestionService } from "./external-api/api-research-ingestion-service"
 export { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
+export { ReasoningProviderHealthService } from "./reasoning/reasoning-health-service"
 export { defaultReasoningProviderConfig, readReasoningProviderConfigFromEnv, reasoningProviderStatus, validateReasoningProviderConfig } from "./reasoning/reasoning-provider-config"
 export { FakeResearchSynthesisProvider } from "./research-synthesis/research-synthesis-provider"
 export { ResearchSynthesisService } from "./research-synthesis/research-synthesis-service"
@@ -172,6 +173,15 @@ export type {
 } from "./research-synthesis/research-synthesis-types"
 export type { ExternalApiHostResolver, ExternalApiResolvedAddress, ExternalApiTransport, ExternalApiTransportRequest, ExternalApiTransportResult } from "./external-api/api-transport"
 export type { ReasoningProviderConfig, ReasoningProviderKind, ReasoningProviderStatus, ReasoningProviderSurface } from "./reasoning/reasoning-provider-config"
+export type {
+  ReasoningProviderHealth,
+  ReasoningProviderHealthCheck,
+  ReasoningProviderHealthCheckSeverity,
+  ReasoningProviderHealthStatus,
+  ReasoningProviderSmokeInput,
+  ReasoningProviderSmokePreview,
+  ReasoningProviderSmokeResult,
+} from "./reasoning/reasoning-health-types"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"

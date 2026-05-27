@@ -2427,6 +2427,40 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("reasoning-secret")
   })
 
+  test("reasoning provider commands render health smoke preview and smoke result", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "reasoning" })
+    expect(state.reasoningProvider?.health).toMatchObject({ status: "ok" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Reasoning provider")
+    expect(snapshot).toContain("health=ok")
+    expect(snapshot).toContain("check=config ok info")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "reasoning-smoke-preview", args: ["research"] })
+    expect(state.reasoningProvider?.smokePreview).toMatchObject({ surface: "research_synthesis", would_call_network: false })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("smoke_preview=research_synthesis network=no")
+    expect(snapshot).toContain("smoke_blockers=none")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "reasoning-smoke-dry-run", args: ["cycle"] })
+    expect(state.reasoningProvider?.lastSmoke).toMatchObject({ surface: "commander_cycle", ok: true, dry_run: true, parsed: false })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("smoke_result=commander_cycle ok dry_run=true parsed=false")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "reasoning-smoke", args: ["research"] })
+    expect(state.reasoningProvider?.lastSmoke).toMatchObject({ surface: "research_synthesis", ok: true, dry_run: false, parsed: true })
+    expect(JSON.stringify(state)).not.toContain("raw-secret")
+    expect(layoutSnapshot(state)).not.toContain("raw-secret")
+  })
+
+  test("reasoning provider invalid surface produces redacted command error", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "reasoning-smoke-preview", args: ["token=raw-secret"] })
+    expect(state.reasoningProvider?.commandError).toContain("reasoning smoke surface")
+    expect(JSON.stringify(state)).not.toContain("raw-secret")
+    expect(layoutSnapshot(state)).not.toContain("raw-secret")
+  })
+
   test("operator action staging fails closed for missing context bad indexes unsupported commands and write authority errors", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "stage", args: ["1"] })
