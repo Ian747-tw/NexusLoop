@@ -4,6 +4,7 @@ import { redactText, redactValue } from "../security/redaction"
 import type {
   ExternalApiAuditRecord,
   ExternalApiConnector,
+  ExternalApiInternalRequestResult,
   ExternalApiMethod,
   ExternalApiRequestInput,
   ExternalApiRequestPreview,
@@ -14,6 +15,7 @@ import { isPrivateOrLocalExternalApiAddress, validateResolvedHost, type External
 
 const MAX_BODY_BYTES = 64 * 1024
 const PREVIEW_BYTES = 512
+const OMITTED_INTERNAL_RESPONSE_PREVIEW = "[internal response preview omitted]"
 const DANGEROUS_USER_HEADERS = new Set(["authorization", "cookie", "set-cookie", "proxy-authorization"])
 
 export interface ExternalApiRequestServiceOptions {
@@ -53,6 +55,14 @@ export class ExternalApiRequestService {
   }
 
   async execute(input: ExternalApiRequestInput): Promise<ExternalApiRequestResult> {
+    return this.executeBuilt(input, false, {})
+  }
+
+  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean } = {}): Promise<ExternalApiInternalRequestResult> {
+    return this.executeBuilt(input, true, options)
+  }
+
+  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean }): Promise<ExternalApiInternalRequestResult> {
     const built = this.build(input)
     const createdAt = this.now().toISOString()
     const requestId = this.requestId()
@@ -106,7 +116,7 @@ export class ExternalApiRequestService {
         url: built.url.toString(),
         headers: built.headers,
         body: built.body,
-        timeout_ms: built.connector.timeout_ms,
+        timeout_ms: options.timeout_ms ?? built.connector.timeout_ms,
         max_response_bytes: built.connector.max_response_bytes,
         allow_local_test_host: built.allowedLocalHttp,
       })
@@ -122,7 +132,10 @@ export class ExternalApiRequestService {
         dryRun: false,
         createdAt,
         responseBytes: bodyBytes,
-        responsePreview: preview(response.body),
+        responsePreview: options.omit_response_preview_from_audit === true ? OMITTED_INTERNAL_RESPONSE_PREVIEW : preview(response.body),
+        responseBodyForInternalUse: includeInternalBody ? internalBody(response.body, built.connector.max_response_bytes, options.redact_response_body !== false) : undefined,
+        responseBodyForInternalUseMaxBytes: built.connector.max_response_bytes,
+        redactResponseBodyForInternalUse: options.redact_response_body !== false,
       })
       await this.writeAudit(result.ok ? "external_api_request_executed" : "external_api_request_failed", result, input.requested_by)
       return result
@@ -241,9 +254,12 @@ export class ExternalApiRequestService {
     statusCode?: number
     responseBytes?: number
     responsePreview?: string
+    responseBodyForInternalUse?: string
+    responseBodyForInternalUseMaxBytes?: number
+    redactResponseBodyForInternalUse?: boolean
     error?: string
-  }): ExternalApiRequestResult {
-    return redactValue({
+  }): ExternalApiInternalRequestResult {
+    const result: ExternalApiInternalRequestResult = redactValue({
       request_id: input.requestId,
       connector_id: input.connectorId,
       method: input.method,
@@ -256,6 +272,14 @@ export class ExternalApiRequestService {
       dry_run: input.dryRun,
       created_at: input.createdAt,
     })
+    if (input.responseBodyForInternalUse) {
+      result.response_body_for_internal_use = internalBody(
+        input.responseBodyForInternalUse,
+        input.responseBodyForInternalUseMaxBytes ?? MAX_BODY_BYTES,
+        input.redactResponseBodyForInternalUse !== false,
+      )
+    }
+    return result
   }
 
   private async writeAudit(kind: "external_api_request_executed" | "external_api_request_failed", result: ExternalApiRequestResult, requestedBy: string): Promise<void> {
@@ -353,6 +377,10 @@ function byteLength(value: string): number {
 function preview(value: string): string {
   const redacted = redactText(value)
   return truncateUtf8(redacted, PREVIEW_BYTES)
+}
+
+function internalBody(value: string, maxBytes: number, redact: boolean): string {
+  return truncateUtf8(redact ? redactText(value) : value, maxBytes)
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

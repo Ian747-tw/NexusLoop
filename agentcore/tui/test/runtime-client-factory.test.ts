@@ -6,7 +6,7 @@ import { FakeRuntimeClient } from "../src/runtime"
 import { reduceRuntimeEvent } from "../src/reducer"
 import { initialState } from "../src/state"
 import { createTuiRuntimeClient, isTuiRuntimeEvent, readRuntimeClientKind, TuiRuntimeServerClient } from "../src/runtime-client-factory"
-import { FakeOpenCodeAdapter, ResearchDb, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
+import { ExternalApiConnectorRegistry, FakeExternalApiTransport, FakeOpenCodeAdapter, ResearchDb, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 
 const cleanup: string[] = []
@@ -43,6 +43,25 @@ async function makeApprovedProject(dir: string): Promise<void> {
       2,
     ),
   )
+}
+
+function minimaxConnector() {
+  return {
+    connector_id: "minimax-anthropic",
+    title: "MiniMax Anthropic",
+    base_url: "https://api.minimax.io/anthropic",
+    allowed_hosts: ["api.minimax.io"],
+    allowed_methods: ["POST" as const],
+    credential_refs: [{ name: "minimax-key", source: "env" as const, env_name: "NXL_MINIMAX_API_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }],
+    timeout_ms: 5000,
+    max_response_bytes: 8192,
+    created_at: "1970-01-01T00:00:00.000Z",
+    updated_at: "1970-01-01T00:00:00.000Z",
+  }
+}
+
+function minimaxEnvelope(payload: Record<string, unknown>): string {
+  return JSON.stringify({ content: [{ type: "text", text: JSON.stringify(payload) }] })
 }
 
 class FakeProcessEventSource implements OpenCodeProcessEventSource {
@@ -658,6 +677,66 @@ describe("TUI runtime client factory", () => {
     expect(state.commanderCycle?.selected?.cycle_id).toBeTruthy()
     expect(state.commanderCycle?.selected?.proposal_ids?.length).toBe(1)
     expect(state.proposals?.recent.at(0)?.status).toBe("proposed")
+
+    await client.runtime.shutdown()
+  })
+
+  test("real runtime path can use injected MiniMax stub reasoning provider without leaking secrets", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic-minimax", title: "MiniMax topic", status: "active" })
+    db.addNote({ id: "note-minimax", topic_id: "topic-minimax", content: "bounded note token=tui-minimax-secret", tags: ["evidence"] })
+    db.close()
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: minimaxEnvelope({
+        title: "TUI MiniMax synthesis",
+        summary: "Synthesis summary",
+        findings: ["finding"],
+        risks: ["risk"],
+        open_questions: ["question"],
+        recommended_actions: [{ title: "checkpoint", summary: "review", action_kind: "operator_checkpoint", evidence_ids: ["note-minimax"] }],
+        confidence: "medium",
+      }) },
+      { status_code: 200, body: minimaxEnvelope({
+        title: "TUI MiniMax cycle",
+        summary: "Cycle summary",
+        findings: ["finding"],
+        risks: ["risk"],
+        recommended_actions: [{ title: "checkpoint", summary: "review", action_kind: "operator_checkpoint", rationale: "bounded", evidence_ids: ["note-minimax"], synthesis_ids: [], related_target_type: "topic", related_target_id: "topic-minimax" }],
+        should_create_proposals: false,
+        confidence: "medium",
+      }) },
+    ])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      adapter: new FakeOpenCodeAdapter(),
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-tui-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-tui",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis", "commander_cycle"],
+      },
+    })
+    const client = createTuiRuntimeClient({ projectDir: dir, server }) as TuiRuntimeServerClient
+
+    let state = await applyRuntimeUiEffect(initialState(dir), client, { type: "send-command", command: "status" })
+    expect(state.reasoningProvider).toMatchObject({ kind: "minimax", provider_id: "minimax-tui", connector_id: "minimax-anthropic" })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "synthesize", args: ["topic-minimax"] })
+    expect(state.researchSynthesis?.selected).toMatchObject({ provider_id: "minimax-tui", title: "TUI MiniMax synthesis" })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "cycle", args: ["topic=topic-minimax"] })
+    expect(state.commanderCycle?.selected).toMatchObject({ provider_id: "minimax-tui", title: "TUI MiniMax cycle" })
+    expect(transport.requests).toHaveLength(2)
+    expect(JSON.stringify(state)).not.toContain("tui-minimax-secret")
+    expect(JSON.stringify({ status: await client.runtime.command("runtime.status") })).not.toContain("raw-tui-minimax-secret")
 
     await client.runtime.shutdown()
   })

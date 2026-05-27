@@ -13,6 +13,7 @@ import type { ExternalApiAuditRecord, ExternalApiConnectorSummary, ExternalApiRe
 import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPreview, ExternalApiResearchIngestionRecord, ExternalApiResearchIngestionResult } from "../external-api/api-research-ingestion-types"
 import type { ResearchSynthesisInput, ResearchSynthesisPreview, ResearchSynthesisRecord, ResearchSynthesisResult } from "../research-synthesis/research-synthesis-types"
 import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, CommanderCycleResult } from "../commander-cycle/commander-cycle-types"
+import type { ReasoningProviderStatus } from "../reasoning/reasoning-provider-config"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -23,6 +24,7 @@ export interface SubmitUserMessageResult {
 
 export interface RuntimeClient {
   command(name: "runtime.status"): Promise<RuntimeStatus>
+  command(name: "runtime.reasoning_provider_status"): Promise<ReasoningProviderStatus>
   command(name: "runtime.resume" | "runtime.start_new_session" | "runtime.view_records"): Promise<unknown>
   command(name: "runtime.shutdown", payload?: { reason?: string }): Promise<unknown>
   command(name: "runtime.get_mission", payload: { missionId: string }): Promise<MissionRecord | null>
@@ -196,6 +198,7 @@ export interface RuntimeClient {
 export interface RuntimeCommandEnvelope {
   command:
     | "runtime.status"
+    | "runtime.reasoning_provider_status"
     | "runtime.resume"
     | "runtime.start_new_session"
     | "runtime.view_records"

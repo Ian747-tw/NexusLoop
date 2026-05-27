@@ -89,6 +89,18 @@ export type ResearchProjectionSummary = {
   pending_count: number
 }
 
+export type ReasoningProviderStatusSummary = {
+  kind: "fake" | "minimax" | string
+  provider_id: string
+  connector_id?: string
+  model?: string
+  max_input_bytes: number
+  max_output_bytes: number
+  timeout_ms?: number
+  system_prompt_version?: string
+  enabled_for: string[]
+}
+
 export type MissionRecord = {
   mission_id: string
   intent_id?: string
@@ -832,6 +844,7 @@ export type UiState = {
   lastCommand?: string
   runtimeStatus?: RuntimeStatusSummary
   adapterStatus?: Record<string, unknown>
+  reasoningProvider?: ReasoningProviderStatusSummary
   researchProjection?: ResearchProjectionSummary
   missions?: MissionSummaryState
   missionExecution?: MissionExecutionState

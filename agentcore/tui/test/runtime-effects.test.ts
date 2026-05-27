@@ -2385,6 +2385,48 @@ describe("runtime UI effects", () => {
     expect(layoutSnapshot(state)).not.toContain("raw-stage-secret")
   })
 
+  test("runtime status renders bounded reasoning provider metadata without secrets", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "load-runtime-status" })
+
+    expect(state.reasoningProvider).toMatchObject({
+      kind: "fake",
+      provider_id: "fake-reasoning",
+      enabled_for: ["research_synthesis", "commander_cycle"],
+    })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("reasoning=fake:fake-reasoning")
+    expect(snapshot).toContain("reasoning_enabled=research_synthesis,commander_cycle")
+
+    const minimaxStatusRuntime: RuntimeClient = {
+      stream: () => runtime.stream(),
+      sendUserMessage: (message: string) => runtime.sendUserMessage(message),
+      sendCommand: (command: string) => runtime.sendCommand(command),
+      command: async (name: string) => {
+        if (name === "runtime.reasoning_provider_status") {
+          return {
+            kind: "minimax",
+            provider_id: "minimax-m2-7",
+            connector_id: "minimax-anthropic",
+            model: "MiniMax-M2.7",
+            max_input_bytes: 32768,
+            max_output_bytes: 16384,
+            enabled_for: ["research_synthesis"],
+            token: "token=reasoning-secret",
+          }
+        }
+        return runtime.command(name)
+      },
+    }
+    state = await applyRuntimeUiEffect(state, minimaxStatusRuntime, { type: "load-reasoning-provider-status" })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("reasoning=minimax:minimax-m2-7")
+    expect(snapshot).toContain("reasoning_connector=minimax-anthropic")
+    expect(snapshot).toContain("reasoning_model=MiniMax-M2.7")
+    expect(JSON.stringify(state)).not.toContain("reasoning-secret")
+    expect(snapshot).not.toContain("reasoning-secret")
+  })
+
   test("operator action staging fails closed for missing context bad indexes unsupported commands and write authority errors", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "stage", args: ["1"] })

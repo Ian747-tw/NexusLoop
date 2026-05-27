@@ -30,6 +30,8 @@ export { CommanderTargetContextService } from "./missions/commander-target-conte
 export { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
 export { ExternalApiRequestService } from "./external-api/api-request-service"
 export { ExternalApiResearchIngestionService } from "./external-api/api-research-ingestion-service"
+export { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
+export { defaultReasoningProviderConfig, readReasoningProviderConfigFromEnv, reasoningProviderStatus, validateReasoningProviderConfig } from "./reasoning/reasoning-provider-config"
 export { FakeResearchSynthesisProvider } from "./research-synthesis/research-synthesis-provider"
 export { ResearchSynthesisService } from "./research-synthesis/research-synthesis-service"
 export { FakeCommanderCycleProvider } from "./commander-cycle/commander-cycle-provider"
@@ -133,6 +135,7 @@ export type {
   ExternalApiRequestInput,
   ExternalApiRequestPreview,
   ExternalApiRequestResult,
+  ExternalApiInternalRequestResult,
 } from "./external-api/api-connector-types"
 export type {
   ExternalApiResearchIngestionInput,
@@ -168,6 +171,7 @@ export type {
   ResearchSynthesisResult,
 } from "./research-synthesis/research-synthesis-types"
 export type { ExternalApiHostResolver, ExternalApiResolvedAddress, ExternalApiTransport, ExternalApiTransportRequest, ExternalApiTransportResult } from "./external-api/api-transport"
+export type { ReasoningProviderConfig, ReasoningProviderKind, ReasoningProviderStatus, ReasoningProviderSurface } from "./reasoning/reasoning-provider-config"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"

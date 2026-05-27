@@ -53,6 +53,7 @@ import type {
   ResearchProjectionSummary,
   ResearchProjectionUiSummary,
   ResearchRecordsState,
+  ReasoningProviderStatusSummary,
   ResearchSynthesisPreviewSummary,
   ResearchSynthesisRecordSummary,
   ResearchSynthesisResultSummary,
@@ -95,6 +96,7 @@ const PREVIEW_LENGTH = 160
 export type RuntimeUiEffect =
   | KeySideEffect
   | { type: "load-runtime-status" }
+  | { type: "load-reasoning-provider-status" }
   | { type: "load-recent-missions"; limit?: number }
   | { type: "refresh-runtime-records" }
   | { type: "load-research-topics"; query?: string; limit?: number }
@@ -177,6 +179,8 @@ export async function applyRuntimeUiEffect(
     switch (effect.type) {
       case "load-runtime-status":
         return applyRuntimeStatus(state, await runtime.command("runtime.status"))
+      case "load-reasoning-provider-status":
+        return applyReasoningProviderStatus(state, await runtime.command("runtime.reasoning_provider_status"))
       case "load-recent-missions":
         return applyRecentMissions(state, await runtime.command("runtime.list_recent_missions", { limit: effect.limit ?? 5 }))
       case "refresh-runtime-records":
@@ -1934,10 +1938,12 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   const proposalSummary = readProposalSummary(value.proposals)
   const proposalBundleSummary = readProposalBundleSummary(value.proposalBundles)
   const workbenchSummary = readWorkbenchSummary(value.playbookDrafts)
+  const reasoningProvider = readReasoningProviderStatus(value.reasoningProvider)
   return {
     ...state,
     runtimeStatus,
     adapterStatus: isRecord(value.adapterStatus) ? redactUnknown(value.adapterStatus) : state.adapterStatus,
+    reasoningProvider: reasoningProvider ?? state.reasoningProvider,
     researchProjection: researchProjection ?? state.researchProjection,
     missions: missions ?? state.missions,
     reviews: reviewSummary ? { ...reviewsState(state), summary: reviewSummary } : state.reviews,
@@ -1951,6 +1957,16 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
       runtimeStatus: runtimeStatus.runtimeStatus,
       activeMissionId: missions?.last_mission_id ?? state.header.activeMissionId,
     },
+  }
+}
+
+function applyReasoningProviderStatus(state: UiState, value: unknown): UiState {
+  const reasoningProvider = readReasoningProviderStatus(value)
+  if (!reasoningProvider) throw new Error("runtime.reasoning_provider_status returned invalid result")
+  return {
+    ...state,
+    reasoningProvider,
+    runtimeCommandError: undefined,
   }
 }
 
@@ -2943,6 +2959,21 @@ function readMissionSummary(value: unknown, recent: MissionRecord[]): MissionSum
     cancelled_count: readNumber(value.cancelled_count, 0),
     last_mission_id: typeof value.last_mission_id === "string" ? redactText(value.last_mission_id) : undefined,
     recent,
+  }
+}
+
+function readReasoningProviderStatus(value: unknown): ReasoningProviderStatusSummary | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    kind: readString(value.kind, "fake"),
+    provider_id: readString(value.provider_id, "unknown"),
+    connector_id: typeof value.connector_id === "string" ? redactText(value.connector_id) : undefined,
+    model: typeof value.model === "string" ? redactText(value.model) : undefined,
+    max_input_bytes: readNumber(value.max_input_bytes, 0),
+    max_output_bytes: readNumber(value.max_output_bytes, 0),
+    timeout_ms: typeof value.timeout_ms === "number" ? value.timeout_ms : undefined,
+    system_prompt_version: typeof value.system_prompt_version === "string" ? redactText(value.system_prompt_version) : undefined,
+    enabled_for: Array.isArray(value.enabled_for) ? value.enabled_for.filter((item): item is string => typeof item === "string").map(redactText) : [],
   }
 }
 

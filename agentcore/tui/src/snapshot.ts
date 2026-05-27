@@ -93,6 +93,13 @@ function runtimeLines(state: UiState): string[] {
   if (state.adapterStatus) {
     out.push(`  adapter=${adapterSummary(state.adapterStatus)}`)
   }
+  if (state.reasoningProvider) {
+    const provider = state.reasoningProvider
+    out.push(`  reasoning=${provider.kind}:${provider.provider_id}`)
+    if (provider.connector_id) out.push(`  reasoning_connector=${provider.connector_id}`)
+    if (provider.model) out.push(`  reasoning_model=${provider.model}`)
+    out.push(`  reasoning_enabled=${provider.enabled_for.join(",") || "none"}`)
+  }
   if (state.researchProjection) {
     out.push(`  projection=${state.researchProjection.ok ? "ok" : "not-ok"} stale=${state.researchProjection.stale} pending=${state.researchProjection.pending_count}`)
     if (state.researchProjection.reason) out.push(`  projection_reason=${state.researchProjection.reason}`)
