@@ -4317,6 +4317,42 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(malformed)).not.toContain("malformed-secret")
     expect((await readEventKinds(malformedDir))).toContain("reasoning_provider_smoke_failed")
     await malformedServer.shutdown()
+
+    const policyTransport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(["smoke_evidence"])) }])
+    const policyDir = await tempProject()
+    await makeProject(policyDir, { approvedSpec: true })
+    const policyServer = new RuntimeServer({
+      projectDir: policyDir,
+      mode: "active",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([{ ...minimaxConnector(), allowed_methods: ["GET"] }]),
+      externalApiTransport: policyTransport,
+      externalApiEnv: {
+        NXL_MINIMAX_API_KEY: "raw-minimax-secret",
+        NXL_REAL_REASONING_PROVIDER_SMOKE: "1",
+      },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-m2-7",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis", "commander_cycle"],
+      },
+      researchProjectionMode: "disabled",
+    })
+    const policyHealth = await policyServer.command("runtime.reasoning_provider_health")
+    expect(policyHealth).toMatchObject({ status: "blocked" })
+    expect(JSON.stringify(policyHealth)).toContain("method not allowed: POST")
+    const policyPreview = await policyServer.command("runtime.preview_reasoning_provider_smoke", { surface: "research" })
+    expect(policyPreview).toMatchObject({ kind: "minimax" })
+    expect(JSON.stringify(policyPreview)).toContain("method not allowed: POST")
+    await policyServer.start()
+    const policyDryRun = await policyServer.command("runtime.execute_reasoning_provider_smoke", { surface: "research", dryRun: true })
+    expect(policyDryRun).toMatchObject({ ok: false, dry_run: true })
+    expect(JSON.stringify(policyDryRun)).toContain("method not allowed: POST")
+    expect(policyTransport.requests).toHaveLength(0)
+    await policyServer.shutdown()
   })
 
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {

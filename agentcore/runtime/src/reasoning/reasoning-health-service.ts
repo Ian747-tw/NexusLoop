@@ -213,6 +213,10 @@ export class ReasoningProviderHealthService {
         redacted_detail: messagesPath ? `path=${redactText(messagesPath)}` : undefined,
       },
       {
+        name: "request_policy",
+        ...this.requestPolicyCheck(connector),
+      },
+      {
         name: "default_headers",
         ok: authHeaders.length === 0,
         severity: authHeaders.length === 0 ? "info" : "error",
@@ -220,6 +224,35 @@ export class ReasoningProviderHealthService {
         redacted_detail: authHeaders.length === 0 ? undefined : `headers=${authHeaders.map(redactText).join(", ")}`,
       },
     ]
+  }
+
+  private requestPolicyCheck(connector: ExternalApiConnector): Omit<ReasoningProviderHealthCheck, "name"> {
+    try {
+      const preview = this.options.requestService.preview({
+        connector_id: connector.connector_id,
+        method: "POST",
+        path: minimaxMessagesPath(connector),
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(minimaxSmokeRequest(this.options.config, this.options.config.enabled_for[0] ?? "research_synthesis")),
+        requested_by: "reasoning-health",
+      })
+      return {
+        ok: preview.allowed,
+        severity: preview.allowed ? "info" : "error",
+        summary: preview.allowed ? "connector policy allows MiniMax smoke request" : "connector policy blocks MiniMax smoke request",
+        redacted_detail: preview.blockers.length > 0 ? preview.blockers.join("; ") : undefined,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        severity: "error",
+        summary: "connector policy preview failed",
+        redacted_detail: boundedText(error instanceof Error ? error.message : String(error), ERROR_PREVIEW_BYTES),
+      }
+    }
   }
 
   private fakePreview(surface: ReasoningProviderSurface): ReasoningProviderSmokePreview {
@@ -247,8 +280,27 @@ export class ReasoningProviderHealthService {
     for (const ref of connector?.credential_refs ?? []) {
       if (!this.env[ref.env_name]) blockers.push(`credential env ref is missing: ${ref.name}`)
     }
+    if (connector) {
+      try {
+        const requestPreview = this.options.requestService.preview({
+          connector_id: connector.connector_id,
+          method: "POST",
+          path: minimaxMessagesPath(connector),
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body,
+          requested_by: "reasoning-smoke-preview",
+        })
+        if (!requestPreview.allowed) blockers.push(...requestPreview.blockers)
+      } catch (error) {
+        blockers.push(error instanceof Error ? error.message : String(error))
+      }
+    }
     if (this.env[REAL_SMOKE_GATE] !== "1") blockers.push(`${REAL_SMOKE_GATE}=1 is required for real MiniMax smoke`)
     if (byteLength(body) > this.options.config.max_input_bytes) blockers.push(`smoke request exceeds max_input_bytes: ${this.options.config.max_input_bytes}`)
+    const dedupedBlockers = [...new Set(blockers.map(redactText))]
     return redactValue({
       provider_id: this.options.config.provider_id,
       kind: "minimax",
@@ -258,7 +310,7 @@ export class ReasoningProviderHealthService {
       model: this.options.config.model,
       prompt_bytes: byteLength(body),
       max_output_bytes: this.options.config.max_output_bytes,
-      blockers: blockers.map(redactText),
+      blockers: dedupedBlockers,
       redacted_request_preview: boundedText(JSON.stringify(redactedRequestPreview(request)), SMOKE_PREVIEW_BYTES),
     })
   }
