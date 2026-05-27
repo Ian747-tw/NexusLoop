@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -46,6 +46,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly externalApiAudit: ExternalApiAuditRecordSummary[] = []
   private readonly externalApiResearchIngestions: ExternalApiResearchIngestionRecordSummary[] = []
   private readonly researchSyntheses: ResearchSynthesisResultSummary[] = []
+  private readonly commanderCycles: CommanderCycleResultSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -298,6 +299,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getResearchSynthesis(String(payload.synthesisId ?? payload.synthesis_id ?? ""))
       case "runtime.list_research_syntheses":
         return this.listResearchSyntheses(readLimit(payload.limit, 20))
+      case "runtime.preview_commander_cycle":
+        return this.previewCommanderCycle(payload)
+      case "runtime.execute_commander_cycle":
+        return this.executeCommanderCycle(payload)
+      case "runtime.get_commander_cycle":
+        return this.getCommanderCycle(String(payload.cycleId ?? payload.cycle_id ?? ""))
+      case "runtime.list_commander_cycles":
+        return this.listCommanderCycles(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -538,6 +547,115 @@ export class FakeRuntimeClient implements RuntimeClient {
       proposal_ids: item.proposal_ids,
       title: item.title,
       summary_preview: preview(item.summary),
+      created_at: item.created_at,
+      requested_by: item.requested_by,
+    }))
+  }
+
+  private previewCommanderCycle(payload: Record<string, unknown>): CommanderCyclePreviewSummary {
+    const topicId = optionalString(payload.topicId ?? payload.topic_id)
+    const missionId = optionalString(payload.missionId ?? payload.mission_id)
+    const objective = optionalString(payload.objective)
+    if (!topicId && !missionId) throw new Error("topic or mission is required")
+    if (topicId && !this.researchTopics().some((topic) => topic.id === topicId)) throw new Error(`topic not found: ${redactText(topicId)}`)
+    if (missionId && !this.missions.some((mission) => mission.mission_id === missionId)) throw new Error(`mission not found: ${redactText(missionId)}`)
+    const notes = topicId ? this.searchNotes(topicId, "") : []
+    const syntheses = topicId ? this.researchSyntheses.filter((item) => item.topic_id === topicId) : []
+    const evidenceIds = topicId ? ["fake-source-1", ...notes.map((note) => note.id)] : []
+    const context = redactText(`topic=${topicId ?? "none"}\nmission=${missionId ?? "none"}\nobjective=${objective ?? ""}\nnotes=${notes.map((note) => note.content).join("\n")}\nsyntheses=${syntheses.map((item) => item.synthesis_id).join(",")}`)
+    return {
+      objective: objective ? redactText(objective) : undefined,
+      topic_id: topicId ? redactText(topicId) : undefined,
+      mission_id: missionId ? redactText(missionId) : undefined,
+      context_counts: {
+        sources: topicId ? 1 : 0,
+        notes: notes.length,
+        artifacts: 0,
+        syntheses: syntheses.length,
+        proposals: this.proposals.length,
+        reviews: this.reviews.length,
+        queues: this.proposals.length + this.proposalBundles.length,
+      },
+      context_bytes: new TextEncoder().encode(context).byteLength,
+      max_context_bytes: readNumber(payload.maxContextBytes ?? payload.max_context_bytes, 49152),
+      included_evidence_ids: evidenceIds.map(redactText),
+      included_synthesis_ids: syntheses.map((item) => item.synthesis_id),
+      blockers: topicId && evidenceIds.length === 0 && syntheses.length === 0 ? ["topic has no evidence or syntheses for commander cycle"] : [],
+      redacted_context_preview: preview(context),
+    }
+  }
+
+  private executeCommanderCycle(payload: Record<string, unknown>): CommanderCycleResultSummary {
+    const cyclePreview = this.previewCommanderCycle(payload)
+    if (cyclePreview.blockers.length > 0) throw new Error(cyclePreview.blockers.join("; "))
+    this.sequence += 1
+    const cycleId = `fake-cycle-${this.sequence}`
+    const action = {
+      title: "Operator checkpoint",
+      summary: "Review commander cycle recommendation.",
+      action_kind: "operator_checkpoint",
+      rationale: "Fake commander cycle preserves operator review and apply authority.",
+      evidence_ids: cyclePreview.included_evidence_ids.slice(0, 3),
+      synthesis_ids: cyclePreview.included_synthesis_ids.slice(0, 3),
+      related_target_type: cyclePreview.mission_id ? "mission" : "topic",
+      related_target_id: cyclePreview.mission_id ?? cyclePreview.topic_id,
+    }
+    const result: CommanderCycleResultSummary = {
+      cycle_id: cycleId,
+      provider_id: "fake-commander-cycle",
+      objective: cyclePreview.objective,
+      topic_id: cyclePreview.topic_id,
+      mission_id: cyclePreview.mission_id,
+      title: `Commander cycle for ${cyclePreview.topic_id ?? cyclePreview.mission_id}`,
+      summary: redactText(`Deterministic commander cycle reviewed ${cyclePreview.included_evidence_ids.length} evidence records.`),
+      findings: [`Evidence records considered: ${cyclePreview.included_evidence_ids.length}`],
+      risks: ["Fake provider does not apply proposals."],
+      recommended_actions: [action],
+      proposal_ids: [],
+      context_hash: "fake-cycle-context-hash",
+      output_hash: "fake-cycle-output-hash",
+      created_at: new Date(0).toISOString(),
+      requested_by: redactText(String(payload.requestedBy ?? payload.requested_by ?? "operator")),
+    }
+    if (payload.createProposals === true || payload.create_proposals === true || payload.createBundle === true || payload.create_bundle === true) {
+      const proposal = this.createProposal({
+        actionKind: "operator_checkpoint",
+        title: action.title,
+        summary: `${action.summary}\n\ncycle_id: ${cycleId}\nevidence_ids: ${action.evidence_ids.join(", ") || "none"}\nsynthesis_ids: ${action.synthesis_ids.join(", ") || "none"}`,
+        proposedBy: result.requested_by,
+        actionPayload: { cycle_id: cycleId, topic_id: result.topic_id, mission_id: result.mission_id, evidence_ids: action.evidence_ids, synthesis_ids: action.synthesis_ids },
+      })
+      result.proposal_ids = [proposal.proposal_id]
+    }
+    if ((payload.createBundle === true || payload.create_bundle === true) && (result.proposal_ids?.length ?? 0) > 0) {
+      const bundle = this.createProposalBundle({
+        title: `Commander cycle ${cycleId}`,
+        summary: `Bundle for ${cycleId}`,
+        createdBy: result.requested_by,
+      })
+      for (const proposalId of result.proposal_ids ?? []) this.addProposalToBundle(bundle.bundle_id, proposalId)
+      result.bundle_id = bundle.bundle_id
+    }
+    this.commanderCycles.unshift(result)
+    return result
+  }
+
+  private getCommanderCycle(cycleId: string): CommanderCycleResultSummary | null {
+    const id = requiredString(cycleId, "cycleId")
+    return this.commanderCycles.find((item) => item.cycle_id === id) ?? null
+  }
+
+  private listCommanderCycles(limit: number): CommanderCycleRecordSummary[] {
+    return this.commanderCycles.slice(0, limit).map((item) => ({
+      cycle_id: item.cycle_id,
+      provider_id: item.provider_id,
+      objective_preview: item.objective ? preview(item.objective) : undefined,
+      topic_id: item.topic_id,
+      mission_id: item.mission_id,
+      title: item.title,
+      summary_preview: preview(item.summary),
+      proposal_ids: item.proposal_ids,
+      bundle_id: item.bundle_id,
       created_at: item.created_at,
       requested_by: item.requested_by,
     }))

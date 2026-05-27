@@ -431,6 +431,107 @@ class ResearchSynthesisRuntime implements RuntimeClient {
   }
 }
 
+class CommanderCycleRuntime implements RuntimeClient {
+  readonly calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+  private readonly cycles: unknown[] = []
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+    this.calls.push({ name, payload })
+    switch (name) {
+      case "runtime.preview_commander_cycle":
+        return {
+          objective: payload?.objective,
+          topic_id: payload?.topicId,
+          mission_id: payload?.missionId,
+          context_counts: { sources: 1, notes: 1, artifacts: 0, syntheses: 1, proposals: 0, reviews: 0, queues: 0 },
+          context_bytes: 192,
+          max_context_bytes: 49152,
+          included_evidence_ids: ["note-1"],
+          included_synthesis_ids: ["synthesis-1"],
+          blockers: [],
+          redacted_context_preview: "context token=context-secret",
+        }
+      case "runtime.execute_commander_cycle": {
+        const result = {
+          cycle_id: "cycle-1",
+          provider_id: "fake-commander-cycle",
+          objective: payload?.objective,
+          topic_id: payload?.topicId,
+          mission_id: payload?.missionId,
+          title: "Cycle token=title-secret",
+          summary: "summary token=summary-secret",
+          findings: ["finding token=finding-secret"],
+          risks: ["bounded risk"],
+          recommended_actions: [{
+            title: "Checkpoint",
+            summary: "operator checkpoint",
+            action_kind: "operator_checkpoint",
+            rationale: "keep review/apply authority",
+            evidence_ids: ["note-1"],
+            synthesis_ids: ["synthesis-1"],
+          }],
+          proposal_ids: payload?.createProposals ? ["proposal-cycle-1"] : [],
+          bundle_id: payload?.createBundle ? "bundle-cycle-1" : undefined,
+          context_hash: "context-hash",
+          output_hash: "output-hash",
+          created_at: "1970-01-01T00:00:00.000Z",
+          requested_by: "operator token=requester-secret",
+        }
+        this.cycles.unshift({
+          cycle_id: result.cycle_id,
+          provider_id: result.provider_id,
+          objective_preview: result.objective,
+          topic_id: result.topic_id,
+          mission_id: result.mission_id,
+          title: result.title,
+          summary_preview: result.summary,
+          proposal_ids: result.proposal_ids,
+          bundle_id: result.bundle_id,
+          created_at: result.created_at,
+          requested_by: result.requested_by,
+        })
+        return result
+      }
+      case "runtime.get_commander_cycle":
+        return this.cycles.length > 0
+          ? {
+            cycle_id: payload?.cycleId,
+            provider_id: "fake-commander-cycle",
+            objective: "loaded objective",
+            topic_id: "topic-1",
+            title: "Loaded cycle",
+            summary: "loaded summary",
+            findings: ["loaded finding"],
+            risks: [],
+            recommended_actions: [],
+            proposal_ids: ["proposal-cycle-1"],
+            bundle_id: "bundle-cycle-1",
+            context_hash: "context-hash",
+            output_hash: "output-hash",
+            created_at: "1970-01-01T00:00:00.000Z",
+            requested_by: "operator",
+          }
+          : null
+      case "runtime.list_commander_cycles":
+        return this.cycles
+      case "runtime.proposal_status":
+        return { proposed_count: 1, review_requested_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0, applied_count: 0, last_proposal_id: "proposal-cycle-1" }
+      case "runtime.list_commander_proposals":
+        return payload?.limit ? [{ proposal_id: "proposal-cycle-1", action_kind: "operator_checkpoint", title: "Checkpoint", summary: "proposal", proposed_by: "operator", status: "proposed", created_at: "1970-01-01T00:00:00.000Z", updated_at: "1970-01-01T00:00:00.000Z" }] : []
+      case "runtime.bundle_status":
+        return { open_count: 1, ready_count: 0, review_requested_count: 0, approved_count: 0, rejected_count: 0, applied_count: 0, partially_applied_count: 0, cancelled_count: 0, last_bundle_id: "bundle-cycle-1" }
+      case "runtime.list_proposal_bundles":
+        return payload?.limit ? [{ bundle_id: "bundle-cycle-1", title: "Cycle bundle", summary: "bundle", status: "open", proposal_ids: ["proposal-cycle-1"], review_ids: [], created_by: "operator", created_at: "1970-01-01T00:00:00.000Z", updated_at: "1970-01-01T00:00:00.000Z" }] : []
+      default:
+        return { ok: true }
+    }
+  }
+}
+
 class FailingResearchRuntime extends ResearchRuntime {
   async command(name: string): Promise<unknown> {
     if (name.startsWith("research.")) throw new Error("research failed token=research-secret")
@@ -2484,6 +2585,69 @@ describe("runtime UI effects", () => {
     expect(state.researchSynthesis?.commandError).toContain("topicId is required")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "synthesize", args: ["topic-1"] })
+    expect(JSON.stringify(state)).not.toContain("title-secret")
+    expect(JSON.stringify(state)).not.toContain("summary-secret")
+    expect(JSON.stringify(state)).not.toContain("finding-secret")
+    expect(JSON.stringify(state)).not.toContain("requester-secret")
+  })
+
+  test("commander cycle slash commands render preview result proposals bundle and recent rows", async () => {
+    const runtime = new CommanderCycleRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "cycle-preview",
+      args: ["topic=topic-1", "objective", "token=objective-secret"],
+    })
+    expect(state.commanderCycle?.preview).toMatchObject({ topic_id: "topic-1", context_bytes: 192 })
+    expect(JSON.stringify(state)).not.toContain("context-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "cycle",
+      args: ["topic=topic-1", "inspect"],
+    })
+    expect(state.commanderCycle?.selected).toMatchObject({ cycle_id: "cycle-1", proposal_ids: [] })
+    expect(state.commanderCycle?.recent.at(0)).toMatchObject({ cycle_id: "cycle-1" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Commander cycle")
+    expect(snapshot).toContain("selected_cycle=cycle-1")
+    expect(snapshot).not.toContain("summary-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "cycle-proposals",
+      args: ["topic=topic-1"],
+    })
+    expect(state.commanderCycle?.selected?.proposal_ids).toEqual(["proposal-cycle-1"])
+    expect(state.proposals?.recent.at(0)).toMatchObject({ proposal_id: "proposal-cycle-1", status: "proposed" })
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "cycle-bundle",
+      args: ["topic=topic-1"],
+    })
+    expect(state.commanderCycle?.selected?.bundle_id).toBe("bundle-cycle-1")
+    expect(state.proposalBundles?.recent.at(0)).toMatchObject({ bundle_id: "bundle-cycle-1", status: "open" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cycles" })
+    expect(state.commanderCycle?.recent.at(0)).toMatchObject({ cycle_id: "cycle-1" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cycle-show", args: ["cycle-1"] })
+    expect(state.commanderCycle?.selected).toMatchObject({ cycle_id: "cycle-1" })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("proposals=proposal-cycle-1")
+    expect(snapshot).toContain("bundle=bundle-cycle-1")
+  })
+
+  test("commander cycle missing args and secret-looking output are redacted", async () => {
+    const runtime = new CommanderCycleRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cycle-preview" })
+    expect(state.commanderCycle?.commandError).toContain("topic or mission is required")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cycle", args: ["topic=topic-1"] })
     expect(JSON.stringify(state)).not.toContain("title-secret")
     expect(JSON.stringify(state)).not.toContain("summary-secret")
     expect(JSON.stringify(state)).not.toContain("finding-secret")

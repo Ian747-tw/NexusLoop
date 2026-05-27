@@ -12,6 +12,7 @@ import type { CommanderTargetContext, CommanderTargetType } from "../missions/co
 import type { ExternalApiAuditRecord, ExternalApiConnectorSummary, ExternalApiRequestInput, ExternalApiRequestPreview, ExternalApiRequestResult } from "../external-api/api-connector-types"
 import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPreview, ExternalApiResearchIngestionRecord, ExternalApiResearchIngestionResult } from "../external-api/api-research-ingestion-types"
 import type { ResearchSynthesisInput, ResearchSynthesisPreview, ResearchSynthesisRecord, ResearchSynthesisResult } from "../research-synthesis/research-synthesis-types"
+import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, CommanderCycleResult } from "../commander-cycle/commander-cycle-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -157,6 +158,30 @@ export interface RuntimeClient {
   }): Promise<ResearchSynthesisResult>
   command(name: "runtime.get_research_synthesis", payload: { synthesisId: string } | { synthesis_id: string }): Promise<ResearchSynthesisResult | null>
   command(name: "runtime.list_research_syntheses", payload?: { limit?: number }): Promise<ResearchSynthesisRecord[]>
+  command(name: "runtime.preview_commander_cycle", payload: CommanderCycleInput | {
+    objective?: string
+    topicId?: string
+    missionId?: string
+    providerId?: string
+    createProposals?: boolean
+    createBundle?: boolean
+    requestedBy: string
+    maxContextBytes?: number
+    maxOutputBytes?: number
+  }): Promise<CommanderCyclePreview>
+  command(name: "runtime.execute_commander_cycle", payload: CommanderCycleInput | {
+    objective?: string
+    topicId?: string
+    missionId?: string
+    providerId?: string
+    createProposals?: boolean
+    createBundle?: boolean
+    requestedBy: string
+    maxContextBytes?: number
+    maxOutputBytes?: number
+  }): Promise<CommanderCycleResult>
+  command(name: "runtime.get_commander_cycle", payload: { cycleId: string } | { cycle_id: string }): Promise<CommanderCycleResult | null>
+  command(name: "runtime.list_commander_cycles", payload?: { limit?: number }): Promise<CommanderCycleRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -237,6 +262,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.execute_research_synthesis"
     | "runtime.get_research_synthesis"
     | "runtime.list_research_syntheses"
+    | "runtime.preview_commander_cycle"
+    | "runtime.execute_commander_cycle"
+    | "runtime.get_commander_cycle"
+    | "runtime.list_commander_cycles"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

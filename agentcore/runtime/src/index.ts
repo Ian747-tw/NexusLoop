@@ -32,6 +32,8 @@ export { ExternalApiRequestService } from "./external-api/api-request-service"
 export { ExternalApiResearchIngestionService } from "./external-api/api-research-ingestion-service"
 export { FakeResearchSynthesisProvider } from "./research-synthesis/research-synthesis-provider"
 export { ResearchSynthesisService } from "./research-synthesis/research-synthesis-service"
+export { FakeCommanderCycleProvider } from "./commander-cycle/commander-cycle-provider"
+export { CommanderCycleService } from "./commander-cycle/commander-cycle-service"
 export { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"
@@ -139,6 +141,16 @@ export type {
   ExternalApiResearchIngestionResult,
   ExternalApiResearchResponseSelector,
 } from "./external-api/api-research-ingestion-types"
+export type {
+  CommanderCycleConfidence,
+  CommanderCycleActionKind,
+  CommanderCycleRecommendedAction,
+  CommanderCycleInput,
+  CommanderCycleContextCounts,
+  CommanderCyclePreview,
+  CommanderCycleResult,
+  CommanderCycleRecord,
+} from "./commander-cycle/commander-cycle-types"
 export type {
   ResearchSynthesisProvider,
   ResearchSynthesisProviderEvidence,
