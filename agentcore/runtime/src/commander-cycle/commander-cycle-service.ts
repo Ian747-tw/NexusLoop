@@ -238,7 +238,7 @@ export class CommanderCycleService {
     }
     if (input.objective) contextParts.push(`# Objective\n${input.objective}`)
 
-    const syntheses = synthesesFor(events, input.topic_id)
+    const syntheses = input.topic_id ? synthesesFor(events, input.topic_id) : []
     const proposals = await this.options.proposalRegistry.listAllProposals()
     const bundles = await this.options.proposalBundleRegistry.listAllBundles()
     const queueItems: CommanderCycleProviderQueueItem[] = [
@@ -446,8 +446,9 @@ export class CommanderCycleService {
 }
 
 function synthesesFor(events: Record<string, unknown>[], topicId?: string): CommanderCycleProviderSynthesis[] {
+  if (!topicId) return []
   return events
-    .filter((event) => event.kind === "research_synthesis_created" && (!topicId || event.topic_id === topicId))
+    .filter((event) => event.kind === "research_synthesis_created" && event.topic_id === topicId)
     .map((event) => ({
       synthesis_id: redactText(String(event.synthesis_id ?? "")),
       title: boundedText(String(event.title ?? ""), 512),

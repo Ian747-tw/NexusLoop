@@ -478,9 +478,11 @@ class InventingEvidenceSynthesisProvider implements ResearchSynthesisProvider {
 class CountingCommanderCycleProvider implements CommanderCycleProvider {
   readonly provider_id = "counting-cycle"
   calls = 0
+  lastInput: CommanderCycleProviderInput | null = null
 
   async run(input: CommanderCycleProviderInput): Promise<CommanderCycleProviderResult> {
     this.calls += 1
+    this.lastInput = input
     const evidenceIds = [...input.sources, ...input.notes, ...input.artifacts].map((item) => item.evidence_id)
     const synthesisIds = input.syntheses.map((item) => item.synthesis_id)
     return {
@@ -3771,6 +3773,54 @@ describe("RuntimeServer core", () => {
     await expect(server.command("runtime.preview_commander_cycle", { topicId: "missing", requestedBy: "operator" })).rejects.toThrow("topic not found")
     const empty = await server.command("runtime.preview_commander_cycle", { topicId: "topic_empty", requestedBy: "operator" }) as { blockers: string[] }
     expect(empty.blockers).toContain("topic has no evidence or syntheses for commander cycle")
+  })
+
+  test("commander cycle does not include unrelated syntheses for mission-only context", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await appendJsonlLine(dir, {
+      kind: "research_synthesis_created",
+      synthesis_id: "synth_unrelated",
+      topic_id: "topic_unrelated",
+      provider_id: "fake",
+      title: "Unrelated synthesis",
+      summary: "Unrelated summary",
+      findings: [],
+      risks: [],
+      open_questions: [],
+      recommended_actions: [],
+      context_hash: "context",
+      output_hash: "output",
+      created_at: "2026-05-25T00:00:00.000Z",
+      requested_by: "operator",
+    })
+    const provider = new CountingCommanderCycleProvider()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      commanderCycleProvider: provider,
+      commanderCycleId: () => "cycle_mission_only",
+    })
+    await server.start()
+    const created = await server.submitUserMessage("mission-only cycle objective")
+    const missionId = created.missionId
+
+    const preview = await server.command("runtime.preview_commander_cycle", {
+      missionId,
+      requestedBy: "operator",
+    }) as { context_counts: Record<string, number>; included_synthesis_ids: string[]; redacted_context_preview: string }
+    expect(preview.context_counts.syntheses).toBe(0)
+    expect(preview.included_synthesis_ids).toEqual([])
+    expect(preview.redacted_context_preview).not.toContain("synth_unrelated")
+
+    const result = await server.command("runtime.execute_commander_cycle", {
+      missionId,
+      requestedBy: "operator",
+    }) as { recommended_actions: Array<{ synthesis_ids?: string[] }> }
+    expect(provider.lastInput?.syntheses).toEqual([])
+    expect(result.recommended_actions[0]?.synthesis_ids ?? []).toEqual([])
+    await server.shutdown()
   })
 
   test("commander cycle executes fake provider and writes completed event without proposals by default", async () => {
