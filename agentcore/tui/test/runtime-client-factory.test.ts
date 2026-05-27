@@ -452,6 +452,57 @@ describe("TUI runtime client factory", () => {
     await client.runtime.shutdown()
   })
 
+  test("real runtime client path exercises opencode handoff with fake adapter", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    const proposal = await client.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "OpenCode handoff",
+      summary: "send approved work to OpenCode",
+      proposedBy: "tester",
+      actionPayload: {
+        objective: "implement handoff from approved proposal",
+        evidence_ids: ["evidence-1"],
+        requested_executor: "opencode",
+      },
+    }) as { proposal_id: string }
+    await expect(client.command("runtime.preview_opencode_handoff", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      proposal_id: proposal.proposal_id,
+      eligible: false,
+    })
+    const reviewed = await client.command("runtime.request_proposal_review", {
+      proposalId: proposal.proposal_id,
+      requestedBy: "tester",
+    }) as { review_id: string }
+    await client.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "tester", reason: "ok" })
+    await expect(client.command("runtime.preview_opencode_handoff", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      proposal_id: proposal.proposal_id,
+      eligible: true,
+      review_status: "approved",
+    })
+    await expect(client.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "tester", dryRun: true })).resolves.toMatchObject({
+      handoff_id: "dry-run",
+      sent: false,
+      dry_run: true,
+    })
+    const result = await client.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "tester" }) as { handoff_id: string; mission_id: string }
+    expect(result).toMatchObject({ proposal_id: proposal.proposal_id, sent: true })
+    await expect(client.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      status: "applied",
+      application_result: expect.stringContaining(result.handoff_id),
+    })
+    await expect(client.command("runtime.list_opencode_handoffs")).resolves.toMatchObject([
+      { handoff_id: result.handoff_id, proposal_id: proposal.proposal_id, mission_id: result.mission_id },
+    ])
+
+    await client.runtime.shutdown()
+  })
+
   test("real runtime client path exercises proposal bundle create add review approve and apply with fake adapter", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)

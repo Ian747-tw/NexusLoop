@@ -5,6 +5,7 @@ export type ProposalActionKind =
   | "release_claim"
   | "record_progress"
   | "submit_result"
+  | "opencode_handoff"
   | "operator_checkpoint"
   | "other"
 

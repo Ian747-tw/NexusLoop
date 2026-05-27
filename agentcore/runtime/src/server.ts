@@ -44,6 +44,8 @@ import { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
 import { defaultReasoningProviderConfig, reasoningProviderStatus, validateReasoningProviderConfig, type ReasoningProviderConfig, type ReasoningProviderStatus } from "./reasoning/reasoning-provider-config"
 import { ReasoningProviderHealthService } from "./reasoning/reasoning-health-service"
 import type { ReasoningProviderHealth, ReasoningProviderSmokeInput, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "./reasoning/reasoning-health-types"
+import { OpenCodeHandoffService } from "./opencode/opencode-handoff-service"
+import type { OpenCodeHandoffInput, OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "./opencode/opencode-handoff-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -88,6 +90,8 @@ export interface RuntimeServerOptions {
   commanderCycleProvider?: CommanderCycleProvider
   commanderCycleNow?: () => Date
   commanderCycleId?: () => string
+  opencodeHandoffNow?: () => Date
+  opencodeHandoffId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -140,6 +144,8 @@ export class RuntimeServer {
   private readonly commanderCycleProvider: CommanderCycleProvider
   private readonly commanderCycleNow?: () => Date
   private readonly commanderCycleId?: () => string
+  private readonly opencodeHandoffNow?: () => Date
+  private readonly opencodeHandoffId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -180,6 +186,8 @@ export class RuntimeServer {
     this.commanderCycleProvider = options.commanderCycleProvider ?? (minimaxProvider ?? new FakeCommanderCycleProvider())
     this.commanderCycleNow = options.commanderCycleNow
     this.commanderCycleId = options.commanderCycleId
+    this.opencodeHandoffNow = options.opencodeHandoffNow
+    this.opencodeHandoffId = options.opencodeHandoffId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -542,6 +550,14 @@ export class RuntimeServer {
         return this.getCommanderCycle(requiredString(payload.cycleId ?? payload.cycle_id, "cycleId"))
       case "runtime.list_commander_cycles":
         return this.listCommanderCycles(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.preview_opencode_handoff":
+        return this.previewOpenCodeHandoff(readOpenCodeHandoffInput(payload))
+      case "runtime.execute_opencode_handoff":
+        return this.executeOpenCodeHandoff(readOpenCodeHandoffInput(payload))
+      case "runtime.list_opencode_handoffs":
+        return this.listOpenCodeHandoffs(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.get_opencode_handoff":
+        return this.getOpenCodeHandoff(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -652,6 +668,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) {
       throw new Error("runtime must be started before accepting user messages")
     }
+    const sent = await this.createAndSendMission(message)
+    return { accepted: true, missionId: sent.mission_id, intentId: sent.intent_id }
+  }
+
+  private async createAndSendMission(message: string): Promise<{ mission_id: string; intent_id: string }> {
     const { intent, mission } = await this.missionRegistry.createUserMessageMission(message)
     const packet = this.missionRegistry.createPacket(mission, message)
     try {
@@ -668,7 +689,7 @@ export class RuntimeServer {
       throw new Error(`mission ${mission.mission_id} adapter delivery succeeded but sent-state persistence failed: ${redactValue(message)}`)
     }
     this.eventBus.emit({ type: "ExecutorLifecycle", phase: "mission-packet-sent", message: `Mission ${mission.mission_id} sent to adapter` })
-    return { accepted: true, missionId: mission.mission_id, intentId: intent.intent_id }
+    return { mission_id: mission.mission_id, intent_id: intent.intent_id }
   }
 
   async getMission(missionId: string): Promise<MissionRecord | null> {
@@ -962,6 +983,23 @@ export class RuntimeServer {
 
   async listCommanderCycles(limit = 20): Promise<CommanderCycleRecord[]> {
     return this.commanderCycleService().list(limit)
+  }
+
+  async previewOpenCodeHandoff(input: OpenCodeHandoffInput): Promise<OpenCodeHandoffPreview> {
+    return this.opencodeHandoffService().preview(input)
+  }
+
+  async executeOpenCodeHandoff(input: OpenCodeHandoffInput): Promise<OpenCodeHandoffResult> {
+    this.requireOpenCodeHandoffRuntime("runtime.execute_opencode_handoff")
+    return this.opencodeHandoffService().execute(input)
+  }
+
+  async listOpenCodeHandoffs(limit = 20): Promise<OpenCodeHandoffRecord[]> {
+    return this.opencodeHandoffService().list(limit)
+  }
+
+  async getOpenCodeHandoff(handoffId: string): Promise<OpenCodeHandoffResult | null> {
+    return this.opencodeHandoffService().get(handoffId)
   }
 
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
@@ -1271,6 +1309,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before reasoning provider smoke")
   }
 
+  private requireOpenCodeHandoffRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before opencode handoff writes")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1291,6 +1334,17 @@ export class RuntimeServer {
       commanderPlaybookDraftRegistry: this.commanderPlaybookDraftRegistry,
       applyService: this.commanderApplyService(),
       now: this.commanderQueueNow,
+    })
+  }
+
+  private opencodeHandoffService(): OpenCodeHandoffService {
+    return new OpenCodeHandoffService({
+      eventStore: this.eventStore,
+      proposalRegistry: this.proposalRegistry,
+      reviewRegistry: this.reviewRegistry,
+      sendMission: (objective) => this.createAndSendMission(objective),
+      now: this.opencodeHandoffNow,
+      idFactory: this.opencodeHandoffId ? () => this.opencodeHandoffId!() : undefined,
     })
   }
 
@@ -1531,6 +1585,14 @@ function readCommanderCycleInput(payload: Record<string, unknown>): CommanderCyc
     requested_by: requiredString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
     max_context_bytes: optionalPositiveInteger(payload.maxContextBytes ?? payload.max_context_bytes, "maxContextBytes", 96 * 1024),
     max_output_bytes: optionalPositiveInteger(payload.maxOutputBytes ?? payload.max_output_bytes, "maxOutputBytes", 32 * 1024),
+  }
+}
+
+function readOpenCodeHandoffInput(payload: Record<string, unknown>): OpenCodeHandoffInput {
+  return {
+    proposal_id: requiredString(payload.proposalId ?? payload.proposal_id, "proposalId"),
+    requested_by: optionalString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+    dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
   }
 }
 

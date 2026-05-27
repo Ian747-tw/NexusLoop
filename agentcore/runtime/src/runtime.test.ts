@@ -1279,6 +1279,207 @@ describe("RuntimeServer core", () => {
     await statusServer.shutdown()
   })
 
+  test("opencode handoff preview gates proposal action review approval and payload shape", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    await expect(server.command("runtime.preview_opencode_handoff", { proposalId: "missing-proposal" })).resolves.toMatchObject({
+      proposal_id: "missing-proposal",
+      eligible: false,
+      blockers: expect.arrayContaining(["commander proposal not found: missing-proposal"]),
+      would_create_mission: false,
+    })
+
+    const wrongKind = await server.command("runtime.create_commander_proposal", {
+      actionKind: "operator_checkpoint",
+      title: "checkpoint",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "do work" },
+    }) as { proposal_id: string }
+    await expect(server.command("runtime.preview_opencode_handoff", { proposalId: wrongKind.proposal_id })).resolves.toMatchObject({
+      eligible: false,
+      blockers: expect.arrayContaining(["proposal action_kind must be opencode_handoff", "proposal requires linked review", "proposal must be approved before handoff"]),
+    })
+
+    const handoffProposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: {
+        objective: "implement bounded feature",
+        source_cycle_id: "cycle-1",
+        source_synthesis_id: "synthesis-1",
+        evidence_ids: ["evidence-1"],
+        requested_executor: "opencode",
+        priority: "normal",
+      },
+    }) as { proposal_id: string }
+    await expect(server.command("runtime.preview_opencode_handoff", { proposalId: handoffProposal.proposal_id })).resolves.toMatchObject({
+      eligible: false,
+      action_kind: "opencode_handoff",
+      proposal_status: "proposed",
+      blockers: expect.arrayContaining(["proposal requires linked review", "proposal must be approved before handoff"]),
+    })
+
+    const reviewed = await server.command("runtime.request_proposal_review", { proposalId: handoffProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await expect(server.command("runtime.preview_opencode_handoff", { proposalId: handoffProposal.proposal_id })).resolves.toMatchObject({
+      eligible: false,
+      review_id: reviewed.review_id,
+      review_status: "pending",
+      blockers: expect.arrayContaining(["linked review must be approved", "proposal must be approved before handoff"]),
+    })
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+    await expect(server.command("runtime.preview_opencode_handoff", { proposalId: handoffProposal.proposal_id })).resolves.toMatchObject({
+      eligible: true,
+      review_id: reviewed.review_id,
+      review_status: "approved",
+      objective_preview: "implement bounded feature",
+      evidence_ids: ["evidence-1"],
+      source_cycle_id: "cycle-1",
+      source_synthesis_id: "synthesis-1",
+      would_create_mission: true,
+      would_send_to_adapter: true,
+    })
+    await server.shutdown()
+  })
+
+  test("opencode handoff execute sends mission through adapter records provenance and is idempotent", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_1",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff token=title-secret",
+      summary: "summary token=summary-secret",
+      proposedBy: "commander",
+      actionPayload: {
+        objective: "build thing token=objective-secret",
+        constraints: ["do not leak token=constraint-secret"],
+        acceptance_criteria: ["works"],
+        evidence_ids: ["evidence-token-secret"],
+        source_cycle_id: "cycle-1",
+      },
+    }) as { proposal_id: string }
+    const reviewed = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+
+    const result = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { handoff_id: string; mission_id: string; intent_id: string }
+    expect(result).toMatchObject({
+      handoff_id: "handoff_1",
+      proposal_id: proposal.proposal_id,
+      review_id: reviewed.review_id,
+      sent: true,
+      dry_run: false,
+      source_cycle_id: "cycle-1",
+    })
+    expect(adapter.packets).toHaveLength(1)
+    expect(adapter.packets[0]).toMatchObject({ missionId: result.mission_id, intentId: result.intent_id })
+    expect(String(adapter.packets[0].objective)).toContain("build thing [REDACTED]")
+    expect(String(adapter.packets[0].objective)).toContain("Constraints:")
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      status: "applied",
+      application_result: "opencode_handoff:handoff_1:mission:" + result.mission_id,
+    })
+    await expect(server.command("runtime.list_opencode_handoffs")).resolves.toMatchObject([{ handoff_id: "handoff_1", proposal_id: proposal.proposal_id, mission_id: result.mission_id }])
+    await expect(server.command("runtime.get_opencode_handoff", { handoffId: "handoff_1" })).resolves.toMatchObject({ handoff_id: "handoff_1", mission_id: result.mission_id })
+
+    const repeated = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" })
+    expect(repeated).toMatchObject({ handoff_id: "handoff_1", mission_id: result.mission_id })
+    expect(adapter.packets).toHaveLength(1)
+    const serialized = JSON.stringify({ status: await server.status(), events: await readJsonlEvents(dir), packets: adapter.packets })
+    expect(serialized).not.toContain("objective-secret")
+    expect(serialized).not.toContain("constraint-secret")
+    expect(serialized).not.toContain("title-secret")
+    expect(serialized).not.toContain("summary-secret")
+    await server.shutdown()
+  })
+
+  test("opencode handoff dry-run and adapter failure do not mark proposal applied", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new ThrowingMissionAdapter(), researchProjectionMode: "disabled", opencodeHandoffId: () => "handoff_fail" })
+
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "deliver token=handoff-secret", evidence_ids: ["e1"] },
+    }) as { proposal_id: string }
+    const reviewed = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+
+    await expect(server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator", dryRun: true })).resolves.toMatchObject({
+      handoff_id: "dry-run",
+      sent: false,
+      dry_run: true,
+    })
+    await expect(server.command("runtime.list_opencode_handoffs")).resolves.toEqual([])
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({ status: "approved" })
+
+    await expect(server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" })).rejects.toThrow("opencode handoff failed")
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({ status: "approved" })
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("opencode_handoff_failed")
+    expect(events.map((event) => event.kind)).not.toContain("opencode_handoff_created")
+    expect(JSON.stringify(events)).not.toContain("handoff-secret")
+    await server.shutdown()
+  })
+
+  test("opencode handoff write gates and handoff event persistence failure fail closed", async () => {
+    const notStartedDir = await tempProject()
+    await makeProject(notStartedDir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: notStartedDir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await expect(notStarted.command("runtime.execute_opencode_handoff", { proposalId: "proposal_1" })).rejects.toThrow("runtime must be started before opencode handoff writes")
+    await expect(notStarted.command("runtime.list_opencode_handoffs")).resolves.toEqual([])
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir)
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await statusServer.start()
+    await expect(statusServer.command("runtime.execute_opencode_handoff", { proposalId: "proposal_1" })).rejects.toThrow("runtime.execute_opencode_handoff requires active mode")
+    await expect(statusServer.command("runtime.preview_opencode_handoff", { proposalId: "proposal_1" })).resolves.toMatchObject({ eligible: false })
+    await statusServer.shutdown()
+
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled", opencodeHandoffId: () => "handoff_persist_fail" })
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "persist failure mission" },
+    }) as { proposal_id: string }
+    const reviewed = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+    const append = server.eventStore.append.bind(server.eventStore)
+    server.eventStore.append = async (event) => {
+      if (event.kind === "opencode_handoff_created") throw new Error("handoff event append failed")
+      return append(event)
+    }
+    await expect(server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" })).rejects.toThrow("handoff event append failed")
+    expect(adapter.packets).toHaveLength(1)
+    await expect(server.command("runtime.get_commander_proposal", { proposalId: proposal.proposal_id })).resolves.toMatchObject({ status: "approved" })
+    await server.shutdown()
+  })
+
   test("proposal bundle runtime commands persist ordered redacted bundles and hydrate readiness", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

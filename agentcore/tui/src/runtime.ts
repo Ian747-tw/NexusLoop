@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -47,6 +47,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly externalApiResearchIngestions: ExternalApiResearchIngestionRecordSummary[] = []
   private readonly researchSyntheses: ResearchSynthesisResultSummary[] = []
   private readonly commanderCycles: CommanderCycleResultSummary[] = []
+  private readonly opencodeHandoffs: OpenCodeHandoffResultSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -316,6 +317,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getCommanderCycle(String(payload.cycleId ?? payload.cycle_id ?? ""))
       case "runtime.list_commander_cycles":
         return this.listCommanderCycles(readLimit(payload.limit, 20))
+      case "runtime.preview_opencode_handoff":
+        return this.previewOpenCodeHandoff(payload)
+      case "runtime.execute_opencode_handoff":
+        return this.executeOpenCodeHandoff(payload)
+      case "runtime.get_opencode_handoff":
+        return this.getOpenCodeHandoff(String(payload.handoffId ?? payload.handoff_id ?? ""))
+      case "runtime.list_opencode_handoffs":
+        return this.listOpenCodeHandoffs(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -721,6 +730,119 @@ export class FakeRuntimeClient implements RuntimeClient {
       bundle_id: item.bundle_id,
       created_at: item.created_at,
       requested_by: item.requested_by,
+    }))
+  }
+
+  private previewOpenCodeHandoff(payload: Record<string, unknown>): OpenCodeHandoffPreviewSummary {
+    const proposalId = requiredString(String(payload.proposalId ?? payload.proposal_id ?? ""), "proposalId")
+    if (proposalId === "fake-handoff-proposal") this.ensureFakeHandoffProposal()
+    const proposal = this.proposals.find((item) => item.proposal_id === proposalId)
+    if (!proposal) {
+      return {
+        proposal_id: redactText(proposalId),
+        eligible: false,
+        blockers: [`commander proposal not found: ${redactText(proposalId)}`],
+        action_kind: "missing",
+        proposal_status: "missing",
+        objective_preview: "",
+        evidence_ids: [],
+        would_create_mission: false,
+        would_send_to_adapter: false,
+      }
+    }
+    const review = proposal.review_id ? this.reviews.find((item) => item.review_id === proposal.review_id) : undefined
+    const actionPayload = isRecord(proposal.action_payload) ? proposal.action_payload : {}
+    const objective = optionalString(actionPayload.objective) ?? ""
+    const evidenceIds = stringList(actionPayload.evidence_ids)
+    const blockers: string[] = []
+    if (proposal.action_kind !== "opencode_handoff") blockers.push("proposal action_kind must be opencode_handoff")
+    if (!objective) blockers.push("objective is required")
+    if (!proposal.review_id) blockers.push("proposal requires linked review")
+    if (proposal.review_id && !review) blockers.push("linked review not found")
+    if (review && review.status !== "approved") blockers.push("linked review must be approved")
+    if (proposal.status !== "approved" && proposal.status !== "applied") blockers.push("proposal must be approved before handoff")
+    return {
+      proposal_id: proposal.proposal_id,
+      eligible: blockers.length === 0,
+      blockers: blockers.map(redactText),
+      action_kind: proposal.action_kind,
+      proposal_status: proposal.status,
+      review_id: proposal.review_id,
+      review_status: review?.status,
+      objective_preview: preview(redactText(objective)),
+      evidence_ids: evidenceIds.map(redactText),
+      source_cycle_id: optionalString(actionPayload.source_cycle_id),
+      source_synthesis_id: optionalString(actionPayload.source_synthesis_id),
+      would_create_mission: blockers.length === 0 && proposal.status !== "applied",
+      would_send_to_adapter: blockers.length === 0 && proposal.status !== "applied",
+    }
+  }
+
+  private executeOpenCodeHandoff(payload: Record<string, unknown>): OpenCodeHandoffResultSummary {
+    const proposalId = requiredString(String(payload.proposalId ?? payload.proposal_id ?? ""), "proposalId")
+    const existing = this.opencodeHandoffs.find((item) => item.proposal_id === proposalId && item.sent)
+    if (existing && payload.dryRun !== true && payload.dry_run !== true) return existing
+    const handoffPreview = this.previewOpenCodeHandoff(payload)
+    if (!handoffPreview.eligible) throw new Error(`opencode handoff is not eligible: ${handoffPreview.blockers.join("; ")}`)
+    const requestedBy = redactText(String(payload.requestedBy ?? payload.requested_by ?? "operator"))
+    const now = new Date(0).toISOString()
+    if (payload.dryRun === true || payload.dry_run === true) {
+      return {
+        handoff_id: "dry-run",
+        proposal_id: handoffPreview.proposal_id,
+        review_id: handoffPreview.review_id,
+        objective_preview: handoffPreview.objective_preview,
+        sent: false,
+        dry_run: true,
+        created_at: now,
+        requested_by: requestedBy,
+        source_cycle_id: handoffPreview.source_cycle_id,
+        source_synthesis_id: handoffPreview.source_synthesis_id,
+        evidence_ids: handoffPreview.evidence_ids,
+      }
+    }
+    this.sequence += 1
+    const mission = this.createMission(handoffPreview.objective_preview)
+    const result: OpenCodeHandoffResultSummary = {
+      handoff_id: `fake-handoff-${this.sequence}`,
+      proposal_id: handoffPreview.proposal_id,
+      review_id: handoffPreview.review_id,
+      mission_id: mission.missionId,
+      intent_id: mission.intentId,
+      objective_preview: handoffPreview.objective_preview,
+      sent: true,
+      dry_run: false,
+      created_at: now,
+      requested_by: requestedBy,
+      source_cycle_id: handoffPreview.source_cycle_id,
+      source_synthesis_id: handoffPreview.source_synthesis_id,
+      evidence_ids: handoffPreview.evidence_ids,
+    }
+    const proposal = this.requireProposal(proposalId)
+    proposal.status = "applied"
+    proposal.applied_at = now
+    proposal.updated_at = now
+    proposal.application_result = `opencode_handoff:${result.handoff_id}:mission:${result.mission_id}`
+    this.opencodeHandoffs.unshift(result)
+    return result
+  }
+
+  private getOpenCodeHandoff(handoffId: string): OpenCodeHandoffResultSummary | null {
+    const id = requiredString(handoffId, "handoffId")
+    return this.opencodeHandoffs.find((item) => item.handoff_id === id) ?? null
+  }
+
+  private listOpenCodeHandoffs(limit: number): OpenCodeHandoffRecordSummary[] {
+    return this.opencodeHandoffs.slice(0, limit).map((item) => ({
+      handoff_id: item.handoff_id,
+      proposal_id: item.proposal_id,
+      mission_id: item.mission_id,
+      intent_id: item.intent_id,
+      sent: item.sent,
+      created_at: item.created_at,
+      requested_by: item.requested_by,
+      source_cycle_id: item.source_cycle_id,
+      source_synthesis_id: item.source_synthesis_id,
     }))
   }
 
@@ -1728,9 +1850,46 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private requireProposal(proposalId: string): CommanderProposalSummary {
     const id = requiredString(proposalId, "proposalId")
+    if (id === "fake-handoff-proposal") this.ensureFakeHandoffProposal()
     const proposal = this.proposals.find((item) => item.proposal_id === id)
     if (!proposal) throw new Error(`commander proposal not found: ${redactText(id)}`)
     return proposal
+  }
+
+  private ensureFakeHandoffProposal(): void {
+    if (this.proposals.some((item) => item.proposal_id === "fake-handoff-proposal")) return
+    const now = new Date(0).toISOString()
+    this.reviews.unshift({
+      review_id: "fake-handoff-review",
+      request_type: "operator_checkpoint",
+      title: "Approve fake OpenCode handoff",
+      summary: "Deterministic fake approved handoff review",
+      requested_by: "operator",
+      status: "approved",
+      created_at: now,
+      updated_at: now,
+      decision_at: now,
+      decision_by: "operator",
+      decision_reason: "approved for fake handoff",
+    })
+    this.proposals.unshift({
+      proposal_id: "fake-handoff-proposal",
+      review_id: "fake-handoff-review",
+      action_kind: "opencode_handoff",
+      title: "Fake OpenCode handoff",
+      summary: "Deterministic approved handoff proposal",
+      proposed_by: "operator",
+      status: "approved",
+      action_payload: {
+        objective: "Run fake OpenCode handoff mission",
+        source_cycle_id: "fake-cycle-1",
+        evidence_ids: ["fake-evidence-1"],
+        requested_executor: "opencode",
+      },
+      created_at: now,
+      updated_at: now,
+      decision_at: now,
+    })
   }
 
   private requireClaim(claimId: string, missionId?: string): ExecutorClaimSummary {
@@ -2014,6 +2173,11 @@ function optionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const cleaned = value.trim()
   return cleaned ? cleaned : undefined
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()).slice(0, 20)
 }
 
 function reviewStatusForDraft(proposalCount: number, reviewCount: number): string {
