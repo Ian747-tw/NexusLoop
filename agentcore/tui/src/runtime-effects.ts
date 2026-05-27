@@ -3850,8 +3850,8 @@ function cycleArgs(args: string[]): { topicId?: string; missionId?: string; obje
       objective.push(arg)
     }
   }
-  if (!topicId && !missionId) throw new Error("topic or mission is required")
   const objectiveText = objective.join(" ").trim()
+  if (!topicId && !missionId && !objectiveText) throw new Error("topic, mission, or objective is required")
   return { topicId, missionId, ...(objectiveText ? { objective: objectiveText } : {}) }
 }
 

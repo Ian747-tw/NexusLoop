@@ -2645,12 +2645,38 @@ describe("runtime UI effects", () => {
     let state = initialState("/tmp/demo")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cycle-preview" })
-    expect(state.commanderCycle?.commandError).toContain("topic or mission is required")
+    expect(state.commanderCycle?.commandError).toContain("topic, mission, or objective is required")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cycle", args: ["topic=topic-1"] })
     expect(JSON.stringify(state)).not.toContain("title-secret")
     expect(JSON.stringify(state)).not.toContain("summary-secret")
     expect(JSON.stringify(state)).not.toContain("finding-secret")
     expect(JSON.stringify(state)).not.toContain("requester-secret")
+  })
+
+  test("commander cycle objective-only slash commands reach runtime", async () => {
+    const runtime = new CommanderCycleRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "cycle-preview",
+      args: ["inspect", "next", "step"],
+    })
+    expect(state.commanderCycle?.preview).toMatchObject({ objective: "inspect next step" })
+    expect(runtime.calls.at(-1)).toMatchObject({
+      name: "runtime.preview_commander_cycle",
+      payload: { objective: "inspect next step" },
+    })
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "cycle",
+      args: ["inspect", "next", "step"],
+    })
+    expect(state.commanderCycle?.selected).toMatchObject({ objective: "inspect next step" })
+    expect(runtime.calls.find((call) => call.name === "runtime.execute_commander_cycle")).toMatchObject({
+      payload: { objective: "inspect next step" },
+    })
   })
 })

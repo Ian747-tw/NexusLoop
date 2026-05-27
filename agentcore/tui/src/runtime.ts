@@ -556,7 +556,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const topicId = optionalString(payload.topicId ?? payload.topic_id)
     const missionId = optionalString(payload.missionId ?? payload.mission_id)
     const objective = optionalString(payload.objective)
-    if (!topicId && !missionId) throw new Error("topic or mission is required")
+    if (!topicId && !missionId && !objective) throw new Error("topic, mission, or objective is required")
     if (topicId && !this.researchTopics().some((topic) => topic.id === topicId)) throw new Error(`topic not found: ${redactText(topicId)}`)
     if (missionId && !this.missions.some((mission) => mission.mission_id === missionId)) throw new Error(`mission not found: ${redactText(missionId)}`)
     const notes = topicId ? this.searchNotes(topicId, "") : []

@@ -208,6 +208,16 @@ describe("TUI keyboard command model", () => {
       { type: "send-command", command: "cycle-preview", args: ["topic=topic-1", "inspect", "evidence"] },
     ])
 
+    const objectiveOnlyState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/cycle inspect next step",
+    }
+    expect(applyKeyCommandWithEffects(objectiveOnlyState, { type: "submit" }).effects).toEqual([
+      { type: "send-command", command: "cycle", args: ["inspect", "next", "step"] },
+    ])
+
     for (const message of ["/tmp/repro/cycle", "/path/cycle", ".cycle topic=topic-1", ":cycle-show cycle-1"]) {
       const pathState: UiState = {
         ...initialState("/tmp/demo"),
