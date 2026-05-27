@@ -62,6 +62,8 @@ export class MiniMaxReasoningProvider implements ResearchSynthesisProvider, Comm
         },
         body,
         requested_by: `reasoning-provider:${this.config.provider_id}`,
+      }, {
+        timeout_ms: this.config.timeout_ms,
       })
       if (!result.ok) throw new Error(result.error ?? "MiniMax reasoning request failed")
       const rawText = textFromAnthropicResponse(result.response_body_for_internal_use ?? result.response_preview ?? "")
@@ -88,7 +90,6 @@ function messageRequest(config: ReasoningProviderConfig, surface: string, prompt
   return {
     model: config.model ?? "",
     max_tokens: Math.max(1, Math.floor(Math.min(maxOutputBytes, config.max_output_bytes) / 4)),
-    temperature: 0,
     system: [
       `NexusLoop reasoning provider ${config.system_prompt_version ?? SYSTEM_PROMPT_VERSION}.`,
       "Return strict JSON only. Do not include markdown prose.",

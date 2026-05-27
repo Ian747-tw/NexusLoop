@@ -54,14 +54,14 @@ export class ExternalApiRequestService {
   }
 
   async execute(input: ExternalApiRequestInput): Promise<ExternalApiRequestResult> {
-    return this.executeBuilt(input, false)
+    return this.executeBuilt(input, false, {})
   }
 
-  async executeForInternalUse(input: ExternalApiRequestInput): Promise<ExternalApiInternalRequestResult> {
-    return this.executeBuilt(input, true)
+  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number } = {}): Promise<ExternalApiInternalRequestResult> {
+    return this.executeBuilt(input, true, options)
   }
 
-  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean): Promise<ExternalApiInternalRequestResult> {
+  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number }): Promise<ExternalApiInternalRequestResult> {
     const built = this.build(input)
     const createdAt = this.now().toISOString()
     const requestId = this.requestId()
@@ -115,7 +115,7 @@ export class ExternalApiRequestService {
         url: built.url.toString(),
         headers: built.headers,
         body: built.body,
-        timeout_ms: built.connector.timeout_ms,
+        timeout_ms: options.timeout_ms ?? built.connector.timeout_ms,
         max_response_bytes: built.connector.max_response_bytes,
         allow_local_test_host: built.allowedLocalHttp,
       })

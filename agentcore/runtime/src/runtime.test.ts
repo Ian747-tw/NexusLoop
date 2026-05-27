@@ -4189,6 +4189,7 @@ describe("RuntimeServer core", () => {
         model: "MiniMax-M2.7",
         max_input_bytes: 32768,
         max_output_bytes: 16384,
+        timeout_ms: 1234,
         enabled_for: ["research_synthesis"],
       },
       researchSynthesisId: () => "synth_minimax",
@@ -4209,10 +4210,12 @@ describe("RuntimeServer core", () => {
       method: "POST",
       url: "https://api.minimax.io/anthropic/v1/messages",
       max_response_bytes: 8192,
+      timeout_ms: 1234,
     })
     expect(transport.requests[0].headers.Authorization).toBe("Bearer raw-minimax-secret")
     const requestBody = JSON.parse(transport.requests[0].body ?? "{}") as { model: string; messages: Array<{ content: string }> }
     expect(requestBody.model).toBe("MiniMax-M2.7")
+    expect(requestBody).not.toHaveProperty("temperature")
     expect(requestBody.messages[0]?.content).toContain("note_synth")
 
     const snapshot = server.getResearchTopicSnapshot("topic_synth")
