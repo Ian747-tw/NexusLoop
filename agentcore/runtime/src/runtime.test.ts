@@ -4174,6 +4174,47 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir)
+    db.createTopic({ id: "topic_disabled", title: "Disabled surface topic", status: "active" })
+    db.addNote({ id: "note_disabled", topic_id: "topic_disabled", content: "disabled surface evidence", tags: ["evidence"] })
+    db.close()
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(["note_disabled"])) }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-research-only",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis"],
+      },
+    })
+    await server.start()
+
+    await expect(server.command("runtime.execute_commander_cycle", {
+      topicId: "topic_disabled",
+      requestedBy: "operator",
+    })).rejects.toThrow("commander cycle failed")
+    expect(transport.requests).toHaveLength(0)
+    const events = await readJsonlEvents(dir)
+    expect(events.find((event) => event.kind === "commander_cycle_failed")).toMatchObject({
+      provider_id: "minimax-research-only",
+    })
+    expect(JSON.stringify(events)).not.toContain("fake-commander-cycle")
+    expect(JSON.stringify(events)).not.toContain("raw-minimax-secret")
+    await server.shutdown()
+  })
+
   test("minimax research synthesis provider parses responses and writes evidence only through synthesis service", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

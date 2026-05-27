@@ -172,10 +172,10 @@ export class RuntimeServer {
     this.externalApiRequestId = options.externalApiRequestId
     this.reasoningProviderConfig = validateReasoningProviderConfig(options.reasoningProviderConfig ?? defaultReasoningProviderConfig())
     const minimaxProvider = this.reasoningProviderConfig.kind === "minimax" ? this.createMiniMaxReasoningProvider() : null
-    this.researchSynthesisProvider = options.researchSynthesisProvider ?? (minimaxProvider && this.reasoningProviderConfig.enabled_for.includes("research_synthesis") ? minimaxProvider : new FakeResearchSynthesisProvider())
+    this.researchSynthesisProvider = options.researchSynthesisProvider ?? (minimaxProvider ?? new FakeResearchSynthesisProvider())
     this.researchSynthesisNow = options.researchSynthesisNow
     this.researchSynthesisId = options.researchSynthesisId
-    this.commanderCycleProvider = options.commanderCycleProvider ?? (minimaxProvider && this.reasoningProviderConfig.enabled_for.includes("commander_cycle") ? minimaxProvider : new FakeCommanderCycleProvider())
+    this.commanderCycleProvider = options.commanderCycleProvider ?? (minimaxProvider ?? new FakeCommanderCycleProvider())
     this.commanderCycleNow = options.commanderCycleNow
     this.commanderCycleId = options.commanderCycleId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
