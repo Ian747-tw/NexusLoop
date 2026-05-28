@@ -78,6 +78,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...researchSynthesisLines(state))
   out.push(...commanderCycleLines(state))
   out.push(...opencodeHandoffLines(state))
+  out.push(...opencodeFollowupLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -310,6 +311,45 @@ function opencodeHandoffLines(state: UiState): string[] {
   if (handoff.recent.length === 0) out.push("    - empty")
   else out.push(...handoff.recent.slice(0, 10).map((record) => `    - ${record.handoff_id} proposal=${record.proposal_id} mission=${record.mission_id ?? "none"} sent=${record.sent}`))
   if (handoff.commandError) out.push(`  command_error=${redactText(handoff.commandError)}`)
+  return out
+}
+
+function opencodeFollowupLines(state: UiState): string[] {
+  const followup = state.opencodeFollowup
+  const out = ["OpenCode follow-up"]
+  if (!followup) {
+    out.push("  followups=0")
+    return out
+  }
+  if (followup.summary) {
+    const summary = followup.summary
+    out.push(`  summary sent=${summary.sent_count} running=${summary.running_count} results=${summary.result_submitted_count} completed=${summary.completed_count} failed=${summary.failed_count} blocked=${summary.blocked_count} stale=${summary.stale_count}`)
+    if (summary.last_handoff_id) out.push(`  last_handoff=${summary.last_handoff_id}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (followup.selected) {
+    const selected = followup.selected
+    out.push(`  selected=${selected.handoff_id} status=${selected.followup_status} sent=${selected.handoff_sent}`)
+    out.push(`  proposal=${selected.proposal_id} proposal_status=${selected.proposal_status ?? "none"} review=${selected.review_id ?? "none"} review_status=${selected.review_status ?? "none"}`)
+    out.push(`  mission=${selected.mission_id ?? "none"} mission_status=${selected.mission_status ?? "none"} claim=${selected.active_claim_id ?? "none"} progress=${selected.latest_progress_id ?? "none"} result=${selected.latest_result_id ?? "none"}`)
+    out.push(`  counts progress=${selected.progress_count} results=${selected.result_count}`)
+    if (selected.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...selected.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (selected.suggested_commands.length > 0) {
+      out.push("  suggested_commands")
+      out.push(...selected.suggested_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+    }
+  } else {
+    out.push("  selected=none")
+  }
+  out.push(`  queue=${followup.selectedQueue ?? "none"} rows=${followup.queueItems.length}`)
+  out.push("  queue_rows")
+  if (followup.queueItems.length === 0) out.push("    - empty")
+  else out.push(...followup.queueItems.slice(0, 10).map((item) => `    - ${item.handoff_id} status=${item.followup_status} mission=${item.mission_id ?? "none"} result=${item.latest_result_id ?? "none"}`))
+  if (followup.commandError) out.push(`  command_error=${redactText(followup.commandError)}`)
   return out
 }
 

@@ -1687,6 +1687,131 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("opencode handoff follow-up projects mission progress results queues stale and blocked states read-only", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    let nextHandoff = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => `handoff_followup_${++nextHandoff}`,
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await server.start()
+
+    async function approvedHandoff(objective: string): Promise<{ handoff_id: string; proposal_id: string; review_id: string; mission_id: string }> {
+      const proposal = await server.command("runtime.create_commander_proposal", {
+        actionKind: "opencode_handoff",
+        title: objective,
+        summary: "summary",
+        proposedBy: "commander",
+        actionPayload: { objective, evidence_ids: ["sk-test-EVIDENCESECRET123"], source_cycle_id: "cycle-1", source_synthesis_id: "synthesis-1" },
+      }) as { proposal_id: string }
+      const reviewed = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+      await server.command("runtime.approve_review_request", { reviewId: reviewed.review_id, decidedBy: "operator", reason: "ok" })
+      const handoff = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { handoff_id: string; mission_id: string }
+      return { handoff_id: handoff.handoff_id, proposal_id: proposal.proposal_id, review_id: reviewed.review_id, mission_id: handoff.mission_id }
+    }
+
+    const sent = await approvedHandoff("sent followup")
+    const running = await approvedHandoff("running followup")
+    const runningClaim = await server.command("runtime.claim_mission", { missionId: running.mission_id, executorId: "executor" }) as { claim_id: string }
+    const runningProgress = await server.command("runtime.record_mission_progress", { missionId: running.mission_id, claimId: runningClaim.claim_id, message: "working token=progress-secret" }) as { progress_id: string }
+    const submitted = await approvedHandoff("submitted followup")
+    const submittedClaim = await server.command("runtime.claim_mission", { missionId: submitted.mission_id, executorId: "executor" }) as { claim_id: string }
+    const submittedResult = await server.command("runtime.submit_mission_result", { missionId: submitted.mission_id, claimId: submittedClaim.claim_id, summary: "done token=result-secret" }) as { result_id: string }
+    const completed = await approvedHandoff("completed followup")
+    const completedClaim = await server.command("runtime.claim_mission", { missionId: completed.mission_id, executorId: "executor" }) as { claim_id: string }
+    const completedResult = await server.command("runtime.submit_mission_result", { missionId: completed.mission_id, claimId: completedClaim.claim_id, summary: "complete" }) as { result_id: string }
+    await server.command("runtime.complete_mission", { missionId: completed.mission_id, resultId: completedResult.result_id, summary: "accepted" })
+    const failed = await approvedHandoff("failed followup")
+    await server.command("runtime.fail_mission", { missionId: failed.mission_id, reason: "executor failed" })
+    await server.eventStore.append({
+      kind: "opencode_handoff_started",
+      handoff_id: "handoff_blocked",
+      proposal_id: sent.proposal_id,
+      review_id: sent.review_id,
+      objective_preview: "blocked",
+      started_at: "2026-05-27T00:00:00.000Z",
+      requested_by: "operator",
+      evidence_ids: [],
+    })
+    await server.eventStore.append({
+      kind: "opencode_handoff_failed",
+      handoff_id: "handoff_failed_event",
+      proposal_id: "missing-proposal",
+      failure_reason: "adapter token=failed-secret",
+      failed_at: "2026-05-27T00:00:00.000Z",
+      requested_by: "operator",
+    })
+    await server.eventStore.append({
+      kind: "opencode_handoff_started",
+      handoff_id: "handoff_failed_with_meta",
+      proposal_id: sent.proposal_id,
+      review_id: sent.review_id,
+      objective_preview: "failed with metadata",
+      started_at: "2026-05-27T00:00:00.000Z",
+      requested_by: "operator",
+      source_cycle_id: "cycle-failed",
+      source_synthesis_id: "synthesis-failed",
+      evidence_ids: ["evidence-failed"],
+    })
+    await server.eventStore.append({
+      kind: "opencode_handoff_failed",
+      handoff_id: "handoff_failed_with_meta",
+      proposal_id: sent.proposal_id,
+      review_id: sent.review_id,
+      failure_reason: "adapter failed",
+      failed_at: "2026-05-27T00:00:01.000Z",
+      requested_by: "operator",
+    })
+
+    await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: sent.handoff_id })).resolves.toMatchObject({
+      proposal_id: sent.proposal_id,
+      review_id: sent.review_id,
+      mission_id: sent.mission_id,
+      followup_status: "sent",
+      handoff_sent: true,
+      proposal_status: "applied",
+      review_status: "approved",
+      mission_status: "sent",
+      suggested_commands: expect.arrayContaining([expect.objectContaining({ command: `/mission ${sent.mission_id}`, command_type: "read" })]),
+    })
+    await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: running.handoff_id })).resolves.toMatchObject({ followup_status: "running", active_claim_id: runningClaim.claim_id, latest_progress_id: runningProgress.progress_id, progress_count: 1 })
+    await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: submitted.handoff_id })).resolves.toMatchObject({ followup_status: "result_submitted", latest_result_id: submittedResult.result_id, result_count: 1 })
+    await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: completed.handoff_id })).resolves.toMatchObject({ followup_status: "completed" })
+    await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: failed.handoff_id })).resolves.toMatchObject({ followup_status: "failed" })
+    await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: "handoff_blocked" })).resolves.toMatchObject({ followup_status: "blocked", blockers: expect.arrayContaining(["handoff follow-up is stale"]) })
+    await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: "handoff_failed_event" })).resolves.toMatchObject({ followup_status: "handoff_failed", blockers: expect.arrayContaining(["commander proposal not found: missing-proposal"]) })
+    await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: "handoff_failed_with_meta" })).resolves.toMatchObject({ followup_status: "handoff_failed", source_cycle_id: "cycle-failed", source_synthesis_id: "synthesis-failed", evidence_ids: ["evidence-failed"] })
+    await expect(server.command("runtime.opencode_handoff_followup_summary", { staleAfterMs: 1 })).resolves.toMatchObject({ sent_count: 1, running_count: 1, result_submitted_count: 1, completed_count: 1, failed_count: 3, blocked_count: 1, stale_count: 1 })
+    await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "needs_result_review" })).resolves.toMatchObject({ queue: "needs_result_review", items: [expect.objectContaining({ handoff_id: submitted.handoff_id })] })
+    await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "active" })).resolves.toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ handoff_id: sent.handoff_id }), expect.objectContaining({ handoff_id: running.handoff_id })]) })
+    await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "completed" })).resolves.toMatchObject({ items: [expect.objectContaining({ handoff_id: completed.handoff_id })] })
+    await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "failed" })).resolves.toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ handoff_id: failed.handoff_id }), expect.objectContaining({ handoff_id: "handoff_failed_event" })]) })
+    await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "blocked" })).resolves.toMatchObject({ items: [expect.objectContaining({ handoff_id: "handoff_blocked" })] })
+    await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "stale", staleAfterMs: 1 })).resolves.toMatchObject({ items: [expect.objectContaining({ handoff_id: "handoff_blocked" })] })
+    await expect(server.command("runtime.list_opencode_handoff_followups", { limit: 101 })).resolves.toHaveLength(8)
+    await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "active", limit: 101 })).resolves.toMatchObject({ limit: 100 })
+    await expect(server.command("runtime.opencode_handoff_followup_summary", { staleAfterMs: 86_400_000 })).resolves.toMatchObject({ stale_count: 1 })
+    await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "bogus" })).rejects.toThrow("handoff follow-up queue is invalid")
+    await expect(server.command("runtime.list_opencode_handoff_followups", { limit: 0 })).rejects.toThrow("limit must be a positive integer")
+
+    const serialized = JSON.stringify(await server.command("runtime.list_opencode_handoff_followups", { limit: 20 }))
+    expect(serialized).not.toContain("progress-secret")
+    expect(serialized).not.toContain("result-secret")
+    expect(serialized).not.toContain("failed-secret")
+    expect(serialized).not.toContain("sk-test-EVIDENCESECRET123")
+    await server.shutdown()
+
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await expect(statusServer.command("runtime.opencode_handoff_followup_summary")).resolves.toMatchObject({ completed_count: 1 })
+    await expect(statusServer.command("runtime.get_opencode_handoff_followup", { handoffId: sent.handoff_id })).resolves.toMatchObject({ followup_status: "sent" })
+    await statusServer.shutdown()
+  })
+
   test("proposal bundle runtime commands persist ordered redacted bundles and hydrate readiness", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

@@ -602,6 +602,65 @@ class OpenCodeHandoffRuntime implements RuntimeClient {
         }
       case "runtime.list_opencode_handoffs":
         return this.handoffs
+      case "runtime.get_opencode_handoff_followup":
+        return {
+          handoff_id: payload?.handoffId,
+          proposal_id: "proposal-approved",
+          review_id: "review-1",
+          mission_id: "mission-handoff-1",
+          intent_id: "intent-handoff-1",
+          followup_status: "result_submitted",
+          handoff_sent: true,
+          proposal_status: "applied",
+          review_status: "approved",
+          mission_status: "running",
+          active_claim_id: "claim-handoff-1",
+          latest_progress_id: "progress-handoff-1",
+          latest_result_id: "result-handoff-1",
+          result_count: 1,
+          progress_count: 1,
+          blockers: ["blocked token=followup-blocker-secret"],
+          suggested_commands: [{ label: "Show mission", command: "/mission mission-handoff-1 token=followup-command-secret", command_type: "read" }],
+          source_cycle_id: "cycle-1",
+          evidence_ids: ["evidence-token=followup-evidence-secret"],
+          updated_at: "1970-01-01T00:00:00.000Z",
+        }
+      case "runtime.list_opencode_handoff_followups":
+        return [{
+          handoff_id: "handoff-1",
+          proposal_id: "proposal-approved",
+          review_id: "review-1",
+          mission_id: "mission-handoff-1",
+          followup_status: "sent",
+          handoff_sent: true,
+          result_count: 0,
+          progress_count: 0,
+          blockers: [],
+          suggested_commands: [{ label: "Show mission", command: "/mission mission-handoff-1", command_type: "read" }],
+          evidence_ids: [],
+          updated_at: "1970-01-01T00:00:00.000Z",
+        }]
+      case "runtime.opencode_handoff_followup_summary":
+        return { sent_count: 1, running_count: 0, result_submitted_count: 1, completed_count: 0, failed_count: 0, blocked_count: 0, stale_count: 1, last_handoff_id: "handoff-1" }
+      case "runtime.opencode_handoff_followup_queue":
+        if (payload?.queue === "bad") throw new Error("handoff follow-up queue is invalid token=queue-secret")
+        return {
+          queue: payload?.queue ?? "active",
+          items: [{
+            handoff_id: "handoff-1",
+            proposal_id: "proposal-approved",
+            mission_id: "mission-handoff-1",
+            followup_status: payload?.queue === "needs_result_review" ? "result_submitted" : "sent",
+            handoff_sent: true,
+            result_count: payload?.queue === "needs_result_review" ? 1 : 0,
+            progress_count: 0,
+            blockers: [],
+            suggested_commands: [{ label: "List results", command: "/results mission-handoff-1", command_type: "read" }],
+            evidence_ids: [],
+          }],
+          total_considered: 1,
+          limit: 20,
+        }
       case "runtime.proposal_status":
         return { proposed_count: 0, review_requested_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0, applied_count: 1, last_proposal_id: "proposal-approved" }
       case "runtime.list_commander_proposals":
@@ -2931,5 +2990,41 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff", args: ["proposal-pending"] })
     expect(state.opencodeHandoff?.commandError).toContain("linked review must be approved")
     expect(JSON.stringify(state)).not.toContain("execute-secret")
+  })
+
+  test("opencode handoff follow-up slash commands render summary queues selected and redact secrets", async () => {
+    const runtime = new OpenCodeHandoffRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-followups" })
+    expect(state.opencodeFollowup?.summary).toMatchObject({ sent_count: 1, result_submitted_count: 1 })
+    expect(state.opencodeFollowup?.queueItems.at(0)).toMatchObject({ handoff_id: "handoff-1", followup_status: "sent" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-followup-summary" })
+    expect(state.opencodeFollowup?.summary).toMatchObject({ stale_count: 1 })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-queue", args: ["needs_result_review"] })
+    expect(state.opencodeFollowup?.selectedQueue).toBe("needs_result_review")
+    expect(state.opencodeFollowup?.queueItems.at(0)).toMatchObject({ followup_status: "result_submitted" })
+
+    for (const command of ["handoff-active", "handoff-results", "handoff-failed", "handoff-blocked", "handoff-stale"]) {
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command })
+      expect(state.opencodeFollowup?.queueItems.length).toBeGreaterThan(0)
+    }
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-followup", args: ["handoff-1"] })
+    expect(state.opencodeFollowup?.selected).toMatchObject({ handoff_id: "handoff-1", latest_result_id: "result-handoff-1" })
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode follow-up")
+    expect(snapshot).toContain("selected=handoff-1 status=result_submitted")
+    expect(snapshot).not.toContain("followup-blocker-secret")
+    expect(snapshot).not.toContain("followup-command-secret")
+    expect(JSON.stringify(state)).not.toContain("followup-evidence-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-followup" })
+    expect(state.opencodeFollowup?.commandError).toContain("handoffId is required")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-queue", args: ["bad"] })
+    expect(state.opencodeFollowup?.commandError).toContain("handoff follow-up queue is invalid")
+    expect(JSON.stringify(state)).not.toContain("queue-secret")
   })
 })

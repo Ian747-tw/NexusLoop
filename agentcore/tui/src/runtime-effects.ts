@@ -20,6 +20,10 @@ import type {
   OpenCodeHandoffRecordSummary,
   OpenCodeHandoffResultSummary,
   OpenCodeHandoffState,
+  OpenCodeHandoffFollowupCounts,
+  OpenCodeHandoffFollowupQueueKind,
+  OpenCodeHandoffFollowupState,
+  OpenCodeHandoffFollowupSummary,
   CommanderApplyPreviewSummary,
   CommanderApplyResultSummary,
   CommanderApplyState,
@@ -185,6 +189,10 @@ export type RuntimeUiEffect =
   | { type: "execute-opencode-handoff"; proposalId: string; dryRun?: boolean }
   | { type: "load-opencode-handoff"; handoffId: string }
   | { type: "load-opencode-handoffs"; limit?: number }
+  | { type: "load-opencode-handoff-followup"; handoffId: string }
+  | { type: "load-opencode-handoff-followups"; limit?: number }
+  | { type: "load-opencode-handoff-followup-summary" }
+  | { type: "load-opencode-handoff-followup-queue"; queue: OpenCodeHandoffFollowupQueueKind; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -673,6 +681,21 @@ export async function applyRuntimeUiEffect(
         )
       case "load-opencode-handoffs":
         return await loadOpenCodeHandoffs(state, runtime, effect.limit ?? HANDOFF_LIMIT)
+      case "load-opencode-handoff-followup":
+        return applyOpenCodeHandoffFollowup(
+          state,
+          await runtime.command("runtime.get_opencode_handoff_followup", { handoffId: effect.handoffId }),
+          effect.handoffId,
+        )
+      case "load-opencode-handoff-followups":
+        return await loadOpenCodeHandoffFollowups(state, runtime, effect.limit ?? HANDOFF_LIMIT)
+      case "load-opencode-handoff-followup-summary":
+        return applyOpenCodeHandoffFollowupSummary(state, await runtime.command("runtime.opencode_handoff_followup_summary"))
+      case "load-opencode-handoff-followup-queue":
+        return applyOpenCodeHandoffFollowupQueue(
+          state,
+          await runtime.command("runtime.opencode_handoff_followup_queue", { queue: effect.queue, limit: effect.limit ?? HANDOFF_LIMIT }),
+        )
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -699,6 +722,7 @@ export async function applyRuntimeUiEffect(
     if (isResearchSynthesisEffect(effect)) return recordResearchSynthesisCommandError(state, error)
     if (isCommanderCycleEffect(effect)) return recordCommanderCycleCommandError(state, error)
     if (isOpenCodeHandoffEffect(effect)) return recordOpenCodeHandoffCommandError(state, error)
+    if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
@@ -1031,8 +1055,25 @@ async function loadOpenCodeHandoffs(state: UiState, runtime: RuntimeClient, limi
   }
 }
 
+async function loadOpenCodeHandoffFollowups(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const items = readOpenCodeHandoffFollowupList(await runtime.command("runtime.list_opencode_handoff_followups", { limit }), "runtime.list_opencode_handoff_followups", limit)
+  const summary = readOpenCodeHandoffFollowupCounts(await runtime.command("runtime.opencode_handoff_followup_summary"))
+  return {
+    ...state,
+    opencodeFollowup: {
+      ...opencodeFollowupState(state),
+      summary,
+      queueItems: items,
+      selectedQueue: undefined,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode follow-ups loaded", detail: `records=${items.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
 async function refreshAfterHandoff(state: UiState, runtime: RuntimeClient): Promise<UiState> {
   let next = await loadOpenCodeHandoffs(state, runtime, HANDOFF_LIMIT)
+  next = await loadOpenCodeHandoffFollowups(next, runtime, HANDOFF_LIMIT)
   next = await loadProposals(next, runtime, PROPOSAL_LIMIT)
   const missionId = next.opencodeHandoff?.lastResult?.mission_id
   return missionId ? await refreshAfterMissionWrite(next, runtime, missionId) : await refreshRuntimeRecordsOrRecordError(next, runtime)
@@ -1186,6 +1227,51 @@ function applyOpenCodeHandoffResult(state: UiState, value: unknown, handoffId?: 
     systemActions: selectedId
       ? [...state.systemActions, { title: "opencode handoff result", detail: `handoff_id=${selectedId}`, status: result?.sent ? "sent" : "dry-run" }].slice(-12)
       : state.systemActions,
+  }
+}
+
+function applyOpenCodeHandoffFollowup(state: UiState, value: unknown, handoffId?: string): UiState {
+  const result = readOpenCodeHandoffFollowup(value)
+  if (!result && value !== null) throw new Error("runtime.get_opencode_handoff_followup returned invalid follow-up")
+  const selectedId = result?.handoff_id ?? (handoffId ? redactText(handoffId) : undefined)
+  return {
+    ...state,
+    opencodeFollowup: {
+      ...opencodeFollowupState(state),
+      selected: result,
+      queueItems: result ? [result, ...opencodeFollowupState(state).queueItems.filter((item) => item.handoff_id !== result.handoff_id)].slice(0, HANDOFF_LIMIT) : opencodeFollowupState(state).queueItems,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "opencode follow-up selected", detail: `handoff_id=${selectedId}`, status: result ? result.followup_status : "missing" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
+function applyOpenCodeHandoffFollowupSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeHandoffFollowupCounts(value)
+  return {
+    ...state,
+    opencodeFollowup: {
+      ...opencodeFollowupState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode follow-up summary", detail: `active=${summary.sent_count + summary.running_count} results=${summary.result_submitted_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeHandoffFollowupQueue(state: UiState, value: unknown): UiState {
+  const queue = readOpenCodeHandoffFollowupQueue(value)
+  return {
+    ...state,
+    opencodeFollowup: {
+      ...opencodeFollowupState(state),
+      selectedQueue: queue.queue,
+      queueItems: queue.items,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode follow-up queue", detail: `${queue.queue}=${queue.items.length}`, status: "loaded" }].slice(-12),
   }
 }
 
@@ -1380,6 +1466,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (researchSynthesisCommands.has(command)) return state.researchSynthesis?.commandError
   if (commanderCycleCommands.has(command)) return state.commanderCycle?.commandError
   if (opencodeHandoffCommands.has(command)) return state.opencodeHandoff?.commandError
+  if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
@@ -1400,6 +1487,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (researchSynthesisCommands.has(command)) return { ...state, researchSynthesis: { ...researchSynthesisState(state), commandError: undefined } }
   if (commanderCycleCommands.has(command)) return { ...state, commanderCycle: { ...commanderCycleState(state), commandError: undefined } }
   if (opencodeHandoffCommands.has(command)) return { ...state, opencodeHandoff: { ...opencodeHandoffState(state), commandError: undefined } }
+  if (opencodeFollowupCommands.has(command)) return { ...state, opencodeFollowup: { ...opencodeFollowupState(state), commandError: undefined } }
   if (reasoningProviderCommands.has(command)) return { ...state, reasoningProvider: { ...reasoningProviderState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
@@ -1484,6 +1572,24 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoffs", limit: HANDOFF_LIMIT })
     case "handoff-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff", handoffId: requiredArg(args, 0, "handoffId") })
+    case "handoff-followup":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup", handoffId: requiredArg(args, 0, "handoffId") })
+    case "handoff-followups":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followups", limit: HANDOFF_LIMIT })
+    case "handoff-followup-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup-summary" })
+    case "handoff-queue":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup-queue", queue: readFollowupQueueArg(requiredArg(args, 0, "queue")), limit: HANDOFF_LIMIT })
+    case "handoff-active":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup-queue", queue: "active", limit: HANDOFF_LIMIT })
+    case "handoff-results":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup-queue", queue: "needs_result_review", limit: HANDOFF_LIMIT })
+    case "handoff-failed":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup-queue", queue: "failed", limit: HANDOFF_LIMIT })
+    case "handoff-blocked":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup-queue", queue: "blocked", limit: HANDOFF_LIMIT })
+    case "handoff-stale":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup-queue", queue: "stale", limit: HANDOFF_LIMIT })
     case "reasoning":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-status" })
         .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-reasoning-provider-health" }))
@@ -1909,6 +2015,11 @@ function isOpenCodeHandoffEffect(effect: RuntimeUiEffect): boolean {
   return opencodeHandoffCommands.has(effect.command)
 }
 
+function isOpenCodeFollowupEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return opencodeFollowupEffectTypes.has(effect.type)
+  return opencodeFollowupCommands.has(effect.command)
+}
+
 function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return reasoningProviderEffectTypes.has(effect.type)
   return reasoningProviderCommands.has(effect.command)
@@ -2036,6 +2147,18 @@ const opencodeHandoffCommands = new Set([
   "handoff-show",
 ])
 
+const opencodeFollowupCommands = new Set([
+  "handoff-followup",
+  "handoff-followups",
+  "handoff-followup-summary",
+  "handoff-queue",
+  "handoff-active",
+  "handoff-results",
+  "handoff-failed",
+  "handoff-blocked",
+  "handoff-stale",
+])
+
 const reasoningProviderCommands = new Set([
   "reasoning",
   "reasoning-health",
@@ -2074,6 +2197,13 @@ const opencodeHandoffEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "execute-opencode-handoff",
   "load-opencode-handoff",
   "load-opencode-handoffs",
+])
+
+const opencodeFollowupEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-opencode-handoff-followup",
+  "load-opencode-handoff-followups",
+  "load-opencode-handoff-followup-summary",
+  "load-opencode-handoff-followup-queue",
 ])
 
 const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -2831,6 +2961,18 @@ function recordOpenCodeHandoffCommandError(state: UiState, error: unknown): UiSt
   }
 }
 
+function recordOpenCodeFollowupCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    opencodeFollowup: {
+      ...opencodeFollowupState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "opencode follow-up command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -3257,6 +3399,85 @@ function recordFromOpenCodeHandoffResult(result: OpenCodeHandoffResultSummary): 
     source_cycle_id: result.source_cycle_id,
     source_synthesis_id: result.source_synthesis_id,
   }
+}
+
+function readOpenCodeHandoffFollowup(value: unknown): OpenCodeHandoffFollowupSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.handoff_id !== "string") throw new Error("runtime.get_opencode_handoff_followup returned invalid follow-up")
+  return {
+    handoff_id: redactText(value.handoff_id),
+    proposal_id: readString(value.proposal_id, ""),
+    review_id: typeof value.review_id === "string" ? redactText(value.review_id) : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    intent_id: typeof value.intent_id === "string" ? redactText(value.intent_id) : undefined,
+    followup_status: readFollowupStatus(value.followup_status),
+    handoff_sent: readBoolean(value.handoff_sent),
+    proposal_status: typeof value.proposal_status === "string" ? redactText(value.proposal_status) : undefined,
+    review_status: typeof value.review_status === "string" ? redactText(value.review_status) : undefined,
+    mission_status: typeof value.mission_status === "string" ? redactText(value.mission_status) : undefined,
+    active_claim_id: typeof value.active_claim_id === "string" ? redactText(value.active_claim_id) : undefined,
+    latest_progress_id: typeof value.latest_progress_id === "string" ? redactText(value.latest_progress_id) : undefined,
+    latest_result_id: typeof value.latest_result_id === "string" ? redactText(value.latest_result_id) : undefined,
+    result_count: readNumber(value.result_count, 0),
+    progress_count: readNumber(value.progress_count, 0),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    suggested_commands: Array.isArray(value.suggested_commands) ? value.suggested_commands.map(readOpenCodeHandoffFollowupCommand).filter((item): item is OpenCodeHandoffFollowupSummary["suggested_commands"][number] => item !== null).slice(0, 10) : [],
+    source_cycle_id: typeof value.source_cycle_id === "string" ? redactText(value.source_cycle_id) : undefined,
+    source_synthesis_id: typeof value.source_synthesis_id === "string" ? redactText(value.source_synthesis_id) : undefined,
+    evidence_ids: readStringList(value.evidence_ids, 20),
+    updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : undefined,
+  }
+}
+
+function readOpenCodeHandoffFollowupCommand(value: unknown): OpenCodeHandoffFollowupSummary["suggested_commands"][number] | null {
+  if (!isRecord(value) || typeof value.label !== "string" || typeof value.command !== "string") return null
+  return {
+    label: preview(redactText(value.label)),
+    command: preview(redactText(value.command)),
+    command_type: value.command_type === "write" ? "write" : "read",
+    requires_active_runtime: value.requires_active_runtime === true,
+    requires_review: value.requires_review === true,
+  }
+}
+
+function readOpenCodeHandoffFollowupList(value: unknown, commandName: string, limit: number): OpenCodeHandoffFollowupSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readOpenCodeHandoffFollowup).filter((record): record is OpenCodeHandoffFollowupSummary => record !== null).slice(0, limit)
+}
+
+function readOpenCodeHandoffFollowupCounts(value: unknown): OpenCodeHandoffFollowupCounts {
+  if (!isRecord(value)) throw new Error("runtime.opencode_handoff_followup_summary returned invalid summary")
+  return {
+    sent_count: readNumber(value.sent_count, 0),
+    running_count: readNumber(value.running_count, 0),
+    result_submitted_count: readNumber(value.result_submitted_count, 0),
+    completed_count: readNumber(value.completed_count, 0),
+    failed_count: readNumber(value.failed_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    stale_count: readNumber(value.stale_count, 0),
+    last_handoff_id: typeof value.last_handoff_id === "string" ? redactText(value.last_handoff_id) : undefined,
+  }
+}
+
+function readOpenCodeHandoffFollowupQueue(value: unknown): { queue: OpenCodeHandoffFollowupQueueKind; items: OpenCodeHandoffFollowupSummary[]; total_considered: number; limit: number } {
+  if (!isRecord(value)) throw new Error("runtime.opencode_handoff_followup_queue returned invalid queue")
+  const limit = readNumber(value.limit, HANDOFF_LIMIT)
+  return {
+    queue: readFollowupStatusQueue(value.queue),
+    items: readOpenCodeHandoffFollowupList(value.items, "runtime.opencode_handoff_followup_queue", limit),
+    total_considered: readNumber(value.total_considered, 0),
+    limit,
+  }
+}
+
+function readFollowupStatus(value: unknown): OpenCodeHandoffFollowupSummary["followup_status"] {
+  if (value === "sent" || value === "claimed" || value === "running" || value === "result_submitted" || value === "completed" || value === "failed" || value === "cancelled" || value === "handoff_failed" || value === "blocked" || value === "unknown") return value
+  return "unknown"
+}
+
+function readFollowupStatusQueue(value: unknown): OpenCodeHandoffFollowupQueueKind {
+  if (value === "active" || value === "needs_result_review" || value === "completed" || value === "failed" || value === "blocked" || value === "stale") return value
+  return "blocked"
 }
 
 function readResearchProjectionUi(value: unknown): ResearchProjectionUiSummary {
@@ -3958,6 +4179,10 @@ function opencodeHandoffState(state: UiState): OpenCodeHandoffState {
   return state.opencodeHandoff ?? { preview: null, lastResult: null, recent: [] }
 }
 
+function opencodeFollowupState(state: UiState): OpenCodeHandoffFollowupState {
+  return state.opencodeFollowup ?? { selected: null, summary: null, queueItems: [] }
+}
+
 function reasoningProviderState(state: UiState) {
   return state.reasoningProvider ?? {
     kind: "fake",
@@ -4323,6 +4548,11 @@ function requiredArg(args: string[], index: number, field: string): string {
   const value = args[index]
   if (!value) throw new Error(`${field} is required`)
   return value
+}
+
+function readFollowupQueueArg(value: string): OpenCodeHandoffFollowupQueueKind {
+  if (value === "active" || value === "needs_result_review" || value === "completed" || value === "failed" || value === "blocked" || value === "stale") return value
+  throw new Error("handoff follow-up queue is invalid")
 }
 
 function requiredMissionIdArg(args: string[], index: number): string {

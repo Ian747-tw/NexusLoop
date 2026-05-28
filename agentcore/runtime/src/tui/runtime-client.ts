@@ -16,6 +16,7 @@ import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, 
 import type { ReasoningProviderStatus } from "../reasoning/reasoning-provider-config"
 import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "../reasoning/reasoning-health-types"
 import type { OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "../opencode/opencode-handoff-types"
+import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary } from "../opencode/opencode-handoff-followup-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -193,6 +194,10 @@ export interface RuntimeClient {
   command(name: "runtime.execute_opencode_handoff", payload: { proposalId: string; requestedBy?: string; dryRun?: boolean } | { proposal_id: string; requested_by?: string; dry_run?: boolean }): Promise<OpenCodeHandoffResult>
   command(name: "runtime.list_opencode_handoffs", payload?: { limit?: number }): Promise<OpenCodeHandoffRecord[]>
   command(name: "runtime.get_opencode_handoff", payload: { handoffId: string } | { handoff_id: string }): Promise<OpenCodeHandoffResult | null>
+  command(name: "runtime.get_opencode_handoff_followup", payload: { handoffId: string } | { handoff_id: string }): Promise<OpenCodeHandoffFollowup | null>
+  command(name: "runtime.list_opencode_handoff_followups", payload?: { limit?: number; staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowup[]>
+  command(name: "runtime.opencode_handoff_followup_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowupSummary>
+  command(name: "runtime.opencode_handoff_followup_queue", payload: { queue: OpenCodeHandoffFollowupQueueKind | string; limit?: number; staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowupQueue>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -285,6 +290,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.execute_opencode_handoff"
     | "runtime.list_opencode_handoffs"
     | "runtime.get_opencode_handoff"
+    | "runtime.get_opencode_handoff_followup"
+    | "runtime.list_opencode_handoff_followups"
+    | "runtime.opencode_handoff_followup_summary"
+    | "runtime.opencode_handoff_followup_queue"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"
