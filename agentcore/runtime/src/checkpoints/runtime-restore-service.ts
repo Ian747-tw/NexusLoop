@@ -49,7 +49,7 @@ export class RuntimeRestoreService {
     const checkpoint = findCheckpoint(events, checkpointId)
     const verification = verifyCheckpoint(events, checkpointId, checkpoint)
     const currentSections = await this.currentSections().catch(() => undefined)
-    const sections = currentSections ?? checkpoint?.sections ?? {}
+    const sections = checkpoint?.sections ?? currentSections ?? {}
     const commander = commanderContext(sections)
     const executor = executorContext(sections)
     const handoff = handoffContext(sections)

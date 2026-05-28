@@ -5051,10 +5051,12 @@ describe("RuntimeServer core", () => {
     })
     await server.start()
     await server.command("runtime.create_runtime_checkpoint", { scope: "full", reason: "resume token=restore-secret", requestedBy: "operator" })
+    const postCheckpointMission = await server.submitUserMessage("post-checkpoint mission")
     const beforeMissions = await server.command("runtime.list_recent_missions", { limit: 20 }) as unknown[]
     const preview = await server.command("runtime.preview_checkpoint_restore", { checkpointId: "checkpoint_restore_1", requestedBy: "operator" }) as {
       can_mark_resume: boolean
       verification: { hash_ok: boolean; cursor_ok: boolean; drift_status: string; new_event_count: number; warnings: string[] }
+      executor_context: { mission_ids: string[] }
       suggested_commands: Array<{ command: string }>
     }
     expect(preview.can_mark_resume).toBe(true)
@@ -5062,6 +5064,7 @@ describe("RuntimeServer core", () => {
     expect(preview.verification.cursor_ok).toBe(true)
     expect(preview.verification.drift_status).toBe("advanced")
     expect(preview.verification.new_event_count).toBeGreaterThan(0)
+    expect(preview.executor_context.mission_ids).not.toContain(postCheckpointMission.missionId)
     expect(preview.suggested_commands.map((command) => command.command)).toContain("/resume-mark checkpoint_restore_1")
     expect(JSON.stringify(preview)).not.toContain("restore-secret")
 
