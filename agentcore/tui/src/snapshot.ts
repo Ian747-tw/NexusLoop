@@ -79,6 +79,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...commanderCycleLines(state))
   out.push(...opencodeHandoffLines(state))
   out.push(...opencodeFollowupLines(state))
+  out.push(...runtimeCheckpointLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -350,6 +351,54 @@ function opencodeFollowupLines(state: UiState): string[] {
   if (followup.queueItems.length === 0) out.push("    - empty")
   else out.push(...followup.queueItems.slice(0, 10).map((item) => `    - ${item.handoff_id} status=${item.followup_status} mission=${item.mission_id ?? "none"} result=${item.latest_result_id ?? "none"}`))
   if (followup.commandError) out.push(`  command_error=${redactText(followup.commandError)}`)
+  return out
+}
+
+function runtimeCheckpointLines(state: UiState): string[] {
+  const checkpoints = state.runtimeCheckpoints
+  const out = ["Runtime checkpoints"]
+  if (!checkpoints) {
+    out.push("  checkpoints=0")
+    return out
+  }
+  if (checkpoints.preview) {
+    const previewRecord = checkpoints.preview
+    out.push(`  preview_scope=${previewRecord.scope} events=${previewRecord.event_count} bytes=${previewRecord.estimated_bytes}/${previewRecord.max_bytes}`)
+    if (previewRecord.last_event_id) out.push(`  preview_last_event=${previewRecord.last_event_id}`)
+    out.push("  preview_sections")
+    out.push(...previewRecord.sections.slice(0, 10).map((section) => `    - ${section.name} items=${section.item_count} bytes=${section.bytes} truncated=${section.truncated}`))
+    if (previewRecord.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewRecord.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (checkpoints.selected) {
+    const selected = checkpoints.selected
+    out.push(`  selected_checkpoint=${selected.checkpoint_id} scope=${selected.scope} restore_supported=${selected.restore_supported}`)
+    out.push(`  hash=${preview(redactText(selected.checkpoint_hash))}`)
+    out.push(`  created_at=${selected.created_at} created_by=${selected.created_by}`)
+    out.push(`  event_count=${selected.event_count} last_event=${selected.last_event_id ?? "none"}`)
+    out.push("  selected_sections")
+    out.push(...selected.section_summaries.slice(0, 10).map((section) => `    - ${section.name} items=${section.item_count} bytes=${section.bytes} truncated=${section.truncated}`))
+    const suggested = Array.isArray(selected.sections.suggested_commands) ? selected.sections.suggested_commands as Array<{ label?: string; command?: string; command_type?: string }> : []
+    if (suggested.length > 0) {
+      out.push("  suggested_commands")
+      out.push(...suggested.slice(0, 10).map((command) => `    - ${preview(redactText(String(command.label ?? "")))}: ${preview(redactText(String(command.command ?? "")))} [${command.command_type ?? "read"}]`))
+    }
+    if (selected.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...selected.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+  } else {
+    out.push("  selected_checkpoint=none")
+  }
+  out.push(`  checkpoints=${checkpoints.recent.length}`)
+  out.push("  recent_checkpoints")
+  if (checkpoints.recent.length === 0) out.push("    - empty")
+  else out.push(...checkpoints.recent.slice(0, 10).map((record) => `    - ${record.checkpoint_id} scope=${record.scope} events=${record.event_count}: ${preview(redactText(record.summary_preview))}`))
+  if (checkpoints.commandError) out.push(`  command_error=${redactText(checkpoints.commandError)}`)
   return out
 }
 

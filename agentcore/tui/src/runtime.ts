@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -48,6 +48,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly researchSyntheses: ResearchSynthesisResultSummary[] = []
   private readonly commanderCycles: CommanderCycleResultSummary[] = []
   private readonly opencodeHandoffs: OpenCodeHandoffResultSummary[] = []
+  private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -333,6 +334,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.opencodeHandoffFollowupSummary()
       case "runtime.opencode_handoff_followup_queue":
         return this.opencodeHandoffFollowupQueue(readFollowupQueue(String(payload.queue ?? "")), readLimit(payload.limit, 20))
+      case "runtime.preview_runtime_checkpoint":
+        return this.previewRuntimeCheckpoint(payload)
+      case "runtime.create_runtime_checkpoint":
+        return this.createRuntimeCheckpoint(payload)
+      case "runtime.get_runtime_checkpoint":
+        return this.getRuntimeCheckpoint(String(payload.checkpointId ?? payload.checkpoint_id ?? ""))
+      case "runtime.list_runtime_checkpoints":
+        return this.listRuntimeCheckpoints(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -931,6 +940,103 @@ export class FakeRuntimeClient implements RuntimeClient {
         updated_at: latestResult?.created_at ?? latestProgress?.created_at ?? mission?.updated_at ?? handoff.created_at,
       }
     })
+  }
+
+  private previewRuntimeCheckpoint(payload: Record<string, unknown>): RuntimeCheckpointPreviewSummary {
+    const scope = readCheckpointScope(optionalString(payload.scope) ?? "full")
+    const reason = optionalString(payload.reason)
+    const sections = this.fakeCheckpointSectionSummaries(scope)
+    return {
+      scope,
+      reason: reason ? redactText(reason) : undefined,
+      event_count: 12 + this.runtimeCheckpoints.length,
+      last_event_id: this.runtimeCheckpoints[0]?.checkpoint_id ?? "fake-last-run",
+      sections,
+      estimated_bytes: sections.reduce((sum, section) => sum + section.bytes, 256),
+      max_bytes: readNumber(payload.maxBytes ?? payload.max_bytes, 65536),
+      blockers: [],
+      redacted_summary_preview: `fake ${scope} checkpoint preview`,
+    }
+  }
+
+  private createRuntimeCheckpoint(payload: Record<string, unknown>): RuntimeCheckpointSummary {
+    const previewResult = this.previewRuntimeCheckpoint(payload)
+    this.sequence += 1
+    const checkpoint: RuntimeCheckpointSummary = {
+      checkpoint_id: `fake-checkpoint-${this.sequence}`,
+      scope: previewResult.scope,
+      reason: previewResult.reason,
+      created_at: new Date(0).toISOString(),
+      created_by: redactText(String(payload.createdBy ?? payload.created_by ?? payload.requestedBy ?? payload.requested_by ?? "operator")),
+      event_count: previewResult.event_count,
+      last_event_id: previewResult.last_event_id,
+      checkpoint_hash: `fake-checkpoint-hash-${this.sequence}`,
+      sections: this.fakeCheckpointSections(previewResult.scope),
+      section_summaries: previewResult.sections,
+      restore_supported: false,
+      warnings: [],
+    }
+    this.runtimeCheckpoints.unshift(checkpoint)
+    return checkpoint
+  }
+
+  private getRuntimeCheckpoint(checkpointId: string): RuntimeCheckpointSummary | null {
+    const id = requiredString(checkpointId, "checkpointId")
+    return this.runtimeCheckpoints.find((item) => item.checkpoint_id === id) ?? null
+  }
+
+  private listRuntimeCheckpoints(limit: number): RuntimeCheckpointRecordSummary[] {
+    return this.runtimeCheckpoints.slice(0, limit).map((checkpoint) => ({
+      checkpoint_id: checkpoint.checkpoint_id,
+      scope: checkpoint.scope,
+      reason: checkpoint.reason,
+      created_at: checkpoint.created_at,
+      created_by: checkpoint.created_by,
+      event_count: checkpoint.event_count,
+      last_event_id: checkpoint.last_event_id,
+      checkpoint_hash: checkpoint.checkpoint_hash,
+      section_names: Object.keys(checkpoint.sections).sort(),
+      summary_preview: `fake ${checkpoint.scope} checkpoint sections=${Object.keys(checkpoint.sections).length}`,
+    }))
+  }
+
+  private fakeCheckpointSections(scope: RuntimeCheckpointScope): Record<string, unknown> {
+    const all: Record<string, unknown> = {
+      runtime: { mode: "active", started: true, run_lock_held: false, event_count: 12 + this.runtimeCheckpoints.length },
+      spec: { status: existsSync(join(this.projectDir, ".nxl")) ? "approved" : "unknown" },
+      reasoning: { status: this.reasoningProviderStatus(), health: this.reasoningProviderHealth() },
+      research: { topic_count: this.researchTopics().length, recent_syntheses: this.listResearchSyntheses(5) },
+      commander: { proposals: this.proposalSummary(), reviews: this.reviewSummary(), cycles: this.listCommanderCycles(5) },
+      executor: { missions: this.missionSummary(), recent_missions: this.missions.slice(0, 5) },
+      opencode: { adapter_status_available: false, adapter_status_reason: "fake checkpoint does not call adapter" },
+      handoff: { recent_handoffs: this.listOpenCodeHandoffs(5), followup_summary: this.opencodeHandoffFollowupSummary() },
+      suggested_commands: [
+        { label: "List checkpoints", command: "/checkpoints", command_type: "read" },
+        { label: "Preview checkpoint", command: `/checkpoint-preview ${scope}`, command_type: "read" },
+      ],
+    }
+    const keys = scope === "commander"
+      ? ["runtime", "spec", "reasoning", "research", "commander", "suggested_commands"]
+      : scope === "executor"
+        ? ["runtime", "executor", "opencode", "suggested_commands"]
+        : scope === "research"
+          ? ["runtime", "reasoning", "research", "commander", "suggested_commands"]
+          : scope === "handoff"
+            ? ["runtime", "executor", "opencode", "handoff", "suggested_commands"]
+            : Object.keys(all)
+    const out: Record<string, unknown> = {}
+    for (const key of keys) out[key] = all[key]
+    return redactUnknown(out) as Record<string, unknown>
+  }
+
+  private fakeCheckpointSectionSummaries(scope: RuntimeCheckpointScope): RuntimeCheckpointPreviewSummary["sections"] {
+    return Object.entries(this.fakeCheckpointSections(scope)).map(([name, value]) => ({
+      name,
+      included: true,
+      item_count: Array.isArray(value) ? value.length : isRecord(value) ? Object.keys(value).length : 1,
+      bytes: new TextEncoder().encode(JSON.stringify(value)).byteLength,
+      truncated: false,
+    })).sort((a, b) => a.name.localeCompare(b.name))
   }
 
   private createMission(message: string): SubmitUserMessageResult {
@@ -2135,6 +2241,11 @@ function readQueueKind(value: string): CommanderQueueKind {
 function readFollowupQueue(value: string): OpenCodeHandoffFollowupQueueKind {
   if (value === "active" || value === "needs_result_review" || value === "completed" || value === "failed" || value === "blocked" || value === "stale") return value
   throw new Error("handoff follow-up queue is invalid")
+}
+
+function readCheckpointScope(value: string): RuntimeCheckpointScope {
+  if (value === "full" || value === "commander" || value === "executor" || value === "research" || value === "handoff") return value
+  throw new Error("runtime checkpoint scope is invalid")
 }
 
 function readExternalApiMethod(value: string): "GET" | "POST" {
