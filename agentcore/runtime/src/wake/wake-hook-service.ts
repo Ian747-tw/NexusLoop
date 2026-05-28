@@ -70,7 +70,7 @@ export class WakeAssessmentService {
     if (!preview.allowed) throw new Error(preview.blockers[0] ?? "wake assessment is blocked")
     const anchor = await this.options.restoreService.get(normalized.resume_id)
     const createdAt = (this.options.now ?? (() => new Date()))().toISOString()
-    const wakeId = this.options.idFactory ? this.options.idFactory() : `wake_${Date.now().toString(36)}_${++this.generatedIds}`
+    const wakeId = normalized.dry_run ? "wake_dry_run" : this.options.idFactory ? this.options.idFactory() : `wake_${Date.now().toString(36)}_${++this.generatedIds}`
     const assessment = fitAssessment({
       wake_id: wakeId,
       trigger_kind: normalized.trigger_kind,
@@ -79,6 +79,7 @@ export class WakeAssessmentService {
       checkpoint_hash: anchor?.checkpoint_hash,
       created_at: createdAt,
       requested_by: redactText(normalized.requested_by),
+      dry_run: normalized.dry_run ? true : undefined,
       allowed: preview.allowed,
       blockers: preview.blockers,
       warnings: preview.warnings,
@@ -89,6 +90,7 @@ export class WakeAssessmentService {
       sections: await this.sectionsForPreview(preview, anchor),
       suggested_commands: preview.suggested_commands,
     }, normalized.max_bytes)
+    if (normalized.dry_run) return redactValue(assessment)
     const eventPayload = eventPayloadFromAssessment(assessment)
     if (persistedEventByteLength(eventPayload) > normalized.max_bytes) throw new Error("runtime wake assessment event exceeds max_bytes")
     await this.options.eventStore.append(eventPayload)
@@ -233,6 +235,7 @@ function eventPayloadFromAssessment(assessment: WakeAssessment): JsonlEvent {
     checkpoint_hash: assessment.checkpoint_hash,
     created_at: assessment.created_at,
     requested_by: assessment.requested_by,
+    dry_run: assessment.dry_run,
     allowed: assessment.allowed,
     blockers: assessment.blockers,
     warnings: assessment.warnings,

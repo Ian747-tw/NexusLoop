@@ -98,6 +98,7 @@ export type WakeAssessment = {
   checkpoint_hash?: string
   created_at: string
   requested_by: string
+  dry_run?: boolean
   allowed: boolean
   blockers: string[]
   warnings: string[]

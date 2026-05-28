@@ -5195,6 +5195,13 @@ describe("RuntimeServer core", () => {
     expect(preview.warnings).toContain("new events exist after checkpoint")
     expect(preview.suggested_commands.map((command) => command.command)).toContain("/resume-anchor resume_wake_1")
     expect(await readJsonlEvents(dir)).toHaveLength(eventsBeforePreview.length)
+    const dryRun = await server.command("runtime.create_wake_assessment", { resumeId: "resume_wake_1", requestedBy: "operator", dryRun: true }) as {
+      wake_id: string
+      dry_run?: boolean
+      allowed: boolean
+    }
+    expect(dryRun).toMatchObject({ wake_id: "wake_dry_run", dry_run: true, allowed: true })
+    expect(await readJsonlEvents(dir)).toHaveLength(eventsBeforePreview.length)
 
     const beforeMissions = await server.command("runtime.list_recent_missions", { limit: 20 })
     const beforePackets = adapter.packets.length
