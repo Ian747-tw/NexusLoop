@@ -499,6 +499,17 @@ describe("TUI runtime client factory", () => {
     await expect(client.command("runtime.list_opencode_handoffs")).resolves.toMatchObject([
       { handoff_id: result.handoff_id, proposal_id: proposal.proposal_id, mission_id: result.mission_id },
     ])
+    await expect(client.command("runtime.get_opencode_handoff_followup", { handoffId: result.handoff_id })).resolves.toMatchObject({
+      handoff_id: result.handoff_id,
+      proposal_id: proposal.proposal_id,
+      mission_id: result.mission_id,
+      followup_status: "sent",
+      suggested_commands: expect.arrayContaining([expect.objectContaining({ command: `/mission ${result.mission_id}` })]),
+    })
+    await expect(client.command("runtime.opencode_handoff_followup_summary")).resolves.toMatchObject({ sent_count: 1 })
+    await expect(client.command("runtime.opencode_handoff_followup_queue", { queue: "active" })).resolves.toMatchObject({
+      items: [expect.objectContaining({ handoff_id: result.handoff_id })],
+    })
 
     await client.runtime.shutdown()
   })

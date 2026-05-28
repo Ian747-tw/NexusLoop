@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -325,6 +325,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getOpenCodeHandoff(String(payload.handoffId ?? payload.handoff_id ?? ""))
       case "runtime.list_opencode_handoffs":
         return this.listOpenCodeHandoffs(readLimit(payload.limit, 20))
+      case "runtime.get_opencode_handoff_followup":
+        return this.getOpenCodeHandoffFollowup(String(payload.handoffId ?? payload.handoff_id ?? ""))
+      case "runtime.list_opencode_handoff_followups":
+        return this.listOpenCodeHandoffFollowups(readLimit(payload.limit, 20))
+      case "runtime.opencode_handoff_followup_summary":
+        return this.opencodeHandoffFollowupSummary()
+      case "runtime.opencode_handoff_followup_queue":
+        return this.opencodeHandoffFollowupQueue(readFollowupQueue(String(payload.queue ?? "")), readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -844,6 +852,85 @@ export class FakeRuntimeClient implements RuntimeClient {
       source_cycle_id: item.source_cycle_id,
       source_synthesis_id: item.source_synthesis_id,
     }))
+  }
+
+  private getOpenCodeHandoffFollowup(handoffId: string): OpenCodeHandoffFollowupSummary | null {
+    const id = requiredString(handoffId, "handoffId")
+    return this.buildOpenCodeHandoffFollowups().find((item) => item.handoff_id === id) ?? null
+  }
+
+  private listOpenCodeHandoffFollowups(limit: number): OpenCodeHandoffFollowupSummary[] {
+    return this.buildOpenCodeHandoffFollowups().slice(0, limit)
+  }
+
+  private opencodeHandoffFollowupSummary(): OpenCodeHandoffFollowupCounts {
+    const items = this.buildOpenCodeHandoffFollowups()
+    return {
+      sent_count: items.filter((item) => item.followup_status === "sent").length,
+      running_count: items.filter((item) => item.followup_status === "claimed" || item.followup_status === "running").length,
+      result_submitted_count: items.filter((item) => item.followup_status === "result_submitted").length,
+      completed_count: items.filter((item) => item.followup_status === "completed").length,
+      failed_count: items.filter((item) => item.followup_status === "failed" || item.followup_status === "cancelled" || item.followup_status === "handoff_failed").length,
+      blocked_count: items.filter((item) => item.followup_status === "blocked" || item.followup_status === "unknown").length,
+      stale_count: items.filter((item) => item.followup_status === "sent").length,
+      last_handoff_id: items[0]?.handoff_id,
+    }
+  }
+
+  private opencodeHandoffFollowupQueue(queue: OpenCodeHandoffFollowupQueueKind, limit: number): { queue: OpenCodeHandoffFollowupQueueKind; items: OpenCodeHandoffFollowupSummary[]; total_considered: number; limit: number } {
+    const all = this.buildOpenCodeHandoffFollowups()
+    const items = all.filter((item) => {
+      if (queue === "active") return item.followup_status === "sent" || item.followup_status === "claimed" || item.followup_status === "running"
+      if (queue === "needs_result_review") return item.followup_status === "result_submitted"
+      if (queue === "completed") return item.followup_status === "completed"
+      if (queue === "failed") return item.followup_status === "failed" || item.followup_status === "cancelled" || item.followup_status === "handoff_failed"
+      if (queue === "stale") return item.followup_status === "sent"
+      return item.followup_status === "blocked" || item.followup_status === "unknown"
+    }).slice(0, limit)
+    return { queue, items, total_considered: all.length, limit }
+  }
+
+  private buildOpenCodeHandoffFollowups(): OpenCodeHandoffFollowupSummary[] {
+    if (this.opencodeHandoffs.length === 0) {
+      this.ensureFakeHandoffProposal()
+      this.executeOpenCodeHandoff({ proposalId: "fake-handoff-proposal", requestedBy: "fake" })
+    }
+    return this.opencodeHandoffs.map((handoff) => {
+      const mission = handoff.mission_id ? this.missions.find((item) => item.mission_id === handoff.mission_id) : undefined
+      const claims = handoff.mission_id ? this.claims.filter((item) => item.mission_id === handoff.mission_id) : []
+      const progress = handoff.mission_id ? this.progress.filter((item) => item.mission_id === handoff.mission_id) : []
+      const results = handoff.mission_id ? this.results.filter((item) => item.mission_id === handoff.mission_id) : []
+      const activeClaim = claims.find((item) => item.status === "active")
+      const latestProgress = progress[0]
+      const latestResult = results[0]
+      const proposal = this.proposals.find((item) => item.proposal_id === handoff.proposal_id)
+      const review = handoff.review_id ? this.reviews.find((item) => item.review_id === handoff.review_id) : undefined
+      const blockers: string[] = []
+      if (!mission && handoff.mission_id) blockers.push(`mission not found: ${handoff.mission_id}`)
+      return {
+        handoff_id: handoff.handoff_id,
+        proposal_id: handoff.proposal_id,
+        review_id: handoff.review_id,
+        mission_id: handoff.mission_id,
+        intent_id: handoff.intent_id,
+        followup_status: fakeFollowupStatus(mission?.status, activeClaim?.claim_id, progress.length, results.length, blockers),
+        handoff_sent: handoff.sent,
+        proposal_status: proposal?.status,
+        review_status: review?.status,
+        mission_status: mission?.status,
+        active_claim_id: activeClaim?.claim_id,
+        latest_progress_id: latestProgress?.progress_id,
+        latest_result_id: latestResult?.result_id,
+        result_count: results.length,
+        progress_count: progress.length,
+        blockers: blockers.map(redactText),
+        suggested_commands: fakeFollowupCommands(handoff.handoff_id, handoff.mission_id, activeClaim?.claim_id, latestProgress?.progress_id, latestResult?.result_id),
+        source_cycle_id: handoff.source_cycle_id,
+        source_synthesis_id: handoff.source_synthesis_id,
+        evidence_ids: handoff.evidence_ids,
+        updated_at: latestResult?.created_at ?? latestProgress?.created_at ?? mission?.updated_at ?? handoff.created_at,
+      }
+    })
   }
 
   private createMission(message: string): SubmitUserMessageResult {
@@ -2045,6 +2132,11 @@ function readQueueKind(value: string): CommanderQueueKind {
   throw new Error("commander queue kind is invalid")
 }
 
+function readFollowupQueue(value: string): OpenCodeHandoffFollowupQueueKind {
+  if (value === "active" || value === "needs_result_review" || value === "completed" || value === "failed" || value === "blocked" || value === "stale") return value
+  throw new Error("handoff follow-up queue is invalid")
+}
+
 function readExternalApiMethod(value: string): "GET" | "POST" {
   const method = value.toUpperCase()
   if (method === "GET" || method === "POST") return method
@@ -2060,6 +2152,36 @@ function isCommanderQueueKind(value: string): value is CommanderQueueKind {
     value === "drafts_needing_review" ||
     value === "bundles_needing_review" ||
     value === "stale_open"
+}
+
+function fakeFollowupStatus(missionStatus: string | undefined, activeClaimId: string | undefined, progressCount: number, resultCount: number, blockers: string[]): OpenCodeHandoffFollowupSummary["followup_status"] {
+  if (blockers.length > 0) return "blocked"
+  if (!missionStatus) return "unknown"
+  if (missionStatus === "completed" || missionStatus === "failed" || missionStatus === "cancelled") return missionStatus
+  if (resultCount > 0) return "result_submitted"
+  if (missionStatus === "running" || progressCount > 0) return "running"
+  if (missionStatus === "claimed" || activeClaimId) return "claimed"
+  if (missionStatus === "sent") return "sent"
+  return "unknown"
+}
+
+function fakeFollowupCommands(handoffId: string, missionId?: string, claimId?: string, progressId?: string, resultId?: string): OpenCodeHandoffFollowupSummary["suggested_commands"] {
+  const commands: OpenCodeHandoffFollowupSummary["suggested_commands"] = [
+    { label: "Show handoff", command: `/handoff-show ${handoffId}`, command_type: "read" },
+    { label: "Show follow-up", command: `/handoff-followup ${handoffId}`, command_type: "read" },
+  ]
+  if (missionId) {
+    commands.push(
+      { label: "Show mission", command: `/mission ${missionId}`, command_type: "read" },
+      { label: "List claims", command: `/claims ${missionId}`, command_type: "read" },
+      { label: "List progress", command: `/progress ${missionId}`, command_type: "read" },
+      { label: "List results", command: `/results ${missionId}`, command_type: "read" },
+    )
+  }
+  if (claimId) commands.push({ label: "Open claim", command: `/open claim ${claimId}`, command_type: "read" })
+  if (progressId) commands.push({ label: "Open progress", command: `/open progress ${progressId}`, command_type: "read" })
+  if (resultId) commands.push({ label: "Open result", command: `/open result ${resultId}`, command_type: "read" })
+  return commands
 }
 
 function readStaleAfterMs(value: unknown): number {

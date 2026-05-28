@@ -46,6 +46,8 @@ import { ReasoningProviderHealthService } from "./reasoning/reasoning-health-ser
 import type { ReasoningProviderHealth, ReasoningProviderSmokeInput, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "./reasoning/reasoning-health-types"
 import { OpenCodeHandoffService } from "./opencode/opencode-handoff-service"
 import type { OpenCodeHandoffInput, OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "./opencode/opencode-handoff-types"
+import { OpenCodeHandoffFollowupService, readOpenCodeHandoffFollowupQueueKind } from "./opencode/opencode-handoff-followup-service"
+import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupSummary } from "./opencode/opencode-handoff-followup-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -559,6 +561,22 @@ export class RuntimeServer {
         return this.listOpenCodeHandoffs(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.get_opencode_handoff":
         return this.getOpenCodeHandoff(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
+      case "runtime.get_opencode_handoff_followup":
+        return this.getOpenCodeHandoffFollowup(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
+      case "runtime.list_opencode_handoff_followups":
+        return this.listOpenCodeHandoffFollowups({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          staleAfterMs: optionalPositiveInteger(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
+        })
+      case "runtime.opencode_handoff_followup_summary":
+        return this.openCodeHandoffFollowupSummary({
+          staleAfterMs: optionalPositiveInteger(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
+        })
+      case "runtime.opencode_handoff_followup_queue":
+        return this.openCodeHandoffFollowupQueue(readOpenCodeHandoffFollowupQueueKind(payload.queue), {
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          staleAfterMs: optionalPositiveInteger(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
+        })
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -1003,6 +1021,22 @@ export class RuntimeServer {
     return this.opencodeHandoffService().get(handoffId)
   }
 
+  async getOpenCodeHandoffFollowup(handoffId: string): Promise<OpenCodeHandoffFollowup | null> {
+    return this.opencodeHandoffFollowupService().get(handoffId)
+  }
+
+  async listOpenCodeHandoffFollowups(options: { limit?: number; staleAfterMs?: number } = {}): Promise<OpenCodeHandoffFollowup[]> {
+    return this.opencodeHandoffFollowupService().list(options)
+  }
+
+  async openCodeHandoffFollowupSummary(options: { staleAfterMs?: number } = {}): Promise<OpenCodeHandoffFollowupSummary> {
+    return this.opencodeHandoffFollowupService().summary(options)
+  }
+
+  async openCodeHandoffFollowupQueue(queue: Parameters<OpenCodeHandoffFollowupService["queue"]>[0], options: { limit?: number; staleAfterMs?: number } = {}): Promise<OpenCodeHandoffFollowupQueue> {
+    return this.opencodeHandoffFollowupService().queue(queue, options)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1348,6 +1382,16 @@ export class RuntimeServer {
       idFactory: this.opencodeHandoffId ? () => this.opencodeHandoffId!() : undefined,
     })
     return this.opencodeHandoffServiceInstance
+  }
+
+  private opencodeHandoffFollowupService(): OpenCodeHandoffFollowupService {
+    return new OpenCodeHandoffFollowupService({
+      eventStore: this.eventStore,
+      proposalRegistry: this.proposalRegistry,
+      reviewRegistry: this.reviewRegistry,
+      missionRegistry: this.missionRegistry,
+      now: this.opencodeHandoffNow,
+    })
   }
 
   private commanderTargetContextService(): CommanderTargetContextService {

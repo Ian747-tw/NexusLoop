@@ -278,7 +278,23 @@ describe("TUI keyboard command model", () => {
     }, { type: "submit" })
     expect(result.effects).toEqual([{ type: "send-command", command: "handoff-dry-run", args: ["proposal-1"] }])
 
-    for (const message of ["/tmp/repro/handoff", "/path/handoff", ".handoff proposal-1", ":handoff-show handoff-1"]) {
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/handoff-followup handoff-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "handoff-followup", args: ["handoff-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/handoff-results",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "handoff-results" }])
+
+    for (const message of ["/tmp/repro/handoff", "/path/handoff", ".handoff proposal-1", ":handoff-show handoff-1", ".handoff-followup handoff-1", ":handoff-active"]) {
       result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",
