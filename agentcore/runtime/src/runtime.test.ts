@@ -1771,6 +1771,9 @@ describe("RuntimeServer core", () => {
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "failed" })).resolves.toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ handoff_id: failed.handoff_id }), expect.objectContaining({ handoff_id: "handoff_failed_event" })]) })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "blocked" })).resolves.toMatchObject({ items: [expect.objectContaining({ handoff_id: "handoff_blocked" })] })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "stale", staleAfterMs: 1 })).resolves.toMatchObject({ items: [expect.objectContaining({ handoff_id: "handoff_blocked" })] })
+    await expect(server.command("runtime.list_opencode_handoff_followups", { limit: 101 })).resolves.toHaveLength(7)
+    await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "active", limit: 101 })).resolves.toMatchObject({ limit: 100 })
+    await expect(server.command("runtime.opencode_handoff_followup_summary", { staleAfterMs: 86_400_000 })).resolves.toMatchObject({ stale_count: 1 })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "bogus" })).rejects.toThrow("handoff follow-up queue is invalid")
     await expect(server.command("runtime.list_opencode_handoff_followups", { limit: 0 })).rejects.toThrow("limit must be a positive integer")
 

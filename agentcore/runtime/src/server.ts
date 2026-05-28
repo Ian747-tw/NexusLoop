@@ -565,17 +565,17 @@ export class RuntimeServer {
         return this.getOpenCodeHandoffFollowup(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
       case "runtime.list_opencode_handoff_followups":
         return this.listOpenCodeHandoffFollowups({
-          limit: optionalPositiveInteger(payload.limit, "limit", 100),
-          staleAfterMs: optionalPositiveInteger(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
+          limit: optionalPositiveIntegerUnbounded(payload.limit, "limit"),
+          staleAfterMs: optionalPositiveIntegerUnbounded(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
         })
       case "runtime.opencode_handoff_followup_summary":
         return this.openCodeHandoffFollowupSummary({
-          staleAfterMs: optionalPositiveInteger(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
+          staleAfterMs: optionalPositiveIntegerUnbounded(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
         })
       case "runtime.opencode_handoff_followup_queue":
         return this.openCodeHandoffFollowupQueue(readOpenCodeHandoffFollowupQueueKind(payload.queue), {
-          limit: optionalPositiveInteger(payload.limit, "limit", 100),
-          staleAfterMs: optionalPositiveInteger(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
+          limit: optionalPositiveIntegerUnbounded(payload.limit, "limit"),
+          staleAfterMs: optionalPositiveIntegerUnbounded(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
         })
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
@@ -1528,6 +1528,12 @@ function optionalPositiveInteger(value: unknown, field: string, max = 1000): num
   if (value === undefined) return undefined
   if (!Number.isInteger(value) || Number(value) < 1) throw new Error(`${field} must be a positive integer`)
   if (Number(value) > max) throw new Error(`${field} must be no greater than ${max}`)
+  return Number(value)
+}
+
+function optionalPositiveIntegerUnbounded(value: unknown, field: string): number | undefined {
+  if (value === undefined) return undefined
+  if (!Number.isInteger(value) || Number(value) < 1) throw new Error(`${field} must be a positive integer`)
   return Number(value)
 }
 
