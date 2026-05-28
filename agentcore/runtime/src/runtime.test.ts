@@ -5360,6 +5360,40 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake assessment summaries use current runtime sections after checkpoint drift", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      adapter,
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_wake_current_1",
+      runtimeResumeId: () => "resume_wake_current_1",
+      runtimeWakeId: () => "wake_current_1",
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_wake_current_1", requestedBy: "operator" })
+    const mission = await server.submitUserMessage("post checkpoint wake follow-up mission")
+
+    const preview = await server.command("runtime.preview_wake_assessment", { resumeId: "resume_wake_current_1", requestedBy: "operator" }) as {
+      drift_status: string
+      executor_summary?: { active_mission_count?: number; mission_count?: number }
+    }
+    expect(preview.drift_status).toBe("advanced")
+    expect(preview.executor_summary?.mission_count).toBeGreaterThanOrEqual(1)
+    expect(preview.executor_summary?.active_mission_count).toBeGreaterThanOrEqual(1)
+
+    const assessment = await server.command("runtime.create_wake_assessment", { resumeId: "resume_wake_current_1", requestedBy: "operator" }) as {
+      sections: { executor?: { mission_ids: string[]; active_mission_ids: string[] } }
+    }
+    expect(assessment.sections.executor?.mission_ids).toContain(mission.missionId)
+    expect(assessment.sections.executor?.active_mission_ids).toContain(mission.missionId)
+    await server.shutdown()
+  })
+
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

@@ -11,6 +11,10 @@ import type {
   WakeAssessmentPreview,
   WakeAssessmentRecord,
   WakeAssessmentSections,
+  WakeCommanderSection,
+  WakeExecutorSection,
+  WakeHandoffSection,
+  WakeReasoningSection,
   WakeSuggestedCommand,
   WakeTriggerKind,
 } from "./wake-hook-types"
@@ -251,16 +255,68 @@ function eventPayloadFromAssessment(assessment: WakeAssessment): JsonlEvent {
 }
 
 function sectionSummaries(restore: RuntimeRestorePreview | null, currentSections: RuntimeCheckpointSections | undefined): WakeAssessmentSections {
-  const current = currentSections ?? {}
-  const handoffCurrent = recordSection(current.handoff)
-  const followup = recordSection(handoffCurrent.followup_summary)
+  const hasCurrent = currentSections !== undefined
   return sanitizeSections({
-    commander: restore?.commander_context,
-    executor: restore?.executor_context,
-    handoff: restore?.handoff_context ? { ...restore.handoff_context, followup_summary: followup } : undefined,
-    reasoning: restore?.reasoning_context,
+    commander: hasCurrent ? commanderSection(currentSections) : restore?.commander_context,
+    executor: hasCurrent ? executorSection(currentSections) : restore?.executor_context,
+    handoff: hasCurrent ? handoffSection(currentSections) : restore?.handoff_context,
+    reasoning: hasCurrent ? reasoningSection(currentSections) : restore?.reasoning_context,
     checkpoint: restore ? { checkpoint_id: restore.checkpoint_id, verification: restore.verification, warnings: restore.verification.warnings } : undefined,
   })
+}
+
+function commanderSection(sections: RuntimeCheckpointSections | undefined): WakeCommanderSection {
+  const commander = recordSection(sections?.commander)
+  return {
+    recent_cycle_ids: idsFrom(commander.recent_cycles, "cycle_id"),
+    recent_synthesis_ids: idsFrom(commander.recent_syntheses, "synthesis_id"),
+    proposal_ids: idsFrom(commander.recent_proposals, "proposal_id"),
+    review_ids: idsFrom(commander.reviews, "last_review_id"),
+    bundle_ids: idsFrom(commander.recent_bundles, "bundle_id"),
+    queue_summary: recordSection(commander.queues),
+    warnings: [],
+  }
+}
+
+function executorSection(sections: RuntimeCheckpointSections | undefined): WakeExecutorSection {
+  const executor = recordSection(sections?.executor)
+  const recent = Array.isArray(executor.recent_missions) ? executor.recent_missions : []
+  const details = Array.isArray(executor.recent_mission_details) ? executor.recent_mission_details : []
+  return {
+    mission_ids: idsFrom(recent, "mission_id"),
+    active_mission_ids: recent.filter((item) => isRecord(item) && item.status !== "completed" && item.status !== "failed" && item.status !== "cancelled").map((item) => redactText(String(item.mission_id))).slice(0, MAX_ITEMS),
+    active_claim_ids: idsFrom(details.flatMap((item) => isRecord(item) && Array.isArray(item.claims) ? item.claims : []), "claim_id"),
+    result_ids: idsFrom(details.flatMap((item) => isRecord(item) && Array.isArray(item.results) ? item.results : []), "result_id"),
+    progress_ids: idsFrom(details.flatMap((item) => isRecord(item) && Array.isArray(item.progress) ? item.progress : []), "progress_id"),
+    warnings: [],
+  }
+}
+
+function handoffSection(sections: RuntimeCheckpointSections | undefined): WakeHandoffSection {
+  const handoff = recordSection(sections?.handoff)
+  const active = recordSection(handoff.active_queue)
+  const needsReview = recordSection(handoff.needs_result_review_queue)
+  const failed = recordSection(handoff.failed_queue)
+  return {
+    handoff_ids: idsFrom(handoff.recent_handoffs, "handoff_id"),
+    active_handoff_ids: idsFrom(active.items, "handoff_id"),
+    needs_result_review_ids: idsFrom(needsReview.items, "handoff_id"),
+    failed_handoff_ids: idsFrom(failed.items, "handoff_id"),
+    followup_summary: recordSection(handoff.followup_summary),
+    warnings: [],
+  }
+}
+
+function reasoningSection(sections: RuntimeCheckpointSections | undefined): WakeReasoningSection {
+  const reasoning = recordSection(sections?.reasoning)
+  const status = recordSection(reasoning.status)
+  const health = recordSection(reasoning.health)
+  return {
+    provider_id: stringField(status.provider_id),
+    provider_kind: stringField(status.kind),
+    health_status: stringField(health.status),
+    warnings: [],
+  }
 }
 
 function suggestedCommands(resumeId: string | undefined, checkpointId: string | undefined, restore: RuntimeRestorePreview | null, sections: WakeAssessmentSections): WakeSuggestedCommand[] {
@@ -438,6 +494,15 @@ function dedupeCommands(commands: WakeSuggestedCommand[]): WakeSuggestedCommand[
 
 function recordSection(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {}
+}
+
+function idsFrom(value: unknown, field: string): string[] {
+  const values = Array.isArray(value) ? value : isRecord(value) ? [value] : []
+  return values.flatMap((item) => isRecord(item) && typeof item[field] === "string" ? [redactText(item[field])] : []).slice(0, MAX_ITEMS)
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === "string" ? redactText(value) : undefined
 }
 
 function unique(values: string[]): string[] {
