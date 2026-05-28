@@ -5005,6 +5005,32 @@ describe("RuntimeServer core", () => {
     await viewServer.shutdown()
   })
 
+  test("runtime checkpoint default IDs remain unique across same-millisecond creates", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const originalDateNow = Date.now
+    Date.now = () => 1234567890
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointNow: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    try {
+      await server.start()
+      const first = await server.command("runtime.create_runtime_checkpoint", { scope: "executor", requestedBy: "operator" }) as { checkpoint_id: string }
+      const second = await server.command("runtime.create_runtime_checkpoint", { scope: "executor", requestedBy: "operator" }) as { checkpoint_id: string }
+      expect(first.checkpoint_id).not.toBe(second.checkpoint_id)
+      expect(first.checkpoint_id).toBe("checkpoint_kf12oi_1")
+      expect(second.checkpoint_id).toBe("checkpoint_kf12oi_2")
+      const listed = await server.command("runtime.list_runtime_checkpoints", { limit: 10 }) as Array<{ checkpoint_id: string }>
+      expect(listed.map((item) => item.checkpoint_id)).toEqual([second.checkpoint_id, first.checkpoint_id])
+    } finally {
+      Date.now = originalDateNow
+      await server.shutdown()
+    }
+  })
+
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

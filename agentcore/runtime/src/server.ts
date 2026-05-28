@@ -160,6 +160,7 @@ export class RuntimeServer {
   private readonly ownsResearchDb: boolean
   private researchDb: RuntimeResearchDbProjection | null = null
   private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
+  private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -1447,12 +1448,13 @@ export class RuntimeServer {
   }
 
   private runtimeCheckpointService(): RuntimeCheckpointService {
-    return new RuntimeCheckpointService({
+    this.runtimeCheckpointServiceInstance ??= new RuntimeCheckpointService({
       eventStore: this.eventStore,
       now: this.runtimeCheckpointNow,
       idFactory: this.runtimeCheckpointId ? () => this.runtimeCheckpointId!() : undefined,
       sectionProvider: () => this.runtimeCheckpointSections(),
     })
+    return this.runtimeCheckpointServiceInstance
   }
 
   private async runtimeCheckpointSections(): Promise<RuntimeCheckpointSections> {
