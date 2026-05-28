@@ -35,6 +35,9 @@ type HandoffSeed =
       review_id?: string
       mission_id?: string
       intent_id?: string
+      source_cycle_id?: string
+      source_synthesis_id?: string
+      evidence_ids: string[]
       requested_by?: string
       updated_at: string
     }
@@ -151,9 +154,9 @@ export class OpenCodeHandoffFollowupService {
       progress_count: progress.length,
       blockers: blockers.map((item) => redactText(item)),
       suggested_commands: suggestedCommands(seedHandoffId, missionId, activeClaim?.claim_id, latestProgress?.progress_id, latestResult?.result_id),
-      source_cycle_id: handoff?.source_cycle_id ?? (seed.kind === "started" ? seed.source_cycle_id : undefined),
-      source_synthesis_id: handoff?.source_synthesis_id ?? (seed.kind === "started" ? seed.source_synthesis_id : undefined),
-      evidence_ids: handoff?.evidence_ids ?? (seed.kind === "started" ? seed.evidence_ids : []),
+      source_cycle_id: handoff?.source_cycle_id ?? (seed.kind === "started" || seed.kind === "failed" ? seed.source_cycle_id : undefined),
+      source_synthesis_id: handoff?.source_synthesis_id ?? (seed.kind === "started" || seed.kind === "failed" ? seed.source_synthesis_id : undefined),
+      evidence_ids: handoff?.evidence_ids ?? (seed.kind === "started" || seed.kind === "failed" ? seed.evidence_ids : []),
       updated_at: updatedAt,
     }
     if (followup.followup_status !== "completed" && followup.followup_status !== "failed" && followup.followup_status !== "cancelled" && isStale(followup, staleAfterMs, this.now())) {
@@ -170,6 +173,12 @@ export class OpenCodeHandoffFollowupService {
         if (!map.has(started.handoff_id)) map.set(started.handoff_id, started)
       } else if (event.kind === "opencode_handoff_failed") {
         const failed = readFailed(event)
+        const started = map.get(failed.handoff_id)
+        if (started?.kind === "started") {
+          failed.source_cycle_id = started.source_cycle_id
+          failed.source_synthesis_id = started.source_synthesis_id
+          failed.evidence_ids = started.evidence_ids
+        }
         map.set(failed.handoff_id, failed)
       } else if (event.kind === "opencode_handoff_created" && isRecord(event.handoff)) {
         const handoff = readHandoffResult(event.handoff)
@@ -248,6 +257,9 @@ function readFailed(event: JsonlEvent): Extract<HandoffSeed, { kind: "failed" }>
     review_id: optionalString(event.review_id),
     mission_id: optionalString(event.mission_id),
     intent_id: optionalString(event.intent_id),
+    source_cycle_id: undefined,
+    source_synthesis_id: undefined,
+    evidence_ids: [],
     requested_by: optionalString(event.requested_by),
     updated_at: cleanRequiredString(event.failed_at, "failed_at"),
   }

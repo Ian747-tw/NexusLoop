@@ -1746,6 +1746,27 @@ describe("RuntimeServer core", () => {
       failed_at: "2026-05-27T00:00:00.000Z",
       requested_by: "operator",
     })
+    await server.eventStore.append({
+      kind: "opencode_handoff_started",
+      handoff_id: "handoff_failed_with_meta",
+      proposal_id: sent.proposal_id,
+      review_id: sent.review_id,
+      objective_preview: "failed with metadata",
+      started_at: "2026-05-27T00:00:00.000Z",
+      requested_by: "operator",
+      source_cycle_id: "cycle-failed",
+      source_synthesis_id: "synthesis-failed",
+      evidence_ids: ["evidence-failed"],
+    })
+    await server.eventStore.append({
+      kind: "opencode_handoff_failed",
+      handoff_id: "handoff_failed_with_meta",
+      proposal_id: sent.proposal_id,
+      review_id: sent.review_id,
+      failure_reason: "adapter failed",
+      failed_at: "2026-05-27T00:00:01.000Z",
+      requested_by: "operator",
+    })
 
     await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: sent.handoff_id })).resolves.toMatchObject({
       proposal_id: sent.proposal_id,
@@ -1764,14 +1785,15 @@ describe("RuntimeServer core", () => {
     await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: failed.handoff_id })).resolves.toMatchObject({ followup_status: "failed" })
     await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: "handoff_blocked" })).resolves.toMatchObject({ followup_status: "blocked", blockers: expect.arrayContaining(["handoff follow-up is stale"]) })
     await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: "handoff_failed_event" })).resolves.toMatchObject({ followup_status: "handoff_failed", blockers: expect.arrayContaining(["commander proposal not found: missing-proposal"]) })
-    await expect(server.command("runtime.opencode_handoff_followup_summary", { staleAfterMs: 1 })).resolves.toMatchObject({ sent_count: 1, running_count: 1, result_submitted_count: 1, completed_count: 1, failed_count: 2, blocked_count: 1, stale_count: 1 })
+    await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: "handoff_failed_with_meta" })).resolves.toMatchObject({ followup_status: "handoff_failed", source_cycle_id: "cycle-failed", source_synthesis_id: "synthesis-failed", evidence_ids: ["evidence-failed"] })
+    await expect(server.command("runtime.opencode_handoff_followup_summary", { staleAfterMs: 1 })).resolves.toMatchObject({ sent_count: 1, running_count: 1, result_submitted_count: 1, completed_count: 1, failed_count: 3, blocked_count: 1, stale_count: 1 })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "needs_result_review" })).resolves.toMatchObject({ queue: "needs_result_review", items: [expect.objectContaining({ handoff_id: submitted.handoff_id })] })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "active" })).resolves.toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ handoff_id: sent.handoff_id }), expect.objectContaining({ handoff_id: running.handoff_id })]) })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "completed" })).resolves.toMatchObject({ items: [expect.objectContaining({ handoff_id: completed.handoff_id })] })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "failed" })).resolves.toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ handoff_id: failed.handoff_id }), expect.objectContaining({ handoff_id: "handoff_failed_event" })]) })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "blocked" })).resolves.toMatchObject({ items: [expect.objectContaining({ handoff_id: "handoff_blocked" })] })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "stale", staleAfterMs: 1 })).resolves.toMatchObject({ items: [expect.objectContaining({ handoff_id: "handoff_blocked" })] })
-    await expect(server.command("runtime.list_opencode_handoff_followups", { limit: 101 })).resolves.toHaveLength(7)
+    await expect(server.command("runtime.list_opencode_handoff_followups", { limit: 101 })).resolves.toHaveLength(8)
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "active", limit: 101 })).resolves.toMatchObject({ limit: 100 })
     await expect(server.command("runtime.opencode_handoff_followup_summary", { staleAfterMs: 86_400_000 })).resolves.toMatchObject({ stale_count: 1 })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "bogus" })).rejects.toThrow("handoff follow-up queue is invalid")
