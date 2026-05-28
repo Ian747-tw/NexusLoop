@@ -221,7 +221,7 @@ function inQueue(item: OpenCodeHandoffFollowup, queue: OpenCodeHandoffFollowupQu
 }
 
 function isStale(item: OpenCodeHandoffFollowup, staleAfterMs: number, now: Date): boolean {
-  if (item.followup_status === "completed" || item.followup_status === "failed" || item.followup_status === "cancelled") return false
+  if (item.followup_status === "completed" || item.followup_status === "failed" || item.followup_status === "cancelled" || item.followup_status === "handoff_failed") return false
   if (!item.updated_at) return false
   const timestamp = Date.parse(item.updated_at)
   return Number.isFinite(timestamp) && now.getTime() - timestamp >= staleAfterMs

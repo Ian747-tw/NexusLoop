@@ -1743,7 +1743,7 @@ describe("RuntimeServer core", () => {
       handoff_id: "handoff_failed_event",
       proposal_id: "missing-proposal",
       failure_reason: "adapter token=failed-secret",
-      failed_at: "2026-05-28T00:01:00.000Z",
+      failed_at: "2026-05-27T00:00:00.000Z",
       requested_by: "operator",
     })
 
@@ -1764,7 +1764,7 @@ describe("RuntimeServer core", () => {
     await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: failed.handoff_id })).resolves.toMatchObject({ followup_status: "failed" })
     await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: "handoff_blocked" })).resolves.toMatchObject({ followup_status: "blocked", blockers: expect.arrayContaining(["handoff follow-up is stale"]) })
     await expect(server.command("runtime.get_opencode_handoff_followup", { handoffId: "handoff_failed_event" })).resolves.toMatchObject({ followup_status: "handoff_failed", blockers: expect.arrayContaining(["commander proposal not found: missing-proposal"]) })
-    await expect(server.command("runtime.opencode_handoff_followup_summary", { staleAfterMs: 1 })).resolves.toMatchObject({ sent_count: 1, running_count: 1, result_submitted_count: 1, completed_count: 1, failed_count: 2, blocked_count: 1 })
+    await expect(server.command("runtime.opencode_handoff_followup_summary", { staleAfterMs: 1 })).resolves.toMatchObject({ sent_count: 1, running_count: 1, result_submitted_count: 1, completed_count: 1, failed_count: 2, blocked_count: 1, stale_count: 1 })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "needs_result_review" })).resolves.toMatchObject({ queue: "needs_result_review", items: [expect.objectContaining({ handoff_id: submitted.handoff_id })] })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "active" })).resolves.toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ handoff_id: sent.handoff_id }), expect.objectContaining({ handoff_id: running.handoff_id })]) })
     await expect(server.command("runtime.opencode_handoff_followup_queue", { queue: "completed" })).resolves.toMatchObject({ items: [expect.objectContaining({ handoff_id: completed.handoff_id })] })
