@@ -1,7 +1,7 @@
 import { redactText, redactValue } from "../security/redaction"
 import type { CommanderPlaybookDraftRegistry } from "./commander-playbook-draft-registry"
 import type { ProposalBundleRegistry } from "./proposal-bundle-registry"
-import type { ProposalRegistry } from "./proposal-registry"
+import { isGenericProposalApplyActionKind, type ProposalRegistry } from "./proposal-registry"
 import type { CommanderProposal } from "./proposal-types"
 import type {
   CommanderApplyOptions,
@@ -79,7 +79,7 @@ export class CommanderApplyService {
         for (const proposalId of preview.proposal_ids) {
           const proposal = before.get(proposalId)
           if (!proposal) throw new Error(`commander proposal not found: ${proposalId}`)
-          if (proposal.status === "approved") await this.proposalRegistry.applyProposal(proposal.proposal_id)
+          if (proposal.status === "approved" && isGenericProposalApplyActionKind(proposal.action_kind)) await this.proposalRegistry.applyProposal(proposal.proposal_id)
           else if (proposal.status !== "applied" && !allowPartial) throw new Error(`proposal is not approved: ${proposal.proposal_id}`)
         }
         break
@@ -113,7 +113,7 @@ export class CommanderApplyService {
       blocked_count: blockers.length,
       blockers,
       apply_mode: "single",
-      would_apply: proposal.status === "approved" ? [proposal.proposal_id] : [],
+      would_apply: proposal.status === "approved" && blockers.length === 0 ? [proposal.proposal_id] : [],
       would_skip: proposal.status === "applied" ? [proposal.proposal_id] : [],
     }
   }
@@ -123,7 +123,10 @@ export class CommanderApplyService {
     if (!bundle) throw new Error(`commander proposal bundle not found: ${bundleId}`)
     const readiness = await this.proposalBundleRegistry.readiness(bundle.bundle_id)
     const proposals = await this.proposalsById(bundle.proposal_ids)
-    const wouldApply = bundle.proposal_ids.filter((proposalId) => proposals.get(proposalId)?.status === "approved")
+    const wouldApply = bundle.proposal_ids.filter((proposalId) => {
+      const proposal = proposals.get(proposalId)
+      return proposal?.status === "approved" && isGenericProposalApplyActionKind(proposal.action_kind)
+    })
     const wouldSkip = bundle.proposal_ids.filter((proposalId) => proposals.get(proposalId)?.status === "applied")
     return {
       target_type: draftId ? "draft" : "bundle",
@@ -179,7 +182,10 @@ export class CommanderApplyService {
       blocked_count: blockers.length,
       blockers: blockers.map(redactText),
       apply_mode: "draft_proposals",
-      would_apply: cancelledBlocker ? [] : draft.proposal_ids.filter((proposalId) => proposals.get(proposalId)?.status === "approved"),
+      would_apply: cancelledBlocker ? [] : draft.proposal_ids.filter((proposalId) => {
+        const proposal = proposals.get(proposalId)
+        return proposal?.status === "approved" && isGenericProposalApplyActionKind(proposal.action_kind)
+      }),
       would_skip: draft.proposal_ids.filter((proposalId) => proposals.get(proposalId)?.status === "applied"),
     }
   }
@@ -205,7 +211,9 @@ export class CommanderApplyService {
 }
 
 function blockersForProposal(proposal: CommanderProposal): string[] {
-  if (proposal.status === "approved" || proposal.status === "applied") return []
+  if (proposal.status === "applied") return []
+  if (!isGenericProposalApplyActionKind(proposal.action_kind)) return [`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`]
+  if (proposal.status === "approved") return []
   if (proposal.status === "rejected" || proposal.status === "cancelled") return [`proposal ${proposal.proposal_id} is ${proposal.status}`]
   if (!proposal.review_id) return [`proposal ${proposal.proposal_id} has no linked review`]
   return [`proposal ${proposal.proposal_id} status is ${proposal.status}`]

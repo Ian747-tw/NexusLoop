@@ -1,7 +1,7 @@
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
 import { redactText, redactValue } from "../security/redaction"
-import type { ProposalRegistry } from "./proposal-registry"
+import { isGenericProposalApplyActionKind, type ProposalRegistry } from "./proposal-registry"
 import type { ProposalStatus } from "./proposal-types"
 import type {
   CommanderProposalBundle,
@@ -188,12 +188,12 @@ export class ProposalBundleRegistry {
             skippedProposalIds.push(proposal.proposal_id)
             continue
           }
-          if (proposal.status !== "approved") {
+          if (proposal.status !== "approved" || !isGenericProposalApplyActionKind(proposal.action_kind)) {
             if (allowPartial) {
               skippedProposalIds.push(proposal.proposal_id)
               continue
             }
-            throw new Error(`proposal is not approved: ${proposal.proposal_id}`)
+            throw new Error(`proposal is not ready for generic apply: ${proposal.proposal_id}`)
           }
           const applied = await this.proposalRegistry.applyProposal(proposal.proposal_id)
           appliedProposalIds.push(applied.proposal_id)
@@ -275,6 +275,9 @@ export class ProposalBundleRegistry {
         continue
       }
       statuses.push(proposal.status)
+      if (proposal.status !== "applied" && !isGenericProposalApplyActionKind(proposal.action_kind)) {
+        blockers.push(`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`)
+      }
       if (proposal.status !== "approved" && proposal.status !== "applied") {
         blockers.push(`proposal ${proposal.proposal_id} status is ${proposal.status}`)
       }
@@ -300,7 +303,7 @@ export class ProposalBundleRegistry {
     const blocked: string[] = []
     for (const proposalId of proposalIds) {
       const proposal = await this.proposalRegistry.getProposal(proposalId)
-      if (!proposal || (proposal.status !== "approved" && proposal.status !== "applied")) blocked.push(proposalId)
+      if (!proposal || !isGenericProposalApplyActionKind(proposal.action_kind) || (proposal.status !== "approved" && proposal.status !== "applied")) blocked.push(proposalId)
     }
     return blocked
   }

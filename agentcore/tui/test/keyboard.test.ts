@@ -256,6 +256,39 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("opencode handoff slash commands route only exact whitelist commands", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/handoff-preview proposal-1",
+    }
+
+    let result = applyKeyCommandWithEffects(state, { type: "submit" })
+    expect(result.state.lastCommand).toBe("handoff-preview")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "handoff-preview", args: ["proposal-1"] },
+    ])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/handoff-dry-run proposal-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "handoff-dry-run", args: ["proposal-1"] }])
+
+    for (const message of ["/tmp/repro/handoff", "/path/handoff", ".handoff proposal-1", ":handoff-show handoff-1"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("mission execution slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

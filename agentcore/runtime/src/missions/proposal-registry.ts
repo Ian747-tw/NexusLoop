@@ -30,11 +30,16 @@ const ACTION_KINDS = new Set<ProposalActionKind>([
   "release_claim",
   "record_progress",
   "submit_result",
+  "opencode_handoff",
   "operator_checkpoint",
   "other",
 ])
 
 const TERMINAL_STATUSES = new Set<ProposalStatus>(["rejected", "cancelled", "applied"])
+
+export function isGenericProposalApplyActionKind(actionKind: ProposalActionKind): boolean {
+  return actionKind !== "opencode_handoff"
+}
 
 export class ProposalRegistry {
   private readonly eventStore: EventStore
@@ -167,6 +172,7 @@ export class ProposalRegistry {
       const proposal = this.requireProposal(cleanRequiredString(proposalId, "proposal_id"))
       if (proposal.status === "applied") return redactValue(proposal)
       if (proposal.status === "rejected" || proposal.status === "cancelled") throw new Error(`terminal proposal cannot apply: ${proposal.proposal_id}`)
+      if (!isGenericProposalApplyActionKind(proposal.action_kind)) throw new Error(`proposal ${proposal.proposal_id} action ${proposal.action_kind} must use its dedicated command`)
       const reviewId = cleanRequiredString(proposal.review_id, "review_id")
       const review = await this.reviewRegistry.getReviewRequest(reviewId)
       if (!review) {
@@ -209,6 +215,65 @@ export class ProposalRegistry {
         })
         throw new Error(`proposal apply failed: ${message}`)
       }
+      return redactValue(this.requireProposal(proposal.proposal_id))
+    })
+  }
+
+  async markProposalApplied(proposalId: string, applicationResult: string): Promise<CommanderProposal> {
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const proposal = this.requireProposal(cleanRequiredString(proposalId, "proposal_id"))
+      const result = redactText(cleanRequiredString(applicationResult, "application_result"))
+      if (proposal.status === "applied") {
+        if (proposal.application_result === result) return redactValue(proposal)
+        throw new Error(`terminal proposal apply conflicts with existing payload: ${proposal.proposal_id}`)
+      }
+      if (proposal.status === "rejected" || proposal.status === "cancelled") throw new Error(`terminal proposal cannot apply: ${proposal.proposal_id}`)
+      const reviewId = cleanRequiredString(proposal.review_id, "review_id")
+      const review = await this.reviewRegistry.getReviewRequest(reviewId)
+      if (!review || review.status !== "approved") throw new Error(`proposal requires an approved linked review before apply: ${proposal.proposal_id}`)
+      if (proposal.status !== "approved") {
+        await this.appendAndApply({
+          kind: "commander_proposal_approved",
+          proposal_id: proposal.proposal_id,
+          review_id: review.review_id,
+          approved_at: review.decision_at ?? this.isoNow(),
+        })
+      }
+      await this.appendAndApply({
+        kind: "commander_proposal_applied",
+        proposal_id: proposal.proposal_id,
+        applied_at: this.isoNow(),
+        application_result: result,
+      })
+      return redactValue(this.requireProposal(proposal.proposal_id))
+    })
+  }
+
+  async applyApprovedProposalExternalAction(proposalId: string, operation: () => Promise<string>): Promise<CommanderProposal> {
+    return this.serializeMutation(async () => {
+      await this.hydrate()
+      const proposal = this.requireProposal(cleanRequiredString(proposalId, "proposal_id"))
+      if (proposal.status === "applied") return redactValue(proposal)
+      if (proposal.status === "rejected" || proposal.status === "cancelled") throw new Error(`terminal proposal cannot apply: ${proposal.proposal_id}`)
+      const reviewId = cleanRequiredString(proposal.review_id, "review_id")
+      const review = await this.reviewRegistry.getReviewRequest(reviewId)
+      if (!review || review.status !== "approved") throw new Error(`proposal requires an approved linked review before apply: ${proposal.proposal_id}`)
+      if (proposal.status !== "approved") {
+        await this.appendAndApply({
+          kind: "commander_proposal_approved",
+          proposal_id: proposal.proposal_id,
+          review_id: review.review_id,
+          approved_at: review.decision_at ?? this.isoNow(),
+        })
+      }
+      const applicationResult = redactText(cleanRequiredString(await operation(), "application_result"))
+      await this.appendAndApply({
+        kind: "commander_proposal_applied",
+        proposal_id: proposal.proposal_id,
+        applied_at: this.isoNow(),
+        application_result: applicationResult,
+      })
       return redactValue(this.requireProposal(proposal.proposal_id))
     })
   }
@@ -486,6 +551,8 @@ function reviewTypeForAction(actionKind: ProposalActionKind): ReviewRequestType 
       return "claim_release"
     case "submit_result":
       return "result_acceptance"
+    case "opencode_handoff":
+      return "operator_checkpoint"
     case "record_progress":
     case "operator_checkpoint":
     case "other":

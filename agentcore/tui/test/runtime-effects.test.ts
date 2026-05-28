@@ -532,6 +532,105 @@ class CommanderCycleRuntime implements RuntimeClient {
   }
 }
 
+class OpenCodeHandoffRuntime implements RuntimeClient {
+  readonly calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+  private readonly handoffs: unknown[] = []
+  async *stream(): AsyncIterable<RuntimeEvent> {}
+  async sendUserMessage(): Promise<void> {}
+  async sendCommand(): Promise<unknown> {
+    return { ok: true }
+  }
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+    this.calls.push({ name, payload })
+    switch (name) {
+      case "runtime.preview_opencode_handoff":
+        return {
+          proposal_id: payload?.proposalId,
+          eligible: payload?.proposalId === "proposal-approved",
+          blockers: payload?.proposalId === "proposal-approved" ? [] : ["linked review must be approved token=blocker-secret"],
+          action_kind: "opencode_handoff",
+          proposal_status: payload?.proposalId === "proposal-approved" ? "approved" : "review_requested",
+          review_id: "review-1",
+          review_status: payload?.proposalId === "proposal-approved" ? "approved" : "pending",
+          objective_preview: "implement handoff token=objective-secret",
+          evidence_ids: ["evidence-1"],
+          source_cycle_id: "cycle-1",
+          would_create_mission: payload?.proposalId === "proposal-approved",
+          would_send_to_adapter: payload?.proposalId === "proposal-approved",
+        }
+      case "runtime.execute_opencode_handoff": {
+        if (payload?.proposalId !== "proposal-approved") throw new Error("linked review must be approved token=execute-secret")
+        const result = {
+          handoff_id: payload?.dryRun ? "dry-run" : "handoff-1",
+          proposal_id: payload?.proposalId,
+          review_id: "review-1",
+          mission_id: payload?.dryRun ? undefined : "mission-handoff-1",
+          intent_id: payload?.dryRun ? undefined : "intent-handoff-1",
+          objective_preview: "implement handoff token=objective-secret",
+          sent: payload?.dryRun !== true,
+          dry_run: payload?.dryRun === true,
+          created_at: "1970-01-01T00:00:00.000Z",
+          requested_by: "operator token=requester-secret",
+          source_cycle_id: "cycle-1",
+          evidence_ids: ["evidence-1"],
+        }
+        if (!result.dry_run) this.handoffs.unshift({
+          handoff_id: result.handoff_id,
+          proposal_id: result.proposal_id,
+          mission_id: result.mission_id,
+          intent_id: result.intent_id,
+          sent: result.sent,
+          created_at: result.created_at,
+          requested_by: result.requested_by,
+          source_cycle_id: result.source_cycle_id,
+        })
+        return result
+      }
+      case "runtime.get_opencode_handoff":
+        return {
+          handoff_id: payload?.handoffId,
+          proposal_id: "proposal-approved",
+          review_id: "review-1",
+          mission_id: "mission-handoff-1",
+          intent_id: "intent-handoff-1",
+          objective_preview: "loaded objective",
+          sent: true,
+          dry_run: false,
+          created_at: "1970-01-01T00:00:00.000Z",
+          requested_by: "operator",
+          evidence_ids: [],
+        }
+      case "runtime.list_opencode_handoffs":
+        return this.handoffs
+      case "runtime.proposal_status":
+        return { proposed_count: 0, review_requested_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0, applied_count: 1, last_proposal_id: "proposal-approved" }
+      case "runtime.list_commander_proposals":
+        return [{ proposal_id: "proposal-approved", action_kind: "opencode_handoff", title: "Handoff", summary: "proposal", proposed_by: "operator", status: "applied", review_id: "review-1", application_result: "opencode_handoff:handoff-1:mission:mission-handoff-1", created_at: "1970-01-01T00:00:00.000Z", updated_at: "1970-01-01T00:00:00.000Z" }]
+      case "runtime.status":
+        return {
+          runtimeStatus: "started",
+          mode: "active",
+          projectName: "demo",
+          specApproved: true,
+          lockHeld: true,
+          missions: { pending_count: 1, failed_count: 0, active_claim_count: 0, completed_count: 0, cancelled_count: 0, last_mission_id: "mission-handoff-1" },
+        }
+      case "runtime.list_recent_missions":
+        return [{ mission_id: "mission-handoff-1", intent_id: "intent-handoff-1", objective: "handoff mission", status: "sent" }]
+      case "runtime.get_mission":
+        return { mission_id: payload?.missionId, intent_id: "intent-handoff-1", objective: "handoff mission", status: "sent" }
+      case "runtime.list_mission_claims":
+      case "runtime.list_mission_progress":
+      case "runtime.list_mission_results":
+      case "runtime.review_status":
+      case "runtime.list_review_requests":
+        return Array.isArray(payload) ? [] : name === "runtime.review_status" ? { pending_count: 0, approved_count: 1, rejected_count: 0, cancelled_count: 0, last_review_id: "review-1" } : []
+      default:
+        return { ok: true }
+    }
+  }
+}
+
 class FailingResearchRuntime extends ResearchRuntime {
   async command(name: string): Promise<unknown> {
     if (name.startsWith("research.")) throw new Error("research failed token=research-secret")
@@ -2264,6 +2363,20 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("nav-title-secret")
     expect(JSON.stringify(state)).not.toContain("nav-summary-secret")
 
+    const handoffProposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff proposal",
+      summary: "handoff summary",
+      proposedBy: "operator",
+      actionPayload: { objective: "handoff objective" },
+    }) as { proposal_id: string }
+    const handoffReview = await runtime.command("runtime.request_proposal_review", { proposalId: handoffProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await runtime.command("runtime.approve_review_request", { reviewId: handoffReview.review_id, decidedBy: "operator", reason: "ok" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "open", args: ["proposal", handoffProposal.proposal_id] })
+    expect(state.commanderNavigation?.selected?.suggested_commands).toContainEqual(expect.objectContaining({ command: `/handoff-preview ${handoffProposal.proposal_id}` }))
+    expect(state.commanderNavigation?.selected?.suggested_commands).toContainEqual(expect.objectContaining({ command: `/handoff ${handoffProposal.proposal_id}` }))
+    expect(state.commanderNavigation?.selected?.suggested_commands).not.toContainEqual(expect.objectContaining({ command: `/apply-target proposal ${handoffProposal.proposal_id}` }))
+
     for (const [command, args, targetType] of [
       ["open-bundle", [bundle.bundle_id], "bundle"],
       ["open-draft", [draft.draft_id], "draft"],
@@ -2489,6 +2602,13 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.lastResult).toMatchObject({ command: "/apply-target proposal missing-proposal", ok: false })
     expect(state.operatorActions?.commandError).toContain("not found")
     expect(state.operatorActions?.staged?.command).toBe("/apply-target proposal missing-proposal")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/handoff", "missing-proposal"] })
+    expect(state.operatorActions?.staged?.command).toBe("/handoff missing-proposal")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/handoff missing-proposal", ok: false })
+    expect(state.operatorActions?.commandError).toContain("not found")
+    expect(state.operatorActions?.staged?.command).toBe("/handoff missing-proposal")
   })
 
   test("fake commander queue ordering applies priority tie-break before target id", () => {
@@ -2754,5 +2874,62 @@ describe("runtime UI effects", () => {
     expect(runtime.calls.find((call) => call.name === "runtime.execute_commander_cycle")).toMatchObject({
       payload: { objective: "inspect next step" },
     })
+  })
+
+  test("opencode handoff slash commands render preview dry-run execute and recent rows", async () => {
+    const runtime = new OpenCodeHandoffRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "handoff-preview",
+      args: ["proposal-approved"],
+    })
+    expect(state.opencodeHandoff?.preview).toMatchObject({ proposal_id: "proposal-approved", eligible: true, review_status: "approved" })
+    expect(JSON.stringify(state)).not.toContain("objective-secret")
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode handoff")
+    expect(snapshot).toContain("preview_proposal=proposal-approved eligible=true")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "handoff-dry-run",
+      args: ["proposal-approved"],
+    })
+    expect(state.opencodeHandoff?.lastResult).toMatchObject({ handoff_id: "dry-run", sent: false, dry_run: true })
+    expect(state.opencodeHandoff?.recent).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "handoff",
+      args: ["proposal-approved"],
+    })
+    expect(state.opencodeHandoff?.lastResult).toMatchObject({ handoff_id: "handoff-1", mission_id: "mission-handoff-1", sent: true })
+    expect(state.opencodeHandoff?.recent.at(0)).toMatchObject({ handoff_id: "handoff-1", mission_id: "mission-handoff-1" })
+    expect(state.proposals?.recent.at(0)).toMatchObject({ proposal_id: "proposal-approved", status: "applied" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoffs" })
+    expect(state.opencodeHandoff?.recent.at(0)).toMatchObject({ handoff_id: "handoff-1" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-show", args: ["handoff-1"] })
+    expect(state.opencodeHandoff?.lastResult).toMatchObject({ handoff_id: "handoff-1" })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("last_handoff=handoff-1")
+    expect(snapshot).not.toContain("requester-secret")
+  })
+
+  test("opencode handoff missing args blockers and secret-looking output are redacted", async () => {
+    const runtime = new OpenCodeHandoffRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-preview" })
+    expect(state.opencodeHandoff?.commandError).toContain("proposalId is required")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-preview", args: ["proposal-pending"] })
+    expect(state.opencodeHandoff?.preview).toMatchObject({ eligible: false })
+    expect(JSON.stringify(state)).not.toContain("blocker-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff", args: ["proposal-pending"] })
+    expect(state.opencodeHandoff?.commandError).toContain("linked review must be approved")
+    expect(JSON.stringify(state)).not.toContain("execute-secret")
   })
 })

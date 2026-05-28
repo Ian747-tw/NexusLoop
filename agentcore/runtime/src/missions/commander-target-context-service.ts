@@ -16,6 +16,10 @@ const SUMMARY_LIMIT = 260
 const RELATED_LIMIT = 50
 const AUDIT_LIMIT = 20
 
+type TargetRecordContext = Omit<CommanderTargetContext, "target_type" | "target_id" | "queue_membership" | "audit_event_count" | "recent_audit_events" | "suggested_commands"> & {
+  action_kind?: string
+}
+
 export interface CommanderTargetContextServiceOptions {
   missionRegistry: MissionRegistry
   reviewRegistry: ReviewRegistry
@@ -50,13 +54,13 @@ export class CommanderTargetContextService {
       queue_membership: queueMembership,
       audit_event_count: chain.events.length,
       recent_audit_events: chain.events.slice(-AUDIT_LIMIT).reverse(),
-      suggested_commands: suggestedCommands(target.target_type, target.target_id, base.status, queueMembership, relatedIds),
+      suggested_commands: suggestedCommands(target.target_type, target.target_id, base.status, queueMembership, relatedIds, base.action_kind),
       missing_links: missingLinks.map((link) => safe(link, SUMMARY_LIMIT)).slice(0, 20),
     }
     return redactValue(context)
   }
 
-  private async recordContext(targetType: CommanderTargetType, targetId: string): Promise<Omit<CommanderTargetContext, "target_type" | "target_id" | "queue_membership" | "audit_event_count" | "recent_audit_events" | "suggested_commands">> {
+  private async recordContext(targetType: CommanderTargetType, targetId: string): Promise<TargetRecordContext> {
     switch (targetType) {
       case "mission": {
         const mission = await this.options.missionRegistry.getMission(targetId)
@@ -137,6 +141,7 @@ export class CommanderTargetContextService {
           summary: previewSummary ? `${proposal.summary} (${previewSummary})` : proposal.summary,
           status: proposal.status,
           record_kind: "commander_proposal",
+          action_kind: proposal.action_kind,
           related_ids: {
             proposal_id: [proposal.proposal_id],
             review_id: optionalArray(proposal.review_id),
@@ -193,19 +198,20 @@ function readTarget(targetType: string, targetId: string): { target_type: Comman
   return { target_type: targetType as CommanderTargetType, target_id: targetId.trim() }
 }
 
-function found(input: { title: string; summary: string; status?: string; record_kind: string; related_ids: Record<string, string[] | undefined> }): Omit<CommanderTargetContext, "target_type" | "target_id" | "queue_membership" | "audit_event_count" | "recent_audit_events" | "suggested_commands"> {
+function found(input: { title: string; summary: string; status?: string; record_kind: string; action_kind?: string; related_ids: Record<string, string[] | undefined> }): TargetRecordContext {
   return {
     found: true,
     title: input.title,
     summary: input.summary,
     status: input.status,
     record_kind: input.record_kind,
+    action_kind: input.action_kind,
     related_ids: relatedIds(input.related_ids),
     missing_links: [],
   }
 }
 
-function missing(targetType: CommanderTargetType, targetId: string): Omit<CommanderTargetContext, "target_type" | "target_id" | "queue_membership" | "audit_event_count" | "recent_audit_events" | "suggested_commands"> {
+function missing(targetType: CommanderTargetType, targetId: string): TargetRecordContext {
   return {
     found: false,
     title: `${targetType} ${targetId}`,
@@ -216,7 +222,7 @@ function missing(targetType: CommanderTargetType, targetId: string): Omit<Comman
   }
 }
 
-function suggestedCommands(targetType: CommanderTargetType, targetId: string, status: string | undefined, queues: string[], relatedIds: Record<string, string[]>): CommanderSuggestedCommand[] {
+function suggestedCommands(targetType: CommanderTargetType, targetId: string, status: string | undefined, queues: string[], relatedIds: Record<string, string[]>, actionKind?: string): CommanderSuggestedCommand[] {
   const id = safe(targetId, TITLE_LIMIT)
   const missionId = relatedIds.mission_id?.[0] ?? id
   const commands: CommanderSuggestedCommand[] = []
@@ -242,8 +248,13 @@ function suggestedCommands(targetType: CommanderTargetType, targetId: string, st
   } else if (targetType === "proposal") {
     add("Open proposal", `/proposal ${id}`)
     add("Request review", `/proposal-review ${id} <title> -- <summary>`, "write", { requires_review: true, requires_active_runtime: true })
-    add("Preview apply", `/apply-preview proposal ${id}`)
-    if (status === "approved") add("Apply proposal", `/apply-target proposal ${id}`, "write", { requires_review: true, requires_active_runtime: true })
+    if (actionKind === "opencode_handoff") {
+      add("Preview handoff", `/handoff-preview ${id}`)
+      if (status === "approved") add("Execute handoff", `/handoff ${id}`, "write", { requires_review: true, requires_active_runtime: true })
+    } else {
+      add("Preview apply", `/apply-preview proposal ${id}`)
+      if (status === "approved") add("Apply proposal", `/apply-target proposal ${id}`, "write", { requires_review: true, requires_active_runtime: true })
+    }
   } else if (targetType === "bundle") {
     add("Open bundle", `/bundle ${id}`)
     add("Check readiness", `/bundle-ready ${id}`)

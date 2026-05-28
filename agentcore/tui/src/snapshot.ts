@@ -77,6 +77,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...externalApiLines(state))
   out.push(...researchSynthesisLines(state))
   out.push(...commanderCycleLines(state))
+  out.push(...opencodeHandoffLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -268,6 +269,47 @@ function proposalBundleLines(state: UiState): string[] {
     }
   }
   if (bundles.commandError) out.push(`  command_error=${redactText(bundles.commandError)}`)
+  return out
+}
+
+function opencodeHandoffLines(state: UiState): string[] {
+  const handoff = state.opencodeHandoff
+  const out = ["OpenCode handoff"]
+  if (!handoff) {
+    out.push("  handoffs=0")
+    return out
+  }
+  if (handoff.preview) {
+    const previewRecord = handoff.preview
+    out.push(`  preview_proposal=${previewRecord.proposal_id} eligible=${previewRecord.eligible}`)
+    out.push(`  preview_action=${previewRecord.action_kind} proposal_status=${previewRecord.proposal_status}`)
+    out.push(`  preview_review=${previewRecord.review_id ?? "none"} review_status=${previewRecord.review_status ?? "none"}`)
+    out.push(`  would_create_mission=${previewRecord.would_create_mission} would_send_to_adapter=${previewRecord.would_send_to_adapter}`)
+    if (previewRecord.source_cycle_id) out.push(`  source_cycle=${previewRecord.source_cycle_id}`)
+    if (previewRecord.source_synthesis_id) out.push(`  source_synthesis=${previewRecord.source_synthesis_id}`)
+    if (previewRecord.evidence_ids.length > 0) out.push(`  evidence=${previewRecord.evidence_ids.slice(0, 10).join(",")}`)
+    if (previewRecord.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewRecord.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (handoff.lastResult) {
+    const result = handoff.lastResult
+    out.push(`  last_handoff=${result.handoff_id} proposal=${result.proposal_id} sent=${result.sent} dry_run=${result.dry_run}`)
+    out.push(`  mission=${result.mission_id ?? "none"} intent=${result.intent_id ?? "none"}`)
+    if (result.review_id) out.push(`  review=${result.review_id}`)
+    if (result.source_cycle_id) out.push(`  source_cycle=${result.source_cycle_id}`)
+    if (result.source_synthesis_id) out.push(`  source_synthesis=${result.source_synthesis_id}`)
+  } else {
+    out.push("  last_handoff=none")
+  }
+  out.push(`  handoffs=${handoff.recent.length}`)
+  out.push("  recent_handoffs")
+  if (handoff.recent.length === 0) out.push("    - empty")
+  else out.push(...handoff.recent.slice(0, 10).map((record) => `    - ${record.handoff_id} proposal=${record.proposal_id} mission=${record.mission_id ?? "none"} sent=${record.sent}`))
+  if (handoff.commandError) out.push(`  command_error=${redactText(handoff.commandError)}`)
   return out
 }
 

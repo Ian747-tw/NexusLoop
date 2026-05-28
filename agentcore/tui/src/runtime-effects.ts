@@ -16,6 +16,10 @@ import type {
   MissionProgressSummary,
   MissionResultSummary,
   MissionSummaryState,
+  OpenCodeHandoffPreviewSummary,
+  OpenCodeHandoffRecordSummary,
+  OpenCodeHandoffResultSummary,
+  OpenCodeHandoffState,
   CommanderApplyPreviewSummary,
   CommanderApplyResultSummary,
   CommanderApplyState,
@@ -95,6 +99,7 @@ const QUEUE_LIMIT = 20
 const EXTERNAL_API_LIMIT = 20
 const SYNTHESIS_LIMIT = 20
 const CYCLE_LIMIT = 20
+const HANDOFF_LIMIT = 20
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -176,6 +181,10 @@ export type RuntimeUiEffect =
   | { type: "execute-commander-cycle"; topicId?: string; missionId?: string; objective?: string; createProposals?: boolean; createBundle?: boolean }
   | { type: "load-commander-cycle"; cycleId: string }
   | { type: "load-commander-cycles"; limit?: number }
+  | { type: "preview-opencode-handoff"; proposalId: string }
+  | { type: "execute-opencode-handoff"; proposalId: string; dryRun?: boolean }
+  | { type: "load-opencode-handoff"; handoffId: string }
+  | { type: "load-opencode-handoffs"; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -644,6 +653,26 @@ export async function applyRuntimeUiEffect(
         )
       case "load-commander-cycles":
         return await loadCommanderCycles(state, runtime, effect.limit ?? CYCLE_LIMIT)
+      case "preview-opencode-handoff":
+        return applyOpenCodeHandoffPreview(
+          state,
+          await runtime.command("runtime.preview_opencode_handoff", { proposalId: effect.proposalId, requestedBy: "operator" }),
+        )
+      case "execute-opencode-handoff": {
+        const next = applyOpenCodeHandoffResult(
+          state,
+          await runtime.command("runtime.execute_opencode_handoff", { proposalId: effect.proposalId, dryRun: effect.dryRun, requestedBy: "operator" }),
+        )
+        return effect.dryRun ? next : await refreshAfterHandoff(next, runtime)
+      }
+      case "load-opencode-handoff":
+        return applyOpenCodeHandoffResult(
+          state,
+          await runtime.command("runtime.get_opencode_handoff", { handoffId: effect.handoffId }),
+          effect.handoffId,
+        )
+      case "load-opencode-handoffs":
+        return await loadOpenCodeHandoffs(state, runtime, effect.limit ?? HANDOFF_LIMIT)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -669,6 +698,7 @@ export async function applyRuntimeUiEffect(
     if (isExternalApiEffect(effect)) return recordExternalApiCommandError(state, error)
     if (isResearchSynthesisEffect(effect)) return recordResearchSynthesisCommandError(state, error)
     if (isCommanderCycleEffect(effect)) return recordCommanderCycleCommandError(state, error)
+    if (isOpenCodeHandoffEffect(effect)) return recordOpenCodeHandoffCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
@@ -988,6 +1018,26 @@ async function loadCommanderCycles(state: UiState, runtime: RuntimeClient, limit
   }
 }
 
+async function loadOpenCodeHandoffs(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const recent = readOpenCodeHandoffRecordList(await runtime.command("runtime.list_opencode_handoffs", { limit }), "runtime.list_opencode_handoffs", limit)
+  return {
+    ...state,
+    opencodeHandoff: {
+      ...opencodeHandoffState(state),
+      recent,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode handoffs loaded", detail: `records=${recent.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+async function refreshAfterHandoff(state: UiState, runtime: RuntimeClient): Promise<UiState> {
+  let next = await loadOpenCodeHandoffs(state, runtime, HANDOFF_LIMIT)
+  next = await loadProposals(next, runtime, PROPOSAL_LIMIT)
+  const missionId = next.opencodeHandoff?.lastResult?.mission_id
+  return missionId ? await refreshAfterMissionWrite(next, runtime, missionId) : await refreshRuntimeRecordsOrRecordError(next, runtime)
+}
+
 function applyExternalApiConnector(state: UiState, value: unknown, connectorId: string): UiState {
   const connector = readExternalApiConnector(value)
   if (!connector && value !== null) throw new Error("runtime.get_external_api_connector returned invalid connector")
@@ -1104,6 +1154,37 @@ function applyCommanderCycleResult(state: UiState, value: unknown, cycleId?: str
     },
     systemActions: selectedId
       ? [...state.systemActions, { title: "commander cycle selected", detail: `cycle_id=${selectedId}`, status: result ? "loaded" : "missing" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
+function applyOpenCodeHandoffPreview(state: UiState, value: unknown): UiState {
+  const handoffPreview = readOpenCodeHandoffPreview(value)
+  return {
+    ...state,
+    opencodeHandoff: {
+      ...opencodeHandoffState(state),
+      preview: handoffPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode handoff preview", detail: `proposal=${handoffPreview.proposal_id}`, status: handoffPreview.eligible ? "eligible" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeHandoffResult(state: UiState, value: unknown, handoffId?: string): UiState {
+  const result = readOpenCodeHandoffResult(value)
+  if (!result && value !== null) throw new Error("runtime.get_opencode_handoff returned invalid result")
+  const selectedId = result?.handoff_id ?? (handoffId ? redactText(handoffId) : undefined)
+  return {
+    ...state,
+    opencodeHandoff: {
+      ...opencodeHandoffState(state),
+      lastResult: result,
+      recent: result && !result.dry_run ? [recordFromOpenCodeHandoffResult(result), ...opencodeHandoffState(state).recent.filter((item) => item.handoff_id !== result.handoff_id)].slice(0, HANDOFF_LIMIT) : opencodeHandoffState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "opencode handoff result", detail: `handoff_id=${selectedId}`, status: result?.sent ? "sent" : "dry-run" }].slice(-12)
       : state.systemActions,
   }
 }
@@ -1298,6 +1379,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (externalApiCommands.has(command)) return state.externalApi?.commandError
   if (researchSynthesisCommands.has(command)) return state.researchSynthesis?.commandError
   if (commanderCycleCommands.has(command)) return state.commanderCycle?.commandError
+  if (opencodeHandoffCommands.has(command)) return state.opencodeHandoff?.commandError
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
@@ -1317,6 +1399,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (externalApiCommands.has(command)) return { ...state, externalApi: { ...externalApiState(state), commandError: undefined } }
   if (researchSynthesisCommands.has(command)) return { ...state, researchSynthesis: { ...researchSynthesisState(state), commandError: undefined } }
   if (commanderCycleCommands.has(command)) return { ...state, commanderCycle: { ...commanderCycleState(state), commandError: undefined } }
+  if (opencodeHandoffCommands.has(command)) return { ...state, opencodeHandoff: { ...opencodeHandoffState(state), commandError: undefined } }
   if (reasoningProviderCommands.has(command)) return { ...state, reasoningProvider: { ...reasoningProviderState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
@@ -1391,6 +1474,16 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-cycles", limit: CYCLE_LIMIT })
     case "cycle-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-cycle", cycleId: requiredArg(args, 0, "cycleId") })
+    case "handoff-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-opencode-handoff", proposalId: requiredArg(args, 0, "proposalId") })
+    case "handoff":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-opencode-handoff", proposalId: requiredArg(args, 0, "proposalId") })
+    case "handoff-dry-run":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-opencode-handoff", proposalId: requiredArg(args, 0, "proposalId"), dryRun: true })
+    case "handoffs":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoffs", limit: HANDOFF_LIMIT })
+    case "handoff-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff", handoffId: requiredArg(args, 0, "handoffId") })
     case "reasoning":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-status" })
         .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-reasoning-provider-health" }))
@@ -1811,6 +1904,11 @@ function isCommanderCycleEffect(effect: RuntimeUiEffect): boolean {
   return commanderCycleCommands.has(effect.command)
 }
 
+function isOpenCodeHandoffEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return opencodeHandoffEffectTypes.has(effect.type)
+  return opencodeHandoffCommands.has(effect.command)
+}
+
 function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return reasoningProviderEffectTypes.has(effect.type)
   return reasoningProviderCommands.has(effect.command)
@@ -1930,6 +2028,14 @@ const commanderCycleCommands = new Set([
   "cycle-show",
 ])
 
+const opencodeHandoffCommands = new Set([
+  "handoff-preview",
+  "handoff",
+  "handoff-dry-run",
+  "handoffs",
+  "handoff-show",
+])
+
 const reasoningProviderCommands = new Set([
   "reasoning",
   "reasoning-health",
@@ -1961,6 +2067,13 @@ const commanderCycleEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "execute-commander-cycle",
   "load-commander-cycle",
   "load-commander-cycles",
+])
+
+const opencodeHandoffEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-opencode-handoff",
+  "execute-opencode-handoff",
+  "load-opencode-handoff",
+  "load-opencode-handoffs",
 ])
 
 const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -2706,6 +2819,18 @@ function recordCommanderCycleCommandError(state: UiState, error: unknown): UiSta
   }
 }
 
+function recordOpenCodeHandoffCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    opencodeHandoff: {
+      ...opencodeHandoffState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "opencode handoff command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -3057,6 +3182,80 @@ function recordFromCommanderCycleResult(result: CommanderCycleResultSummary): Co
     bundle_id: result.bundle_id,
     created_at: result.created_at,
     requested_by: result.requested_by,
+  }
+}
+
+function readOpenCodeHandoffPreview(value: unknown): OpenCodeHandoffPreviewSummary {
+  if (!isRecord(value) || typeof value.proposal_id !== "string") throw new Error("runtime.preview_opencode_handoff returned invalid preview")
+  return {
+    proposal_id: redactText(value.proposal_id),
+    eligible: readBoolean(value.eligible),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    action_kind: readString(value.action_kind, "unknown"),
+    proposal_status: readString(value.proposal_status, "unknown"),
+    review_id: typeof value.review_id === "string" ? redactText(value.review_id) : undefined,
+    review_status: typeof value.review_status === "string" ? redactText(value.review_status) : undefined,
+    objective_preview: preview(readString(value.objective_preview, "")),
+    evidence_ids: readStringList(value.evidence_ids, 20),
+    source_cycle_id: typeof value.source_cycle_id === "string" ? redactText(value.source_cycle_id) : undefined,
+    source_synthesis_id: typeof value.source_synthesis_id === "string" ? redactText(value.source_synthesis_id) : undefined,
+    would_create_mission: readBoolean(value.would_create_mission),
+    would_send_to_adapter: readBoolean(value.would_send_to_adapter),
+  }
+}
+
+function readOpenCodeHandoffResult(value: unknown): OpenCodeHandoffResultSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.handoff_id !== "string") throw new Error("runtime.get_opencode_handoff returned invalid result")
+  return {
+    handoff_id: redactText(value.handoff_id),
+    proposal_id: readString(value.proposal_id, ""),
+    review_id: typeof value.review_id === "string" ? redactText(value.review_id) : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    intent_id: typeof value.intent_id === "string" ? redactText(value.intent_id) : undefined,
+    adapter_session_id: typeof value.adapter_session_id === "string" ? redactText(value.adapter_session_id) : undefined,
+    objective_preview: preview(readString(value.objective_preview, "")),
+    sent: readBoolean(value.sent),
+    dry_run: readBoolean(value.dry_run),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+    requested_by: readString(value.requested_by, "unknown"),
+    source_cycle_id: typeof value.source_cycle_id === "string" ? redactText(value.source_cycle_id) : undefined,
+    source_synthesis_id: typeof value.source_synthesis_id === "string" ? redactText(value.source_synthesis_id) : undefined,
+    evidence_ids: readStringList(value.evidence_ids, 20),
+  }
+}
+
+function readOpenCodeHandoffRecordList(value: unknown, commandName: string, limit: number): OpenCodeHandoffRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readOpenCodeHandoffRecord).filter((record): record is OpenCodeHandoffRecordSummary => record !== null).slice(0, limit)
+}
+
+function readOpenCodeHandoffRecord(value: unknown): OpenCodeHandoffRecordSummary | null {
+  if (!isRecord(value) || typeof value.handoff_id !== "string") return null
+  return {
+    handoff_id: redactText(value.handoff_id),
+    proposal_id: readString(value.proposal_id, ""),
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    intent_id: typeof value.intent_id === "string" ? redactText(value.intent_id) : undefined,
+    sent: readBoolean(value.sent),
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+    requested_by: readString(value.requested_by, "unknown"),
+    source_cycle_id: typeof value.source_cycle_id === "string" ? redactText(value.source_cycle_id) : undefined,
+    source_synthesis_id: typeof value.source_synthesis_id === "string" ? redactText(value.source_synthesis_id) : undefined,
+  }
+}
+
+function recordFromOpenCodeHandoffResult(result: OpenCodeHandoffResultSummary): OpenCodeHandoffRecordSummary {
+  return {
+    handoff_id: result.handoff_id,
+    proposal_id: result.proposal_id,
+    mission_id: result.mission_id,
+    intent_id: result.intent_id,
+    sent: result.sent,
+    created_at: result.created_at,
+    requested_by: result.requested_by,
+    source_cycle_id: result.source_cycle_id,
+    source_synthesis_id: result.source_synthesis_id,
   }
 }
 
@@ -3753,6 +3952,10 @@ function researchSynthesisState(state: UiState): ResearchSynthesisState {
 
 function commanderCycleState(state: UiState): CommanderCycleState {
   return state.commanderCycle ?? { preview: null, selected: null, recent: [] }
+}
+
+function opencodeHandoffState(state: UiState): OpenCodeHandoffState {
+  return state.opencodeHandoff ?? { preview: null, lastResult: null, recent: [] }
 }
 
 function reasoningProviderState(state: UiState) {

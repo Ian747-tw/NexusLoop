@@ -15,6 +15,7 @@ import type { ResearchSynthesisInput, ResearchSynthesisPreview, ResearchSynthesi
 import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, CommanderCycleResult } from "../commander-cycle/commander-cycle-types"
 import type { ReasoningProviderStatus } from "../reasoning/reasoning-provider-config"
 import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "../reasoning/reasoning-health-types"
+import type { OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "../opencode/opencode-handoff-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -188,6 +189,10 @@ export interface RuntimeClient {
   }): Promise<CommanderCycleResult>
   command(name: "runtime.get_commander_cycle", payload: { cycleId: string } | { cycle_id: string }): Promise<CommanderCycleResult | null>
   command(name: "runtime.list_commander_cycles", payload?: { limit?: number }): Promise<CommanderCycleRecord[]>
+  command(name: "runtime.preview_opencode_handoff", payload: { proposalId: string; requestedBy?: string; dryRun?: boolean } | { proposal_id: string; requested_by?: string; dry_run?: boolean }): Promise<OpenCodeHandoffPreview>
+  command(name: "runtime.execute_opencode_handoff", payload: { proposalId: string; requestedBy?: string; dryRun?: boolean } | { proposal_id: string; requested_by?: string; dry_run?: boolean }): Promise<OpenCodeHandoffResult>
+  command(name: "runtime.list_opencode_handoffs", payload?: { limit?: number }): Promise<OpenCodeHandoffRecord[]>
+  command(name: "runtime.get_opencode_handoff", payload: { handoffId: string } | { handoff_id: string }): Promise<OpenCodeHandoffResult | null>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -276,6 +281,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.execute_commander_cycle"
     | "runtime.get_commander_cycle"
     | "runtime.list_commander_cycles"
+    | "runtime.preview_opencode_handoff"
+    | "runtime.execute_opencode_handoff"
+    | "runtime.list_opencode_handoffs"
+    | "runtime.get_opencode_handoff"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"
