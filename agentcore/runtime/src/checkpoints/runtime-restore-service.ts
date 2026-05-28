@@ -278,7 +278,7 @@ function checkpointHash(checkpoint: RuntimeCheckpoint): string {
 
 function readCheckpointEvent(event: CheckpointEvent): RuntimeCheckpoint | null {
   if (!isRecord(event.checkpoint) || typeof event.checkpoint.checkpoint_id !== "string") return null
-  return redactValue(event.checkpoint as RuntimeCheckpoint)
+  return event.checkpoint as RuntimeCheckpoint
 }
 
 function readAnchorEvent(event: ResumeAnchorEvent): RuntimeResumeAnchor | null {

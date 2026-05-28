@@ -5095,13 +5095,13 @@ describe("RuntimeServer core", () => {
       runtimeCheckpointId: () => "checkpoint_tamper_1",
     })
     await server.start()
-    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", reason: "token=original-restore-secret", requestedBy: "operator" })
     const eventsPath = join(dir, ".nxl", "events.jsonl")
     const lines = (await readFile(eventsPath, "utf8")).split(/\r?\n/).filter(Boolean)
     const rewritten = lines.map((line) => {
       const event = JSON.parse(line) as Record<string, unknown>
       if (event.kind === "runtime_checkpoint_created" && event.checkpoint && typeof event.checkpoint === "object") {
-        ;(event.checkpoint as Record<string, unknown>).created_by = "tampered"
+        ;(event.checkpoint as Record<string, unknown>).reason = "token=tampered-restore-secret"
       }
       return JSON.stringify(event)
     }).join("\n") + "\n"
@@ -5110,6 +5110,7 @@ describe("RuntimeServer core", () => {
     expect(preview.can_mark_resume).toBe(false)
     expect(preview.verification.hash_ok).toBe(false)
     expect(preview.verification.blockers).toContain("runtime checkpoint hash verification failed")
+    expect(JSON.stringify(preview)).not.toContain("tampered-restore-secret")
     await expect(server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_tamper_1", requestedBy: "operator" })).rejects.toThrow("runtime checkpoint hash verification failed")
     await server.shutdown()
   })
