@@ -1015,6 +1015,85 @@ export type RuntimeCheckpointsState = {
   commandError?: string
 }
 
+export type RuntimeCheckpointDriftStatus = "none" | "advanced" | "forked" | "unknown"
+
+export type RuntimeCheckpointVerificationSummary = {
+  checkpoint_id: string
+  exists: boolean
+  hash_ok: boolean
+  cursor_ok: boolean
+  event_count_at_checkpoint: number
+  current_event_count: number
+  checkpoint_last_event_id?: string
+  current_last_event_id?: string
+  new_event_count: number
+  drift_status: RuntimeCheckpointDriftStatus | string
+  blockers: string[]
+  warnings: string[]
+}
+
+export type RuntimeRestoreContextSummary = {
+  recent_cycle_ids?: string[]
+  recent_synthesis_ids?: string[]
+  proposal_ids?: string[]
+  review_ids?: string[]
+  bundle_ids?: string[]
+  mission_ids?: string[]
+  active_mission_ids?: string[]
+  active_claim_ids?: string[]
+  result_ids?: string[]
+  progress_ids?: string[]
+  handoff_ids?: string[]
+  active_handoff_ids?: string[]
+  needs_result_review_ids?: string[]
+  failed_handoff_ids?: string[]
+  provider_id?: string
+  provider_kind?: string
+  health_status?: string
+  warnings: string[]
+}
+
+export type RuntimeRestoreSuggestedCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+}
+
+export type RuntimeRestorePreviewSummary = {
+  checkpoint_id: string
+  can_mark_resume: boolean
+  verification: RuntimeCheckpointVerificationSummary
+  commander_context: RuntimeRestoreContextSummary
+  executor_context: RuntimeRestoreContextSummary
+  handoff_context: RuntimeRestoreContextSummary
+  reasoning_context: RuntimeRestoreContextSummary
+  suggested_commands: RuntimeRestoreSuggestedCommandSummary[]
+  redacted_summary_preview: string
+  created_at: string
+}
+
+export type RuntimeResumeAnchorSummary = {
+  resume_id: string
+  checkpoint_id: string
+  checkpoint_hash: string
+  marked_at: string
+  marked_by: string
+  event_count_at_checkpoint: number
+  current_event_count: number
+  checkpoint_last_event_id?: string
+  current_last_event_id?: string
+  drift_status: RuntimeCheckpointDriftStatus | string
+  summary_preview: string
+}
+
+export type RuntimeRestoreState = {
+  preview?: RuntimeRestorePreviewSummary | null
+  selectedAnchor?: RuntimeResumeAnchorSummary | null
+  recentAnchors: RuntimeResumeAnchorSummary[]
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -1111,6 +1190,7 @@ export type UiState = {
   opencodeHandoff?: OpenCodeHandoffState
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState
+  runtimeRestore?: RuntimeRestoreState
 }
 
 export function initialState(projectDir: string): UiState {

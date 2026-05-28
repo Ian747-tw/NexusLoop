@@ -29,6 +29,9 @@ import type {
   RuntimeCheckpointSectionSummary,
   RuntimeCheckpointSummary,
   RuntimeCheckpointsState,
+  RuntimeRestorePreviewSummary,
+  RuntimeRestoreState,
+  RuntimeResumeAnchorSummary,
   OpenCodeHandoffFollowupSummary,
   CommanderApplyPreviewSummary,
   CommanderApplyResultSummary,
@@ -204,6 +207,10 @@ export type RuntimeUiEffect =
   | { type: "create-runtime-checkpoint"; scope?: RuntimeCheckpointScope; reason?: string }
   | { type: "load-runtime-checkpoint"; checkpointId: string }
   | { type: "load-runtime-checkpoints"; limit?: number }
+  | { type: "preview-checkpoint-restore"; checkpointId: string }
+  | { type: "mark-checkpoint-resume-anchor"; checkpointId: string }
+  | { type: "load-checkpoint-resume-anchor"; resumeId: string }
+  | { type: "load-checkpoint-resume-anchors"; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -727,6 +734,26 @@ export async function applyRuntimeUiEffect(
         )
       case "load-runtime-checkpoints":
         return await loadRuntimeCheckpoints(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
+      case "preview-checkpoint-restore":
+        return applyRuntimeRestorePreview(
+          state,
+          await runtime.command("runtime.preview_checkpoint_restore", { checkpointId: effect.checkpointId, requestedBy: "operator" }),
+        )
+      case "mark-checkpoint-resume-anchor": {
+        const next = applyRuntimeResumeAnchor(
+          state,
+          await runtime.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: effect.checkpointId, requestedBy: "operator" }),
+        )
+        return await loadRuntimeResumeAnchors(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "load-checkpoint-resume-anchor":
+        return applyRuntimeResumeAnchor(
+          state,
+          await runtime.command("runtime.get_checkpoint_resume_anchor", { resumeId: effect.resumeId }),
+          effect.resumeId,
+        )
+      case "load-checkpoint-resume-anchors":
+        return await loadRuntimeResumeAnchors(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -755,6 +782,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeHandoffEffect(effect)) return recordOpenCodeHandoffCommandError(state, error)
     if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
     if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
+    if (isRuntimeRestoreEffect(effect)) return recordRuntimeRestoreCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
@@ -1116,6 +1144,19 @@ async function loadRuntimeCheckpoints(state: UiState, runtime: RuntimeClient, li
   }
 }
 
+async function loadRuntimeResumeAnchors(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const recentAnchors = readRuntimeResumeAnchorList(await runtime.command("runtime.list_checkpoint_resume_anchors", { limit }), "runtime.list_checkpoint_resume_anchors", limit)
+  return {
+    ...state,
+    runtimeRestore: {
+      ...runtimeRestoreState(state),
+      recentAnchors,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "checkpoint resume anchors loaded", detail: `records=${recentAnchors.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
 async function refreshAfterHandoff(state: UiState, runtime: RuntimeClient): Promise<UiState> {
   let next = await loadOpenCodeHandoffs(state, runtime, HANDOFF_LIMIT)
   next = await loadOpenCodeHandoffFollowups(next, runtime, HANDOFF_LIMIT)
@@ -1351,6 +1392,37 @@ function applyRuntimeCheckpoint(state: UiState, value: unknown, checkpointId?: s
   }
 }
 
+function applyRuntimeRestorePreview(state: UiState, value: unknown): UiState {
+  const preview = readRuntimeRestorePreview(value)
+  return {
+    ...state,
+    runtimeRestore: {
+      ...runtimeRestoreState(state),
+      preview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "checkpoint resume preview", detail: `checkpoint_id=${preview.checkpoint_id}`, status: preview.can_mark_resume ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyRuntimeResumeAnchor(state: UiState, value: unknown, resumeId?: string): UiState {
+  const anchor = readRuntimeResumeAnchor(value)
+  if (!anchor && value !== null) throw new Error("runtime.get_checkpoint_resume_anchor returned invalid anchor")
+  const selectedId = anchor?.resume_id ?? (resumeId ? redactText(resumeId) : undefined)
+  return {
+    ...state,
+    runtimeRestore: {
+      ...runtimeRestoreState(state),
+      selectedAnchor: anchor,
+      recentAnchors: anchor ? [anchor, ...runtimeRestoreState(state).recentAnchors.filter((item) => item.resume_id !== anchor.resume_id)].slice(0, CHECKPOINT_LIMIT) : runtimeRestoreState(state).recentAnchors,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "checkpoint resume anchor selected", detail: `resume_id=${selectedId}`, status: anchor ? anchor.drift_status : "missing" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -1544,6 +1616,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeHandoffCommands.has(command)) return state.opencodeHandoff?.commandError
   if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
   if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
+  if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
@@ -1566,6 +1639,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeHandoffCommands.has(command)) return { ...state, opencodeHandoff: { ...opencodeHandoffState(state), commandError: undefined } }
   if (opencodeFollowupCommands.has(command)) return { ...state, opencodeFollowup: { ...opencodeFollowupState(state), commandError: undefined } }
   if (runtimeCheckpointCommands.has(command)) return { ...state, runtimeCheckpoints: { ...runtimeCheckpointsState(state), commandError: undefined } }
+  if (runtimeRestoreCommands.has(command)) return { ...state, runtimeRestore: { ...runtimeRestoreState(state), commandError: undefined } }
   if (reasoningProviderCommands.has(command)) return { ...state, reasoningProvider: { ...reasoningProviderState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
@@ -1680,6 +1754,15 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-checkpoints", limit: CHECKPOINT_LIMIT })
     case "checkpoint-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-checkpoint", checkpointId: requiredArg(args, 0, "checkpointId") })
+    case "restore-preview":
+    case "resume-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-checkpoint-restore", checkpointId: requiredArg(args, 0, "checkpointId") })
+    case "resume-mark":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "mark-checkpoint-resume-anchor", checkpointId: requiredArg(args, 0, "checkpointId") })
+    case "resume-anchors":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-checkpoint-resume-anchors", limit: CHECKPOINT_LIMIT })
+    case "resume-anchor":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-checkpoint-resume-anchor", resumeId: requiredArg(args, 0, "resumeId") })
     case "reasoning":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-status" })
         .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-reasoning-provider-health" }))
@@ -2115,6 +2198,11 @@ function isRuntimeCheckpointEffect(effect: RuntimeUiEffect): boolean {
   return runtimeCheckpointCommands.has(effect.command)
 }
 
+function isRuntimeRestoreEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return runtimeRestoreEffectTypes.has(effect.type)
+  return runtimeRestoreCommands.has(effect.command)
+}
+
 function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return reasoningProviderEffectTypes.has(effect.type)
   return reasoningProviderCommands.has(effect.command)
@@ -2261,6 +2349,14 @@ const runtimeCheckpointCommands = new Set([
   "checkpoint-show",
 ])
 
+const runtimeRestoreCommands = new Set([
+  "restore-preview",
+  "resume-preview",
+  "resume-mark",
+  "resume-anchors",
+  "resume-anchor",
+])
+
 const reasoningProviderCommands = new Set([
   "reasoning",
   "reasoning-health",
@@ -2313,6 +2409,13 @@ const runtimeCheckpointEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "create-runtime-checkpoint",
   "load-runtime-checkpoint",
   "load-runtime-checkpoints",
+])
+
+const runtimeRestoreEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-checkpoint-restore",
+  "mark-checkpoint-resume-anchor",
+  "load-checkpoint-resume-anchor",
+  "load-checkpoint-resume-anchors",
 ])
 
 const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -3094,6 +3197,18 @@ function recordRuntimeCheckpointCommandError(state: UiState, error: unknown): Ui
   }
 }
 
+function recordRuntimeRestoreCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    runtimeRestore: {
+      ...runtimeRestoreState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "checkpoint resume command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -3660,6 +3775,97 @@ function recordFromRuntimeCheckpoint(checkpoint: RuntimeCheckpointSummary): Runt
     section_names: Object.keys(checkpoint.sections).sort(),
     summary_preview: `sections=${Object.keys(checkpoint.sections).sort().join(",")}`,
   }
+}
+
+function readRuntimeRestorePreview(value: unknown): RuntimeRestorePreviewSummary {
+  if (!isRecord(value) || typeof value.checkpoint_id !== "string") throw new Error("runtime.preview_checkpoint_restore returned invalid preview")
+  return {
+    checkpoint_id: redactText(value.checkpoint_id),
+    can_mark_resume: readBoolean(value.can_mark_resume),
+    verification: readRuntimeCheckpointVerification(value.verification),
+    commander_context: readRuntimeRestoreContext(value.commander_context),
+    executor_context: readRuntimeRestoreContext(value.executor_context),
+    handoff_context: readRuntimeRestoreContext(value.handoff_context),
+    reasoning_context: readRuntimeRestoreContext(value.reasoning_context),
+    suggested_commands: Array.isArray(value.suggested_commands) ? value.suggested_commands.map(readRuntimeRestoreCommand).filter((item): item is RuntimeRestorePreviewSummary["suggested_commands"][number] => item !== null).slice(0, 10) : [],
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    created_at: readString(value.created_at, ""),
+  }
+}
+
+function readRuntimeCheckpointVerification(value: unknown): RuntimeRestorePreviewSummary["verification"] {
+  if (!isRecord(value)) throw new Error("runtime.preview_checkpoint_restore returned invalid verification")
+  return {
+    checkpoint_id: readString(value.checkpoint_id, ""),
+    exists: readBoolean(value.exists),
+    hash_ok: readBoolean(value.hash_ok),
+    cursor_ok: readBoolean(value.cursor_ok),
+    event_count_at_checkpoint: readNumber(value.event_count_at_checkpoint, 0),
+    current_event_count: readNumber(value.current_event_count, 0),
+    checkpoint_last_event_id: typeof value.checkpoint_last_event_id === "string" ? redactText(value.checkpoint_last_event_id) : undefined,
+    current_last_event_id: typeof value.current_last_event_id === "string" ? redactText(value.current_last_event_id) : undefined,
+    new_event_count: readNumber(value.new_event_count, 0),
+    drift_status: readString(value.drift_status, "unknown"),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+  }
+}
+
+function readRuntimeRestoreContext(value: unknown): RuntimeRestorePreviewSummary["commander_context"] {
+  if (!isRecord(value)) return { warnings: [] }
+  return {
+    recent_cycle_ids: readStringList(value.recent_cycle_ids, 20),
+    recent_synthesis_ids: readStringList(value.recent_synthesis_ids, 20),
+    proposal_ids: readStringList(value.proposal_ids, 20),
+    review_ids: readStringList(value.review_ids, 20),
+    bundle_ids: readStringList(value.bundle_ids, 20),
+    mission_ids: readStringList(value.mission_ids, 20),
+    active_mission_ids: readStringList(value.active_mission_ids, 20),
+    active_claim_ids: readStringList(value.active_claim_ids, 20),
+    result_ids: readStringList(value.result_ids, 20),
+    progress_ids: readStringList(value.progress_ids, 20),
+    handoff_ids: readStringList(value.handoff_ids, 20),
+    active_handoff_ids: readStringList(value.active_handoff_ids, 20),
+    needs_result_review_ids: readStringList(value.needs_result_review_ids, 20),
+    failed_handoff_ids: readStringList(value.failed_handoff_ids, 20),
+    provider_id: typeof value.provider_id === "string" ? redactText(value.provider_id) : undefined,
+    provider_kind: typeof value.provider_kind === "string" ? redactText(value.provider_kind) : undefined,
+    health_status: typeof value.health_status === "string" ? redactText(value.health_status) : undefined,
+    warnings: readStringList(value.warnings, 10).map(preview),
+  }
+}
+
+function readRuntimeRestoreCommand(value: unknown): RuntimeRestorePreviewSummary["suggested_commands"][number] | null {
+  if (!isRecord(value) || typeof value.label !== "string" || typeof value.command !== "string") return null
+  return {
+    label: preview(redactText(value.label)),
+    command: preview(redactText(value.command)),
+    command_type: value.command_type === "write" ? "write" : "read",
+    requires_active_runtime: value.requires_active_runtime === true,
+  }
+}
+
+function readRuntimeResumeAnchor(value: unknown): RuntimeResumeAnchorSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.resume_id !== "string") throw new Error("runtime.get_checkpoint_resume_anchor returned invalid anchor")
+  return {
+    resume_id: redactText(value.resume_id),
+    checkpoint_id: readString(value.checkpoint_id, ""),
+    checkpoint_hash: readString(value.checkpoint_hash, ""),
+    marked_at: readString(value.marked_at, ""),
+    marked_by: readString(value.marked_by, "operator"),
+    event_count_at_checkpoint: readNumber(value.event_count_at_checkpoint, 0),
+    current_event_count: readNumber(value.current_event_count, 0),
+    checkpoint_last_event_id: typeof value.checkpoint_last_event_id === "string" ? redactText(value.checkpoint_last_event_id) : undefined,
+    current_last_event_id: typeof value.current_last_event_id === "string" ? redactText(value.current_last_event_id) : undefined,
+    drift_status: readString(value.drift_status, "unknown"),
+    summary_preview: preview(readString(value.summary_preview, "")),
+  }
+}
+
+function readRuntimeResumeAnchorList(value: unknown, commandName: string, limit: number): RuntimeResumeAnchorSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readRuntimeResumeAnchor).filter((anchor): anchor is RuntimeResumeAnchorSummary => anchor !== null).slice(0, limit)
 }
 
 function readRuntimeCheckpointSections(value: unknown): RuntimeCheckpointSectionSummary[] {
@@ -4396,6 +4602,10 @@ function opencodeFollowupState(state: UiState): OpenCodeHandoffFollowupState {
 
 function runtimeCheckpointsState(state: UiState): RuntimeCheckpointsState {
   return state.runtimeCheckpoints ?? { preview: null, selected: null, recent: [] }
+}
+
+function runtimeRestoreState(state: UiState): RuntimeRestoreState {
+  return state.runtimeRestore ?? { preview: null, selectedAnchor: null, recentAnchors: [] }
 }
 
 function reasoningProviderState(state: UiState) {

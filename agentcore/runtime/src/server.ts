@@ -50,6 +50,8 @@ import { OpenCodeHandoffFollowupService, readOpenCodeHandoffFollowupQueueKind } 
 import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupSummary } from "./opencode/opencode-handoff-followup-types"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
+import { RuntimeRestoreService } from "./checkpoints/runtime-restore-service"
+import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "./checkpoints/runtime-restore-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -98,6 +100,8 @@ export interface RuntimeServerOptions {
   opencodeHandoffId?: () => string
   runtimeCheckpointNow?: () => Date
   runtimeCheckpointId?: () => string
+  runtimeResumeNow?: () => Date
+  runtimeResumeId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -154,6 +158,8 @@ export class RuntimeServer {
   private readonly opencodeHandoffId?: () => string
   private readonly runtimeCheckpointNow?: () => Date
   private readonly runtimeCheckpointId?: () => string
+  private readonly runtimeResumeNow?: () => Date
+  private readonly runtimeResumeId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -161,6 +167,7 @@ export class RuntimeServer {
   private researchDb: RuntimeResearchDbProjection | null = null
   private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
   private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
+  private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -200,6 +207,8 @@ export class RuntimeServer {
     this.opencodeHandoffId = options.opencodeHandoffId
     this.runtimeCheckpointNow = options.runtimeCheckpointNow
     this.runtimeCheckpointId = options.runtimeCheckpointId
+    this.runtimeResumeNow = options.runtimeResumeNow
+    this.runtimeResumeId = options.runtimeResumeId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -594,6 +603,14 @@ export class RuntimeServer {
         return this.getRuntimeCheckpoint(requiredString(payload.checkpointId ?? payload.checkpoint_id, "checkpointId"))
       case "runtime.list_runtime_checkpoints":
         return this.listRuntimeCheckpoints(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.preview_checkpoint_restore":
+        return this.previewCheckpointRestore(readRuntimeRestoreInput(payload))
+      case "runtime.mark_checkpoint_resume_anchor":
+        return this.markCheckpointResumeAnchor(readRuntimeRestoreInput(payload))
+      case "runtime.get_checkpoint_resume_anchor":
+        return this.getCheckpointResumeAnchor(requiredString(payload.resumeId ?? payload.resume_id, "resumeId"))
+      case "runtime.list_checkpoint_resume_anchors":
+        return this.listCheckpointResumeAnchors(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -1071,6 +1088,23 @@ export class RuntimeServer {
     return this.runtimeCheckpointService().list(limit)
   }
 
+  async previewCheckpointRestore(input: RuntimeRestoreInput): Promise<RuntimeRestorePreview> {
+    return this.runtimeRestoreService().preview(input)
+  }
+
+  async markCheckpointResumeAnchor(input: RuntimeRestoreInput): Promise<RuntimeResumeAnchor> {
+    this.requireRuntimeResumeWriteRuntime("runtime.mark_checkpoint_resume_anchor")
+    return this.runtimeRestoreService().mark(input)
+  }
+
+  async getCheckpointResumeAnchor(resumeId: string): Promise<RuntimeResumeAnchor | null> {
+    return this.runtimeRestoreService().get(resumeId)
+  }
+
+  async listCheckpointResumeAnchors(limit = 20): Promise<RuntimeResumeAnchor[]> {
+    return this.runtimeRestoreService().list(limit)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1388,6 +1422,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before runtime checkpoint writes")
   }
 
+  private requireRuntimeResumeWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before runtime resume anchor writes")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1455,6 +1494,16 @@ export class RuntimeServer {
       sectionProvider: () => this.runtimeCheckpointSections(),
     })
     return this.runtimeCheckpointServiceInstance
+  }
+
+  private runtimeRestoreService(): RuntimeRestoreService {
+    this.runtimeRestoreServiceInstance ??= new RuntimeRestoreService({
+      eventStore: this.eventStore,
+      now: this.runtimeResumeNow ?? this.runtimeCheckpointNow,
+      idFactory: this.runtimeResumeId ? () => this.runtimeResumeId!() : undefined,
+      sectionProvider: () => this.runtimeCheckpointSections(),
+    })
+    return this.runtimeRestoreServiceInstance
   }
 
   private async runtimeCheckpointSections(): Promise<RuntimeCheckpointSections> {
@@ -1830,6 +1879,14 @@ function readRuntimeCheckpointInput(payload: Record<string, unknown>): RuntimeCh
     created_by: optionalString(payload.createdBy ?? payload.created_by, "createdBy"),
     requested_by: optionalString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
     max_bytes: optionalPositiveInteger(payload.maxBytes ?? payload.max_bytes, "maxBytes", 256 * 1024),
+  }
+}
+
+function readRuntimeRestoreInput(payload: Record<string, unknown>): RuntimeRestoreInput {
+  return {
+    checkpoint_id: requiredString(payload.checkpointId ?? payload.checkpoint_id, "checkpointId"),
+    marked_by: optionalString(payload.markedBy ?? payload.marked_by, "markedBy"),
+    requested_by: optionalString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
   }
 }
 
