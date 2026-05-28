@@ -88,6 +88,51 @@ async function readJsonlEvents(dir: string): Promise<Record<string, unknown>[]> 
   }
 }
 
+function testStableStringify(value: unknown): string {
+  return JSON.stringify(testSortValue(value))
+}
+
+function testSortValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(testSortValue)
+  if (typeof value !== "object" || value === null) return value
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(value).sort()) out[key] = testSortValue((value as Record<string, unknown>)[key])
+  return out
+}
+
+function testCheckpointHash(checkpoint: Record<string, unknown>): string {
+  const { checkpoint_hash: _hash, ...payload } = checkpoint
+  return createHash("sha256").update(testStableStringify(payload)).digest("hex")
+}
+
+function wakeEventPayloadForTest(assessment: Record<string, unknown>): Record<string, unknown> {
+  return {
+    kind: "runtime_wake_assessment_created",
+    wake_id: assessment.wake_id,
+    trigger_kind: assessment.trigger_kind,
+    resume_id: assessment.resume_id,
+    checkpoint_id: assessment.checkpoint_id,
+    checkpoint_hash: assessment.checkpoint_hash,
+    created_at: assessment.created_at,
+    requested_by: assessment.requested_by,
+    allowed: assessment.allowed,
+    blockers: assessment.blockers,
+    warnings: assessment.warnings,
+    drift_status: assessment.drift_status,
+    current_event_count: assessment.current_event_count,
+    checkpoint_event_count: assessment.checkpoint_event_count,
+    new_event_count: assessment.new_event_count,
+    sections: assessment.sections,
+    suggested_commands: assessment.suggested_commands,
+    assessment_hash: assessment.assessment_hash,
+    wake_assessment: assessment,
+  }
+}
+
+function lineByteLength(line: string): number {
+  return Buffer.byteLength(`${line}\n`, "utf8")
+}
+
 function instrumentStartupOrder(server: RuntimeServer): string[] {
   const order: string[] = []
   const append = server.eventStore.append.bind(server.eventStore)
@@ -5233,6 +5278,79 @@ describe("RuntimeServer core", () => {
     expect(viewPreview.allowed).toBe(false)
     await expect(viewServer.command("runtime.create_wake_assessment", { resumeId: "resume_wake_tamper_1", requestedBy: "operator" })).rejects.toThrow("runtime.create_wake_assessment requires active mode")
     await viewServer.shutdown()
+  })
+
+  test("wake assessment validates resume anchor hash against current checkpoint hash", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_wake_rehash_1",
+      runtimeResumeId: () => "resume_wake_rehash_1",
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", reason: "token=original-rehash-secret", requestedBy: "operator" })
+    const anchor = await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_wake_rehash_1", requestedBy: "operator" }) as { checkpoint_hash: string }
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const rewritten = (await readFile(eventsPath, "utf8")).split(/\r?\n/).filter(Boolean).map((line) => {
+      const event = JSON.parse(line) as Record<string, unknown>
+      if (event.kind === "runtime_checkpoint_created" && event.checkpoint && typeof event.checkpoint === "object") {
+        const checkpoint = event.checkpoint as Record<string, unknown>
+        checkpoint.reason = "token=tampered-rehash-secret"
+        checkpoint.checkpoint_hash = testCheckpointHash(checkpoint)
+        event.checkpoint_hash = checkpoint.checkpoint_hash
+      }
+      return JSON.stringify(event)
+    }).join("\n") + "\n"
+    await writeFile(eventsPath, rewritten)
+
+    const restorePreview = await server.command("runtime.preview_checkpoint_restore", { checkpointId: "checkpoint_wake_rehash_1", requestedBy: "operator" }) as { verification: { hash_ok: boolean } }
+    expect(restorePreview.verification.hash_ok).toBe(true)
+    const preview = await server.command("runtime.preview_wake_assessment", { resumeId: "resume_wake_rehash_1", requestedBy: "operator" }) as { allowed: boolean; blockers: string[] }
+    expect(preview.allowed).toBe(false)
+    expect(preview.blockers).toContain("runtime resume anchor checkpoint hash does not match current checkpoint")
+    expect(preview.blockers).not.toContain("runtime checkpoint hash verification failed")
+    expect(JSON.stringify(preview)).not.toContain("tampered-rehash-secret")
+    expect(JSON.stringify(preview)).not.toContain(anchor.checkpoint_hash)
+    await expect(server.command("runtime.create_wake_assessment", { resumeId: "resume_wake_rehash_1", requestedBy: "operator" })).rejects.toThrow("runtime resume anchor checkpoint hash does not match current checkpoint")
+    await server.shutdown()
+  })
+
+  test("wake assessment byte cap accounts for append metadata before persistence", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let wakeIds = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_wake_cap_1",
+      runtimeResumeId: () => "resume_wake_cap_1",
+      runtimeWakeId: () => `wake_cap_${++wakeIds}`,
+      runtimeWakeNow: () => new Date("2026-05-10T12:15:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_wake_cap_1", requestedBy: "operator" })
+
+    const first = await server.command("runtime.create_wake_assessment", { resumeId: "resume_wake_cap_1", requestedBy: "operator" }) as Record<string, unknown>
+    const eventWithoutAppendMetadataBytes = Buffer.byteLength(testStableStringify(wakeEventPayloadForTest(first)), "utf8")
+    expect(eventWithoutAppendMetadataBytes).toBeGreaterThanOrEqual(2048)
+    expect(eventWithoutAppendMetadataBytes).toBeLessThanOrEqual(256 * 1024)
+    const nearCapWithoutAppendMetadata = eventWithoutAppendMetadataBytes + 32
+    const beforeRejectedCreate = await readJsonlEvents(dir)
+    await expect(server.command("runtime.create_wake_assessment", {
+      resumeId: "resume_wake_cap_1",
+      requestedBy: "operator",
+      maxBytes: nearCapWithoutAppendMetadata,
+    })).rejects.toThrow("runtime wake assessment event exceeds max_bytes")
+    const afterRejectedCreate = await readJsonlEvents(dir)
+    expect(afterRejectedCreate).toHaveLength(beforeRejectedCreate.length)
+    const wakeLine = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).split(/\r?\n/).filter((line) => line.includes("\"runtime_wake_assessment_created\""))[0]
+    expect(lineByteLength(wakeLine)).toBeGreaterThan(nearCapWithoutAppendMetadata)
+    await server.shutdown()
   })
 
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {

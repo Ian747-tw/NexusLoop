@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import type { RuntimeRestoreService } from "../checkpoints/runtime-restore-service"
-import type { RuntimeCheckpointSections } from "../checkpoints/runtime-checkpoint-types"
+import type { RuntimeCheckpoint, RuntimeCheckpointSections } from "../checkpoints/runtime-checkpoint-types"
 import type { RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
@@ -21,6 +21,8 @@ const MIN_MAX_BYTES = 2048
 const MAX_ITEMS = 20
 const MAX_STRING_CHARS = 1000
 const PREVIEW_CHARS = 360
+const APPEND_EVENT_ID_PLACEHOLDER = "rt_zzzzzzzzzz_zzzzzzzz"
+const APPEND_TIMESTAMP_PLACEHOLDER = "9999-12-31T23:59:59.999Z"
 
 type SectionProvider = () => Promise<RuntimeCheckpointSections> | RuntimeCheckpointSections
 
@@ -35,6 +37,11 @@ export interface WakeAssessmentServiceOptions {
 type WakeAssessmentEvent = JsonlEvent & {
   kind: "runtime_wake_assessment_created"
   wake_assessment?: WakeAssessment
+}
+
+type RuntimeCheckpointEvent = JsonlEvent & {
+  kind: "runtime_checkpoint_created"
+  checkpoint?: RuntimeCheckpoint
 }
 
 type NormalizedWakeInput = {
@@ -82,28 +89,8 @@ export class WakeAssessmentService {
       sections: await this.sectionsForPreview(preview, anchor),
       suggested_commands: preview.suggested_commands,
     }, normalized.max_bytes)
-    const eventPayload = {
-      kind: "runtime_wake_assessment_created",
-      wake_id: assessment.wake_id,
-      trigger_kind: assessment.trigger_kind,
-      resume_id: assessment.resume_id,
-      checkpoint_id: assessment.checkpoint_id,
-      checkpoint_hash: assessment.checkpoint_hash,
-      created_at: assessment.created_at,
-      requested_by: assessment.requested_by,
-      allowed: assessment.allowed,
-      blockers: assessment.blockers,
-      warnings: assessment.warnings,
-      drift_status: assessment.drift_status,
-      current_event_count: assessment.current_event_count,
-      checkpoint_event_count: assessment.checkpoint_event_count,
-      new_event_count: assessment.new_event_count,
-      sections: assessment.sections,
-      suggested_commands: assessment.suggested_commands,
-      assessment_hash: assessment.assessment_hash,
-      wake_assessment: assessment,
-    }
-    if (byteLength(stableStringify(eventPayload)) > normalized.max_bytes) throw new Error("runtime wake assessment event exceeds max_bytes")
+    const eventPayload = eventPayloadFromAssessment(assessment)
+    if (persistedEventByteLength(eventPayload) > normalized.max_bytes) throw new Error("runtime wake assessment event exceeds max_bytes")
     await this.options.eventStore.append(eventPayload)
     return redactValue(assessment)
   }
@@ -149,6 +136,10 @@ export class WakeAssessmentService {
       if (!restorePreview.verification.hash_ok) blockers.push("runtime checkpoint hash verification failed")
       if (restorePreview.verification.drift_status === "forked") blockers.push("runtime checkpoint event cursor is forked")
       if (restorePreview.verification.drift_status === "advanced") warnings.push("new events exist after checkpoint")
+    }
+    const currentCheckpointHash = checkpointId ? await this.currentCheckpointHash(checkpointId) : undefined
+    if (anchor && currentCheckpointHash && anchor.checkpoint_hash !== currentCheckpointHash) {
+      blockers.push("runtime resume anchor checkpoint hash does not match current checkpoint")
     }
     const currentSections = await this.currentSections()
     const sections = sectionSummaries(restorePreview, currentSections)
@@ -220,6 +211,39 @@ export class WakeAssessmentService {
       if (assessment) out.push(assessment)
     }
     return out
+  }
+
+  private async currentCheckpointHash(checkpointId: string): Promise<string | undefined> {
+    for (const event of await this.options.eventStore.readAll()) {
+      if (event.kind !== "runtime_checkpoint_created") continue
+      const checkpoint = readCheckpointEvent(event as RuntimeCheckpointEvent)
+      if (checkpoint?.checkpoint_id === checkpointId) return checkpoint.checkpoint_hash
+    }
+    return undefined
+  }
+}
+
+function eventPayloadFromAssessment(assessment: WakeAssessment): JsonlEvent {
+  return {
+    kind: "runtime_wake_assessment_created",
+    wake_id: assessment.wake_id,
+    trigger_kind: assessment.trigger_kind,
+    resume_id: assessment.resume_id,
+    checkpoint_id: assessment.checkpoint_id,
+    checkpoint_hash: assessment.checkpoint_hash,
+    created_at: assessment.created_at,
+    requested_by: assessment.requested_by,
+    allowed: assessment.allowed,
+    blockers: assessment.blockers,
+    warnings: assessment.warnings,
+    drift_status: assessment.drift_status,
+    current_event_count: assessment.current_event_count,
+    checkpoint_event_count: assessment.checkpoint_event_count,
+    new_event_count: assessment.new_event_count,
+    sections: assessment.sections,
+    suggested_commands: assessment.suggested_commands,
+    assessment_hash: assessment.assessment_hash,
+    wake_assessment: assessment,
   }
 }
 
@@ -310,6 +334,11 @@ function recordFromAssessment(assessment: WakeAssessment): WakeAssessmentRecord 
 function readAssessmentEvent(event: WakeAssessmentEvent): WakeAssessment | null {
   if (!isRecord(event.wake_assessment) || typeof event.wake_assessment.wake_id !== "string") return null
   return redactValue(event.wake_assessment as WakeAssessment)
+}
+
+function readCheckpointEvent(event: RuntimeCheckpointEvent): RuntimeCheckpoint | null {
+  if (!isRecord(event.checkpoint) || typeof event.checkpoint.checkpoint_id !== "string" || typeof event.checkpoint.checkpoint_hash !== "string") return null
+  return event.checkpoint as RuntimeCheckpoint
 }
 
 export function readWakeAssessmentInput(payload: Record<string, unknown>): WakeAssessmentInput {
@@ -431,6 +460,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function byteLength(value: string): number {
   return Buffer.byteLength(value, "utf8")
+}
+
+function persistedEventByteLength(payload: JsonlEvent): number {
+  const safePayload = redactValue({
+    ...payload,
+    event_id: payload.event_id ?? APPEND_EVENT_ID_PLACEHOLDER,
+    timestamp: payload.timestamp ?? APPEND_TIMESTAMP_PLACEHOLDER,
+  })
+  return byteLength(stableStringify(safePayload)) + 1
 }
 
 function sha256(value: string): string {
