@@ -114,24 +114,7 @@ export class RuntimeCheckpointService {
       restore_supported: false as const,
       warnings: [] as string[],
     }
-    const fitted = fitCheckpoint(base, input.max_bytes)
-    const payloadForHash = {
-      checkpoint_id: fitted.checkpoint_id,
-      scope: fitted.scope,
-      reason: fitted.reason,
-      created_at: fitted.created_at,
-      created_by: fitted.created_by,
-      event_count: fitted.event_count,
-      last_event_id: fitted.last_event_id,
-      sections: fitted.sections,
-      restore_supported: false,
-      warnings: fitted.warnings,
-    }
-    const checkpoint: RuntimeCheckpoint = {
-      ...fitted,
-      section_summaries: summarizeSections(fitted.sections),
-      checkpoint_hash: sha256(stableStringify(payloadForHash)),
-    }
+    const checkpoint = fitCheckpoint(base, input.max_bytes)
     return redactValue(checkpoint)
   }
 
@@ -158,20 +141,31 @@ export class RuntimeCheckpointService {
   }
 }
 
-function fitCheckpoint<T extends Omit<RuntimeCheckpoint, "checkpoint_hash" | "section_summaries">>(checkpoint: T, maxBytes: number): T {
-  const initialBytes = byteLength(stableStringify(checkpoint))
-  if (initialBytes <= maxBytes) return checkpoint
+function fitCheckpoint(checkpoint: Omit<RuntimeCheckpoint, "checkpoint_hash" | "section_summaries">, maxBytes: number): RuntimeCheckpoint {
+  const initial = finalizeCheckpoint(checkpoint)
+  if (byteLength(stableStringify(initial)) <= maxBytes) return initial
   const warnings = [...checkpoint.warnings, `checkpoint truncated to fit max_bytes=${maxBytes}`]
   let sections = truncateSections(checkpoint.sections, MAX_ARRAY_ITEMS)
-  let candidate = { ...checkpoint, sections, warnings }
+  let candidate = finalizeCheckpoint({ ...checkpoint, sections, warnings })
   if (byteLength(stableStringify(candidate)) <= maxBytes) return candidate
   sections = truncateSections(sections, 5)
-  candidate = { ...checkpoint, sections, warnings }
+  candidate = finalizeCheckpoint({ ...checkpoint, sections, warnings })
   if (byteLength(stableStringify(candidate)) <= maxBytes) return candidate
   sections = minimalSections(sections)
-  candidate = { ...checkpoint, sections, warnings: [...warnings, "checkpoint sections reduced to minimal summaries"] }
+  candidate = finalizeCheckpoint({ ...checkpoint, sections, warnings: [...warnings, "checkpoint sections reduced to minimal summaries"] })
   if (byteLength(stableStringify(candidate)) <= maxBytes) return candidate
   throw new Error("minimal runtime checkpoint exceeds max_bytes")
+}
+
+function finalizeCheckpoint(checkpoint: Omit<RuntimeCheckpoint, "checkpoint_hash" | "section_summaries">): RuntimeCheckpoint {
+  const withSummaries = {
+    ...checkpoint,
+    section_summaries: summarizeSections(checkpoint.sections),
+  }
+  return {
+    ...withSummaries,
+    checkpoint_hash: sha256(stableStringify(withSummaries)),
+  }
 }
 
 function truncateSections(sections: RuntimeCheckpointSections, limit: number): RuntimeCheckpointSections {

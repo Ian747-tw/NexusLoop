@@ -4989,13 +4989,17 @@ describe("RuntimeServer core", () => {
     }) as { checkpoint_hash: string; warnings: string[]; section_summaries: Array<{ truncated: boolean }> }
     expect(truncated.warnings.length).toBeGreaterThan(0)
     expect(truncated.section_summaries.some((section) => section.truncated)).toBe(true)
+    expect(Buffer.byteLength(JSON.stringify(truncated), "utf8")).toBeLessThanOrEqual(2048)
     const second = await server.command("runtime.create_runtime_checkpoint", {
       scope: "full",
       maxBytes: 2048,
       requestedBy: "operator",
     }) as { checkpoint_hash: string }
     expect(second.checkpoint_hash).not.toBe(truncated.checkpoint_hash)
-    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("checkpoint-truncation-secret")
+    const checkpointEvents = await readJsonlEvents(dir)
+    expect(JSON.stringify(checkpointEvents)).not.toContain("checkpoint-truncation-secret")
+    const truncatedEvent = checkpointEvents.find((event) => event.kind === "runtime_checkpoint_created" && event.checkpoint_hash === truncated.checkpoint_hash)
+    expect(Buffer.byteLength(JSON.stringify((truncatedEvent as { checkpoint: unknown }).checkpoint), "utf8")).toBeLessThanOrEqual(2048)
     await server.shutdown()
 
     const viewServer = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
