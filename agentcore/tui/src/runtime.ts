@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -50,6 +50,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly opencodeHandoffs: OpenCodeHandoffResultSummary[] = []
   private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
   private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
+  private readonly wakeAssessments: WakeAssessmentSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -351,6 +352,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getCheckpointResumeAnchor(String(payload.resumeId ?? payload.resume_id ?? ""))
       case "runtime.list_checkpoint_resume_anchors":
         return this.runtimeResumeAnchors.slice(0, readLimit(payload.limit, 20))
+      case "runtime.preview_wake_assessment":
+        return this.previewWakeAssessment(payload)
+      case "runtime.create_wake_assessment":
+        return this.createWakeAssessment(payload)
+      case "runtime.get_wake_assessment":
+        return this.getWakeAssessment(String(payload.wakeId ?? payload.wake_id ?? ""))
+      case "runtime.list_wake_assessments":
+        return this.listWakeAssessments(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -1101,6 +1110,100 @@ export class FakeRuntimeClient implements RuntimeClient {
   private getCheckpointResumeAnchor(resumeId: string): RuntimeResumeAnchorSummary | null {
     const id = requiredString(resumeId, "resumeId")
     return this.runtimeResumeAnchors.find((anchor) => anchor.resume_id === id) ?? null
+  }
+
+  private previewWakeAssessment(payload: Record<string, unknown>): WakeAssessmentPreviewSummary {
+    const resumeId = optionalString(payload.resumeId ?? payload.resume_id)
+    const checkpointId = optionalString(payload.checkpointId ?? payload.checkpoint_id)
+    if (resumeId && checkpointId) throw new Error("wake assessment accepts resume_id or checkpoint_id, not both")
+    if (!resumeId && !checkpointId) throw new Error("resume_id or checkpoint_id is required")
+    const anchor = resumeId ? this.getCheckpointResumeAnchor(resumeId) : null
+    const resolvedCheckpointId = anchor?.checkpoint_id ?? checkpointId
+    const restore = resolvedCheckpointId ? this.previewCheckpointRestore({ checkpointId: resolvedCheckpointId }) : null
+    const blockers: string[] = []
+    const warnings: string[] = []
+    if (resumeId && !anchor) blockers.push("runtime resume anchor not found")
+    if (!resumeId && checkpointId) warnings.push("wake preview is using an unanchored checkpoint; create requires resume_id")
+    if (restore) {
+      blockers.push(...restore.verification.blockers)
+      warnings.push(...restore.verification.warnings)
+      if (restore.verification.drift_status === "advanced") warnings.push("new events exist after checkpoint")
+    }
+    return {
+      trigger_kind: "manual",
+      resume_id: resumeId,
+      checkpoint_id: resolvedCheckpointId,
+      allowed: blockers.length === 0,
+      blockers: [...new Set(blockers.map(redactText))],
+      warnings: [...new Set(warnings.map(redactText))],
+      drift_status: restore?.verification.drift_status,
+      current_event_count: restore?.verification.current_event_count ?? 12,
+      checkpoint_event_count: restore?.verification.event_count_at_checkpoint,
+      new_event_count: restore?.verification.new_event_count,
+      reasoning_health_status: "ok",
+      handoff_summary: this.opencodeHandoffFollowupSummary(),
+      commander_summary: this.commanderQueueSummary(24 * 60 * 60 * 1000),
+      executor_summary: { mission_count: this.missions.length, active_mission_count: this.missions.filter((mission) => mission.status !== "completed" && mission.status !== "failed").length },
+      suggested_commands: [
+        ...(resumeId ? [{ label: "Show resume anchor", command: `/resume-anchor ${resumeId}`, command_type: "read" as const }] : []),
+        ...(resolvedCheckpointId ? [{ label: "Preview restore", command: `/restore-preview ${resolvedCheckpointId}`, command_type: "read" as const }] : []),
+        { label: "Open handoff follow-ups", command: "/handoff-followups", command_type: "read" },
+        { label: "Open commander queues", command: "/queues", command_type: "read" },
+        { label: "Reasoning status", command: "/reasoning", command_type: "read" },
+      ],
+      redacted_summary_preview: `fake wake assessment checkpoint=${resolvedCheckpointId ?? "none"} allowed=${blockers.length === 0}`,
+    }
+  }
+
+  private createWakeAssessment(payload: Record<string, unknown>): WakeAssessmentSummary {
+    const resumeId = requiredString(String(payload.resumeId ?? payload.resume_id ?? ""), "resumeId")
+    const previewResult = this.previewWakeAssessment({ resumeId })
+    if (!previewResult.allowed) throw new Error(previewResult.blockers[0] ?? "wake assessment is blocked")
+    const wakeNumber = this.wakeAssessments.length + 1
+    const assessment: WakeAssessmentSummary = {
+      wake_id: `fake-wake-${wakeNumber}`,
+      trigger_kind: "manual",
+      resume_id: resumeId,
+      checkpoint_id: previewResult.checkpoint_id,
+      checkpoint_hash: this.getCheckpointResumeAnchor(resumeId)?.checkpoint_hash,
+      created_at: new Date(0).toISOString(),
+      requested_by: redactText(String(payload.requestedBy ?? payload.requested_by ?? "operator")),
+      allowed: previewResult.allowed,
+      blockers: previewResult.blockers,
+      warnings: previewResult.warnings,
+      drift_status: previewResult.drift_status,
+      current_event_count: previewResult.current_event_count,
+      checkpoint_event_count: previewResult.checkpoint_event_count,
+      new_event_count: previewResult.new_event_count,
+      sections: {
+        resume: { resume_id: resumeId, checkpoint_id: previewResult.checkpoint_id, warnings: [] },
+        reasoning: { provider_id: "fake-reasoning", provider_kind: "fake", health_status: "ok", warnings: [] },
+      },
+      suggested_commands: previewResult.suggested_commands,
+      assessment_hash: `fake-wake-hash-${wakeNumber}`,
+    }
+    this.wakeAssessments.unshift(assessment)
+    return assessment
+  }
+
+  private getWakeAssessment(wakeId: string): WakeAssessmentSummary | null {
+    const id = requiredString(wakeId, "wakeId")
+    return this.wakeAssessments.find((wake) => wake.wake_id === id) ?? null
+  }
+
+  private listWakeAssessments(limit: number): WakeAssessmentRecordSummary[] {
+    return this.wakeAssessments.slice(0, limit).map((wake) => ({
+      wake_id: wake.wake_id,
+      trigger_kind: wake.trigger_kind,
+      resume_id: wake.resume_id,
+      checkpoint_id: wake.checkpoint_id,
+      allowed: wake.allowed,
+      drift_status: wake.drift_status,
+      created_at: wake.created_at,
+      requested_by: wake.requested_by,
+      summary_preview: `fake wake checkpoint=${wake.checkpoint_id ?? "none"} allowed=${wake.allowed}`,
+      assessment_hash: wake.assessment_hash,
+    }))
   }
 
   private fakeCheckpointSections(scope: RuntimeCheckpointScope): Record<string, unknown> {

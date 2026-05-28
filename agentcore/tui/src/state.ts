@@ -1094,6 +1094,85 @@ export type RuntimeRestoreState = {
   commandError?: string
 }
 
+export type WakeTriggerKindSummary = "manual" | "startup_preview" | "external_signal" | string
+
+export type WakeSuggestedCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  requires_review?: boolean
+}
+
+export type WakeAssessmentSectionsSummary = {
+  resume?: Record<string, unknown>
+  commander?: RuntimeRestoreContextSummary
+  executor?: RuntimeRestoreContextSummary
+  handoff?: RuntimeRestoreContextSummary
+  reasoning?: RuntimeRestoreContextSummary
+  checkpoint?: Record<string, unknown>
+}
+
+export type WakeAssessmentPreviewSummary = {
+  wake_id?: string
+  trigger_kind: WakeTriggerKindSummary
+  resume_id?: string
+  checkpoint_id?: string
+  allowed: boolean
+  blockers: string[]
+  warnings: string[]
+  drift_status?: RuntimeCheckpointDriftStatus | string
+  current_event_count: number
+  checkpoint_event_count?: number
+  new_event_count?: number
+  reasoning_health_status?: string
+  handoff_summary?: Record<string, unknown>
+  commander_summary?: Record<string, unknown>
+  executor_summary?: Record<string, unknown>
+  suggested_commands: WakeSuggestedCommandSummary[]
+  redacted_summary_preview: string
+}
+
+export type WakeAssessmentSummary = {
+  wake_id: string
+  trigger_kind: WakeTriggerKindSummary
+  resume_id?: string
+  checkpoint_id?: string
+  checkpoint_hash?: string
+  created_at: string
+  requested_by: string
+  allowed: boolean
+  blockers: string[]
+  warnings: string[]
+  drift_status?: RuntimeCheckpointDriftStatus | string
+  current_event_count: number
+  checkpoint_event_count?: number
+  new_event_count?: number
+  sections: WakeAssessmentSectionsSummary
+  suggested_commands: WakeSuggestedCommandSummary[]
+  assessment_hash: string
+}
+
+export type WakeAssessmentRecordSummary = {
+  wake_id: string
+  trigger_kind: WakeTriggerKindSummary
+  resume_id?: string
+  checkpoint_id?: string
+  allowed: boolean
+  drift_status?: RuntimeCheckpointDriftStatus | string
+  created_at: string
+  requested_by: string
+  summary_preview: string
+  assessment_hash: string
+}
+
+export type WakeAssessmentState = {
+  preview?: WakeAssessmentPreviewSummary | null
+  selected?: WakeAssessmentSummary | null
+  recent: WakeAssessmentRecordSummary[]
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -1191,6 +1270,7 @@ export type UiState = {
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState
   runtimeRestore?: RuntimeRestoreState
+  wakeAssessment?: WakeAssessmentState
 }
 
 export function initialState(projectDir: string): UiState {

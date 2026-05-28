@@ -3112,4 +3112,49 @@ describe("runtime UI effects", () => {
     expect(state.runtimeRestore?.preview?.can_mark_resume).toBe(false)
     expect(JSON.stringify(state)).not.toContain("restore-secret")
   })
+
+  test("wake assessment slash commands preview create list and select", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint", args: ["full", "token=wake-secret"] })
+    const checkpointId = state.runtimeCheckpoints?.selected?.checkpoint_id ?? "missing"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "resume-mark", args: [checkpointId] })
+    const resumeId = state.runtimeRestore?.selectedAnchor?.resume_id ?? "missing"
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-preview", args: [`resume=${resumeId}`] })
+    expect(state.wakeAssessment?.preview).toMatchObject({ allowed: true, resume_id: resumeId, checkpoint_id: checkpointId })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Wake assessment")
+    expect(snapshot).toContain(`resume=${resumeId}`)
+    expect(snapshot).toContain(`checkpoint=${checkpointId}`)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake", args: [`resume=${resumeId}`] })
+    const wakeId = state.wakeAssessment?.selected?.wake_id
+    expect(wakeId).toMatch(/^fake-wake-/)
+    expect(state.wakeAssessment?.selected).toMatchObject({ resume_id: resumeId, checkpoint_id: checkpointId, allowed: true })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wakes" })
+    expect(state.wakeAssessment?.recent.at(0)).toMatchObject({ wake_id: wakeId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-show", args: [wakeId ?? "missing"] })
+    expect(state.wakeAssessment?.selected).toMatchObject({ wake_id: wakeId })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain(`selected_wake=${wakeId}`)
+    expect(snapshot).not.toContain("wake-secret")
+    expect(JSON.stringify(state)).not.toContain("wake-secret")
+  })
+
+  test("wake assessment checkpoint preview warning missing args and redaction", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint", args: ["full", "token=wake-preview-secret"] })
+    const checkpointId = state.runtimeCheckpoints?.selected?.checkpoint_id ?? "missing"
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-preview", args: [`checkpoint=${checkpointId}`] })
+    expect(state.wakeAssessment?.preview).toMatchObject({ allowed: true, checkpoint_id: checkpointId })
+    expect(state.wakeAssessment?.preview?.warnings).toContain("wake preview is using an unanchored checkpoint; create requires resume_id")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake", args: [`checkpoint=${checkpointId}`] })
+    expect(state.wakeAssessment?.commandError).toContain("wake requires resume=<resumeId>")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-preview" })
+    expect(state.wakeAssessment?.commandError).toContain("wake preview requires resume=<resumeId> or checkpoint=<checkpointId>")
+    expect(JSON.stringify(state)).not.toContain("wake-preview-secret")
+  })
 })

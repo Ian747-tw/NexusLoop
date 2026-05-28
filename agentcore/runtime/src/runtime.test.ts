@@ -5118,6 +5118,123 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake assessment previews from resume anchor and creates durable read-only assessment", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      adapter,
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_wake_1",
+      runtimeResumeId: () => "resume_wake_1",
+      runtimeWakeId: () => "wake_1",
+      runtimeCheckpointNow: () => new Date("2026-05-10T12:00:00.000Z"),
+      runtimeResumeNow: () => new Date("2026-05-10T12:05:00.000Z"),
+      runtimeWakeNow: () => new Date("2026-05-10T12:10:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", reason: "wake token=checkpoint-secret", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_wake_1", requestedBy: "operator" })
+    const eventsBeforePreview = await readJsonlEvents(dir)
+    const preview = await server.command("runtime.preview_wake_assessment", { resumeId: "resume_wake_1", requestedBy: "operator" }) as {
+      allowed: boolean
+      resume_id: string
+      checkpoint_id: string
+      drift_status: string
+      warnings: string[]
+      suggested_commands: Array<{ command: string }>
+    }
+    expect(preview).toMatchObject({ allowed: true, resume_id: "resume_wake_1", checkpoint_id: "checkpoint_wake_1", drift_status: "advanced" })
+    expect(preview.warnings).toContain("new events exist after checkpoint")
+    expect(preview.suggested_commands.map((command) => command.command)).toContain("/resume-anchor resume_wake_1")
+    expect(await readJsonlEvents(dir)).toHaveLength(eventsBeforePreview.length)
+
+    const beforeMissions = await server.command("runtime.list_recent_missions", { limit: 20 })
+    const beforePackets = adapter.packets.length
+    const assessment = await server.command("runtime.create_wake_assessment", { resumeId: "resume_wake_1", requestedBy: "operator" }) as {
+      wake_id: string
+      allowed: boolean
+      assessment_hash: string
+      sections: { resume?: { resume_id?: string }; reasoning?: { health_status?: string } }
+    }
+    expect(assessment.wake_id).toBe("wake_1")
+    expect(assessment.allowed).toBe(true)
+    expect(assessment.assessment_hash).toMatch(/^[a-f0-9]{64}$/)
+    expect(assessment.sections.resume?.resume_id).toBe("resume_wake_1")
+    expect(assessment.sections.reasoning?.health_status).toBe("ok")
+    expect(await server.command("runtime.list_recent_missions", { limit: 20 })).toEqual(beforeMissions)
+    expect(adapter.packets).toHaveLength(beforePackets)
+    const events = await readJsonlEvents(dir)
+    expect(events.at(-1)).toMatchObject({ kind: "runtime_wake_assessment_created", wake_id: "wake_1", resume_id: "resume_wake_1", checkpoint_id: "checkpoint_wake_1" })
+    expect(JSON.stringify(events)).not.toContain("checkpoint-secret")
+    const listed = await server.command("runtime.list_wake_assessments", { limit: 10 }) as Array<{ wake_id: string }>
+    expect(listed.map((item) => item.wake_id)).toEqual(["wake_1"])
+    const selected = await server.command("runtime.get_wake_assessment", { wakeId: "wake_1" })
+    expect(selected).toMatchObject({ wake_id: "wake_1", resume_id: "resume_wake_1" })
+    await server.shutdown()
+  })
+
+  test("wake assessment checkpoint-only preview is read-only but create requires resume anchor", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_wake_preview_1",
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    const eventsBeforePreview = await readJsonlEvents(dir)
+    const preview = await server.command("runtime.preview_wake_assessment", { checkpointId: "checkpoint_wake_preview_1", requestedBy: "operator" }) as {
+      allowed: boolean
+      warnings: string[]
+    }
+    expect(preview.allowed).toBe(true)
+    expect(preview.warnings).toContain("wake preview is using an unanchored checkpoint; create requires resume_id")
+    expect(await readJsonlEvents(dir)).toHaveLength(eventsBeforePreview.length)
+    await expect(server.command("runtime.create_wake_assessment", { checkpointId: "checkpoint_wake_preview_1", requestedBy: "operator" })).rejects.toThrow("resume_id is required for wake assessment creation")
+    await server.shutdown()
+  })
+
+  test("wake assessment blocks tampered checkpoints and enforces write gates", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_wake_tamper_1",
+      runtimeResumeId: () => "resume_wake_tamper_1",
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", reason: "token=original-wake-secret", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_wake_tamper_1", requestedBy: "operator" })
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const rewritten = (await readFile(eventsPath, "utf8")).split(/\r?\n/).filter(Boolean).map((line) => {
+      const event = JSON.parse(line) as Record<string, unknown>
+      if (event.kind === "runtime_checkpoint_created" && event.checkpoint && typeof event.checkpoint === "object") {
+        ;(event.checkpoint as Record<string, unknown>).reason = "token=tampered-wake-secret"
+      }
+      return JSON.stringify(event)
+    }).join("\n") + "\n"
+    await writeFile(eventsPath, rewritten)
+    const preview = await server.command("runtime.preview_wake_assessment", { resumeId: "resume_wake_tamper_1", requestedBy: "operator" }) as { allowed: boolean; blockers: string[] }
+    expect(preview.allowed).toBe(false)
+    expect(preview.blockers).toContain("runtime checkpoint hash verification failed")
+    expect(JSON.stringify(preview)).not.toContain("tampered-wake-secret")
+    await expect(server.command("runtime.create_wake_assessment", { resumeId: "resume_wake_tamper_1", requestedBy: "operator" })).rejects.toThrow("runtime checkpoint hash verification failed")
+    await server.shutdown()
+
+    const viewServer = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    const viewPreview = await viewServer.command("runtime.preview_wake_assessment", { resumeId: "resume_wake_tamper_1", requestedBy: "operator" }) as { allowed: boolean }
+    expect(viewPreview.allowed).toBe(false)
+    await expect(viewServer.command("runtime.create_wake_assessment", { resumeId: "resume_wake_tamper_1", requestedBy: "operator" })).rejects.toThrow("runtime.create_wake_assessment requires active mode")
+    await viewServer.shutdown()
+  })
+
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

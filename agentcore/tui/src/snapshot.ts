@@ -81,6 +81,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
+  out.push(...wakeAssessmentLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -446,6 +447,54 @@ function runtimeRestoreLines(state: UiState): string[] {
   if (restore.recentAnchors.length === 0) out.push("    - empty")
   else out.push(...restore.recentAnchors.slice(0, 10).map((anchor) => `    - ${anchor.resume_id} checkpoint=${anchor.checkpoint_id} drift=${anchor.drift_status}: ${preview(redactText(anchor.summary_preview))}`))
   if (restore.commandError) out.push(`  command_error=${redactText(restore.commandError)}`)
+  return out
+}
+
+function wakeAssessmentLines(state: UiState): string[] {
+  const wake = state.wakeAssessment
+  const out = ["Wake assessment"]
+  if (!wake) {
+    out.push("  wakes=0")
+    return out
+  }
+  if (wake.preview) {
+    const previewRecord = wake.preview
+    out.push(`  preview_allowed=${previewRecord.allowed} resume=${previewRecord.resume_id ?? "none"} checkpoint=${previewRecord.checkpoint_id ?? "none"} drift=${previewRecord.drift_status ?? "unknown"}`)
+    out.push(`  events=${previewRecord.checkpoint_event_count ?? 0}->${previewRecord.current_event_count} new=${previewRecord.new_event_count ?? 0}`)
+    if (previewRecord.reasoning_health_status) out.push(`  reasoning_health=${previewRecord.reasoning_health_status}`)
+    if (previewRecord.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewRecord.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (previewRecord.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...previewRecord.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    if (previewRecord.suggested_commands.length > 0) {
+      out.push("  suggested_commands")
+      out.push(...previewRecord.suggested_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (wake.selected) {
+    const selected = wake.selected
+    out.push(`  selected_wake=${selected.wake_id} allowed=${selected.allowed} resume=${selected.resume_id ?? "none"} checkpoint=${selected.checkpoint_id ?? "none"} drift=${selected.drift_status ?? "unknown"}`)
+    out.push(`  hash=${preview(redactText(selected.assessment_hash))}`)
+    out.push(`  events=${selected.checkpoint_event_count ?? 0}->${selected.current_event_count} new=${selected.new_event_count ?? 0}`)
+    if (selected.sections.reasoning?.health_status) out.push(`  selected_reasoning_health=${selected.sections.reasoning.health_status}`)
+    if (selected.blockers.length > 0) {
+      out.push("  selected_blockers")
+      out.push(...selected.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  } else {
+    out.push("  selected_wake=none")
+  }
+  out.push(`  wakes=${wake.recent.length}`)
+  out.push("  recent_wakes")
+  if (wake.recent.length === 0) out.push("    - empty")
+  else out.push(...wake.recent.slice(0, 10).map((record) => `    - ${record.wake_id} allowed=${record.allowed} checkpoint=${record.checkpoint_id ?? "none"}: ${preview(redactText(record.summary_preview))}`))
+  if (wake.commandError) out.push(`  command_error=${redactText(wake.commandError)}`)
   return out
 }
 

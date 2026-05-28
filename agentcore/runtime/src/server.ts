@@ -52,6 +52,8 @@ import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoi
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
 import { RuntimeRestoreService } from "./checkpoints/runtime-restore-service"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "./checkpoints/runtime-restore-types"
+import { WakeAssessmentService, readWakeAssessmentInput } from "./wake/wake-hook-service"
+import type { WakeAssessment, WakeAssessmentPreview, WakeAssessmentRecord } from "./wake/wake-hook-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -102,6 +104,8 @@ export interface RuntimeServerOptions {
   runtimeCheckpointId?: () => string
   runtimeResumeNow?: () => Date
   runtimeResumeId?: () => string
+  runtimeWakeNow?: () => Date
+  runtimeWakeId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -160,6 +164,8 @@ export class RuntimeServer {
   private readonly runtimeCheckpointId?: () => string
   private readonly runtimeResumeNow?: () => Date
   private readonly runtimeResumeId?: () => string
+  private readonly runtimeWakeNow?: () => Date
+  private readonly runtimeWakeId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -168,6 +174,7 @@ export class RuntimeServer {
   private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
   private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
   private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
+  private wakeAssessmentServiceInstance: WakeAssessmentService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -209,6 +216,8 @@ export class RuntimeServer {
     this.runtimeCheckpointId = options.runtimeCheckpointId
     this.runtimeResumeNow = options.runtimeResumeNow
     this.runtimeResumeId = options.runtimeResumeId
+    this.runtimeWakeNow = options.runtimeWakeNow
+    this.runtimeWakeId = options.runtimeWakeId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -611,6 +620,14 @@ export class RuntimeServer {
         return this.getCheckpointResumeAnchor(requiredString(payload.resumeId ?? payload.resume_id, "resumeId"))
       case "runtime.list_checkpoint_resume_anchors":
         return this.listCheckpointResumeAnchors(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.preview_wake_assessment":
+        return this.previewWakeAssessment(readWakeAssessmentInput(payload))
+      case "runtime.create_wake_assessment":
+        return this.createWakeAssessment(readWakeAssessmentInput(payload))
+      case "runtime.get_wake_assessment":
+        return this.getWakeAssessment(requiredString(payload.wakeId ?? payload.wake_id, "wakeId"))
+      case "runtime.list_wake_assessments":
+        return this.listWakeAssessments(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -1105,6 +1122,23 @@ export class RuntimeServer {
     return this.runtimeRestoreService().list(limit)
   }
 
+  async previewWakeAssessment(input: Parameters<WakeAssessmentService["preview"]>[0]): Promise<WakeAssessmentPreview> {
+    return this.wakeAssessmentService().preview(input)
+  }
+
+  async createWakeAssessment(input: Parameters<WakeAssessmentService["create"]>[0]): Promise<WakeAssessment> {
+    this.requireWakeAssessmentWriteRuntime("runtime.create_wake_assessment")
+    return this.wakeAssessmentService().create(input)
+  }
+
+  async getWakeAssessment(wakeId: string): Promise<WakeAssessment | null> {
+    return this.wakeAssessmentService().get(wakeId)
+  }
+
+  async listWakeAssessments(limit = 20): Promise<WakeAssessmentRecord[]> {
+    return this.wakeAssessmentService().list(limit)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1427,6 +1461,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before runtime resume anchor writes")
   }
 
+  private requireWakeAssessmentWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before wake assessment writes")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1504,6 +1543,17 @@ export class RuntimeServer {
       sectionProvider: () => this.runtimeCheckpointSections(),
     })
     return this.runtimeRestoreServiceInstance
+  }
+
+  private wakeAssessmentService(): WakeAssessmentService {
+    this.wakeAssessmentServiceInstance ??= new WakeAssessmentService({
+      eventStore: this.eventStore,
+      restoreService: this.runtimeRestoreService(),
+      now: this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow,
+      idFactory: this.runtimeWakeId ? () => this.runtimeWakeId!() : undefined,
+      sectionProvider: () => this.runtimeCheckpointSections(),
+    })
+    return this.wakeAssessmentServiceInstance
   }
 
   private async runtimeCheckpointSections(): Promise<RuntimeCheckpointSections> {
