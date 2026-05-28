@@ -5035,6 +5035,85 @@ describe("RuntimeServer core", () => {
     }
   })
 
+  test("runtime restore preview verifies checkpoint drift and marks resume anchors without mutation", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      adapter,
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_restore_1",
+      runtimeResumeId: () => "resume_restore_1",
+      runtimeCheckpointNow: () => new Date("2026-05-10T12:00:00.000Z"),
+      runtimeResumeNow: () => new Date("2026-05-10T12:05:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", reason: "resume token=restore-secret", requestedBy: "operator" })
+    const beforeMissions = await server.command("runtime.list_recent_missions", { limit: 20 }) as unknown[]
+    const preview = await server.command("runtime.preview_checkpoint_restore", { checkpointId: "checkpoint_restore_1", requestedBy: "operator" }) as {
+      can_mark_resume: boolean
+      verification: { hash_ok: boolean; cursor_ok: boolean; drift_status: string; new_event_count: number; warnings: string[] }
+      suggested_commands: Array<{ command: string }>
+    }
+    expect(preview.can_mark_resume).toBe(true)
+    expect(preview.verification.hash_ok).toBe(true)
+    expect(preview.verification.cursor_ok).toBe(true)
+    expect(preview.verification.drift_status).toBe("advanced")
+    expect(preview.verification.new_event_count).toBeGreaterThan(0)
+    expect(preview.suggested_commands.map((command) => command.command)).toContain("/resume-mark checkpoint_restore_1")
+    expect(JSON.stringify(preview)).not.toContain("restore-secret")
+
+    const anchor = await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_restore_1", requestedBy: "operator" }) as { resume_id: string; checkpoint_id: string; drift_status: string }
+    expect(anchor).toMatchObject({ resume_id: "resume_restore_1", checkpoint_id: "checkpoint_restore_1", drift_status: "advanced" })
+    expect(await server.command("runtime.list_recent_missions", { limit: 20 })).toEqual(beforeMissions)
+    const events = await readJsonlEvents(dir)
+    expect(events.at(-1)).toMatchObject({ kind: "runtime_resume_anchor_marked", resume_id: "resume_restore_1", checkpoint_id: "checkpoint_restore_1" })
+    expect(JSON.stringify(events)).not.toContain("restore-secret")
+
+    const anchors = await server.command("runtime.list_checkpoint_resume_anchors", { limit: 10 }) as Array<{ resume_id: string }>
+    expect(anchors.map((item) => item.resume_id)).toEqual(["resume_restore_1"])
+    const selected = await server.command("runtime.get_checkpoint_resume_anchor", { resumeId: "resume_restore_1" })
+    expect(selected).toMatchObject({ resume_id: "resume_restore_1", checkpoint_id: "checkpoint_restore_1" })
+    await server.shutdown()
+
+    const viewServer = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    const viewPreview = await viewServer.command("runtime.preview_checkpoint_restore", { checkpointId: "checkpoint_restore_1", requestedBy: "operator" }) as { verification: { hash_ok: boolean } }
+    expect(viewPreview.verification.hash_ok).toBe(true)
+    await expect(viewServer.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_restore_1", requestedBy: "operator" })).rejects.toThrow("runtime.mark_checkpoint_resume_anchor requires active mode")
+    await viewServer.shutdown()
+  })
+
+  test("runtime restore preview blocks hash mismatch before resume marking", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_tamper_1",
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const lines = (await readFile(eventsPath, "utf8")).split(/\r?\n/).filter(Boolean)
+    const rewritten = lines.map((line) => {
+      const event = JSON.parse(line) as Record<string, unknown>
+      if (event.kind === "runtime_checkpoint_created" && event.checkpoint && typeof event.checkpoint === "object") {
+        ;(event.checkpoint as Record<string, unknown>).created_by = "tampered"
+      }
+      return JSON.stringify(event)
+    }).join("\n") + "\n"
+    await writeFile(eventsPath, rewritten)
+    const preview = await server.command("runtime.preview_checkpoint_restore", { checkpointId: "checkpoint_tamper_1", requestedBy: "operator" }) as { can_mark_resume: boolean; verification: { hash_ok: boolean; blockers: string[] } }
+    expect(preview.can_mark_resume).toBe(false)
+    expect(preview.verification.hash_ok).toBe(false)
+    expect(preview.verification.blockers).toContain("runtime checkpoint hash verification failed")
+    await expect(server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_tamper_1", requestedBy: "operator" })).rejects.toThrow("runtime checkpoint hash verification failed")
+    await server.shutdown()
+  })
+
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -49,6 +49,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly commanderCycles: CommanderCycleResultSummary[] = []
   private readonly opencodeHandoffs: OpenCodeHandoffResultSummary[] = []
   private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
+  private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -342,6 +343,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getRuntimeCheckpoint(String(payload.checkpointId ?? payload.checkpoint_id ?? ""))
       case "runtime.list_runtime_checkpoints":
         return this.listRuntimeCheckpoints(readLimit(payload.limit, 20))
+      case "runtime.preview_checkpoint_restore":
+        return this.previewCheckpointRestore(payload)
+      case "runtime.mark_checkpoint_resume_anchor":
+        return this.markCheckpointResumeAnchor(payload)
+      case "runtime.get_checkpoint_resume_anchor":
+        return this.getCheckpointResumeAnchor(String(payload.resumeId ?? payload.resume_id ?? ""))
+      case "runtime.list_checkpoint_resume_anchors":
+        return this.runtimeResumeAnchors.slice(0, readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -961,16 +970,16 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private createRuntimeCheckpoint(payload: Record<string, unknown>): RuntimeCheckpointSummary {
     const previewResult = this.previewRuntimeCheckpoint(payload)
-    this.sequence += 1
+    const checkpointNumber = this.runtimeCheckpoints.length + 1
     const checkpoint: RuntimeCheckpointSummary = {
-      checkpoint_id: `fake-checkpoint-${this.sequence}`,
+      checkpoint_id: `fake-checkpoint-${checkpointNumber}`,
       scope: previewResult.scope,
       reason: previewResult.reason,
       created_at: new Date(0).toISOString(),
       created_by: redactText(String(payload.createdBy ?? payload.created_by ?? payload.requestedBy ?? payload.requested_by ?? "operator")),
       event_count: previewResult.event_count,
       last_event_id: previewResult.last_event_id,
-      checkpoint_hash: `fake-checkpoint-hash-${this.sequence}`,
+      checkpoint_hash: `fake-checkpoint-hash-${checkpointNumber}`,
       sections: this.fakeCheckpointSections(previewResult.scope),
       section_summaries: previewResult.sections,
       restore_supported: false,
@@ -998,6 +1007,100 @@ export class FakeRuntimeClient implements RuntimeClient {
       section_names: Object.keys(checkpoint.sections).sort(),
       summary_preview: `fake ${checkpoint.scope} checkpoint sections=${Object.keys(checkpoint.sections).length}`,
     }))
+  }
+
+  private previewCheckpointRestore(payload: Record<string, unknown>): RuntimeRestorePreviewSummary {
+    const checkpointId = requiredString(String(payload.checkpointId ?? payload.checkpoint_id ?? ""), "checkpointId")
+    const checkpoint = this.getRuntimeCheckpoint(checkpointId)
+    const exists = checkpoint !== null
+    const currentEvents = 12 + this.runtimeCheckpoints.length + this.runtimeResumeAnchors.length
+    const drift = exists && checkpoint.event_count === currentEvents ? "none" : exists ? "advanced" : "unknown"
+    const verification = {
+      checkpoint_id: checkpointId,
+      exists,
+      hash_ok: exists,
+      cursor_ok: exists,
+      event_count_at_checkpoint: checkpoint?.event_count ?? 0,
+      current_event_count: currentEvents,
+      checkpoint_last_event_id: checkpoint?.last_event_id,
+      current_last_event_id: this.runtimeResumeAnchors[0]?.resume_id ?? this.runtimeCheckpoints[0]?.checkpoint_id ?? "fake-last-run",
+      new_event_count: checkpoint ? Math.max(0, currentEvents - checkpoint.event_count) : currentEvents,
+      drift_status: drift,
+      blockers: exists ? [] : ["runtime checkpoint not found"],
+      warnings: exists ? ["checkpoint restore is preview-only; full restore is not implemented"] : [],
+    }
+    return {
+      checkpoint_id: checkpointId,
+      can_mark_resume: exists,
+      verification,
+      commander_context: {
+        recent_cycle_ids: this.commanderCycles.slice(0, 5).map((cycle) => cycle.cycle_id),
+        recent_synthesis_ids: this.researchSyntheses.slice(0, 5).map((synthesis) => synthesis.synthesis_id),
+        proposal_ids: this.proposals.slice(0, 5).map((proposal) => proposal.proposal_id),
+        review_ids: this.reviews.slice(0, 5).map((review) => review.review_id),
+        bundle_ids: this.proposalBundles.slice(0, 5).map((bundle) => bundle.bundle_id),
+        warnings: [],
+      },
+      executor_context: {
+        mission_ids: this.missions.slice(0, 5).map((mission) => mission.mission_id),
+        active_mission_ids: this.missions.filter((mission) => mission.status !== "completed" && mission.status !== "failed").slice(0, 5).map((mission) => mission.mission_id),
+        active_claim_ids: this.claims.slice(0, 5).map((claim) => claim.claim_id),
+        result_ids: this.results.slice(0, 5).map((result) => result.result_id),
+        progress_ids: this.progress.slice(0, 5).map((item) => item.progress_id),
+        warnings: [],
+      },
+      handoff_context: {
+        handoff_ids: this.opencodeHandoffs.slice(0, 5).map((handoff) => handoff.handoff_id),
+        active_handoff_ids: this.opencodeHandoffFollowupQueue("active", 5).items.map((item) => item.handoff_id),
+        needs_result_review_ids: this.opencodeHandoffFollowupQueue("needs_result_review", 5).items.map((item) => item.handoff_id),
+        failed_handoff_ids: this.opencodeHandoffFollowupQueue("failed", 5).items.map((item) => item.handoff_id),
+        warnings: [],
+      },
+      reasoning_context: {
+        provider_id: "fake-reasoning",
+        provider_kind: "fake",
+        health_status: "ok",
+        warnings: [],
+      },
+      suggested_commands: [
+        { label: "Show checkpoint", command: `/checkpoint-show ${checkpointId}`, command_type: "read" },
+        { label: "Open handoff follow-ups", command: "/handoff-followups", command_type: "read" },
+        { label: "List missions", command: "/missions", command_type: "read" },
+        { label: "Open commander queues", command: "/queues", command_type: "read" },
+        { label: "List cycles", command: "/cycles", command_type: "read" },
+        { label: "List syntheses", command: "/syntheses", command_type: "read" },
+        { label: "Reasoning status", command: "/reasoning", command_type: "read" },
+        ...(exists ? [{ label: "Mark resume anchor", command: `/resume-mark ${checkpointId}`, command_type: "write" as const, requires_active_runtime: true }] : []),
+      ],
+      redacted_summary_preview: exists ? `fake resume preview checkpoint=${checkpointId} drift=${drift}` : `fake resume preview missing checkpoint=${checkpointId}`,
+      created_at: new Date(0).toISOString(),
+    }
+  }
+
+  private markCheckpointResumeAnchor(payload: Record<string, unknown>): RuntimeResumeAnchorSummary {
+    const preview = this.previewCheckpointRestore(payload)
+    if (!preview.can_mark_resume) throw new Error("runtime checkpoint cannot be marked for resume")
+    const resumeNumber = this.runtimeResumeAnchors.length + 1
+    const anchor: RuntimeResumeAnchorSummary = {
+      resume_id: `fake-resume-${resumeNumber}`,
+      checkpoint_id: preview.checkpoint_id,
+      checkpoint_hash: this.getRuntimeCheckpoint(preview.checkpoint_id)?.checkpoint_hash ?? "",
+      marked_at: new Date(0).toISOString(),
+      marked_by: redactText(String(payload.markedBy ?? payload.marked_by ?? payload.requestedBy ?? payload.requested_by ?? "operator")),
+      event_count_at_checkpoint: preview.verification.event_count_at_checkpoint,
+      current_event_count: preview.verification.current_event_count,
+      checkpoint_last_event_id: preview.verification.checkpoint_last_event_id,
+      current_last_event_id: preview.verification.current_last_event_id,
+      drift_status: preview.verification.drift_status,
+      summary_preview: preview.redacted_summary_preview,
+    }
+    this.runtimeResumeAnchors.unshift(anchor)
+    return anchor
+  }
+
+  private getCheckpointResumeAnchor(resumeId: string): RuntimeResumeAnchorSummary | null {
+    const id = requiredString(resumeId, "resumeId")
+    return this.runtimeResumeAnchors.find((anchor) => anchor.resume_id === id) ?? null
   }
 
   private fakeCheckpointSections(scope: RuntimeCheckpointScope): Record<string, unknown> {

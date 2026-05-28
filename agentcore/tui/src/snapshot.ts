@@ -80,6 +80,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeHandoffLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
+  out.push(...runtimeRestoreLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -399,6 +400,52 @@ function runtimeCheckpointLines(state: UiState): string[] {
   if (checkpoints.recent.length === 0) out.push("    - empty")
   else out.push(...checkpoints.recent.slice(0, 10).map((record) => `    - ${record.checkpoint_id} scope=${record.scope} events=${record.event_count}: ${preview(redactText(record.summary_preview))}`))
   if (checkpoints.commandError) out.push(`  command_error=${redactText(checkpoints.commandError)}`)
+  return out
+}
+
+function runtimeRestoreLines(state: UiState): string[] {
+  const restore = state.runtimeRestore
+  const out = ["Checkpoint resume"]
+  if (!restore) {
+    out.push("  anchors=0")
+    return out
+  }
+  if (restore.preview) {
+    const previewRecord = restore.preview
+    out.push(`  preview_checkpoint=${previewRecord.checkpoint_id} can_mark=${previewRecord.can_mark_resume}`)
+    out.push(`  verification hash_ok=${previewRecord.verification.hash_ok} cursor_ok=${previewRecord.verification.cursor_ok} drift=${previewRecord.verification.drift_status}`)
+    out.push(`  events=${previewRecord.verification.event_count_at_checkpoint}->${previewRecord.verification.current_event_count} new=${previewRecord.verification.new_event_count}`)
+    out.push(`  commander cycles=${(previewRecord.commander_context.recent_cycle_ids ?? []).join(",") || "none"} proposals=${(previewRecord.commander_context.proposal_ids ?? []).join(",") || "none"}`)
+    out.push(`  executor missions=${(previewRecord.executor_context.mission_ids ?? []).join(",") || "none"} active=${(previewRecord.executor_context.active_mission_ids ?? []).join(",") || "none"}`)
+    out.push(`  handoffs=${(previewRecord.handoff_context.handoff_ids ?? []).join(",") || "none"} needs_results=${(previewRecord.handoff_context.needs_result_review_ids ?? []).join(",") || "none"}`)
+    if (previewRecord.reasoning_context.provider_id) out.push(`  reasoning=${previewRecord.reasoning_context.provider_kind ?? "unknown"}:${previewRecord.reasoning_context.provider_id} health=${previewRecord.reasoning_context.health_status ?? "unknown"}`)
+    if (previewRecord.verification.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewRecord.verification.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (previewRecord.verification.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...previewRecord.verification.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    if (previewRecord.suggested_commands.length > 0) {
+      out.push("  suggested_commands")
+      out.push(...previewRecord.suggested_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (restore.selectedAnchor) {
+    const anchor = restore.selectedAnchor
+    out.push(`  selected_anchor=${anchor.resume_id} checkpoint=${anchor.checkpoint_id} drift=${anchor.drift_status}`)
+    out.push(`  marked_at=${anchor.marked_at} marked_by=${anchor.marked_by}`)
+  } else {
+    out.push("  selected_anchor=none")
+  }
+  out.push(`  anchors=${restore.recentAnchors.length}`)
+  out.push("  recent_anchors")
+  if (restore.recentAnchors.length === 0) out.push("    - empty")
+  else out.push(...restore.recentAnchors.slice(0, 10).map((anchor) => `    - ${anchor.resume_id} checkpoint=${anchor.checkpoint_id} drift=${anchor.drift_status}: ${preview(redactText(anchor.summary_preview))}`))
+  if (restore.commandError) out.push(`  command_error=${redactText(restore.commandError)}`)
   return out
 }
 

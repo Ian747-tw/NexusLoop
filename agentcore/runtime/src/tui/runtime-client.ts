@@ -18,6 +18,7 @@ import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningP
 import type { OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "../opencode/opencode-handoff-types"
 import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary } from "../opencode/opencode-handoff-followup-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
+import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -203,6 +204,10 @@ export interface RuntimeClient {
   command(name: "runtime.create_runtime_checkpoint", payload?: RuntimeCheckpointInput | { scope?: string; reason?: string; requestedBy?: string; createdBy?: string; maxBytes?: number }): Promise<RuntimeCheckpoint>
   command(name: "runtime.get_runtime_checkpoint", payload: { checkpointId: string } | { checkpoint_id: string }): Promise<RuntimeCheckpoint | null>
   command(name: "runtime.list_runtime_checkpoints", payload?: { limit?: number }): Promise<RuntimeCheckpointRecord[]>
+  command(name: "runtime.preview_checkpoint_restore", payload: RuntimeRestoreInput): Promise<RuntimeRestorePreview>
+  command(name: "runtime.mark_checkpoint_resume_anchor", payload: RuntimeRestoreInput): Promise<RuntimeResumeAnchor>
+  command(name: "runtime.get_checkpoint_resume_anchor", payload: { resumeId: string } | { resume_id: string }): Promise<RuntimeResumeAnchor | null>
+  command(name: "runtime.list_checkpoint_resume_anchors", payload?: { limit?: number }): Promise<RuntimeResumeAnchor[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -303,6 +308,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.create_runtime_checkpoint"
     | "runtime.get_runtime_checkpoint"
     | "runtime.list_runtime_checkpoints"
+    | "runtime.preview_checkpoint_restore"
+    | "runtime.mark_checkpoint_resume_anchor"
+    | "runtime.get_checkpoint_resume_anchor"
+    | "runtime.list_checkpoint_resume_anchors"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

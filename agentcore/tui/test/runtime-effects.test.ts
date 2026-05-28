@@ -3072,4 +3072,44 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("Runtime checkpoints")
     expect(snapshot).not.toContain("checkpoint-secret")
   })
+
+  test("runtime restore slash commands preview mark list and selected anchor", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint", args: ["full", "token=restore-secret"] })
+    const checkpointId = state.runtimeCheckpoints?.selected?.checkpoint_id ?? "missing"
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "restore-preview", args: [checkpointId] })
+    expect(state.runtimeRestore?.preview).toMatchObject({ checkpoint_id: checkpointId, can_mark_resume: true })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Checkpoint resume")
+    expect(snapshot).toContain(`preview_checkpoint=${checkpointId}`)
+    expect(snapshot).toContain("drift=advanced")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "resume-preview", args: [checkpointId] })
+    expect(state.runtimeRestore?.preview?.checkpoint_id).toBe(checkpointId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "resume-mark", args: [checkpointId] })
+    const resumeId = state.runtimeRestore?.selectedAnchor?.resume_id
+    expect(resumeId).toMatch(/^fake-resume-/)
+    expect(state.runtimeRestore?.recentAnchors.at(0)).toMatchObject({ resume_id: resumeId, checkpoint_id: checkpointId })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "resume-anchors" })
+    expect(state.runtimeRestore?.recentAnchors.at(0)).toMatchObject({ resume_id: resumeId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "resume-anchor", args: [resumeId ?? "missing"] })
+    expect(state.runtimeRestore?.selectedAnchor).toMatchObject({ resume_id: resumeId, checkpoint_id: checkpointId })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain(`selected_anchor=${resumeId}`)
+    expect(JSON.stringify(state)).not.toContain("restore-secret")
+    expect(snapshot).not.toContain("restore-secret")
+  })
+
+  test("runtime restore missing args and missing checkpoint are redacted errors", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "restore-preview" })
+    expect(state.runtimeRestore?.commandError).toContain("checkpointId is required")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "restore-preview", args: ["missing-token=restore-secret"] })
+    expect(state.runtimeRestore?.preview?.can_mark_resume).toBe(false)
+    expect(JSON.stringify(state)).not.toContain("restore-secret")
+  })
 })
