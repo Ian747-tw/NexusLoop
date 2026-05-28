@@ -492,6 +492,37 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("runtime checkpoint slash commands route through whitelist only", () => {
+    for (const [message, command, args] of [
+      ["/checkpoint-preview", "checkpoint-preview", []],
+      ["/checkpoint full operator save", "checkpoint", ["full", "operator", "save"]],
+      ["/checkpoints", "checkpoints", []],
+      ["/checkpoint-show checkpoint-1", "checkpoint-show", ["checkpoint-1"]],
+    ] as const) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+
+      expect(result.state.messageDraft).toBe("")
+      expect(result.state.lastCommand).toBe(command)
+      expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
+    }
+
+    for (const message of ["/tmp/repro/checkpoint", "/path/checkpoint", ".checkpoint full", ":checkpoint full"]) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("slash command arguments are redacted before entering system actions", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

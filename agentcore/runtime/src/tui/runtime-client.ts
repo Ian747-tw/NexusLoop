@@ -17,6 +17,7 @@ import type { ReasoningProviderStatus } from "../reasoning/reasoning-provider-co
 import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "../reasoning/reasoning-health-types"
 import type { OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "../opencode/opencode-handoff-types"
 import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary } from "../opencode/opencode-handoff-followup-types"
+import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -198,6 +199,10 @@ export interface RuntimeClient {
   command(name: "runtime.list_opencode_handoff_followups", payload?: { limit?: number; staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowup[]>
   command(name: "runtime.opencode_handoff_followup_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowupSummary>
   command(name: "runtime.opencode_handoff_followup_queue", payload: { queue: OpenCodeHandoffFollowupQueueKind | string; limit?: number; staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowupQueue>
+  command(name: "runtime.preview_runtime_checkpoint", payload?: RuntimeCheckpointInput | { scope?: string; reason?: string; requestedBy?: string; createdBy?: string; maxBytes?: number }): Promise<RuntimeCheckpointPreview>
+  command(name: "runtime.create_runtime_checkpoint", payload?: RuntimeCheckpointInput | { scope?: string; reason?: string; requestedBy?: string; createdBy?: string; maxBytes?: number }): Promise<RuntimeCheckpoint>
+  command(name: "runtime.get_runtime_checkpoint", payload: { checkpointId: string } | { checkpoint_id: string }): Promise<RuntimeCheckpoint | null>
+  command(name: "runtime.list_runtime_checkpoints", payload?: { limit?: number }): Promise<RuntimeCheckpointRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -294,6 +299,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.list_opencode_handoff_followups"
     | "runtime.opencode_handoff_followup_summary"
     | "runtime.opencode_handoff_followup_queue"
+    | "runtime.preview_runtime_checkpoint"
+    | "runtime.create_runtime_checkpoint"
+    | "runtime.get_runtime_checkpoint"
+    | "runtime.list_runtime_checkpoints"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

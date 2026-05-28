@@ -23,6 +23,12 @@ import type {
   OpenCodeHandoffFollowupCounts,
   OpenCodeHandoffFollowupQueueKind,
   OpenCodeHandoffFollowupState,
+  RuntimeCheckpointPreviewSummary,
+  RuntimeCheckpointRecordSummary,
+  RuntimeCheckpointScope,
+  RuntimeCheckpointSectionSummary,
+  RuntimeCheckpointSummary,
+  RuntimeCheckpointsState,
   OpenCodeHandoffFollowupSummary,
   CommanderApplyPreviewSummary,
   CommanderApplyResultSummary,
@@ -104,6 +110,7 @@ const EXTERNAL_API_LIMIT = 20
 const SYNTHESIS_LIMIT = 20
 const CYCLE_LIMIT = 20
 const HANDOFF_LIMIT = 20
+const CHECKPOINT_LIMIT = 20
 const PREVIEW_LENGTH = 160
 
 export type RuntimeUiEffect =
@@ -193,6 +200,10 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-handoff-followups"; limit?: number }
   | { type: "load-opencode-handoff-followup-summary" }
   | { type: "load-opencode-handoff-followup-queue"; queue: OpenCodeHandoffFollowupQueueKind; limit?: number }
+  | { type: "preview-runtime-checkpoint"; scope?: RuntimeCheckpointScope; reason?: string }
+  | { type: "create-runtime-checkpoint"; scope?: RuntimeCheckpointScope; reason?: string }
+  | { type: "load-runtime-checkpoint"; checkpointId: string }
+  | { type: "load-runtime-checkpoints"; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -696,6 +707,26 @@ export async function applyRuntimeUiEffect(
           state,
           await runtime.command("runtime.opencode_handoff_followup_queue", { queue: effect.queue, limit: effect.limit ?? HANDOFF_LIMIT }),
         )
+      case "preview-runtime-checkpoint":
+        return applyRuntimeCheckpointPreview(
+          state,
+          await runtime.command("runtime.preview_runtime_checkpoint", { scope: effect.scope, reason: effect.reason, requestedBy: "operator" }),
+        )
+      case "create-runtime-checkpoint": {
+        const next = applyRuntimeCheckpoint(
+          state,
+          await runtime.command("runtime.create_runtime_checkpoint", { scope: effect.scope, reason: effect.reason, requestedBy: "operator" }),
+        )
+        return await loadRuntimeCheckpoints(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "load-runtime-checkpoint":
+        return applyRuntimeCheckpoint(
+          state,
+          await runtime.command("runtime.get_runtime_checkpoint", { checkpointId: effect.checkpointId }),
+          effect.checkpointId,
+        )
+      case "load-runtime-checkpoints":
+        return await loadRuntimeCheckpoints(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -723,6 +754,7 @@ export async function applyRuntimeUiEffect(
     if (isCommanderCycleEffect(effect)) return recordCommanderCycleCommandError(state, error)
     if (isOpenCodeHandoffEffect(effect)) return recordOpenCodeHandoffCommandError(state, error)
     if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
+    if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
@@ -1071,6 +1103,19 @@ async function loadOpenCodeHandoffFollowups(state: UiState, runtime: RuntimeClie
   }
 }
 
+async function loadRuntimeCheckpoints(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const recent = readRuntimeCheckpointRecordList(await runtime.command("runtime.list_runtime_checkpoints", { limit }), "runtime.list_runtime_checkpoints", limit)
+  return {
+    ...state,
+    runtimeCheckpoints: {
+      ...runtimeCheckpointsState(state),
+      recent,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "runtime checkpoints loaded", detail: `records=${recent.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
 async function refreshAfterHandoff(state: UiState, runtime: RuntimeClient): Promise<UiState> {
   let next = await loadOpenCodeHandoffs(state, runtime, HANDOFF_LIMIT)
   next = await loadOpenCodeHandoffFollowups(next, runtime, HANDOFF_LIMIT)
@@ -1275,6 +1320,37 @@ function applyOpenCodeHandoffFollowupQueue(state: UiState, value: unknown): UiSt
   }
 }
 
+function applyRuntimeCheckpointPreview(state: UiState, value: unknown): UiState {
+  const checkpointPreview = readRuntimeCheckpointPreview(value)
+  return {
+    ...state,
+    runtimeCheckpoints: {
+      ...runtimeCheckpointsState(state),
+      preview: checkpointPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "runtime checkpoint preview", detail: `scope=${checkpointPreview.scope}`, status: checkpointPreview.blockers.length === 0 ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyRuntimeCheckpoint(state: UiState, value: unknown, checkpointId?: string): UiState {
+  const checkpoint = readRuntimeCheckpoint(value)
+  if (!checkpoint && value !== null) throw new Error("runtime.get_runtime_checkpoint returned invalid checkpoint")
+  const selectedId = checkpoint?.checkpoint_id ?? (checkpointId ? redactText(checkpointId) : undefined)
+  return {
+    ...state,
+    runtimeCheckpoints: {
+      ...runtimeCheckpointsState(state),
+      selected: checkpoint,
+      recent: checkpoint ? [recordFromRuntimeCheckpoint(checkpoint), ...runtimeCheckpointsState(state).recent.filter((item) => item.checkpoint_id !== checkpoint.checkpoint_id)].slice(0, CHECKPOINT_LIMIT) : runtimeCheckpointsState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "runtime checkpoint selected", detail: `checkpoint_id=${selectedId}`, status: checkpoint ? checkpoint.scope : "missing" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -1467,6 +1543,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (commanderCycleCommands.has(command)) return state.commanderCycle?.commandError
   if (opencodeHandoffCommands.has(command)) return state.opencodeHandoff?.commandError
   if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
+  if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
@@ -1488,6 +1565,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (commanderCycleCommands.has(command)) return { ...state, commanderCycle: { ...commanderCycleState(state), commandError: undefined } }
   if (opencodeHandoffCommands.has(command)) return { ...state, opencodeHandoff: { ...opencodeHandoffState(state), commandError: undefined } }
   if (opencodeFollowupCommands.has(command)) return { ...state, opencodeFollowup: { ...opencodeFollowupState(state), commandError: undefined } }
+  if (runtimeCheckpointCommands.has(command)) return { ...state, runtimeCheckpoints: { ...runtimeCheckpointsState(state), commandError: undefined } }
   if (reasoningProviderCommands.has(command)) return { ...state, reasoningProvider: { ...reasoningProviderState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
@@ -1590,6 +1668,18 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup-queue", queue: "blocked", limit: HANDOFF_LIMIT })
     case "handoff-stale":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup-queue", queue: "stale", limit: HANDOFF_LIMIT })
+    case "checkpoint-preview": {
+      const effect = checkpointEffect("preview-runtime-checkpoint", args)
+      return applyRuntimeUiEffect(commandState, runtime, effect)
+    }
+    case "checkpoint": {
+      const effect = checkpointEffect("create-runtime-checkpoint", args)
+      return applyRuntimeUiEffect(commandState, runtime, effect)
+    }
+    case "checkpoints":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-checkpoints", limit: CHECKPOINT_LIMIT })
+    case "checkpoint-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-checkpoint", checkpointId: requiredArg(args, 0, "checkpointId") })
     case "reasoning":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-status" })
         .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-reasoning-provider-health" }))
@@ -2020,6 +2110,11 @@ function isOpenCodeFollowupEffect(effect: RuntimeUiEffect): boolean {
   return opencodeFollowupCommands.has(effect.command)
 }
 
+function isRuntimeCheckpointEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return runtimeCheckpointEffectTypes.has(effect.type)
+  return runtimeCheckpointCommands.has(effect.command)
+}
+
 function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return reasoningProviderEffectTypes.has(effect.type)
   return reasoningProviderCommands.has(effect.command)
@@ -2159,6 +2254,13 @@ const opencodeFollowupCommands = new Set([
   "handoff-stale",
 ])
 
+const runtimeCheckpointCommands = new Set([
+  "checkpoint-preview",
+  "checkpoint",
+  "checkpoints",
+  "checkpoint-show",
+])
+
 const reasoningProviderCommands = new Set([
   "reasoning",
   "reasoning-health",
@@ -2204,6 +2306,13 @@ const opencodeFollowupEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-opencode-handoff-followups",
   "load-opencode-handoff-followup-summary",
   "load-opencode-handoff-followup-queue",
+])
+
+const runtimeCheckpointEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-runtime-checkpoint",
+  "create-runtime-checkpoint",
+  "load-runtime-checkpoint",
+  "load-runtime-checkpoints",
 ])
 
 const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -2973,6 +3082,18 @@ function recordOpenCodeFollowupCommandError(state: UiState, error: unknown): UiS
   }
 }
 
+function recordRuntimeCheckpointCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    runtimeCheckpoints: {
+      ...runtimeCheckpointsState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "runtime checkpoint command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -3468,6 +3589,96 @@ function readOpenCodeHandoffFollowupQueue(value: unknown): { queue: OpenCodeHand
     total_considered: readNumber(value.total_considered, 0),
     limit,
   }
+}
+
+function readRuntimeCheckpointPreview(value: unknown): RuntimeCheckpointPreviewSummary {
+  if (!isRecord(value)) throw new Error("runtime.preview_runtime_checkpoint returned invalid preview")
+  return {
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    scope: readCheckpointScope(value.scope),
+    reason: typeof value.reason === "string" ? preview(redactText(value.reason)) : undefined,
+    event_count: readNumber(value.event_count, 0),
+    last_event_id: typeof value.last_event_id === "string" ? redactText(value.last_event_id) : undefined,
+    sections: readRuntimeCheckpointSections(value.sections),
+    estimated_bytes: readNumber(value.estimated_bytes, 0),
+    max_bytes: readNumber(value.max_bytes, 0),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readRuntimeCheckpoint(value: unknown): RuntimeCheckpointSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.checkpoint_id !== "string") throw new Error("runtime.get_runtime_checkpoint returned invalid checkpoint")
+  return {
+    checkpoint_id: redactText(value.checkpoint_id),
+    scope: readCheckpointScope(value.scope),
+    reason: typeof value.reason === "string" ? preview(redactText(value.reason)) : undefined,
+    created_at: readString(value.created_at, ""),
+    created_by: readString(value.created_by, "unknown"),
+    event_count: readNumber(value.event_count, 0),
+    last_event_id: typeof value.last_event_id === "string" ? redactText(value.last_event_id) : undefined,
+    checkpoint_hash: readString(value.checkpoint_hash, ""),
+    sections: isRecord(value.sections) ? redactUnknown(value.sections) as Record<string, unknown> : {},
+    section_summaries: readRuntimeCheckpointSections(value.section_summaries),
+    restore_supported: false,
+    warnings: readStringList(value.warnings, 10).map(preview),
+  }
+}
+
+function readRuntimeCheckpointRecordList(value: unknown, commandName: string, limit: number): RuntimeCheckpointRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readRuntimeCheckpointRecord).filter((record): record is RuntimeCheckpointRecordSummary => record !== null).slice(0, limit)
+}
+
+function readRuntimeCheckpointRecord(value: unknown): RuntimeCheckpointRecordSummary | null {
+  if (!isRecord(value) || typeof value.checkpoint_id !== "string") return null
+  return {
+    checkpoint_id: redactText(value.checkpoint_id),
+    scope: readCheckpointScope(value.scope),
+    reason: typeof value.reason === "string" ? preview(redactText(value.reason)) : undefined,
+    created_at: readString(value.created_at, ""),
+    created_by: readString(value.created_by, "unknown"),
+    event_count: readNumber(value.event_count, 0),
+    last_event_id: typeof value.last_event_id === "string" ? redactText(value.last_event_id) : undefined,
+    checkpoint_hash: readString(value.checkpoint_hash, ""),
+    section_names: readStringList(value.section_names, 20),
+    summary_preview: preview(readString(value.summary_preview, "")),
+  }
+}
+
+function recordFromRuntimeCheckpoint(checkpoint: RuntimeCheckpointSummary): RuntimeCheckpointRecordSummary {
+  return {
+    checkpoint_id: checkpoint.checkpoint_id,
+    scope: checkpoint.scope,
+    reason: checkpoint.reason,
+    created_at: checkpoint.created_at,
+    created_by: checkpoint.created_by,
+    event_count: checkpoint.event_count,
+    last_event_id: checkpoint.last_event_id,
+    checkpoint_hash: checkpoint.checkpoint_hash,
+    section_names: Object.keys(checkpoint.sections).sort(),
+    summary_preview: `sections=${Object.keys(checkpoint.sections).sort().join(",")}`,
+  }
+}
+
+function readRuntimeCheckpointSections(value: unknown): RuntimeCheckpointSectionSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => {
+    if (!isRecord(item) || typeof item.name !== "string") return null
+    return {
+      name: readString(item.name, "section"),
+      included: readBoolean(item.included),
+      item_count: readNumber(item.item_count, 0),
+      bytes: readNumber(item.bytes, 0),
+      truncated: readBoolean(item.truncated),
+    }
+  }).filter((item): item is RuntimeCheckpointSectionSummary => item !== null).slice(0, 20)
+}
+
+function readCheckpointScope(value: unknown): RuntimeCheckpointScope {
+  if (value === "full" || value === "commander" || value === "executor" || value === "research" || value === "handoff") return value
+  return "full"
 }
 
 function readFollowupStatus(value: unknown): OpenCodeHandoffFollowupSummary["followup_status"] {
@@ -4183,6 +4394,10 @@ function opencodeFollowupState(state: UiState): OpenCodeHandoffFollowupState {
   return state.opencodeFollowup ?? { selected: null, summary: null, queueItems: [] }
 }
 
+function runtimeCheckpointsState(state: UiState): RuntimeCheckpointsState {
+  return state.runtimeCheckpoints ?? { preview: null, selected: null, recent: [] }
+}
+
 function reasoningProviderState(state: UiState) {
   return state.reasoningProvider ?? {
     kind: "fake",
@@ -4489,6 +4704,19 @@ function commanderCycleEffect(type: "preview-commander-cycle" | "execute-command
   return { type, ...parsed }
 }
 
+function checkpointEffect(type: "preview-runtime-checkpoint" | "create-runtime-checkpoint", args: string[]): Extract<RuntimeUiEffect, { type: "preview-runtime-checkpoint" | "create-runtime-checkpoint" }> {
+  let scope: RuntimeCheckpointScope = "full"
+  let reasonStart = 0
+  if (args[0] && isCheckpointScope(args[0])) {
+    scope = args[0]
+    reasonStart = 1
+  } else if (args[0]) {
+    throw new Error("runtime checkpoint scope is invalid")
+  }
+  const reason = optionalRest(args, reasonStart)
+  return { type, scope, ...(reason ? { reason } : {}) }
+}
+
 function cycleArgs(args: string[]): { topicId?: string; missionId?: string; objective?: string } {
   let topicId: string | undefined
   let missionId: string | undefined
@@ -4553,6 +4781,10 @@ function requiredArg(args: string[], index: number, field: string): string {
 function readFollowupQueueArg(value: string): OpenCodeHandoffFollowupQueueKind {
   if (value === "active" || value === "needs_result_review" || value === "completed" || value === "failed" || value === "blocked" || value === "stale") return value
   throw new Error("handoff follow-up queue is invalid")
+}
+
+function isCheckpointScope(value: string): value is RuntimeCheckpointScope {
+  return value === "full" || value === "commander" || value === "executor" || value === "research" || value === "handoff"
 }
 
 function requiredMissionIdArg(args: string[], index: number): string {

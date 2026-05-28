@@ -950,6 +950,71 @@ export type OpenCodeHandoffFollowupState = {
   commandError?: string
 }
 
+export type RuntimeCheckpointScope = "full" | "commander" | "executor" | "research" | "handoff"
+
+export type RuntimeCheckpointSectionSummary = {
+  name: string
+  included: boolean
+  item_count: number
+  bytes: number
+  truncated: boolean
+}
+
+export type RuntimeCheckpointSuggestedCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+}
+
+export type RuntimeCheckpointPreviewSummary = {
+  checkpoint_id?: string
+  scope: RuntimeCheckpointScope
+  reason?: string
+  event_count: number
+  last_event_id?: string
+  sections: RuntimeCheckpointSectionSummary[]
+  estimated_bytes: number
+  max_bytes: number
+  blockers: string[]
+  redacted_summary_preview: string
+}
+
+export type RuntimeCheckpointSummary = {
+  checkpoint_id: string
+  scope: RuntimeCheckpointScope
+  reason?: string
+  created_at: string
+  created_by: string
+  event_count: number
+  last_event_id?: string
+  checkpoint_hash: string
+  sections: Record<string, unknown>
+  section_summaries: RuntimeCheckpointSectionSummary[]
+  restore_supported: false
+  warnings: string[]
+}
+
+export type RuntimeCheckpointRecordSummary = {
+  checkpoint_id: string
+  scope: RuntimeCheckpointScope
+  reason?: string
+  created_at: string
+  created_by: string
+  event_count: number
+  last_event_id?: string
+  checkpoint_hash: string
+  section_names: string[]
+  summary_preview: string
+}
+
+export type RuntimeCheckpointsState = {
+  preview?: RuntimeCheckpointPreviewSummary | null
+  selected?: RuntimeCheckpointSummary | null
+  recent: RuntimeCheckpointRecordSummary[]
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -1045,6 +1110,7 @@ export type UiState = {
   commanderCycle?: CommanderCycleState
   opencodeHandoff?: OpenCodeHandoffState
   opencodeFollowup?: OpenCodeHandoffFollowupState
+  runtimeCheckpoints?: RuntimeCheckpointsState
 }
 
 export function initialState(projectDir: string): UiState {

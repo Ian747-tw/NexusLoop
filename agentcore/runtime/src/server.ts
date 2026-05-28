@@ -48,6 +48,8 @@ import { OpenCodeHandoffService } from "./opencode/opencode-handoff-service"
 import type { OpenCodeHandoffInput, OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "./opencode/opencode-handoff-types"
 import { OpenCodeHandoffFollowupService, readOpenCodeHandoffFollowupQueueKind } from "./opencode/opencode-handoff-followup-service"
 import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupSummary } from "./opencode/opencode-handoff-followup-types"
+import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
+import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -94,6 +96,8 @@ export interface RuntimeServerOptions {
   commanderCycleId?: () => string
   opencodeHandoffNow?: () => Date
   opencodeHandoffId?: () => string
+  runtimeCheckpointNow?: () => Date
+  runtimeCheckpointId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -148,6 +152,8 @@ export class RuntimeServer {
   private readonly commanderCycleId?: () => string
   private readonly opencodeHandoffNow?: () => Date
   private readonly opencodeHandoffId?: () => string
+  private readonly runtimeCheckpointNow?: () => Date
+  private readonly runtimeCheckpointId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -191,6 +197,8 @@ export class RuntimeServer {
     this.commanderCycleId = options.commanderCycleId
     this.opencodeHandoffNow = options.opencodeHandoffNow
     this.opencodeHandoffId = options.opencodeHandoffId
+    this.runtimeCheckpointNow = options.runtimeCheckpointNow
+    this.runtimeCheckpointId = options.runtimeCheckpointId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -577,6 +585,14 @@ export class RuntimeServer {
           limit: optionalPositiveIntegerUnbounded(payload.limit, "limit"),
           staleAfterMs: optionalPositiveIntegerUnbounded(payload.staleAfterMs ?? payload.stale_after_ms, "staleAfterMs"),
         })
+      case "runtime.preview_runtime_checkpoint":
+        return this.previewRuntimeCheckpoint(readRuntimeCheckpointInput(payload))
+      case "runtime.create_runtime_checkpoint":
+        return this.createRuntimeCheckpoint(readRuntimeCheckpointInput(payload))
+      case "runtime.get_runtime_checkpoint":
+        return this.getRuntimeCheckpoint(requiredString(payload.checkpointId ?? payload.checkpoint_id, "checkpointId"))
+      case "runtime.list_runtime_checkpoints":
+        return this.listRuntimeCheckpoints(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -1037,6 +1053,23 @@ export class RuntimeServer {
     return this.opencodeHandoffFollowupService().queue(queue, options)
   }
 
+  async previewRuntimeCheckpoint(input: RuntimeCheckpointInput = {}): Promise<RuntimeCheckpointPreview> {
+    return this.runtimeCheckpointService().preview(input)
+  }
+
+  async createRuntimeCheckpoint(input: RuntimeCheckpointInput = {}): Promise<RuntimeCheckpoint> {
+    this.requireRuntimeCheckpointWriteRuntime("runtime.create_runtime_checkpoint")
+    return this.runtimeCheckpointService().create(input)
+  }
+
+  async getRuntimeCheckpoint(checkpointId: string): Promise<RuntimeCheckpoint | null> {
+    return this.runtimeCheckpointService().get(checkpointId)
+  }
+
+  async listRuntimeCheckpoints(limit = 20): Promise<RuntimeCheckpointRecord[]> {
+    return this.runtimeCheckpointService().list(limit)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1349,6 +1382,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before opencode handoff writes")
   }
 
+  private requireRuntimeCheckpointWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before runtime checkpoint writes")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1406,6 +1444,141 @@ export class RuntimeServer {
       queueService: this.commanderQueueService(),
       runtimeStatus: this.status.bind(this),
     })
+  }
+
+  private runtimeCheckpointService(): RuntimeCheckpointService {
+    return new RuntimeCheckpointService({
+      eventStore: this.eventStore,
+      now: this.runtimeCheckpointNow,
+      idFactory: this.runtimeCheckpointId ? () => this.runtimeCheckpointId!() : undefined,
+      sectionProvider: () => this.runtimeCheckpointSections(),
+    })
+  }
+
+  private async runtimeCheckpointSections(): Promise<RuntimeCheckpointSections> {
+    const events = await this.eventStore.readAll()
+    const lastEventId = events.at(-1)?.event_id
+    const missionSummary = await this.missionRegistry.statusSummary()
+    const recentMissions = await this.missionRegistry.listRecentMissions(10)
+    const recentMissionDetails = []
+    for (const mission of recentMissions.slice(0, 5)) {
+      recentMissionDetails.push({
+        mission_id: mission.mission_id,
+        status: mission.status,
+        updated_at: mission.updated_at,
+        claims: (await this.missionRegistry.listMissionClaims(mission.mission_id)).slice(-5),
+        progress: (await this.missionRegistry.listMissionProgress(mission.mission_id)).slice(-5),
+        results: (await this.missionRegistry.listMissionResults(mission.mission_id)).slice(-5),
+      })
+    }
+    const projection = this.safeResearchProjectionStatus()
+    const research = this.safeResearchCheckpointSummary()
+    const syntheses = await this.safeListResearchSyntheses(10)
+    const cycles = await this.safeListCommanderCycles(10)
+    const handoffSummary = await this.openCodeHandoffFollowupSummary().catch((error) => ({ error: error instanceof Error ? error.message : String(error) }))
+    const handoffActive = await this.openCodeHandoffFollowupQueue("active", { limit: 10 }).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }))
+    return redactValue({
+      runtime: {
+        mode: this.mode,
+        started: this.started,
+        run_lock_held: this.runLock.isHeld(),
+        runtime_status_summary: this.started ? "started" : "created",
+        event_count: events.length,
+        last_event_id: typeof lastEventId === "string" ? lastEventId : undefined,
+        projection_health: projection,
+      },
+      spec: {
+        status: this.specSummary?.status ?? "unknown",
+        objective_preview: this.specSummary?.objective,
+        approved_by: this.specSummary?.approvedBy,
+        approved_at: this.specSummary?.approvedAt,
+      },
+      reasoning: {
+        status: this.reasoningProviderStatus(),
+        health: this.reasoningProviderHealth(),
+      },
+      research: {
+        projection,
+        topics: research.topics,
+        topic_count: research.topic_count,
+        recent_syntheses: syntheses,
+        recent_api_ingestions: await this.listExternalApiResearchIngestions(10).catch(() => []),
+      },
+      commander: {
+        proposals: await this.proposalStatusSummary(),
+        reviews: await this.reviewStatusSummary(),
+        bundles: await this.proposalBundleStatusSummary(),
+        playbook_drafts: await this.commanderPlaybookDraftStatusSummary(),
+        recent_proposals: await this.listCommanderProposals({ limit: 10 }),
+        recent_bundles: await this.listProposalBundles({ limit: 10 }),
+        recent_playbook_drafts: await this.listCommanderPlaybookDrafts({ limit: 10 }),
+        recent_cycles: cycles,
+        recent_syntheses: syntheses,
+        queues: await this.commanderQueueSummary().catch((error) => ({ error: error instanceof Error ? error.message : String(error) })),
+      },
+      executor: {
+        missions: missionSummary,
+        recent_missions: recentMissions,
+        recent_mission_details: recentMissionDetails,
+      },
+      opencode: {
+        adapter_status_available: false,
+        adapter_status_reason: "checkpoint creation does not call adapter",
+        executor_stream_error: this.executorStreamError ?? undefined,
+      },
+      handoff: {
+        recent_handoffs: await this.listOpenCodeHandoffs(10),
+        followup_summary: handoffSummary,
+        active_queue: handoffActive,
+        needs_result_review_queue: await this.openCodeHandoffFollowupQueue("needs_result_review", { limit: 10 }).catch((error) => ({ error: error instanceof Error ? error.message : String(error) })),
+      },
+    })
+  }
+
+  private safeResearchProjectionStatus(): RuntimeResearchProjectionHealth {
+    try {
+      return this.researchProjectionStatus()
+    } catch (error) {
+      return redactValue({
+        ...this.researchProjectionHealth,
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  private safeResearchCheckpointSummary(): { topics: Array<Record<string, unknown>>; topic_count: number } {
+    try {
+      if (this.researchProjectionMode === "disabled") return { topics: [], topic_count: 0 }
+      const topics = this.getResearchDb().listTopics()
+      return {
+        topics: topics.slice(0, 10).map((topic) => ({
+          id: topic.id,
+          title: topic.title,
+          status: topic.status,
+          updated_at: topic.updated_at,
+        })),
+        topic_count: topics.length,
+      }
+    } catch {
+      return { topics: [], topic_count: 0 }
+    }
+  }
+
+  private async safeListResearchSyntheses(limit: number): Promise<ResearchSynthesisRecord[]> {
+    try {
+      return await this.listResearchSyntheses(limit)
+    } catch {
+      return []
+    }
+  }
+
+  private async safeListCommanderCycles(limit: number): Promise<CommanderCycleRecord[]> {
+    try {
+      return await this.listCommanderCycles(limit)
+    } catch {
+      return []
+    }
   }
 
   private externalApiRequestService(): ExternalApiRequestService {
@@ -1645,6 +1818,16 @@ function readOpenCodeHandoffInput(payload: Record<string, unknown>): OpenCodeHan
     proposal_id: requiredString(payload.proposalId ?? payload.proposal_id, "proposalId"),
     requested_by: optionalString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
     dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
+  }
+}
+
+function readRuntimeCheckpointInput(payload: Record<string, unknown>): RuntimeCheckpointInput {
+  return {
+    scope: payload.scope === undefined ? undefined : readRuntimeCheckpointScope(payload.scope),
+    reason: optionalString(payload.reason, "reason"),
+    created_by: optionalString(payload.createdBy ?? payload.created_by, "createdBy"),
+    requested_by: optionalString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+    max_bytes: optionalPositiveInteger(payload.maxBytes ?? payload.max_bytes, "maxBytes", 256 * 1024),
   }
 }
 

@@ -4891,6 +4891,120 @@ describe("RuntimeServer core", () => {
     await policyServer.shutdown()
   })
 
+  test("runtime checkpoints preview, create, list, and get bounded redacted state without adapter calls", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      adapter,
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_test_1",
+      runtimeCheckpointNow: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+
+    const preview = await server.command("runtime.preview_runtime_checkpoint", {
+      scope: "full",
+      reason: "operator checkpoint token=checkpoint-preview-secret",
+      requestedBy: "operator",
+    })
+    expect(preview).toMatchObject({ scope: "full", event_count: 0, blockers: [] })
+    expect(JSON.stringify(preview)).not.toContain("checkpoint-preview-secret")
+    expect(await readEventKinds(dir)).toEqual([])
+
+    await expect(server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })).rejects.toThrow("runtime must be started before runtime checkpoint writes")
+    await server.start()
+    const startPackets = adapter.packets.length
+    const checkpoint = await server.command("runtime.create_runtime_checkpoint", {
+      scope: "full",
+      reason: "save token=checkpoint-secret",
+      requestedBy: "operator",
+    })
+    expect(checkpoint).toMatchObject({
+      checkpoint_id: "checkpoint_test_1",
+      scope: "full",
+      restore_supported: false,
+      event_count: 1,
+    })
+    expect(adapter.packets).toHaveLength(startPackets)
+    expect(JSON.stringify(checkpoint)).not.toContain("checkpoint-secret")
+    expect(JSON.stringify(checkpoint)).toContain("[REDACTED]")
+    expect(Object.keys((checkpoint as { sections: Record<string, unknown> }).sections)).toContain("commander")
+    expect(Object.keys((checkpoint as { sections: Record<string, unknown> }).sections)).toContain("executor")
+    const hash = (checkpoint as { checkpoint_hash: string }).checkpoint_hash
+    expect(hash).toMatch(/^[a-f0-9]{64}$/)
+
+    const events = await readJsonlEvents(dir)
+    const checkpointEvent = events.find((event) => event.kind === "runtime_checkpoint_created")
+    expect(checkpointEvent).toBeTruthy()
+    expect(checkpointEvent).toMatchObject({ checkpoint_id: "checkpoint_test_1", checkpoint_hash: hash, restore_supported: false })
+    expect(JSON.stringify(events)).not.toContain("checkpoint-secret")
+
+    const listed = await server.command("runtime.list_runtime_checkpoints", { limit: 10 })
+    expect(Array.isArray(listed)).toBe(true)
+    expect((listed as Array<Record<string, unknown>>)[0]).toMatchObject({ checkpoint_id: "checkpoint_test_1", scope: "full", checkpoint_hash: hash })
+    const selected = await server.command("runtime.get_runtime_checkpoint", { checkpointId: "checkpoint_test_1" })
+    expect(selected).toMatchObject({ checkpoint_id: "checkpoint_test_1", checkpoint_hash: hash })
+
+    const rebuilt = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    const rebuiltSelected = await rebuilt.command("runtime.get_runtime_checkpoint", { checkpointId: "checkpoint_test_1" })
+    expect(rebuiltSelected).toMatchObject({ checkpoint_id: "checkpoint_test_1", checkpoint_hash: hash })
+    await rebuilt.shutdown()
+    await server.shutdown()
+  })
+
+  test("runtime checkpoint scopes, truncation, and read-mode behavior are deterministic and bounded", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointNow: () => new Date("2026-05-10T12:00:00.000Z"),
+    })
+    await server.start()
+
+    const commander = await server.command("runtime.preview_runtime_checkpoint", { scope: "commander", requestedBy: "operator" }) as { sections: Array<{ name: string }> }
+    const commanderSections = commander.sections.map((section) => section.name)
+    expect(commanderSections).toContain("commander")
+    expect(commanderSections).not.toContain("executor")
+
+    const executor = await server.command("runtime.preview_runtime_checkpoint", { scope: "executor", requestedBy: "operator" }) as { sections: Array<{ name: string }> }
+    const executorSections = executor.sections.map((section) => section.name)
+    expect(executorSections).toContain("executor")
+    expect(executorSections).not.toContain("research")
+
+    const research = await server.command("runtime.preview_runtime_checkpoint", { scope: "research", requestedBy: "operator" }) as { sections: Array<{ name: string }> }
+    expect(research.sections.map((section) => section.name)).toContain("research")
+
+    const handoff = await server.command("runtime.preview_runtime_checkpoint", { scope: "handoff", requestedBy: "operator" }) as { sections: Array<{ name: string }> }
+    expect(handoff.sections.map((section) => section.name)).toContain("handoff")
+
+    const truncated = await server.command("runtime.create_runtime_checkpoint", {
+      scope: "full",
+      maxBytes: 2048,
+      reason: "bounded checkpoint secret=checkpoint-truncation-secret",
+      requestedBy: "operator",
+    }) as { checkpoint_hash: string; warnings: string[]; section_summaries: Array<{ truncated: boolean }> }
+    expect(truncated.warnings.length).toBeGreaterThan(0)
+    expect(truncated.section_summaries.some((section) => section.truncated)).toBe(true)
+    const second = await server.command("runtime.create_runtime_checkpoint", {
+      scope: "full",
+      maxBytes: 2048,
+      requestedBy: "operator",
+    }) as { checkpoint_hash: string }
+    expect(second.checkpoint_hash).not.toBe(truncated.checkpoint_hash)
+    expect(JSON.stringify(await readJsonlEvents(dir))).not.toContain("checkpoint-truncation-secret")
+    await server.shutdown()
+
+    const viewServer = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    const list = await viewServer.command("runtime.list_runtime_checkpoints", { limit: 10 }) as unknown[]
+    expect(list.length).toBeGreaterThanOrEqual(2)
+    await expect(viewServer.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })).rejects.toThrow("runtime.create_runtime_checkpoint requires active mode")
+    await viewServer.shutdown()
+  })
+
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

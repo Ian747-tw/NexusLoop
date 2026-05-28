@@ -3027,4 +3027,49 @@ describe("runtime UI effects", () => {
     expect(state.opencodeFollowup?.commandError).toContain("handoff follow-up queue is invalid")
     expect(JSON.stringify(state)).not.toContain("queue-secret")
   })
+
+  test("runtime checkpoint slash commands render preview create list and selected checkpoint", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint-preview" })
+    expect(state.runtimeCheckpoints?.preview).toMatchObject({ scope: "full", blockers: [] })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Runtime checkpoints")
+    expect(snapshot).toContain("preview_scope=full")
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "checkpoint",
+      args: ["full", "e2e", "checkpoint", "token=checkpoint-secret"],
+    })
+    const checkpointId = state.runtimeCheckpoints?.selected?.checkpoint_id
+    expect(checkpointId).toMatch(/^fake-checkpoint-/)
+    expect(state.runtimeCheckpoints?.selected).toMatchObject({ scope: "full", restore_supported: false })
+    expect(state.runtimeCheckpoints?.recent.at(0)).toMatchObject({ checkpoint_id: checkpointId, scope: "full" })
+    expect(JSON.stringify(state)).not.toContain("checkpoint-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoints" })
+    expect(state.runtimeCheckpoints?.recent.at(0)).toMatchObject({ checkpoint_id: checkpointId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint-show", args: [checkpointId ?? "missing"] })
+    expect(state.runtimeCheckpoints?.selected).toMatchObject({ checkpoint_id: checkpointId })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain(`selected_checkpoint=${checkpointId}`)
+    expect(snapshot).toContain("restore_supported=false")
+  })
+
+  test("runtime checkpoint invalid scope and secret-looking state are redacted", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint-preview", args: ["invalid"] })
+    expect(state.runtimeCheckpoints?.commandError).toContain("runtime checkpoint scope is invalid")
+    expect(JSON.stringify(state)).not.toContain("invalid-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint", args: ["research", "token=checkpoint-secret"] })
+    expect(JSON.stringify(state)).not.toContain("checkpoint-secret")
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Runtime checkpoints")
+    expect(snapshot).not.toContain("checkpoint-secret")
+  })
 })
