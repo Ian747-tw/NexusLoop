@@ -11,6 +11,8 @@ import { RuntimeServerClient } from "./tui/runtime-server-client"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
+import type { RuntimeRestoreService } from "./checkpoints/runtime-restore-service"
+import { WakeAssessmentService } from "./wake/wake-hook-service"
 import { MissionRegistry } from "./missions/mission-registry"
 import { ReviewRegistry } from "./missions/review-registry"
 import { ProposalRegistry } from "./missions/proposal-registry"
@@ -125,7 +127,6 @@ function wakeEventPayloadForTest(assessment: Record<string, unknown>): Record<st
     sections: assessment.sections,
     suggested_commands: assessment.suggested_commands,
     assessment_hash: assessment.assessment_hash,
-    wake_assessment: assessment,
   }
 }
 
@@ -5348,16 +5349,90 @@ describe("RuntimeServer core", () => {
     expect(eventWithoutAppendMetadataBytes).toBeLessThanOrEqual(256 * 1024)
     const nearCapWithoutAppendMetadata = eventWithoutAppendMetadataBytes + 32
     const beforeRejectedCreate = await readJsonlEvents(dir)
-    await expect(server.command("runtime.create_wake_assessment", {
+    const capped = await server.command("runtime.create_wake_assessment", {
       resumeId: "resume_wake_cap_1",
       requestedBy: "operator",
       maxBytes: nearCapWithoutAppendMetadata,
-    })).rejects.toThrow("runtime wake assessment event exceeds max_bytes")
-    const afterRejectedCreate = await readJsonlEvents(dir)
-    expect(afterRejectedCreate).toHaveLength(beforeRejectedCreate.length)
-    const wakeLine = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).split(/\r?\n/).filter((line) => line.includes("\"runtime_wake_assessment_created\""))[0]
-    expect(lineByteLength(wakeLine)).toBeGreaterThan(nearCapWithoutAppendMetadata)
+    }) as { warnings: string[] }
+    expect(capped.warnings).toContain(`wake assessment truncated to fit max_bytes=${nearCapWithoutAppendMetadata}`)
+    const afterCappedCreate = await readJsonlEvents(dir)
+    expect(afterCappedCreate).toHaveLength(beforeRejectedCreate.length + 1)
+    const wakeLines = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).split(/\r?\n/).filter((line) => line.includes("\"runtime_wake_assessment_created\""))
+    expect(lineByteLength(wakeLines.at(-1)!)).toBeLessThanOrEqual(nearCapWithoutAppendMetadata)
     await server.shutdown()
+  })
+
+  test("wake assessment truncates against persisted event payload size", async () => {
+    const dir = await tempProject()
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_checkpoint_created",
+      checkpoint_id: "checkpoint_wake_large_1",
+      checkpoint_hash: "checkpoint-large-hash",
+      checkpoint: {
+        checkpoint_id: "checkpoint_wake_large_1",
+        scope: "full",
+        created_at: "2026-05-10T12:00:00.000Z",
+        created_by: "operator",
+        event_count: 1,
+        checkpoint_hash: "checkpoint-large-hash",
+        sections: {},
+        section_summaries: [],
+        restore_supported: false,
+        warnings: [],
+      },
+    })
+    const restoreService = {
+      get: async () => ({
+        resume_id: "resume_wake_large_1",
+        checkpoint_id: "checkpoint_wake_large_1",
+        checkpoint_hash: "checkpoint-large-hash",
+        marked_at: "2026-05-10T12:05:00.000Z",
+        marked_by: "operator",
+        event_count_at_checkpoint: 1,
+        current_event_count: 1,
+        drift_status: "none",
+        summary_preview: "large wake",
+      }),
+      preview: async () => ({
+        checkpoint_id: "checkpoint_wake_large_1",
+        can_mark_resume: true,
+        verification: {
+          checkpoint_id: "checkpoint_wake_large_1",
+          exists: true,
+          hash_ok: true,
+          cursor_ok: true,
+          event_count_at_checkpoint: 1,
+          current_event_count: 1,
+          new_event_count: 0,
+          drift_status: "none",
+          blockers: [],
+          warnings: [],
+        },
+        commander_context: { recent_cycle_ids: [], recent_synthesis_ids: [], proposal_ids: [], review_ids: [], bundle_ids: [], warnings: [] },
+        executor_context: { mission_ids: [], active_mission_ids: [], active_claim_ids: [], result_ids: [], progress_ids: [], warnings: [] },
+        handoff_context: { handoff_ids: [], active_handoff_ids: [], needs_result_review_ids: [], failed_handoff_ids: [], warnings: [] },
+        reasoning_context: { health_status: "ok", warnings: [] },
+        suggested_commands: [],
+        redacted_summary_preview: "large wake",
+        created_at: "2026-05-10T12:06:00.000Z",
+      }),
+    } as unknown as RuntimeRestoreService
+    const largeFollowup = Object.fromEntries(Array.from({ length: 80 }, (_, index) => [`large_${index}`, "x".repeat(1000)]))
+    const service = new WakeAssessmentService({
+      eventStore,
+      restoreService,
+      idFactory: () => "wake_large_1",
+      now: () => new Date("2026-05-10T12:10:00.000Z"),
+      sectionProvider: () => ({
+        handoff: { followup_summary: largeFollowup },
+      }),
+    })
+
+    const assessment = await service.create({ resume_id: "resume_wake_large_1", requested_by: "operator", max_bytes: 8192 })
+    expect(assessment.warnings).toContain("wake assessment truncated to fit max_bytes=8192")
+    const wakeLine = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).split(/\r?\n/).filter((line) => line.includes("\"runtime_wake_assessment_created\""))[0]
+    expect(lineByteLength(wakeLine)).toBeLessThanOrEqual(8192)
   })
 
   test("wake assessment summaries use current runtime sections after checkpoint drift", async () => {

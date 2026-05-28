@@ -250,7 +250,6 @@ function eventPayloadFromAssessment(assessment: WakeAssessment): JsonlEvent {
     sections: assessment.sections,
     suggested_commands: assessment.suggested_commands,
     assessment_hash: assessment.assessment_hash,
-    wake_assessment: assessment,
   }
 }
 
@@ -346,10 +345,10 @@ function suggestedCommands(resumeId: string | undefined, checkpointId: string | 
 
 function fitAssessment(input: Omit<WakeAssessment, "assessment_hash">, maxBytes: number): WakeAssessment {
   let assessment = finalizeAssessment(input)
-  if (byteLength(stableStringify(assessment)) <= maxBytes) return redactValue(assessment)
+  if (persistedEventByteLength(eventPayloadFromAssessment(assessment)) <= maxBytes) return redactValue(assessment)
   const warnings = unique([...input.warnings, `wake assessment truncated to fit max_bytes=${maxBytes}`])
   const truncated = finalizeAssessment({ ...input, warnings, sections: truncateSections(input.sections, 5), suggested_commands: input.suggested_commands.slice(0, 8) })
-  if (byteLength(stableStringify(truncated)) <= maxBytes) return redactValue(truncated)
+  if (persistedEventByteLength(eventPayloadFromAssessment(truncated)) <= maxBytes) return redactValue(truncated)
   const minimal = finalizeAssessment({
     ...input,
     warnings: unique([...warnings, "wake assessment sections reduced to minimal summaries"]),
@@ -360,7 +359,7 @@ function fitAssessment(input: Omit<WakeAssessment, "assessment_hash">, maxBytes:
     },
     suggested_commands: input.suggested_commands.slice(0, 4),
   })
-  if (byteLength(stableStringify(minimal)) <= maxBytes) return redactValue(minimal)
+  if (persistedEventByteLength(eventPayloadFromAssessment(minimal)) <= maxBytes) return redactValue(minimal)
   throw new Error("minimal wake assessment exceeds max_bytes")
 }
 
@@ -391,8 +390,15 @@ function recordFromAssessment(assessment: WakeAssessment): WakeAssessmentRecord 
 }
 
 function readAssessmentEvent(event: WakeAssessmentEvent): WakeAssessment | null {
-  if (!isRecord(event.wake_assessment) || typeof event.wake_assessment.wake_id !== "string") return null
-  return redactValue(event.wake_assessment as WakeAssessment)
+  if (isRecord(event.wake_assessment) && typeof event.wake_assessment.wake_id === "string") return redactValue(event.wake_assessment as WakeAssessment)
+  if (typeof event.wake_id !== "string") return null
+  const {
+    kind: _kind,
+    event_id: _eventId,
+    timestamp: _timestamp,
+    ...assessment
+  } = event
+  return redactValue(assessment as WakeAssessment)
 }
 
 function readCheckpointEvent(event: RuntimeCheckpointEvent): RuntimeCheckpoint | null {
