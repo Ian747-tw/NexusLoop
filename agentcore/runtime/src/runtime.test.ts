@@ -6094,6 +6094,52 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake schedule tick applies continuation plan caps per due schedule", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let scheduleId = 0
+    let wakeId = 0
+    let planId = 0
+    let continuationStepIndex = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_tick_plan_cap_1",
+      runtimeResumeId: () => "resume_tick_plan_cap_1",
+      runtimeWakeId: () => `wake_tick_plan_cap_${++wakeId}`,
+      runtimeContinuationId: () => `plan_tick_plan_cap_${++planId}`,
+      runtimeContinuationStepId: () => `step_tick_plan_cap_${++continuationStepIndex}`,
+      runtimeWakeScheduleId: () => `schedule_tick_plan_cap_${++scheduleId}`,
+      runtimeWakeScheduleTickId: () => "tick_plan_cap_1",
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T13:14:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_tick_plan_cap_1", requestedBy: "operator" })
+    for (const nextDueAt of ["2026-05-11T13:12:00.000Z", "2026-05-11T13:13:00.000Z"]) {
+      await server.command("runtime.create_wake_schedule", {
+        resumeId: "resume_tick_plan_cap_1",
+        intervalMs: 60_000,
+        nextDueAt,
+        policy: { createContinuationPlan: true, maxContinuationPlansPerTick: 1 },
+        requestedBy: "operator",
+      })
+    }
+
+    const preview = await server.command("runtime.preview_wake_schedule_tick", { now: "2026-05-11T13:14:00.000Z", maxDueItems: 5 }) as { eligible_count: number; items: Array<{ would_create_continuation_plan: boolean }> }
+    expect(preview.eligible_count).toBe(2)
+    expect(preview.items.filter((item) => item.would_create_continuation_plan)).toHaveLength(2)
+
+    const result = await server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:14:00.000Z", maxDueItems: 5, requestedBy: "operator" }) as { processed_count: number; wake_ids: string[]; plan_ids: string[] }
+    expect(result).toMatchObject({
+      processed_count: 2,
+      wake_ids: ["wake_tick_plan_cap_1", "wake_tick_plan_cap_2"],
+      plan_ids: ["plan_tick_plan_cap_1", "plan_tick_plan_cap_2"],
+    })
+    await server.shutdown()
+  })
+
   test("wake schedule write gates preserve read surfaces", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

@@ -251,12 +251,12 @@ export class WakeScheduleService {
         let wakeId: string | undefined
         let planId: string | undefined
         try {
-          if (schedule.policy.create_wake_assessment) {
+          if (schedule.policy.create_wake_assessment && schedule.policy.max_wake_assessments_per_tick > 0) {
             const wake = await this.options.wakeService.create({ resume_id: schedule.resume_id, requested_by: input.requested_by })
             wakeId = wake.wake_id
             wakeIds.push(wake.wake_id)
           }
-          if (wakeId && schedule.policy.create_continuation_plan && planIds.length < schedule.policy.max_continuation_plans_per_tick) {
+          if (wakeId && schedule.policy.create_continuation_plan && schedule.policy.max_continuation_plans_per_tick > 0) {
             const plan = await this.options.continuationService.create({
               wake_id: wakeId,
               requested_by: input.requested_by,
@@ -332,8 +332,8 @@ export class WakeScheduleService {
         last_tick_at: schedule.last_tick_at,
         blockers: unique(blockers),
         warnings: unique(warnings),
-        would_create_wake: due && schedule.policy.create_wake_assessment && blockers.length === 0,
-        would_create_continuation_plan: due && schedule.policy.create_wake_assessment && schedule.policy.create_continuation_plan && blockers.length === 0,
+        would_create_wake: due && schedule.policy.create_wake_assessment && schedule.policy.max_wake_assessments_per_tick > 0 && blockers.length === 0,
+        would_create_continuation_plan: due && schedule.policy.create_wake_assessment && schedule.policy.max_wake_assessments_per_tick > 0 && schedule.policy.create_continuation_plan && schedule.policy.max_continuation_plans_per_tick > 0 && blockers.length === 0,
       }
       if (due) dueItems.push(item)
       else otherItems.push(item)
