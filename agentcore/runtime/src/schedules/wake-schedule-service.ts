@@ -443,6 +443,7 @@ function applyScheduleEvent(schedules: Map<string, WakeSchedule>, event: WakeSch
   if (event.kind === "runtime_wake_schedule_resumed") schedule.status = "active"
   if (event.kind === "runtime_wake_schedule_cancelled") schedule.status = "cancelled"
   schedule.updated_at = stringField(event.paused_at) ?? stringField(event.resumed_at) ?? stringField(event.cancelled_at) ?? stringField(event.timestamp) ?? schedule.updated_at
+  schedule.schedule_hash = sha256(stableStringify({ ...schedule, schedule_hash: undefined }))
 }
 
 function updateProcessedSchedule(schedules: Map<string, WakeSchedule>, processed: unknown, tickAt: string | undefined): void {

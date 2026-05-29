@@ -5936,16 +5936,19 @@ describe("RuntimeServer core", () => {
       title: "schedule token=schedule-secret",
       reason: "reason token=schedule-secret",
       requestedBy: "operator",
-    }) as { schedule_id: string; status: string; reason: string }
+    }) as { schedule_id: string; status: string; reason: string; schedule_hash: string }
     expect(schedule).toMatchObject({ schedule_id: "schedule_1", status: "active" })
     expect(JSON.stringify(schedule)).not.toContain("schedule-secret")
 
-    const paused = await server.command("runtime.pause_wake_schedule", { scheduleId: "schedule_1", requestedBy: "operator" }) as { status: string }
+    const paused = await server.command("runtime.pause_wake_schedule", { scheduleId: "schedule_1", requestedBy: "operator" }) as { status: string; schedule_hash: string }
     expect(paused.status).toBe("paused")
-    const resumed = await server.command("runtime.resume_wake_schedule", { scheduleId: "schedule_1", requestedBy: "operator" }) as { status: string }
+    expect(paused.schedule_hash).not.toBe(schedule.schedule_hash)
+    const resumed = await server.command("runtime.resume_wake_schedule", { scheduleId: "schedule_1", requestedBy: "operator" }) as { status: string; schedule_hash: string }
     expect(resumed.status).toBe("active")
-    const cancelled = await server.command("runtime.cancel_wake_schedule", { scheduleId: "schedule_1", requestedBy: "operator" }) as { status: string }
+    expect(resumed.schedule_hash).not.toBe(paused.schedule_hash)
+    const cancelled = await server.command("runtime.cancel_wake_schedule", { scheduleId: "schedule_1", requestedBy: "operator" }) as { status: string; schedule_hash: string }
     expect(cancelled.status).toBe("cancelled")
+    expect(cancelled.schedule_hash).not.toBe(resumed.schedule_hash)
     const listed = await server.command("runtime.list_wake_schedules", { limit: 10 }) as Array<{ schedule_id: string; status: string }>
     expect(listed[0]).toMatchObject({ schedule_id: "schedule_1", resume_id: "resume_schedule_1", status: "cancelled", title: "schedule [REDACTED]", next_due_at: "2026-05-11T13:01:00.000Z", summary_preview: expect.any(String) })
     const events = await readJsonlEvents(dir)
