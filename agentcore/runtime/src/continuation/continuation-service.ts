@@ -81,6 +81,7 @@ type NormalizedDecisionInput = {
 export class ContinuationService {
   private generatedPlanIds = 0
   private generatedStepIds = 0
+  private readonly stepExecutionLocks = new Map<string, Promise<void>>()
 
   constructor(private readonly options: ContinuationServiceOptions) {}
 
@@ -141,6 +142,10 @@ export class ContinuationService {
 
   async executeStep(input: ContinuationStepInput): Promise<ContinuationStepResult> {
     const normalized = normalizeStepInput(input)
+    return this.withPlanStepLock(normalized.plan_id, () => this.executeStepLocked(normalized))
+  }
+
+  private async executeStepLocked(normalized: NormalizedStepInput): Promise<ContinuationStepResult> {
     const plan = await this.requirePlan(normalized.plan_id)
     if (plan.status === "paused") throw new Error("continuation plan is paused")
     if (plan.status === "cancelled") throw new Error("continuation plan is cancelled")
@@ -212,6 +217,23 @@ export class ContinuationService {
       await this.options.eventStore.append({ kind: "runtime_continuation_plan_completed", plan_id: plan.plan_id, completed_at: completedAt, requested_by: normalized.requested_by })
     }
     return redactValue(result)
+  }
+
+  private async withPlanStepLock<T>(planId: string, run: () => Promise<T>): Promise<T> {
+    const previous = this.stepExecutionLocks.get(planId) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const chain = previous.catch(() => undefined).then(() => current)
+    this.stepExecutionLocks.set(planId, chain)
+    await previous.catch(() => undefined)
+    try {
+      return await run()
+    } finally {
+      release()
+      if (this.stepExecutionLocks.get(planId) === chain) this.stepExecutionLocks.delete(planId)
+    }
   }
 
   async pause(input: ContinuationPlanDecisionInput): Promise<ContinuationPlan> {

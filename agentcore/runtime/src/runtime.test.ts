@@ -5633,6 +5633,60 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(events)).not.toContain("late-cancel-secret")
   })
 
+  test("continuation concurrent execution serializes pending step selection", async () => {
+    const dir = await tempProject()
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let readCalls = 0
+    let releaseRead!: (value: unknown) => void
+    let markReadStarted!: () => void
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve
+    })
+    const readResult = new Promise<unknown>((resolve) => {
+      releaseRead = resolve
+    })
+    const service = new ContinuationService({
+      eventStore,
+      wakeService: {
+        get: async () => ({
+          wake_id: "wake_continue_concurrent_1",
+          trigger_kind: "manual",
+          created_at: "2026-05-11T12:15:00.000Z",
+          requested_by: "operator",
+          allowed: true,
+          blockers: [],
+          warnings: [],
+          current_event_count: 1,
+          sections: {},
+          suggested_commands: [{ label: "List missions", command: "/missions", command_type: "read" }],
+          assessment_hash: "wake-concurrent-hash",
+        }),
+      } as unknown as WakeAssessmentService,
+      executeReadCommand: async () => {
+        readCalls += 1
+        markReadStarted()
+        return readResult
+      },
+      idFactory: () => "plan_continue_concurrent_1",
+      stepIdFactory: () => "step_continue_concurrent_1",
+      now: () => new Date("2026-05-11T12:15:00.000Z"),
+    })
+
+    await service.create({ wake_id: "wake_continue_concurrent_1", requested_by: "operator" })
+    const first = service.executeStep({ plan_id: "plan_continue_concurrent_1", index: 0, requested_by: "operator" })
+    await readStarted
+    const second = service.executeStep({ plan_id: "plan_continue_concurrent_1", index: 0, requested_by: "operator" })
+    releaseRead([])
+    await expect(first).resolves.toMatchObject({ status: "succeeded", command: "/missions" })
+    await expect(second).rejects.toThrow("continuation plan is completed")
+
+    expect(readCalls).toBe(1)
+    const events = await eventStore.readAll()
+    expect(events.filter((event) => event.kind === "runtime_continuation_step_started")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "runtime_continuation_step_succeeded")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "runtime_continuation_step_failed")).toHaveLength(0)
+  })
+
   test("continuation completion write failures do not corrupt succeeded steps", async () => {
     const dir = await tempProject()
     const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
