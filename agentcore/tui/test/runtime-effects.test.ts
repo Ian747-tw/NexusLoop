@@ -2668,6 +2668,13 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.lastResult).toMatchObject({ command: "/handoff missing-proposal", ok: false })
     expect(state.operatorActions?.commandError).toContain("not found")
     expect(state.operatorActions?.staged?.command).toBe("/handoff missing-proposal")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/schedule-wake", "resume=missing-resume", "every=60s"] })
+    expect(state.operatorActions?.staged?.command).toBe("/schedule-wake resume=missing-resume every=60s")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/schedule-wake resume=missing-resume every=60s", ok: false })
+    expect(state.operatorActions?.commandError).toContain("runtime resume anchor not found")
+    expect(state.operatorActions?.staged?.command).toBe("/schedule-wake resume=missing-resume every=60s")
   })
 
   test("fake commander queue ordering applies priority tie-break before target id", () => {
@@ -3215,5 +3222,96 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-step", args: [planId, String(writeIndex)] })
     expect(state.continuation?.commandError).toContain("continuation write commands are blocked by default")
     expect(JSON.stringify(state)).not.toContain("blocked-continuation-secret")
+  })
+
+  test("wake schedule slash commands preview create tick and redact secrets", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint", args: ["full", "token=schedule-secret"] })
+    const checkpointId = state.runtimeCheckpoints?.selected?.checkpoint_id ?? "missing"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "resume-mark", args: [checkpointId] })
+    const resumeId = state.runtimeRestore?.selectedAnchor?.resume_id ?? "missing"
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "schedule-wake-preview", args: [`resume=${resumeId}`, "every=60s", "token=schedule-secret"] })
+    expect(state.wakeSchedules?.preview).toMatchObject({ resume_id: resumeId, can_create: true, interval_ms: 60_000 })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Wake schedules")
+    expect(snapshot).toContain(`preview_resume=${resumeId}`)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "schedule-wake", args: [`resume=${resumeId}`, "every=60s", "token=schedule-secret"] })
+    const scheduleId = state.wakeSchedules?.selected?.schedule_id
+    expect(scheduleId).toMatch(/^fake-wake-schedule-/)
+    expect(state.wakeSchedules?.selected?.next_due_at).toBe("1970-01-01T00:01:00.000Z")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-schedules" })
+    expect(state.wakeSchedules?.recent.at(0)).toMatchObject({ schedule_id: scheduleId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-schedule", args: [scheduleId ?? "missing"] })
+    expect(state.wakeSchedules?.selected).toMatchObject({ schedule_id: scheduleId })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick-preview" })
+    expect(state.wakeSchedules?.tickPreview).toMatchObject({ due_count: 0, eligible_count: 0 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick-dry-run" })
+    expect(state.wakeSchedules?.lastTick).toMatchObject({ dry_run: true, processed_count: 0, wake_ids: [] })
+    expect(state.wakeAssessment?.selected).toBeUndefined()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick" })
+    expect(state.wakeSchedules?.lastTick).toMatchObject({ dry_run: false, processed_count: 0, wake_ids: [] })
+    expect(state.continuation?.lastStepResult).toBeUndefined()
+    await runtime.command("runtime.create_wake_schedule", {
+      resumeId,
+      intervalMs: 60_000,
+      nextDueAt: "1970-01-01T00:00:00.000Z",
+      title: "explicitly due fake schedule",
+      requestedBy: "operator",
+    })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick-preview" })
+    expect(state.wakeSchedules?.tickPreview).toMatchObject({ due_count: 1, eligible_count: 1 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick" })
+    expect(state.wakeSchedules?.lastTick).toMatchObject({ dry_run: false, processed_count: 1 })
+    expect(state.wakeSchedules?.lastTick?.wake_ids.at(0)).toMatch(/^fake-wake-/)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-ticks" })
+    const tickId = state.wakeSchedules?.recentTicks.at(0)?.tick_id
+    expect(tickId).toMatch(/^fake-wake-tick-/)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick-show", args: [tickId ?? "missing"] })
+    expect(state.wakeSchedules?.lastTick).toMatchObject({ tick_id: tickId })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-schedule-pause", args: [scheduleId ?? "missing"] })
+    expect(state.wakeSchedules?.selected?.status).toBe("paused")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-schedule-resume", args: [scheduleId ?? "missing"] })
+    expect(state.wakeSchedules?.selected?.status).toBe("active")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-schedule-cancel", args: [scheduleId ?? "missing"] })
+    expect(state.wakeSchedules?.selected?.status).toBe("cancelled")
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain(`selected_schedule=${scheduleId}`)
+    expect(snapshot).not.toContain("schedule-secret")
+    expect(JSON.stringify(state)).not.toContain("schedule-secret")
+  })
+
+  test("fake wake schedule tick prioritizes due active schedules before capped inactive records", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await runtime.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await runtime.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "fake-checkpoint-1", requestedBy: "operator" })
+    await runtime.command("runtime.create_wake_schedule", { resumeId: "fake-resume-1", intervalMs: 60_000, nextDueAt: "1970-01-01T00:00:00.000Z", requestedBy: "operator" })
+    await runtime.command("runtime.pause_wake_schedule", { scheduleId: "fake-wake-schedule-1", requestedBy: "operator" })
+    await runtime.command("runtime.create_wake_schedule", { resumeId: "fake-resume-1", intervalMs: 60_000, nextDueAt: "1970-01-01T00:00:00.000Z", requestedBy: "operator" })
+    await runtime.command("runtime.cancel_wake_schedule", { scheduleId: "fake-wake-schedule-2", requestedBy: "operator" })
+    await runtime.command("runtime.create_wake_schedule", { resumeId: "fake-resume-1", intervalMs: 60_000, nextDueAt: "1970-01-01T00:00:00.000Z", requestedBy: "operator" })
+
+    const preview = await runtime.command("runtime.preview_wake_schedule_tick", { maxDueItems: 1 }) as { due_count: number; eligible_count: number; items: Array<{ schedule_id: string; status: string }> }
+    expect(preview).toMatchObject({ due_count: 1, eligible_count: 1 })
+    expect(preview.items).toEqual([expect.objectContaining({ schedule_id: "fake-wake-schedule-3", status: "active" })])
+
+    const result = await runtime.command("runtime.execute_wake_schedule_tick", { maxDueItems: 1, requestedBy: "operator" }) as { processed_count: number; wake_ids: string[] }
+    expect(result).toMatchObject({ processed_count: 1, wake_ids: ["fake-wake-1"] })
+    const schedule = await runtime.command("runtime.get_wake_schedule", { scheduleId: "fake-wake-schedule-3" }) as { last_wake_id?: string }
+    expect(schedule.last_wake_id).toBe("fake-wake-1")
+  })
+
+  test("wake schedule missing and invalid args produce redacted command errors", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "schedule-wake-preview", args: ["every=5m"] })
+    expect(state.wakeSchedules?.commandError).toContain("schedule wake requires resume=<resumeId>")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "schedule-wake-preview", args: ["resume=resume-1", "every=soon-token=schedule-secret"] })
+    expect(state.wakeSchedules?.commandError).toContain("schedule duration")
+    expect(JSON.stringify(state)).not.toContain("schedule-secret")
   })
 })

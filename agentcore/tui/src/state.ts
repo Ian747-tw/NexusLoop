@@ -1268,6 +1268,108 @@ export type ContinuationState = {
   commandError?: string
 }
 
+export type WakeScheduleStatusSummary = "active" | "paused" | "cancelled" | string
+
+export type WakeSchedulePolicySummary = {
+  create_wake_assessment: boolean
+  create_continuation_plan: boolean
+  include_write_steps: boolean
+  max_wake_assessments_per_tick: number
+  max_continuation_plans_per_tick: number
+}
+
+export type WakeScheduleSummary = {
+  schedule_id: string
+  resume_id: string
+  checkpoint_id?: string
+  status: WakeScheduleStatusSummary
+  title: string
+  interval_ms: number
+  next_due_at: string
+  last_tick_at?: string
+  last_wake_id?: string
+  last_plan_id?: string
+  created_at: string
+  created_by: string
+  updated_at: string
+  policy: WakeSchedulePolicySummary
+  reason?: string
+  schedule_hash: string
+  warnings: string[]
+}
+
+export type WakeScheduleRecordSummary = {
+  schedule_id: string
+  resume_id: string
+  status: WakeScheduleStatusSummary
+  title: string
+  next_due_at: string
+  last_tick_at?: string
+  last_wake_id?: string
+  last_plan_id?: string
+  summary_preview: string
+}
+
+export type WakeSchedulePreviewSummary = {
+  resume_id: string
+  checkpoint_id?: string
+  title: string
+  interval_ms: number
+  next_due_at: string
+  policy: WakeSchedulePolicySummary
+  can_create: boolean
+  blockers: string[]
+  warnings: string[]
+  redacted_summary_preview: string
+}
+
+export type WakeScheduleDueItemSummary = {
+  schedule_id: string
+  resume_id: string
+  checkpoint_id?: string
+  due: boolean
+  status: WakeScheduleStatusSummary
+  next_due_at: string
+  last_tick_at?: string
+  blockers: string[]
+  warnings: string[]
+  would_create_wake: boolean
+  would_create_continuation_plan: boolean
+}
+
+export type WakeScheduleTickPreviewSummary = {
+  now: string
+  due_count: number
+  eligible_count: number
+  blocked_count: number
+  items: WakeScheduleDueItemSummary[]
+  max_items: number
+  blockers: string[]
+  warnings: string[]
+}
+
+export type WakeScheduleTickResultSummary = {
+  tick_id: string
+  now: string
+  processed_count: number
+  wake_ids: string[]
+  plan_ids: string[]
+  skipped: WakeScheduleDueItemSummary[]
+  created_at: string
+  requested_by: string
+  dry_run: boolean
+}
+
+export type WakeSchedulesState = {
+  preview?: WakeSchedulePreviewSummary | null
+  selected?: WakeScheduleSummary | null
+  recent: WakeScheduleRecordSummary[]
+  tickPreview?: WakeScheduleTickPreviewSummary | null
+  lastTick?: WakeScheduleTickResultSummary | null
+  recentTicks: WakeScheduleTickResultSummary[]
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -1367,6 +1469,7 @@ export type UiState = {
   runtimeRestore?: RuntimeRestoreState
   wakeAssessment?: WakeAssessmentState
   continuation?: ContinuationState
+  wakeSchedules?: WakeSchedulesState
 }
 
 export function initialState(projectDir: string): UiState {

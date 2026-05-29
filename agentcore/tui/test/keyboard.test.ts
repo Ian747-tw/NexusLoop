@@ -625,6 +625,45 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("wake schedule slash commands route through whitelist only", () => {
+    for (const [message, command, args] of [
+      ["/schedule-wake-preview resume=resume-1 every=5m nightly check", "schedule-wake-preview", ["resume=resume-1", "every=5m", "nightly", "check"]],
+      ["/schedule-wake resume=resume-1 every=60s", "schedule-wake", ["resume=resume-1", "every=60s"]],
+      ["/wake-schedules", "wake-schedules", []],
+      ["/wake-schedule schedule-1", "wake-schedule", ["schedule-1"]],
+      ["/wake-schedule-pause schedule-1", "wake-schedule-pause", ["schedule-1"]],
+      ["/wake-schedule-resume schedule-1", "wake-schedule-resume", ["schedule-1"]],
+      ["/wake-schedule-cancel schedule-1", "wake-schedule-cancel", ["schedule-1"]],
+      ["/wake-tick-preview", "wake-tick-preview", []],
+      ["/wake-tick", "wake-tick", []],
+      ["/wake-tick-dry-run", "wake-tick-dry-run", []],
+      ["/wake-ticks", "wake-ticks", []],
+      ["/wake-tick-show tick-1", "wake-tick-show", ["tick-1"]],
+    ] as const) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+
+      expect(result.state.messageDraft).toBe("")
+      expect(result.state.lastCommand).toBe(command)
+      expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
+    }
+
+    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1"]) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("slash command arguments are redacted before entering system actions", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
