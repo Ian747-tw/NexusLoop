@@ -1328,7 +1328,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private previewWakeScheduleTick(payload: Record<string, unknown>): WakeScheduleTickPreviewSummary {
     const now = typeof payload.now === "string" ? payload.now : new Date(0).toISOString()
     const maxItems = readLimit(payload.maxDueItems ?? payload.max_due_items, 5)
-    const items = this.wakeSchedules.slice().sort((left, right) => left.next_due_at.localeCompare(right.next_due_at)).slice(0, maxItems).map((schedule) => {
+    const allItems = this.wakeSchedules.slice().sort((left, right) => left.next_due_at.localeCompare(right.next_due_at) || left.schedule_id.localeCompare(right.schedule_id)).map((schedule) => {
       const due = schedule.status === "active" && Date.parse(schedule.next_due_at) <= Date.parse(now)
       const blockers = schedule.status === "active" ? [] : [`wake schedule is ${schedule.status}`]
       return {
@@ -1345,11 +1345,15 @@ export class FakeRuntimeClient implements RuntimeClient {
         would_create_continuation_plan: due && blockers.length === 0 && schedule.policy.create_wake_assessment && schedule.policy.create_continuation_plan,
       }
     })
+    const dueItems = allItems.filter((item) => item.due)
+    const otherItems = allItems.filter((item) => !item.due)
+    const orderedItems = [...dueItems, ...otherItems]
+    const items = orderedItems.slice(0, maxItems)
     return {
       now,
-      due_count: items.filter((item) => item.due).length,
-      eligible_count: items.filter((item) => item.due && item.blockers.length === 0).length,
-      blocked_count: items.filter((item) => item.due && item.blockers.length > 0).length,
+      due_count: orderedItems.filter((item) => item.due).length,
+      eligible_count: orderedItems.filter((item) => item.due && item.blockers.length === 0).length,
+      blocked_count: orderedItems.filter((item) => item.due && item.blockers.length > 0).length,
       items,
       max_items: maxItems,
       blockers: [],

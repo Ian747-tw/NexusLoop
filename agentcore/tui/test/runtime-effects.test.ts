@@ -3285,6 +3285,26 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("schedule-secret")
   })
 
+  test("fake wake schedule tick prioritizes due active schedules before capped inactive records", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    await runtime.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await runtime.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "fake-checkpoint-1", requestedBy: "operator" })
+    await runtime.command("runtime.create_wake_schedule", { resumeId: "fake-resume-1", intervalMs: 60_000, nextDueAt: "1970-01-01T00:00:00.000Z", requestedBy: "operator" })
+    await runtime.command("runtime.pause_wake_schedule", { scheduleId: "fake-wake-schedule-1", requestedBy: "operator" })
+    await runtime.command("runtime.create_wake_schedule", { resumeId: "fake-resume-1", intervalMs: 60_000, nextDueAt: "1970-01-01T00:00:00.000Z", requestedBy: "operator" })
+    await runtime.command("runtime.cancel_wake_schedule", { scheduleId: "fake-wake-schedule-2", requestedBy: "operator" })
+    await runtime.command("runtime.create_wake_schedule", { resumeId: "fake-resume-1", intervalMs: 60_000, nextDueAt: "1970-01-01T00:00:00.000Z", requestedBy: "operator" })
+
+    const preview = await runtime.command("runtime.preview_wake_schedule_tick", { maxDueItems: 1 }) as { due_count: number; eligible_count: number; items: Array<{ schedule_id: string; status: string }> }
+    expect(preview).toMatchObject({ due_count: 1, eligible_count: 1 })
+    expect(preview.items).toEqual([expect.objectContaining({ schedule_id: "fake-wake-schedule-3", status: "active" })])
+
+    const result = await runtime.command("runtime.execute_wake_schedule_tick", { maxDueItems: 1, requestedBy: "operator" }) as { processed_count: number; wake_ids: string[] }
+    expect(result).toMatchObject({ processed_count: 1, wake_ids: ["fake-wake-1"] })
+    const schedule = await runtime.command("runtime.get_wake_schedule", { scheduleId: "fake-wake-schedule-3" }) as { last_wake_id?: string }
+    expect(schedule.last_wake_id).toBe("fake-wake-1")
+  })
+
   test("wake schedule missing and invalid args produce redacted command errors", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")
