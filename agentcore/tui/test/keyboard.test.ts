@@ -555,6 +555,38 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("wake slash commands route through whitelist only", () => {
+    for (const [message, command, args] of [
+      ["/wake-preview resume=resume-1", "wake-preview", ["resume=resume-1"]],
+      ["/wake-preview checkpoint=checkpoint-1", "wake-preview", ["checkpoint=checkpoint-1"]],
+      ["/wake resume=resume-1", "wake", ["resume=resume-1"]],
+      ["/wakes", "wakes", []],
+      ["/wake-show wake-1", "wake-show", ["wake-1"]],
+    ] as const) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+
+      expect(result.state.messageDraft).toBe("")
+      expect(result.state.lastCommand).toBe(command)
+      expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
+    }
+
+    for (const message of ["/tmp/repro/wake", "/path/wake-preview", ".wake resume=resume-1", ":wake-preview resume=resume-1"]) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("slash command arguments are redacted before entering system actions", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

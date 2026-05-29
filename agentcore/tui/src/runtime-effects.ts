@@ -32,6 +32,11 @@ import type {
   RuntimeRestorePreviewSummary,
   RuntimeRestoreState,
   RuntimeResumeAnchorSummary,
+  WakeAssessmentPreviewSummary,
+  WakeAssessmentRecordSummary,
+  WakeAssessmentState,
+  WakeAssessmentSummary,
+  WakeSuggestedCommandSummary,
   OpenCodeHandoffFollowupSummary,
   CommanderApplyPreviewSummary,
   CommanderApplyResultSummary,
@@ -211,6 +216,10 @@ export type RuntimeUiEffect =
   | { type: "mark-checkpoint-resume-anchor"; checkpointId: string }
   | { type: "load-checkpoint-resume-anchor"; resumeId: string }
   | { type: "load-checkpoint-resume-anchors"; limit?: number }
+  | { type: "preview-wake-assessment"; resumeId?: string; checkpointId?: string }
+  | { type: "create-wake-assessment"; resumeId: string }
+  | { type: "load-wake-assessment"; wakeId: string }
+  | { type: "load-wake-assessments"; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -754,6 +763,26 @@ export async function applyRuntimeUiEffect(
         )
       case "load-checkpoint-resume-anchors":
         return await loadRuntimeResumeAnchors(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
+      case "preview-wake-assessment":
+        return applyWakeAssessmentPreview(
+          state,
+          await runtime.command("runtime.preview_wake_assessment", { resumeId: effect.resumeId, checkpointId: effect.checkpointId, requestedBy: "operator" }),
+        )
+      case "create-wake-assessment": {
+        const next = applyWakeAssessment(
+          state,
+          await runtime.command("runtime.create_wake_assessment", { resumeId: effect.resumeId, requestedBy: "operator" }),
+        )
+        return await loadWakeAssessments(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "load-wake-assessment":
+        return applyWakeAssessment(
+          state,
+          await runtime.command("runtime.get_wake_assessment", { wakeId: effect.wakeId }),
+          effect.wakeId,
+        )
+      case "load-wake-assessments":
+        return await loadWakeAssessments(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -783,6 +812,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
     if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
     if (isRuntimeRestoreEffect(effect)) return recordRuntimeRestoreCommandError(state, error)
+    if (isWakeAssessmentEffect(effect)) return recordWakeAssessmentCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
@@ -1423,6 +1453,50 @@ function applyRuntimeResumeAnchor(state: UiState, value: unknown, resumeId?: str
   }
 }
 
+async function loadWakeAssessments(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const recent = readWakeAssessmentRecordList(await runtime.command("runtime.list_wake_assessments", { limit }), "runtime.list_wake_assessments", limit)
+  return {
+    ...state,
+    wakeAssessment: {
+      ...wakeAssessmentState(state),
+      recent,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake assessments loaded", detail: `records=${recent.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeAssessmentPreview(state: UiState, value: unknown): UiState {
+  const preview = readWakeAssessmentPreview(value)
+  return {
+    ...state,
+    wakeAssessment: {
+      ...wakeAssessmentState(state),
+      preview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake assessment preview", detail: `checkpoint_id=${preview.checkpoint_id ?? "none"}`, status: preview.allowed ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyWakeAssessment(state: UiState, value: unknown, wakeId?: string): UiState {
+  const assessment = readWakeAssessment(value)
+  if (!assessment && value !== null) throw new Error("runtime.get_wake_assessment returned invalid assessment")
+  const selectedId = assessment?.wake_id ?? (wakeId ? redactText(wakeId) : undefined)
+  return {
+    ...state,
+    wakeAssessment: {
+      ...wakeAssessmentState(state),
+      selected: assessment,
+      recent: assessment ? [recordFromWakeAssessment(assessment), ...wakeAssessmentState(state).recent.filter((item) => item.wake_id !== assessment.wake_id)].slice(0, CHECKPOINT_LIMIT) : wakeAssessmentState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "wake assessment selected", detail: `wake_id=${selectedId}`, status: assessment ? (assessment.allowed ? "ready" : "blocked") : "missing" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -1617,6 +1691,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
   if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
   if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError
+  if (wakeAssessmentCommands.has(command)) return state.wakeAssessment?.commandError
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
@@ -1640,6 +1715,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeFollowupCommands.has(command)) return { ...state, opencodeFollowup: { ...opencodeFollowupState(state), commandError: undefined } }
   if (runtimeCheckpointCommands.has(command)) return { ...state, runtimeCheckpoints: { ...runtimeCheckpointsState(state), commandError: undefined } }
   if (runtimeRestoreCommands.has(command)) return { ...state, runtimeRestore: { ...runtimeRestoreState(state), commandError: undefined } }
+  if (wakeAssessmentCommands.has(command)) return { ...state, wakeAssessment: { ...wakeAssessmentState(state), commandError: undefined } }
   if (reasoningProviderCommands.has(command)) return { ...state, reasoningProvider: { ...reasoningProviderState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
@@ -1763,6 +1839,19 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-checkpoint-resume-anchors", limit: CHECKPOINT_LIMIT })
     case "resume-anchor":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-checkpoint-resume-anchor", resumeId: requiredArg(args, 0, "resumeId") })
+    case "wake-preview": {
+      const target = wakeTargetArg(args, true)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-assessment", ...target })
+    }
+    case "wake": {
+      const target = wakeTargetArg(args, false)
+      if (!target.resumeId) throw new Error("wake requires resume=<resumeId>")
+      return applyRuntimeUiEffect(commandState, runtime, { type: "create-wake-assessment", resumeId: target.resumeId })
+    }
+    case "wakes":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-assessments", limit: CHECKPOINT_LIMIT })
+    case "wake-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-assessment", wakeId: requiredArg(args, 0, "wakeId") })
     case "reasoning":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-status" })
         .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-reasoning-provider-health" }))
@@ -2203,6 +2292,11 @@ function isRuntimeRestoreEffect(effect: RuntimeUiEffect): boolean {
   return runtimeRestoreCommands.has(effect.command)
 }
 
+function isWakeAssessmentEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return wakeAssessmentEffectTypes.has(effect.type)
+  return wakeAssessmentCommands.has(effect.command)
+}
+
 function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return reasoningProviderEffectTypes.has(effect.type)
   return reasoningProviderCommands.has(effect.command)
@@ -2357,6 +2451,13 @@ const runtimeRestoreCommands = new Set([
   "resume-anchor",
 ])
 
+const wakeAssessmentCommands = new Set([
+  "wake-preview",
+  "wake",
+  "wakes",
+  "wake-show",
+])
+
 const reasoningProviderCommands = new Set([
   "reasoning",
   "reasoning-health",
@@ -2416,6 +2517,13 @@ const runtimeRestoreEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "mark-checkpoint-resume-anchor",
   "load-checkpoint-resume-anchor",
   "load-checkpoint-resume-anchors",
+])
+
+const wakeAssessmentEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-wake-assessment",
+  "create-wake-assessment",
+  "load-wake-assessment",
+  "load-wake-assessments",
 ])
 
 const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -3209,6 +3317,18 @@ function recordRuntimeRestoreCommandError(state: UiState, error: unknown): UiSta
   }
 }
 
+function recordWakeAssessmentCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    wakeAssessment: {
+      ...wakeAssessmentState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "wake assessment command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -3866,6 +3986,100 @@ function readRuntimeResumeAnchor(value: unknown): RuntimeResumeAnchorSummary | n
 function readRuntimeResumeAnchorList(value: unknown, commandName: string, limit: number): RuntimeResumeAnchorSummary[] {
   if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
   return value.map(readRuntimeResumeAnchor).filter((anchor): anchor is RuntimeResumeAnchorSummary => anchor !== null).slice(0, limit)
+}
+
+function readWakeAssessmentPreview(value: unknown): WakeAssessmentPreviewSummary {
+  if (!isRecord(value)) throw new Error("runtime.preview_wake_assessment returned invalid preview")
+  return {
+    wake_id: typeof value.wake_id === "string" ? redactText(value.wake_id) : undefined,
+    trigger_kind: readString(value.trigger_kind, "manual"),
+    resume_id: typeof value.resume_id === "string" ? redactText(value.resume_id) : undefined,
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    allowed: readBoolean(value.allowed),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    drift_status: typeof value.drift_status === "string" ? redactText(value.drift_status) : undefined,
+    current_event_count: readNumber(value.current_event_count, 0),
+    checkpoint_event_count: typeof value.checkpoint_event_count === "number" ? value.checkpoint_event_count : undefined,
+    new_event_count: typeof value.new_event_count === "number" ? value.new_event_count : undefined,
+    reasoning_health_status: typeof value.reasoning_health_status === "string" ? redactText(value.reasoning_health_status) : undefined,
+    handoff_summary: isRecord(value.handoff_summary) ? redactUnknown(value.handoff_summary) as Record<string, unknown> : undefined,
+    commander_summary: isRecord(value.commander_summary) ? redactUnknown(value.commander_summary) as Record<string, unknown> : undefined,
+    executor_summary: isRecord(value.executor_summary) ? redactUnknown(value.executor_summary) as Record<string, unknown> : undefined,
+    suggested_commands: Array.isArray(value.suggested_commands) ? value.suggested_commands.map(readWakeSuggestedCommand).filter((item): item is WakeSuggestedCommandSummary => item !== null).slice(0, 10) : [],
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeAssessment(value: unknown): WakeAssessmentSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.wake_id !== "string") throw new Error("runtime.get_wake_assessment returned invalid assessment")
+  return {
+    wake_id: redactText(value.wake_id),
+    trigger_kind: readString(value.trigger_kind, "manual"),
+    resume_id: typeof value.resume_id === "string" ? redactText(value.resume_id) : undefined,
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    checkpoint_hash: typeof value.checkpoint_hash === "string" ? redactText(value.checkpoint_hash) : undefined,
+    created_at: readString(value.created_at, ""),
+    requested_by: readString(value.requested_by, "operator"),
+    allowed: readBoolean(value.allowed),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    drift_status: typeof value.drift_status === "string" ? redactText(value.drift_status) : undefined,
+    current_event_count: readNumber(value.current_event_count, 0),
+    checkpoint_event_count: typeof value.checkpoint_event_count === "number" ? value.checkpoint_event_count : undefined,
+    new_event_count: typeof value.new_event_count === "number" ? value.new_event_count : undefined,
+    sections: isRecord(value.sections) ? redactUnknown(value.sections) as WakeAssessmentSummary["sections"] : {},
+    suggested_commands: Array.isArray(value.suggested_commands) ? value.suggested_commands.map(readWakeSuggestedCommand).filter((item): item is WakeSuggestedCommandSummary => item !== null).slice(0, 10) : [],
+    assessment_hash: readString(value.assessment_hash, ""),
+  }
+}
+
+function readWakeAssessmentRecordList(value: unknown, commandName: string, limit: number): WakeAssessmentRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeAssessmentRecord).filter((record): record is WakeAssessmentRecordSummary => record !== null).slice(0, limit)
+}
+
+function readWakeAssessmentRecord(value: unknown): WakeAssessmentRecordSummary | null {
+  if (!isRecord(value) || typeof value.wake_id !== "string") return null
+  return {
+    wake_id: redactText(value.wake_id),
+    trigger_kind: readString(value.trigger_kind, "manual"),
+    resume_id: typeof value.resume_id === "string" ? redactText(value.resume_id) : undefined,
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    allowed: readBoolean(value.allowed),
+    drift_status: typeof value.drift_status === "string" ? redactText(value.drift_status) : undefined,
+    created_at: readString(value.created_at, ""),
+    requested_by: readString(value.requested_by, "operator"),
+    summary_preview: preview(readString(value.summary_preview, "")),
+    assessment_hash: readString(value.assessment_hash, ""),
+  }
+}
+
+function readWakeSuggestedCommand(value: unknown): WakeSuggestedCommandSummary | null {
+  if (!isRecord(value) || typeof value.label !== "string" || typeof value.command !== "string") return null
+  return {
+    label: preview(redactText(value.label)),
+    command: preview(redactText(value.command)),
+    command_type: value.command_type === "write" ? "write" : "read",
+    requires_active_runtime: value.requires_active_runtime === true,
+    requires_review: value.requires_review === true,
+  }
+}
+
+function recordFromWakeAssessment(assessment: WakeAssessmentSummary): WakeAssessmentRecordSummary {
+  return {
+    wake_id: assessment.wake_id,
+    trigger_kind: assessment.trigger_kind,
+    resume_id: assessment.resume_id,
+    checkpoint_id: assessment.checkpoint_id,
+    allowed: assessment.allowed,
+    drift_status: assessment.drift_status,
+    created_at: assessment.created_at,
+    requested_by: assessment.requested_by,
+    summary_preview: `wake checkpoint=${assessment.checkpoint_id ?? "none"} allowed=${assessment.allowed}`,
+    assessment_hash: assessment.assessment_hash,
+  }
 }
 
 function readRuntimeCheckpointSections(value: unknown): RuntimeCheckpointSectionSummary[] {
@@ -4608,6 +4822,10 @@ function runtimeRestoreState(state: UiState): RuntimeRestoreState {
   return state.runtimeRestore ?? { preview: null, selectedAnchor: null, recentAnchors: [] }
 }
 
+function wakeAssessmentState(state: UiState): WakeAssessmentState {
+  return state.wakeAssessment ?? { preview: null, selected: null, recent: [] }
+}
+
 function reasoningProviderState(state: UiState) {
   return state.reasoningProvider ?? {
     kind: "fake",
@@ -4925,6 +5143,16 @@ function checkpointEffect(type: "preview-runtime-checkpoint" | "create-runtime-c
   }
   const reason = optionalRest(args, reasonStart)
   return { type, scope, ...(reason ? { reason } : {}) }
+}
+
+function wakeTargetArg(args: string[], allowCheckpoint: boolean): { resumeId?: string; checkpointId?: string } {
+  if (args.length !== 1) throw new Error(allowCheckpoint ? "wake preview requires resume=<resumeId> or checkpoint=<checkpointId>" : "wake requires resume=<resumeId>")
+  const [key, ...rest] = args[0].split("=")
+  const value = rest.join("=").trim()
+  if (!value) throw new Error(allowCheckpoint ? "wake preview requires resume=<resumeId> or checkpoint=<checkpointId>" : "wake requires resume=<resumeId>")
+  if (key === "resume") return { resumeId: value }
+  if (allowCheckpoint && key === "checkpoint") return { checkpointId: value }
+  throw new Error(allowCheckpoint ? "wake preview requires resume=<resumeId> or checkpoint=<checkpointId>" : "wake requires resume=<resumeId>")
 }
 
 function cycleArgs(args: string[]): { topicId?: string; missionId?: string; objective?: string } {

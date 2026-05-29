@@ -19,6 +19,7 @@ import type { OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResu
 import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary } from "../opencode/opencode-handoff-followup-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
+import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAssessmentRecord } from "../wake/wake-hook-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -208,6 +209,10 @@ export interface RuntimeClient {
   command(name: "runtime.mark_checkpoint_resume_anchor", payload: RuntimeRestoreInput): Promise<RuntimeResumeAnchor>
   command(name: "runtime.get_checkpoint_resume_anchor", payload: { resumeId: string } | { resume_id: string }): Promise<RuntimeResumeAnchor | null>
   command(name: "runtime.list_checkpoint_resume_anchors", payload?: { limit?: number }): Promise<RuntimeResumeAnchor[]>
+  command(name: "runtime.preview_wake_assessment", payload: WakeAssessmentInput): Promise<WakeAssessmentPreview>
+  command(name: "runtime.create_wake_assessment", payload: WakeAssessmentInput): Promise<WakeAssessment>
+  command(name: "runtime.get_wake_assessment", payload: { wakeId: string } | { wake_id: string }): Promise<WakeAssessment | null>
+  command(name: "runtime.list_wake_assessments", payload?: { limit?: number }): Promise<WakeAssessmentRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -312,6 +317,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.mark_checkpoint_resume_anchor"
     | "runtime.get_checkpoint_resume_anchor"
     | "runtime.list_checkpoint_resume_anchors"
+    | "runtime.preview_wake_assessment"
+    | "runtime.create_wake_assessment"
+    | "runtime.get_wake_assessment"
+    | "runtime.list_wake_assessments"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"
