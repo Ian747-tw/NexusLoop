@@ -189,7 +189,7 @@ export class WakeSchedulerService {
       this.activeTick = activeTick
       void activeTick.finally(() => {
         if (this.activeTick === activeTick) this.activeTick = null
-      })
+      }).catch(() => undefined)
     }, delayMs)
   }
 

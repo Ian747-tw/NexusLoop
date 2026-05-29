@@ -6728,6 +6728,50 @@ describe("RuntimeServer core", () => {
     ])
   })
 
+  test("wake scheduler consumes rejected scheduled tick cleanup promises", async () => {
+    const timers: Array<() => void> = []
+    const unhandled: unknown[] = []
+    const onUnhandled = (error: unknown) => {
+      unhandled.push(error)
+    }
+    process.on("unhandledRejection", onUnhandled)
+    let appendCount = 0
+    const service = new WakeSchedulerService({
+      eventStore: {
+        append: async () => {
+          appendCount += 1
+          if (appendCount > 1) throw new Error("scheduler event write failed token=abc123")
+          return `event_${appendCount}`
+        },
+        readAll: async () => [],
+      } as unknown as EventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:18:00.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: () => undefined,
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => ({ now: "2026-05-11T14:18:00.000Z", due_count: 1, eligible_count: 1, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }),
+        executeTick: async () => {
+          throw new Error("tick failed")
+        },
+      } as unknown as WakeScheduleService,
+    })
+    try {
+      await service.start({ intervalMs: 10, requestedBy: "operator" })
+      timers.shift()?.()
+      await timeout(20)
+      expect(unhandled).toHaveLength(0)
+      expect(service.status()).toMatchObject({ status: "running", tick_count: 0 })
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+    }
+  })
+
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
