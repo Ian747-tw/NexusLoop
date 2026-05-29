@@ -5564,6 +5564,32 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("continuation plan max_bytes accounts for persisted event payload", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let stepIndex = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_continue_cap_1",
+      runtimeResumeId: () => "resume_continue_cap_1",
+      runtimeWakeId: () => "wake_continue_cap_1",
+      runtimeContinuationId: () => "plan_continue_cap_1",
+      runtimeContinuationStepId: () => `step_continue_cap_${++stepIndex}`,
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_continue_cap_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_assessment", { resumeId: "resume_continue_cap_1", requestedBy: "operator" })
+    const plan = await server.command("runtime.create_continuation_plan", { wakeId: "wake_continue_cap_1", requestedBy: "operator", maxBytes: 4096 }) as { warnings: string[]; steps: unknown[] }
+    expect(plan.warnings).toContain("continuation plan truncated to fit max_bytes=4096")
+    expect(plan.steps.length).toBeGreaterThanOrEqual(1)
+    const continuationLine = (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).split(/\r?\n/).filter((line) => line.includes("\"runtime_continuation_plan_created\""))[0]
+    expect(lineByteLength(continuationLine)).toBeLessThanOrEqual(4096)
+    await server.shutdown()
+  })
+
   test("continuation pause cancel read modes and write gates preserve runtime authority", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

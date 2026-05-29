@@ -27,6 +27,8 @@ const HARD_MAX_STEPS = 50
 const MAX_STRING_CHARS = 1000
 const PREVIEW_CHARS = 360
 const MAX_LIST_LIMIT = 100
+const APPEND_EVENT_ID_PLACEHOLDER = "rt_zzzzzzzzzz_zzzzzzzz"
+const APPEND_TIMESTAMP_PLACEHOLDER = "9999-12-31T23:59:59.999Z"
 
 export type ContinuationCommandExecutor = (command: string) => Promise<unknown> | unknown
 
@@ -121,7 +123,9 @@ export class ContinuationService {
       warnings: preview.warnings,
       allowed_write_commands: normalized.allowed_write_commands,
     }, normalized.max_bytes)
-    await this.options.eventStore.append({ kind: "runtime_continuation_plan_created", plan_id: plan.plan_id, wake_id: plan.wake_id, plan })
+    const eventPayload = eventPayloadFromPlan(plan)
+    if (persistedEventByteLength(eventPayload) > normalized.max_bytes) throw new Error("runtime continuation plan event exceeds max_bytes")
+    await this.options.eventStore.append(eventPayload)
     return redactValue(plan)
   }
 
@@ -448,13 +452,30 @@ function selectStep(plan: ContinuationPlan, input: NormalizedStepInput): Continu
 
 function fitPlan(input: Omit<ContinuationPlan, "plan_hash">, maxBytes: number): ContinuationPlan {
   let plan = finalizePlan(input)
-  if (byteLength(stableStringify(plan)) <= maxBytes) return redactValue(plan)
+  if (persistedEventByteLength(eventPayloadFromPlan(plan)) <= maxBytes) return redactValue(plan)
   const warning = `continuation plan truncated to fit max_bytes=${maxBytes}`
   for (let stepCount = Math.max(1, input.steps.length - 1); stepCount >= 1; stepCount--) {
     const candidate = finalizePlan({ ...input, warnings: unique([...input.warnings, warning]), steps: input.steps.slice(0, stepCount) })
-    if (byteLength(stableStringify(candidate)) <= maxBytes) return redactValue(candidate)
+    if (persistedEventByteLength(eventPayloadFromPlan(candidate)) <= maxBytes) return redactValue(candidate)
   }
   throw new Error("minimal continuation plan exceeds max_bytes")
+}
+
+function eventPayloadFromPlan(plan: ContinuationPlan): JsonlEvent {
+  return {
+    kind: "runtime_continuation_plan_created",
+    plan_id: plan.plan_id,
+    wake_id: plan.wake_id,
+    plan,
+  }
+}
+
+function persistedEventByteLength(event: JsonlEvent): number {
+  return byteLength(JSON.stringify({
+    ...event,
+    event_id: event.event_id ?? APPEND_EVENT_ID_PLACEHOLDER,
+    timestamp: event.timestamp ?? APPEND_TIMESTAMP_PLACEHOLDER,
+  }))
 }
 
 function finalizePlan(input: Omit<ContinuationPlan, "plan_hash">): ContinuationPlan {
