@@ -237,9 +237,10 @@ export class WakeScheduleService {
   }
 
   private async executeTickLocked(input: NormalizedTickInput): Promise<WakeScheduleTickResult> {
-    const preview = await this.previewTickNormalized(input)
-    const eligible = preview.items.filter((item) => item.due && item.blockers.length === 0).slice(0, input.max_due_items)
-    const skipped: WakeScheduleDueItem[] = preview.items.filter((item) => !item.due || item.blockers.length > 0)
+    const allItems = await this.dueItems(await this.schedules(), input.now)
+    const previewItems = allItems.slice(0, input.max_due_items)
+    const eligible = allItems.filter((item) => item.due && item.blockers.length === 0).slice(0, input.max_due_items)
+    const skipped: WakeScheduleDueItem[] = previewItems.filter((item) => !item.due || item.blockers.length > 0)
     const tickId = this.options.tickIdFactory ? this.options.tickIdFactory() : `wake_tick_${Date.now().toString(36)}_${++this.generatedTickIds}`
     const createdAt = this.now()
     const wakeIds: string[] = []
@@ -294,7 +295,7 @@ export class WakeScheduleService {
       processed_count: input.dry_run ? eligible.length : processed.length,
       wake_ids: input.dry_run ? [] : wakeIds,
       plan_ids: input.dry_run ? [] : planIds,
-      skipped: input.dry_run ? preview.items.filter((item) => item.blockers.length > 0) : skipped,
+      skipped: input.dry_run ? previewItems.filter((item) => item.blockers.length > 0) : skipped,
       created_at: createdAt,
       requested_by: input.requested_by,
       dry_run: input.dry_run,

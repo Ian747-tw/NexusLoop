@@ -14,6 +14,7 @@ import type { RuntimeEvent } from "./events/event-types"
 import type { RuntimeRestoreService } from "./checkpoints/runtime-restore-service"
 import { WakeAssessmentService } from "./wake/wake-hook-service"
 import { ContinuationService } from "./continuation/continuation-service"
+import { WakeScheduleService } from "./schedules/wake-schedule-service"
 import { MissionRegistry } from "./missions/mission-registry"
 import { ReviewRegistry } from "./missions/review-registry"
 import { ProposalRegistry } from "./missions/proposal-registry"
@@ -6095,6 +6096,79 @@ describe("RuntimeServer core", () => {
     const schedule = await server.command("runtime.get_wake_schedule", { scheduleId: "schedule_tick_priority_3" }) as { last_wake_id?: string }
     expect(schedule.last_wake_id).toBe("wake_tick_priority_1")
     await server.shutdown()
+  })
+
+  test("wake schedule tick applies execution cap after blocked due schedules", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let scheduleId = 0
+    let wakeId = 0
+    const service = new WakeScheduleService({
+      eventStore,
+      idFactory: () => `schedule_blocked_cap_${++scheduleId}`,
+      tickIdFactory: () => "tick_blocked_cap_1",
+      now: () => new Date("2026-05-11T13:20:00.000Z"),
+      restoreService: {
+        get: async (resumeId: string) => ({
+          resume_id: resumeId,
+          checkpoint_id: `checkpoint_${resumeId}`,
+          checkpoint_hash: "hash",
+          marked_at: "2026-05-11T13:19:00.000Z",
+          marked_by: "operator",
+          event_count_at_checkpoint: 1,
+          current_event_count: 1,
+          drift_status: "none",
+          summary_preview: "anchor",
+        }),
+        preview: async ({ checkpoint_id }: { checkpoint_id?: string }) => ({
+          checkpoint_id: checkpoint_id ?? "checkpoint",
+          can_mark_resume: true,
+          verification: {
+            checkpoint_id: checkpoint_id ?? "checkpoint",
+            exists: true,
+            hash_ok: true,
+            cursor_ok: true,
+            event_count_at_checkpoint: 1,
+            current_event_count: 1,
+            new_event_count: 0,
+            drift_status: "none",
+            blockers: [],
+            warnings: [],
+          },
+          commander_context: { recent_cycle_ids: [], recent_synthesis_ids: [], proposal_ids: [], review_ids: [], bundle_ids: [], warnings: [] },
+          executor_context: { mission_ids: [], active_mission_ids: [], active_claim_ids: [], result_ids: [], progress_ids: [], warnings: [] },
+          handoff_context: { handoff_ids: [], active_handoff_ids: [], needs_result_review_ids: [], failed_handoff_ids: [], warnings: [] },
+          reasoning_context: { warnings: [] },
+          suggested_commands: [],
+          redacted_summary_preview: "preview",
+          created_at: "2026-05-11T13:19:00.000Z",
+        }),
+      } as unknown as RuntimeRestoreService,
+      wakeService: {
+        preview: async ({ resume_id }: { resume_id?: string }) => resume_id?.startsWith("resume_blocked")
+          ? { allowed: false, blockers: ["blocked resume anchor"], warnings: [] }
+          : { allowed: true, blockers: [], warnings: [] },
+        create: async () => ({ wake_id: `wake_blocked_cap_${++wakeId}` }),
+      } as unknown as WakeAssessmentService,
+      continuationService: {
+        create: async () => ({ plan_id: "plan_unused" }),
+      } as unknown as ContinuationService,
+    })
+
+    await service.create({ resumeId: "resume_blocked_1", intervalMs: 60_000, nextDueAt: "2026-05-11T13:00:00.000Z", requestedBy: "operator" })
+    await service.create({ resumeId: "resume_blocked_2", intervalMs: 60_000, nextDueAt: "2026-05-11T13:01:00.000Z", requestedBy: "operator" })
+    await service.create({ resumeId: "resume_eligible_1", intervalMs: 60_000, nextDueAt: "2026-05-11T13:02:00.000Z", requestedBy: "operator" })
+
+    const preview = await service.previewTick({ now: "2026-05-11T13:20:00.000Z", maxDueItems: 1 })
+    expect(preview).toMatchObject({ due_count: 3, eligible_count: 1, blocked_count: 2 })
+    expect(preview.items).toEqual([expect.objectContaining({ schedule_id: "schedule_blocked_cap_1", blockers: expect.arrayContaining(["blocked resume anchor"]) })])
+
+    const result = await service.executeTick({ now: "2026-05-11T13:20:00.000Z", maxDueItems: 1, requestedBy: "operator" })
+    expect(result).toMatchObject({ processed_count: 1, wake_ids: ["wake_blocked_cap_1"] })
+    expect(result.skipped).toEqual([expect.objectContaining({ schedule_id: "schedule_blocked_cap_1", blockers: expect.arrayContaining(["blocked resume anchor"]) })])
+    const eligible = await service.get("schedule_blocked_cap_3")
+    expect(eligible?.last_wake_id).toBe("wake_blocked_cap_1")
   })
 
   test("wake schedule tick applies continuation plan caps per due schedule", async () => {
