@@ -61,6 +61,13 @@ import type {
   CommanderWorkbenchReadinessSummary,
   CommanderWorkbenchState,
   CommanderWorkbenchStatusSummary,
+  ContinuationPlanPreviewSummary,
+  ContinuationPlanRecordSummary,
+  ContinuationPlanSummary,
+  ContinuationState,
+  ContinuationStepPreviewSummary,
+  ContinuationStepResultSummary,
+  ContinuationStepSummary,
   ExternalApiAuditRecordSummary,
   ExternalApiConnectorSummary,
   ExternalApiResearchIngestionPreviewSummary,
@@ -220,6 +227,13 @@ export type RuntimeUiEffect =
   | { type: "create-wake-assessment"; resumeId: string }
   | { type: "load-wake-assessment"; wakeId: string }
   | { type: "load-wake-assessments"; limit?: number }
+  | { type: "preview-continuation-plan"; wakeId: string }
+  | { type: "create-continuation-plan"; wakeId: string }
+  | { type: "load-continuation-plan"; planId: string }
+  | { type: "load-continuation-plans"; limit?: number }
+  | { type: "execute-continuation-step"; planId: string; index?: number; dryRun?: boolean }
+  | { type: "pause-continuation-plan"; planId: string }
+  | { type: "cancel-continuation-plan"; planId: string }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -783,6 +797,47 @@ export async function applyRuntimeUiEffect(
         )
       case "load-wake-assessments":
         return await loadWakeAssessments(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
+      case "preview-continuation-plan":
+        return applyContinuationPlanPreview(
+          state,
+          await runtime.command("runtime.preview_continuation_plan", { wakeId: effect.wakeId, requestedBy: "operator" }),
+        )
+      case "create-continuation-plan": {
+        const next = applyContinuationPlan(
+          state,
+          await runtime.command("runtime.create_continuation_plan", { wakeId: effect.wakeId, requestedBy: "operator" }),
+        )
+        return await loadContinuationPlans(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "load-continuation-plan":
+        return applyContinuationPlan(
+          state,
+          await runtime.command("runtime.get_continuation_plan", { planId: effect.planId }),
+          effect.planId,
+        )
+      case "load-continuation-plans":
+        return await loadContinuationPlans(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
+      case "execute-continuation-step": {
+        const next = applyContinuationStepResult(
+          state,
+          await runtime.command("runtime.execute_continuation_step", { planId: effect.planId, index: effect.index, dryRun: effect.dryRun === true, requestedBy: "operator" }),
+        )
+        return effect.dryRun ? next : applyContinuationPlan(next, await runtime.command("runtime.get_continuation_plan", { planId: effect.planId }), effect.planId)
+      }
+      case "pause-continuation-plan": {
+        const next = applyContinuationPlan(
+          state,
+          await runtime.command("runtime.pause_continuation_plan", { planId: effect.planId, requestedBy: "operator" }),
+        )
+        return await loadContinuationPlans(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "cancel-continuation-plan": {
+        const next = applyContinuationPlan(
+          state,
+          await runtime.command("runtime.cancel_continuation_plan", { planId: effect.planId, requestedBy: "operator" }),
+        )
+        return await loadContinuationPlans(next, runtime, CHECKPOINT_LIMIT)
+      }
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -813,6 +868,7 @@ export async function applyRuntimeUiEffect(
     if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
     if (isRuntimeRestoreEffect(effect)) return recordRuntimeRestoreCommandError(state, error)
     if (isWakeAssessmentEffect(effect)) return recordWakeAssessmentCommandError(state, error)
+    if (isContinuationEffect(effect)) return recordContinuationCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
@@ -1497,6 +1553,63 @@ function applyWakeAssessment(state: UiState, value: unknown, wakeId?: string): U
   }
 }
 
+async function loadContinuationPlans(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const recent = readContinuationPlanRecordList(await runtime.command("runtime.list_continuation_plans", { limit }), "runtime.list_continuation_plans", limit)
+  return {
+    ...state,
+    continuation: {
+      ...continuationState(state),
+      recent,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "continuation plans loaded", detail: `records=${recent.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyContinuationPlanPreview(state: UiState, value: unknown): UiState {
+  const preview = readContinuationPlanPreview(value)
+  return {
+    ...state,
+    continuation: {
+      ...continuationState(state),
+      preview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "continuation preview", detail: `wake_id=${preview.wake_id} steps=${preview.step_count}`, status: preview.can_create ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyContinuationPlan(state: UiState, value: unknown, planId?: string): UiState {
+  const plan = readContinuationPlan(value)
+  if (!plan && value !== null) throw new Error("runtime.get_continuation_plan returned invalid plan")
+  const selectedId = plan?.plan_id ?? (planId ? redactText(planId) : undefined)
+  return {
+    ...state,
+    continuation: {
+      ...continuationState(state),
+      selected: plan,
+      recent: plan ? [recordFromContinuationPlan(plan), ...continuationState(state).recent.filter((item) => item.plan_id !== plan.plan_id)].slice(0, CHECKPOINT_LIMIT) : continuationState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "continuation plan selected", detail: `plan_id=${selectedId}`, status: plan ? plan.status : "missing" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
+function applyContinuationStepResult(state: UiState, value: unknown): UiState {
+  const result = readContinuationStepResult(value)
+  return {
+    ...state,
+    continuation: {
+      ...continuationState(state),
+      lastStepResult: result,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "continuation step result", detail: `plan_id=${result.plan_id} index=${result.index}`, status: result.status }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -1692,6 +1805,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
   if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError
   if (wakeAssessmentCommands.has(command)) return state.wakeAssessment?.commandError
+  if (continuationCommands.has(command)) return state.continuation?.commandError
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
@@ -1716,6 +1830,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (runtimeCheckpointCommands.has(command)) return { ...state, runtimeCheckpoints: { ...runtimeCheckpointsState(state), commandError: undefined } }
   if (runtimeRestoreCommands.has(command)) return { ...state, runtimeRestore: { ...runtimeRestoreState(state), commandError: undefined } }
   if (wakeAssessmentCommands.has(command)) return { ...state, wakeAssessment: { ...wakeAssessmentState(state), commandError: undefined } }
+  if (continuationCommands.has(command)) return { ...state, continuation: { ...continuationState(state), commandError: undefined } }
   if (reasoningProviderCommands.has(command)) return { ...state, reasoningProvider: { ...reasoningProviderState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
@@ -1852,6 +1967,24 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-assessments", limit: CHECKPOINT_LIMIT })
     case "wake-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-assessment", wakeId: requiredArg(args, 0, "wakeId") })
+    case "continue-preview":
+    case "cont-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-continuation-plan", wakeId: wakeIdArg(args) })
+    case "continue-plan":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "create-continuation-plan", wakeId: wakeIdArg(args) })
+    case "continue-step":
+    case "cont-step":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-continuation-step", planId: requiredArg(args, 0, "planId"), index: optionalIndexArg(args, 1) })
+    case "continue-dry-run":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-continuation-step", planId: requiredArg(args, 0, "planId"), index: optionalIndexArg(args, 1), dryRun: true })
+    case "continue-pause":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "pause-continuation-plan", planId: requiredArg(args, 0, "planId") })
+    case "continue-cancel":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-continuation-plan", planId: requiredArg(args, 0, "planId") })
+    case "continuations":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-continuation-plans", limit: CHECKPOINT_LIMIT })
+    case "continue-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-continuation-plan", planId: requiredArg(args, 0, "planId") })
     case "reasoning":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-status" })
         .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-reasoning-provider-health" }))
@@ -2297,6 +2430,11 @@ function isWakeAssessmentEffect(effect: RuntimeUiEffect): boolean {
   return wakeAssessmentCommands.has(effect.command)
 }
 
+function isContinuationEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return continuationEffectTypes.has(effect.type)
+  return continuationCommands.has(effect.command)
+}
+
 function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return reasoningProviderEffectTypes.has(effect.type)
   return reasoningProviderCommands.has(effect.command)
@@ -2458,6 +2596,19 @@ const wakeAssessmentCommands = new Set([
   "wake-show",
 ])
 
+const continuationCommands = new Set([
+  "continue-preview",
+  "cont-preview",
+  "continue-plan",
+  "continue-step",
+  "cont-step",
+  "continue-dry-run",
+  "continue-pause",
+  "continue-cancel",
+  "continuations",
+  "continue-show",
+])
+
 const reasoningProviderCommands = new Set([
   "reasoning",
   "reasoning-health",
@@ -2524,6 +2675,16 @@ const wakeAssessmentEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "create-wake-assessment",
   "load-wake-assessment",
   "load-wake-assessments",
+])
+
+const continuationEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-continuation-plan",
+  "create-continuation-plan",
+  "load-continuation-plan",
+  "load-continuation-plans",
+  "execute-continuation-step",
+  "pause-continuation-plan",
+  "cancel-continuation-plan",
 ])
 
 const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -3329,6 +3490,18 @@ function recordWakeAssessmentCommandError(state: UiState, error: unknown): UiSta
   }
 }
 
+function recordContinuationCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    continuation: {
+      ...continuationState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "continuation command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function readResearchProjection(value: unknown): ResearchProjectionSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -4082,6 +4255,128 @@ function recordFromWakeAssessment(assessment: WakeAssessmentSummary): WakeAssess
   }
 }
 
+function readContinuationPlanPreview(value: unknown): ContinuationPlanPreviewSummary {
+  if (!isRecord(value)) throw new Error("runtime.preview_continuation_plan returned invalid preview")
+  return {
+    wake_id: readString(value.wake_id, ""),
+    resume_id: typeof value.resume_id === "string" ? redactText(value.resume_id) : undefined,
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    can_create: readBoolean(value.can_create),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    step_count: readNumber(value.step_count, 0),
+    read_step_count: readNumber(value.read_step_count, 0),
+    write_step_count: readNumber(value.write_step_count, 0),
+    operator_checkpoint_count: readNumber(value.operator_checkpoint_count, 0),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    steps: Array.isArray(value.steps) ? value.steps.map(readContinuationStepPreview).filter((step): step is ContinuationStepPreviewSummary => step !== null).slice(0, 10) : [],
+  }
+}
+
+function readContinuationPlan(value: unknown): ContinuationPlanSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.plan_id !== "string") throw new Error("runtime.get_continuation_plan returned invalid plan")
+  return {
+    plan_id: redactText(value.plan_id),
+    wake_id: readString(value.wake_id, ""),
+    resume_id: typeof value.resume_id === "string" ? redactText(value.resume_id) : undefined,
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    status: readString(value.status, "proposed"),
+    created_at: readString(value.created_at, ""),
+    created_by: readString(value.created_by, "operator"),
+    updated_at: readString(value.updated_at, ""),
+    plan_hash: readString(value.plan_hash, ""),
+    steps: Array.isArray(value.steps) ? value.steps.map(readContinuationStep).filter((step): step is ContinuationStepSummary => step !== null).slice(0, 20) : [],
+    current_step_index: typeof value.current_step_index === "number" ? value.current_step_index : undefined,
+    completed_step_count: readNumber(value.completed_step_count, 0),
+    failed_step_count: readNumber(value.failed_step_count, 0),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+  }
+}
+
+function readContinuationStepPreview(value: unknown): ContinuationStepPreviewSummary | null {
+  if (!isRecord(value) || typeof value.command !== "string") return null
+  return {
+    index: readNumber(value.index, 0),
+    label: preview(readString(value.label, "")),
+    command: preview(readString(value.command, "")),
+    command_type: value.command_type === "write" ? "write" : "read",
+    step_kind: readString(value.step_kind, "read_command"),
+    requires_active_runtime: value.requires_active_runtime === true,
+    requires_review: value.requires_review === true,
+    allowed_by_default: readBoolean(value.allowed_by_default),
+    blockers: readStringList(value.blockers, 10).map(preview),
+  }
+}
+
+function readContinuationStep(value: unknown): ContinuationStepSummary | null {
+  const base = readContinuationStepPreview(value)
+  if (!base || !isRecord(value) || typeof value.step_id !== "string") return null
+  return {
+    ...base,
+    step_id: redactText(value.step_id),
+    status: readString(value.status, "pending"),
+    created_from_suggestion: value.created_from_suggestion === true,
+    result_summary: typeof value.result_summary === "string" ? preview(redactText(value.result_summary)) : undefined,
+    error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
+    started_at: typeof value.started_at === "string" ? redactText(value.started_at) : undefined,
+    completed_at: typeof value.completed_at === "string" ? redactText(value.completed_at) : undefined,
+  }
+}
+
+function readContinuationStepResult(value: unknown): ContinuationStepResultSummary {
+  if (!isRecord(value) || typeof value.plan_id !== "string" || typeof value.step_id !== "string") throw new Error("runtime.execute_continuation_step returned invalid result")
+  return {
+    plan_id: redactText(value.plan_id),
+    step_id: redactText(value.step_id),
+    index: readNumber(value.index, 0),
+    status: readString(value.status, "failed"),
+    command: preview(readString(value.command, "")),
+    result_summary: typeof value.result_summary === "string" ? preview(redactText(value.result_summary)) : undefined,
+    error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
+    dry_run: value.dry_run === true,
+    started_at: readString(value.started_at, ""),
+    completed_at: readString(value.completed_at, ""),
+  }
+}
+
+function readContinuationPlanRecordList(value: unknown, commandName: string, limit: number): ContinuationPlanRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readContinuationPlanRecord).filter((record): record is ContinuationPlanRecordSummary => record !== null).slice(0, limit)
+}
+
+function readContinuationPlanRecord(value: unknown): ContinuationPlanRecordSummary | null {
+  if (!isRecord(value) || typeof value.plan_id !== "string") return null
+  return {
+    plan_id: redactText(value.plan_id),
+    wake_id: readString(value.wake_id, ""),
+    status: readString(value.status, "proposed"),
+    created_at: readString(value.created_at, ""),
+    updated_at: readString(value.updated_at, ""),
+    step_count: readNumber(value.step_count, 0),
+    completed_step_count: readNumber(value.completed_step_count, 0),
+    failed_step_count: readNumber(value.failed_step_count, 0),
+    summary_preview: preview(readString(value.summary_preview, "")),
+    plan_hash: readString(value.plan_hash, ""),
+  }
+}
+
+function recordFromContinuationPlan(plan: ContinuationPlanSummary): ContinuationPlanRecordSummary {
+  return {
+    plan_id: plan.plan_id,
+    wake_id: plan.wake_id,
+    status: plan.status,
+    created_at: plan.created_at,
+    updated_at: plan.updated_at,
+    step_count: plan.steps.length,
+    completed_step_count: plan.completed_step_count,
+    failed_step_count: plan.failed_step_count,
+    summary_preview: `continuation wake=${plan.wake_id} status=${plan.status}`,
+    plan_hash: plan.plan_hash,
+  }
+}
+
 function readRuntimeCheckpointSections(value: unknown): RuntimeCheckpointSectionSummary[] {
   if (!Array.isArray(value)) return []
   return value.map((item) => {
@@ -4826,6 +5121,10 @@ function wakeAssessmentState(state: UiState): WakeAssessmentState {
   return state.wakeAssessment ?? { preview: null, selected: null, recent: [] }
 }
 
+function continuationState(state: UiState): ContinuationState {
+  return state.continuation ?? { preview: null, selected: null, lastStepResult: null, recent: [] }
+}
+
 function reasoningProviderState(state: UiState) {
   return state.reasoningProvider ?? {
     kind: "fake",
@@ -5153,6 +5452,22 @@ function wakeTargetArg(args: string[], allowCheckpoint: boolean): { resumeId?: s
   if (key === "resume") return { resumeId: value }
   if (allowCheckpoint && key === "checkpoint") return { checkpointId: value }
   throw new Error(allowCheckpoint ? "wake preview requires resume=<resumeId> or checkpoint=<checkpointId>" : "wake requires resume=<resumeId>")
+}
+
+function wakeIdArg(args: string[]): string {
+  if (args.length !== 1) throw new Error("continuation command requires wake=<wakeId>")
+  const [key, ...rest] = args[0].split("=")
+  const value = rest.join("=").trim()
+  if (key !== "wake" || !value) throw new Error("continuation command requires wake=<wakeId>")
+  return value
+}
+
+function optionalIndexArg(args: string[], index: number): number | undefined {
+  const value = args[index]
+  if (value === undefined) return undefined
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error("continuation step index must be a nonnegative integer")
+  return parsed
 }
 
 function cycleArgs(args: string[]): { topicId?: string; missionId?: string; objective?: string } {

@@ -5469,6 +5469,134 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("continuation plan previews and creates bounded steps from wake assessment suggestions", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_continue_1",
+      runtimeResumeId: () => "resume_continue_1",
+      runtimeWakeId: () => "wake_continue_1",
+      runtimeContinuationId: () => "plan_continue_1",
+      runtimeContinuationStepId: (() => {
+        let index = 0
+        return () => `step_continue_${++index}`
+      })(),
+      runtimeContinuationNow: () => new Date("2026-05-11T12:00:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", reason: "token=continue-secret", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_continue_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_assessment", { resumeId: "resume_continue_1", requestedBy: "operator" })
+    const beforePreview = await readJsonlEvents(dir)
+    const preview = await server.command("runtime.preview_continuation_plan", { wakeId: "wake_continue_1", requestedBy: "operator" }) as {
+      can_create: boolean
+      read_step_count: number
+      write_step_count: number
+      steps: Array<{ command: string; status?: string; allowed_by_default: boolean; blockers: string[] }>
+    }
+    expect(preview.can_create).toBe(true)
+    expect(preview.read_step_count).toBeGreaterThan(0)
+    expect(preview.write_step_count).toBeGreaterThan(0)
+    expect(preview.steps.find((step) => step.command.startsWith("/checkpoint "))?.blockers).toContain("continuation write commands are blocked by default")
+    expect(await readJsonlEvents(dir)).toHaveLength(beforePreview.length)
+
+    const plan = await server.command("runtime.create_continuation_plan", { wakeId: "wake_continue_1", requestedBy: "operator" }) as {
+      plan_id: string
+      plan_hash: string
+      status: string
+      steps: Array<{ step_id: string; command: string; status: string; allowed_by_default: boolean; blockers: string[] }>
+    }
+    expect(plan).toMatchObject({ plan_id: "plan_continue_1", status: "proposed" })
+    expect(plan.plan_hash).toMatch(/^[a-f0-9]{64}$/)
+    expect(plan.steps[0]).toMatchObject({ step_id: "step_continue_1", command: "/resume-anchor resume_continue_1", status: "pending", allowed_by_default: true })
+    expect(plan.steps.find((step) => step.command.startsWith("/checkpoint "))?.status).toBe("blocked")
+    const events = await readJsonlEvents(dir)
+    expect(events.at(-1)).toMatchObject({ kind: "runtime_continuation_plan_created", plan_id: "plan_continue_1", wake_id: "wake_continue_1" })
+    expect(JSON.stringify(events)).not.toContain("continue-secret")
+    const listed = await server.command("runtime.list_continuation_plans", { limit: 10 }) as Array<{ plan_id: string }>
+    expect(listed.map((item) => item.plan_id)).toEqual(["plan_continue_1"])
+    const selected = await server.command("runtime.get_continuation_plan", { planId: "plan_continue_1" })
+    expect(selected).toMatchObject({ plan_id: "plan_continue_1", wake_id: "wake_continue_1" })
+    await server.shutdown()
+  })
+
+  test("continuation step execution is single-step read-only with dry-run and blocked write protections", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let stepIndex = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_continue_step_1",
+      runtimeResumeId: () => "resume_continue_step_1",
+      runtimeWakeId: () => "wake_continue_step_1",
+      runtimeContinuationId: () => "plan_continue_step_1",
+      runtimeContinuationStepId: () => `step_continue_step_${++stepIndex}`,
+      runtimeContinuationNow: () => new Date("2026-05-11T12:05:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_continue_step_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_assessment", { resumeId: "resume_continue_step_1", requestedBy: "operator" })
+    const plan = await server.command("runtime.create_continuation_plan", { wakeId: "wake_continue_step_1", requestedBy: "operator" }) as {
+      plan_id: string
+      steps: Array<{ index: number; command: string; status: string }>
+    }
+    const beforeDryRun = await readJsonlEvents(dir)
+    const dryRun = await server.command("runtime.execute_continuation_step", { planId: plan.plan_id, dryRun: true, requestedBy: "operator" }) as { dry_run: boolean; status: string }
+    expect(dryRun).toMatchObject({ dry_run: true, status: "succeeded" })
+    expect(await readJsonlEvents(dir)).toHaveLength(beforeDryRun.length)
+    const result = await server.command("runtime.execute_continuation_step", { planId: plan.plan_id, requestedBy: "operator" }) as { step_id: string; status: string; command: string }
+    expect(result).toMatchObject({ step_id: "step_continue_step_1", status: "succeeded", command: "/resume-anchor resume_continue_step_1" })
+    const afterOne = await server.command("runtime.get_continuation_plan", { planId: plan.plan_id }) as { completed_step_count: number; steps: Array<{ status: string }> }
+    expect(afterOne.completed_step_count).toBe(1)
+    expect(afterOne.steps.filter((step) => step.status === "succeeded")).toHaveLength(1)
+    const writeStep = plan.steps.find((step) => step.command.startsWith("/checkpoint "))
+    expect(writeStep).toBeDefined()
+    const beforeBlocked = await readJsonlEvents(dir)
+    await expect(server.command("runtime.execute_continuation_step", { planId: plan.plan_id, index: writeStep!.index, allowWrite: true, requestedBy: "operator" })).rejects.toThrow("continuation write commands are blocked by default")
+    expect(await readJsonlEvents(dir)).toHaveLength(beforeBlocked.length)
+    await server.shutdown()
+  })
+
+  test("continuation pause cancel read modes and write gates preserve runtime authority", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_continue_gate_1",
+      runtimeResumeId: () => "resume_continue_gate_1",
+      runtimeWakeId: () => "wake_continue_gate_1",
+      runtimeContinuationId: () => "plan_continue_gate_1",
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_continue_gate_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_assessment", { resumeId: "resume_continue_gate_1", requestedBy: "operator" })
+    await server.command("runtime.create_continuation_plan", { wakeId: "wake_continue_gate_1", requestedBy: "operator" })
+    const paused = await server.command("runtime.pause_continuation_plan", { planId: "plan_continue_gate_1", requestedBy: "operator" }) as { status: string }
+    expect(paused.status).toBe("paused")
+    await expect(server.command("runtime.execute_continuation_step", { planId: "plan_continue_gate_1", requestedBy: "operator" })).rejects.toThrow("continuation plan is paused")
+    const cancelled = await server.command("runtime.cancel_continuation_plan", { planId: "plan_continue_gate_1", requestedBy: "operator" }) as { status: string }
+    expect(cancelled.status).toBe("cancelled")
+    await server.shutdown()
+
+    const viewServer = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    const preview = await viewServer.command("runtime.preview_continuation_plan", { wakeId: "wake_continue_gate_1", requestedBy: "operator" }) as { can_create: boolean }
+    expect(preview.can_create).toBe(true)
+    const list = await viewServer.command("runtime.list_continuation_plans", { limit: 10 }) as Array<{ plan_id: string }>
+    expect(list.map((item) => item.plan_id)).toEqual(["plan_continue_gate_1"])
+    await expect(viewServer.command("runtime.create_continuation_plan", { wakeId: "wake_continue_gate_1", requestedBy: "operator" })).rejects.toThrow("runtime.create_continuation_plan requires active mode")
+    await expect(viewServer.command("runtime.execute_continuation_step", { planId: "plan_continue_gate_1", requestedBy: "operator" })).rejects.toThrow("runtime.execute_continuation_step requires active mode")
+    await viewServer.shutdown()
+  })
+
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

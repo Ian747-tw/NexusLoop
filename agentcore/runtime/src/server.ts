@@ -54,6 +54,8 @@ import { RuntimeRestoreService } from "./checkpoints/runtime-restore-service"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "./checkpoints/runtime-restore-types"
 import { WakeAssessmentService, readWakeAssessmentInput } from "./wake/wake-hook-service"
 import type { WakeAssessment, WakeAssessmentPreview, WakeAssessmentRecord } from "./wake/wake-hook-types"
+import { ContinuationService, readContinuationPlanDecisionInput, readContinuationPlanInput, readContinuationStepInput } from "./continuation/continuation-service"
+import type { ContinuationPlan, ContinuationPlanPreview, ContinuationPlanRecord, ContinuationStepResult } from "./continuation/continuation-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -106,6 +108,9 @@ export interface RuntimeServerOptions {
   runtimeResumeId?: () => string
   runtimeWakeNow?: () => Date
   runtimeWakeId?: () => string
+  runtimeContinuationNow?: () => Date
+  runtimeContinuationId?: () => string
+  runtimeContinuationStepId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -166,6 +171,9 @@ export class RuntimeServer {
   private readonly runtimeResumeId?: () => string
   private readonly runtimeWakeNow?: () => Date
   private readonly runtimeWakeId?: () => string
+  private readonly runtimeContinuationNow?: () => Date
+  private readonly runtimeContinuationId?: () => string
+  private readonly runtimeContinuationStepId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -175,6 +183,7 @@ export class RuntimeServer {
   private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
   private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
   private wakeAssessmentServiceInstance: WakeAssessmentService | null = null
+  private continuationServiceInstance: ContinuationService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -218,6 +227,9 @@ export class RuntimeServer {
     this.runtimeResumeId = options.runtimeResumeId
     this.runtimeWakeNow = options.runtimeWakeNow
     this.runtimeWakeId = options.runtimeWakeId
+    this.runtimeContinuationNow = options.runtimeContinuationNow
+    this.runtimeContinuationId = options.runtimeContinuationId
+    this.runtimeContinuationStepId = options.runtimeContinuationStepId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -628,6 +640,20 @@ export class RuntimeServer {
         return this.getWakeAssessment(requiredString(payload.wakeId ?? payload.wake_id, "wakeId"))
       case "runtime.list_wake_assessments":
         return this.listWakeAssessments(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.preview_continuation_plan":
+        return this.previewContinuationPlan(readContinuationPlanInput(payload))
+      case "runtime.create_continuation_plan":
+        return this.createContinuationPlan(readContinuationPlanInput(payload))
+      case "runtime.get_continuation_plan":
+        return this.getContinuationPlan(requiredString(payload.planId ?? payload.plan_id, "planId"))
+      case "runtime.list_continuation_plans":
+        return this.listContinuationPlans(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.execute_continuation_step":
+        return this.executeContinuationStep(readContinuationStepInput(payload))
+      case "runtime.pause_continuation_plan":
+        return this.pauseContinuationPlan(readContinuationPlanDecisionInput(payload))
+      case "runtime.cancel_continuation_plan":
+        return this.cancelContinuationPlan(readContinuationPlanDecisionInput(payload))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -1139,6 +1165,38 @@ export class RuntimeServer {
     return this.wakeAssessmentService().list(limit)
   }
 
+  async previewContinuationPlan(input: Parameters<ContinuationService["preview"]>[0]): Promise<ContinuationPlanPreview> {
+    return this.continuationService().preview(input)
+  }
+
+  async createContinuationPlan(input: Parameters<ContinuationService["create"]>[0]): Promise<ContinuationPlan> {
+    this.requireContinuationWriteRuntime("runtime.create_continuation_plan")
+    return this.continuationService().create(input)
+  }
+
+  async getContinuationPlan(planId: string): Promise<ContinuationPlan | null> {
+    return this.continuationService().get(planId)
+  }
+
+  async listContinuationPlans(limit = 20): Promise<ContinuationPlanRecord[]> {
+    return this.continuationService().list(limit)
+  }
+
+  async executeContinuationStep(input: Parameters<ContinuationService["executeStep"]>[0]): Promise<ContinuationStepResult> {
+    this.requireContinuationWriteRuntime("runtime.execute_continuation_step")
+    return this.continuationService().executeStep(input)
+  }
+
+  async pauseContinuationPlan(input: Parameters<ContinuationService["pause"]>[0]): Promise<ContinuationPlan> {
+    this.requireContinuationWriteRuntime("runtime.pause_continuation_plan")
+    return this.continuationService().pause(input)
+  }
+
+  async cancelContinuationPlan(input: Parameters<ContinuationService["cancel"]>[0]): Promise<ContinuationPlan> {
+    this.requireContinuationWriteRuntime("runtime.cancel_continuation_plan")
+    return this.continuationService().cancel(input)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1466,6 +1524,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before wake assessment writes")
   }
 
+  private requireContinuationWriteRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before continuation writes")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1554,6 +1617,68 @@ export class RuntimeServer {
       sectionProvider: () => this.runtimeCheckpointSections(),
     })
     return this.wakeAssessmentServiceInstance
+  }
+
+  private continuationService(): ContinuationService {
+    this.continuationServiceInstance ??= new ContinuationService({
+      eventStore: this.eventStore,
+      wakeService: this.wakeAssessmentService(),
+      now: this.runtimeContinuationNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow,
+      idFactory: this.runtimeContinuationId ? () => this.runtimeContinuationId!() : undefined,
+      stepIdFactory: this.runtimeContinuationStepId ? () => this.runtimeContinuationStepId!() : undefined,
+      executeReadCommand: (command) => this.executeContinuationReadCommand(command),
+    })
+    return this.continuationServiceInstance
+  }
+
+  private async executeContinuationReadCommand(command: string): Promise<unknown> {
+    const [name, ...args] = command.trim().split(/\s+/)
+    switch (name) {
+      case "/reasoning":
+        return { status: this.reasoningProviderStatus(), health: await this.reasoningProviderHealth() }
+      case "/handoff-followups":
+        return this.listOpenCodeHandoffFollowups({ limit: 20 })
+      case "/handoff-active":
+        return this.openCodeHandoffFollowupQueue("active", { limit: 20 })
+      case "/handoff-results":
+        return this.openCodeHandoffFollowupQueue("needs_result_review", { limit: 20 })
+      case "/handoff-failed":
+        return this.openCodeHandoffFollowupQueue("failed", { limit: 20 })
+      case "/handoff-blocked":
+        return this.openCodeHandoffFollowupQueue("blocked", { limit: 20 })
+      case "/handoff-stale":
+        return this.openCodeHandoffFollowupQueue("stale", { limit: 20 })
+      case "/handoff-followup":
+        return this.getOpenCodeHandoffFollowup(requiredString(args[0], "handoffId"))
+      case "/queues":
+        return this.commanderQueueSummary()
+      case "/cycles":
+        return this.listCommanderCycles(20)
+      case "/cycle-show":
+        return this.getCommanderCycle(requiredString(args[0], "cycleId"))
+      case "/syntheses":
+        return this.listResearchSyntheses(20)
+      case "/synthesis":
+        return this.getResearchSynthesis(requiredString(args[0], "synthesisId"))
+      case "/resume-anchors":
+        return this.listCheckpointResumeAnchors(20)
+      case "/resume-anchor":
+        return this.getCheckpointResumeAnchor(requiredString(args[0], "resumeId"))
+      case "/restore-preview":
+        return this.previewCheckpointRestore({ checkpoint_id: requiredString(args[0], "checkpointId") })
+      case "/checkpoints":
+        return this.listRuntimeCheckpoints(20)
+      case "/checkpoint-show":
+        return this.getRuntimeCheckpoint(requiredString(args[0], "checkpointId"))
+      case "/wakes":
+        return this.listWakeAssessments(20)
+      case "/wake-show":
+        return this.getWakeAssessment(requiredString(args[0], "wakeId"))
+      case "/mission":
+        return this.getMission(requiredString(args[0], "missionId"))
+      default:
+        throw new Error("continuation read command is not supported")
+    }
   }
 
   private async runtimeCheckpointSections(): Promise<RuntimeCheckpointSections> {

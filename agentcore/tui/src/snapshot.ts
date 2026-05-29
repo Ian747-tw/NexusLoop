@@ -82,6 +82,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
   out.push(...wakeAssessmentLines(state))
+  out.push(...continuationLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -495,6 +496,54 @@ function wakeAssessmentLines(state: UiState): string[] {
   if (wake.recent.length === 0) out.push("    - empty")
   else out.push(...wake.recent.slice(0, 10).map((record) => `    - ${record.wake_id} allowed=${record.allowed} checkpoint=${record.checkpoint_id ?? "none"}: ${preview(redactText(record.summary_preview))}`))
   if (wake.commandError) out.push(`  command_error=${redactText(wake.commandError)}`)
+  return out
+}
+
+function continuationLines(state: UiState): string[] {
+  const continuation = state.continuation
+  const out = ["Continuation"]
+  if (!continuation) {
+    out.push("  plans=0")
+    return out
+  }
+  if (continuation.preview) {
+    const previewRecord = continuation.preview
+    out.push(`  preview_wake=${previewRecord.wake_id} can_create=${previewRecord.can_create} steps=${previewRecord.step_count} read=${previewRecord.read_step_count} write=${previewRecord.write_step_count}`)
+    if (previewRecord.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewRecord.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (previewRecord.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...previewRecord.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  preview_steps")
+    if (previewRecord.steps.length === 0) out.push("    - empty")
+    else out.push(...previewRecord.steps.slice(0, 10).map((step) => `    - ${step.index}:${step.step_kind}:${step.command_type}:${step.allowed_by_default ? "allowed" : "blocked"} ${preview(redactText(step.command))}`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (continuation.selected) {
+    const selected = continuation.selected
+    out.push(`  selected_plan=${selected.plan_id} status=${selected.status} wake=${selected.wake_id} completed=${selected.completed_step_count} failed=${selected.failed_step_count}`)
+    out.push(`  hash=${preview(redactText(selected.plan_hash))}`)
+    out.push("  steps")
+    if (selected.steps.length === 0) out.push("    - empty")
+    else out.push(...selected.steps.slice(0, 10).map((step) => `    - ${step.index}:${step.status}:${step.command_type} ${preview(redactText(step.command))}`))
+  } else {
+    out.push("  selected_plan=none")
+  }
+  if (continuation.lastStepResult) {
+    const result = continuation.lastStepResult
+    out.push(`  last_step=${result.step_id} index=${result.index} status=${result.status} dry_run=${result.dry_run === true}`)
+    if (result.result_summary) out.push(`  last_step_summary=${preview(redactText(result.result_summary))}`)
+    if (result.error) out.push(`  last_step_error=${preview(redactText(result.error))}`)
+  }
+  out.push(`  plans=${continuation.recent.length}`)
+  out.push("  recent_plans")
+  if (continuation.recent.length === 0) out.push("    - empty")
+  else out.push(...continuation.recent.slice(0, 10).map((record) => `    - ${record.plan_id} status=${record.status} wake=${record.wake_id}: ${preview(redactText(record.summary_preview))}`))
+  if (continuation.commandError) out.push(`  command_error=${redactText(continuation.commandError)}`)
   return out
 }
 

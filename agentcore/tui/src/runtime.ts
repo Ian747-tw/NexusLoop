@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -51,6 +51,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
   private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
   private readonly wakeAssessments: WakeAssessmentSummary[] = []
+  private readonly continuationPlans: ContinuationPlanSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -360,6 +361,20 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getWakeAssessment(String(payload.wakeId ?? payload.wake_id ?? ""))
       case "runtime.list_wake_assessments":
         return this.listWakeAssessments(readLimit(payload.limit, 20))
+      case "runtime.preview_continuation_plan":
+        return this.previewContinuationPlan(payload)
+      case "runtime.create_continuation_plan":
+        return this.createContinuationPlan(payload)
+      case "runtime.get_continuation_plan":
+        return this.getContinuationPlan(String(payload.planId ?? payload.plan_id ?? ""))
+      case "runtime.list_continuation_plans":
+        return this.listContinuationPlans(readLimit(payload.limit, 20))
+      case "runtime.execute_continuation_step":
+        return this.executeContinuationStep(payload)
+      case "runtime.pause_continuation_plan":
+        return this.pauseContinuationPlan(payload)
+      case "runtime.cancel_continuation_plan":
+        return this.cancelContinuationPlan(payload)
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -1150,6 +1165,7 @@ export class FakeRuntimeClient implements RuntimeClient {
         { label: "Open handoff follow-ups", command: "/handoff-followups", command_type: "read" },
         { label: "Open commander queues", command: "/queues", command_type: "read" },
         { label: "Reasoning status", command: "/reasoning", command_type: "read" },
+        { label: "Create follow-up checkpoint", command: "/checkpoint full wake follow-up", command_type: "write", requires_active_runtime: true },
       ],
       redacted_summary_preview: `fake wake assessment checkpoint=${resolvedCheckpointId ?? "none"} allowed=${blockers.length === 0}`,
     }
@@ -1204,6 +1220,136 @@ export class FakeRuntimeClient implements RuntimeClient {
       summary_preview: `fake wake checkpoint=${wake.checkpoint_id ?? "none"} allowed=${wake.allowed}`,
       assessment_hash: wake.assessment_hash,
     }))
+  }
+
+  private previewContinuationPlan(payload: Record<string, unknown>): ContinuationPlanPreviewSummary {
+    const wakeId = requiredString(String(payload.wakeId ?? payload.wake_id ?? ""), "wakeId")
+    const wake = this.getWakeAssessment(wakeId)
+    const blockers: string[] = []
+    const warnings = wake?.warnings ?? []
+    if (!wake) blockers.push("wake assessment not found")
+    if (wake && !wake.allowed) blockers.push("wake assessment is not allowed")
+    const steps = (wake?.suggested_commands ?? []).slice(0, 20).map((command, index) => {
+      const isWrite = command.command_type === "write"
+      const blockers = isWrite ? ["continuation write commands are blocked by default"] : []
+      return {
+        index,
+        label: command.label,
+        command: command.command,
+        command_type: command.command_type,
+        step_kind: isWrite && command.command.startsWith("/checkpoint ") ? "operator_checkpoint" : isWrite ? "write_command" : "read_command",
+        requires_active_runtime: command.requires_active_runtime,
+        requires_review: command.requires_review,
+        allowed_by_default: !isWrite,
+        blockers,
+      }
+    })
+    if (wake && steps.length === 0) blockers.push("wake assessment has no continuation-compatible suggested commands")
+    return {
+      wake_id: wakeId,
+      resume_id: wake?.resume_id,
+      checkpoint_id: wake?.checkpoint_id,
+      can_create: blockers.length === 0,
+      blockers: blockers.map(redactText),
+      warnings: warnings.map(redactText),
+      step_count: steps.length,
+      read_step_count: steps.filter((step) => step.command_type === "read").length,
+      write_step_count: steps.filter((step) => step.command_type === "write").length,
+      operator_checkpoint_count: steps.filter((step) => step.step_kind === "operator_checkpoint").length,
+      redacted_summary_preview: `fake continuation wake=${wakeId} steps=${steps.length}`,
+      steps,
+    }
+  }
+
+  private createContinuationPlan(payload: Record<string, unknown>): ContinuationPlanSummary {
+    const preview = this.previewContinuationPlan(payload)
+    if (!preview.can_create) throw new Error(preview.blockers[0] ?? "continuation plan is blocked")
+    const number = this.continuationPlans.length + 1
+    const plan: ContinuationPlanSummary = {
+      plan_id: `fake-continuation-${number}`,
+      wake_id: preview.wake_id,
+      resume_id: preview.resume_id,
+      checkpoint_id: preview.checkpoint_id,
+      status: "proposed",
+      created_at: new Date(0).toISOString(),
+      created_by: redactText(String(payload.createdBy ?? payload.created_by ?? payload.requestedBy ?? payload.requested_by ?? "operator")),
+      updated_at: new Date(0).toISOString(),
+      plan_hash: `fake-continuation-hash-${number}`,
+      steps: preview.steps.map((step) => ({
+        ...step,
+        step_id: `fake-continuation-step-${number}-${step.index + 1}`,
+        status: step.allowed_by_default ? "pending" : "blocked",
+        created_from_suggestion: true,
+      })),
+      current_step_index: preview.steps.find((step) => step.allowed_by_default)?.index,
+      completed_step_count: 0,
+      failed_step_count: 0,
+      blockers: preview.blockers,
+      warnings: preview.warnings,
+    }
+    this.continuationPlans.unshift(plan)
+    return plan
+  }
+
+  private getContinuationPlan(planId: string): ContinuationPlanSummary | null {
+    const id = requiredString(planId, "planId")
+    return this.continuationPlans.find((plan) => plan.plan_id === id) ?? null
+  }
+
+  private listContinuationPlans(limit: number): ContinuationPlanRecordSummary[] {
+    return this.continuationPlans.slice(0, limit).map((plan) => continuationRecord(plan))
+  }
+
+  private executeContinuationStep(payload: Record<string, unknown>): ContinuationStepResultSummary {
+    const plan = this.getContinuationPlan(String(payload.planId ?? payload.plan_id ?? ""))
+    if (!plan) throw new Error("continuation plan not found")
+    if (plan.status === "paused" || plan.status === "cancelled" || plan.status === "completed") throw new Error(`continuation plan is ${plan.status}`)
+    const index = typeof payload.index === "number" ? payload.index : plan.steps.find((step) => step.status === "pending")?.index
+    if (index === undefined) throw new Error("continuation plan has no pending step")
+    const step = plan.steps.find((item) => item.index === index)
+    if (!step) throw new Error("continuation step not found")
+    if (step.status === "blocked") throw new Error(step.blockers[0] ?? "continuation step is blocked")
+    if (step.command_type === "write") throw new Error("continuation write step execution is not supported in Branch 7I")
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const now = new Date(0).toISOString()
+    const result: ContinuationStepResultSummary = {
+      plan_id: plan.plan_id,
+      step_id: step.step_id,
+      index: step.index,
+      status: "succeeded",
+      command: step.command,
+      result_summary: dryRun ? `dry-run would execute ${step.command}` : `executed fake read step ${step.command}`,
+      dry_run: dryRun || undefined,
+      started_at: now,
+      completed_at: now,
+    }
+    if (!dryRun) {
+      step.status = "succeeded"
+      step.started_at = now
+      step.completed_at = now
+      step.result_summary = result.result_summary
+      plan.status = plan.steps.every((item) => item.status !== "pending" && item.status !== "running") ? "completed" : "active"
+      plan.updated_at = now
+      plan.completed_step_count = plan.steps.filter((item) => item.status === "succeeded").length
+      plan.current_step_index = plan.steps.find((item) => item.status === "pending")?.index
+    }
+    return result
+  }
+
+  private pauseContinuationPlan(payload: Record<string, unknown>): ContinuationPlanSummary {
+    const plan = this.getContinuationPlan(String(payload.planId ?? payload.plan_id ?? ""))
+    if (!plan) throw new Error("continuation plan not found")
+    plan.status = "paused"
+    plan.updated_at = new Date(0).toISOString()
+    return plan
+  }
+
+  private cancelContinuationPlan(payload: Record<string, unknown>): ContinuationPlanSummary {
+    const plan = this.getContinuationPlan(String(payload.planId ?? payload.plan_id ?? ""))
+    if (!plan) throw new Error("continuation plan not found")
+    plan.status = "cancelled"
+    plan.updated_at = new Date(0).toISOString()
+    return plan
   }
 
   private fakeCheckpointSections(scope: RuntimeCheckpointScope): Record<string, unknown> {
@@ -2988,6 +3134,21 @@ function readReasoningSurface(value: unknown): "research_synthesis" | "commander
   if (value === undefined || value === "research" || value === "research_synthesis") return "research_synthesis"
   if (value === "cycle" || value === "commander_cycle") return "commander_cycle"
   throw new Error("reasoning smoke surface must be research_synthesis or commander_cycle")
+}
+
+function continuationRecord(plan: ContinuationPlanSummary): ContinuationPlanRecordSummary {
+  return {
+    plan_id: plan.plan_id,
+    wake_id: plan.wake_id,
+    status: plan.status,
+    created_at: plan.created_at,
+    updated_at: plan.updated_at,
+    step_count: plan.steps.length,
+    completed_step_count: plan.completed_step_count,
+    failed_step_count: plan.failed_step_count,
+    summary_preview: `fake continuation wake=${plan.wake_id} status=${plan.status}`,
+    plan_hash: plan.plan_hash,
+  }
 }
 
 function proposalPayloadsForPlaybook(playbookId: string, fields: Record<string, string>, proposedBy: string): Record<string, unknown>[] {

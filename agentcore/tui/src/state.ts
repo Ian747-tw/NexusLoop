@@ -1173,6 +1173,101 @@ export type WakeAssessmentState = {
   commandError?: string
 }
 
+export type ContinuationPlanStatusSummary = "proposed" | "active" | "paused" | "completed" | "cancelled" | "blocked" | "failed" | string
+
+export type ContinuationStepStatusSummary = "pending" | "running" | "succeeded" | "failed" | "skipped" | "blocked" | string
+
+export type ContinuationStepKindSummary = "read_command" | "write_command" | "operator_checkpoint" | string
+
+export type ContinuationStepPreviewSummary = {
+  index: number
+  label: string
+  command: string
+  command_type: "read" | "write"
+  step_kind: ContinuationStepKindSummary
+  requires_active_runtime?: boolean
+  requires_review?: boolean
+  allowed_by_default: boolean
+  blockers: string[]
+}
+
+export type ContinuationPlanPreviewSummary = {
+  wake_id: string
+  resume_id?: string
+  checkpoint_id?: string
+  can_create: boolean
+  blockers: string[]
+  warnings: string[]
+  step_count: number
+  read_step_count: number
+  write_step_count: number
+  operator_checkpoint_count: number
+  redacted_summary_preview: string
+  steps: ContinuationStepPreviewSummary[]
+}
+
+export type ContinuationStepSummary = ContinuationStepPreviewSummary & {
+  step_id: string
+  status: ContinuationStepStatusSummary
+  created_from_suggestion?: boolean
+  result_summary?: string
+  error?: string
+  started_at?: string
+  completed_at?: string
+}
+
+export type ContinuationPlanSummary = {
+  plan_id: string
+  wake_id: string
+  resume_id?: string
+  checkpoint_id?: string
+  status: ContinuationPlanStatusSummary
+  created_at: string
+  created_by: string
+  updated_at: string
+  plan_hash: string
+  steps: ContinuationStepSummary[]
+  current_step_index?: number
+  completed_step_count: number
+  failed_step_count: number
+  blockers: string[]
+  warnings: string[]
+}
+
+export type ContinuationStepResultSummary = {
+  plan_id: string
+  step_id: string
+  index: number
+  status: ContinuationStepStatusSummary
+  command: string
+  result_summary?: string
+  error?: string
+  dry_run?: boolean
+  started_at: string
+  completed_at: string
+}
+
+export type ContinuationPlanRecordSummary = {
+  plan_id: string
+  wake_id: string
+  status: ContinuationPlanStatusSummary
+  created_at: string
+  updated_at: string
+  step_count: number
+  completed_step_count: number
+  failed_step_count: number
+  summary_preview: string
+  plan_hash: string
+}
+
+export type ContinuationState = {
+  preview?: ContinuationPlanPreviewSummary | null
+  selected?: ContinuationPlanSummary | null
+  lastStepResult?: ContinuationStepResultSummary | null
+  recent: ContinuationPlanRecordSummary[]
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -1271,6 +1366,7 @@ export type UiState = {
   runtimeCheckpoints?: RuntimeCheckpointsState
   runtimeRestore?: RuntimeRestoreState
   wakeAssessment?: WakeAssessmentState
+  continuation?: ContinuationState
 }
 
 export function initialState(projectDir: string): UiState {

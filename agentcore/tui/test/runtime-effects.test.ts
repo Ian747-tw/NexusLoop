@@ -3157,4 +3157,63 @@ describe("runtime UI effects", () => {
     expect(state.wakeAssessment?.commandError).toContain("wake preview requires resume=<resumeId> or checkpoint=<checkpointId>")
     expect(JSON.stringify(state)).not.toContain("wake-preview-secret")
   })
+
+  test("continuation slash commands preview create execute pause cancel and redact secrets", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint", args: ["full", "token=continuation-secret"] })
+    const checkpointId = state.runtimeCheckpoints?.selected?.checkpoint_id ?? "missing"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "resume-mark", args: [checkpointId] })
+    const resumeId = state.runtimeRestore?.selectedAnchor?.resume_id ?? "missing"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake", args: [`resume=${resumeId}`] })
+    const wakeId = state.wakeAssessment?.selected?.wake_id ?? "missing"
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-preview", args: [`wake=${wakeId}`] })
+    expect(state.continuation?.preview).toMatchObject({ wake_id: wakeId, can_create: true })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Continuation")
+    expect(snapshot).toContain(`preview_wake=${wakeId}`)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-plan", args: [`wake=${wakeId}`] })
+    const planId = state.continuation?.selected?.plan_id
+    expect(planId).toMatch(/^fake-continuation-/)
+    expect(state.continuation?.selected?.steps.at(0)).toMatchObject({ status: "pending", command_type: "read" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-dry-run", args: [planId ?? "missing"] })
+    expect(state.continuation?.lastStepResult).toMatchObject({ plan_id: planId, dry_run: true, status: "succeeded" })
+    expect(state.continuation?.selected?.steps.at(0)?.status).toBe("pending")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-step", args: [planId ?? "missing"] })
+    expect(state.continuation?.lastStepResult).toMatchObject({ plan_id: planId, dry_run: false, status: "succeeded" })
+    expect(state.continuation?.selected?.completed_step_count).toBe(1)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continuations" })
+    expect(state.continuation?.recent.at(0)).toMatchObject({ plan_id: planId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-show", args: [planId ?? "missing"] })
+    expect(state.continuation?.selected).toMatchObject({ plan_id: planId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-pause", args: [planId ?? "missing"] })
+    expect(state.continuation?.selected?.status).toBe("paused")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-cancel", args: [planId ?? "missing"] })
+    expect(state.continuation?.selected?.status).toBe("cancelled")
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain(`selected_plan=${planId}`)
+    expect(snapshot).not.toContain("continuation-secret")
+    expect(JSON.stringify(state)).not.toContain("continuation-secret")
+  })
+
+  test("continuation missing args and blocked write steps produce redacted command errors", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-preview" })
+    expect(state.continuation?.commandError).toContain("continuation command requires wake=<wakeId>")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint", args: ["full", "token=blocked-continuation-secret"] })
+    const checkpointId = state.runtimeCheckpoints?.selected?.checkpoint_id ?? "missing"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "resume-mark", args: [checkpointId] })
+    const resumeId = state.runtimeRestore?.selectedAnchor?.resume_id ?? "missing"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake", args: [`resume=${resumeId}`] })
+    const wakeId = state.wakeAssessment?.selected?.wake_id ?? "missing"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-plan", args: [`wake=${wakeId}`] })
+    const planId = state.continuation?.selected?.plan_id ?? "missing"
+    const writeIndex = state.continuation?.selected?.steps.find((step) => step.command_type === "write")?.index ?? 99
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "continue-step", args: [planId, String(writeIndex)] })
+    expect(state.continuation?.commandError).toContain("continuation write commands are blocked by default")
+    expect(JSON.stringify(state)).not.toContain("blocked-continuation-secret")
+  })
 })

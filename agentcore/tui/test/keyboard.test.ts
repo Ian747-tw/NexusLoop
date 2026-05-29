@@ -587,6 +587,44 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("continuation slash commands route through whitelist only", () => {
+    for (const [message, command, args] of [
+      ["/continue-preview wake=wake-1", "continue-preview", ["wake=wake-1"]],
+      ["/cont-preview wake=wake-1", "cont-preview", ["wake=wake-1"]],
+      ["/continue-plan wake=wake-1", "continue-plan", ["wake=wake-1"]],
+      ["/continue-step plan-1", "continue-step", ["plan-1"]],
+      ["/continue-step plan-1 2", "continue-step", ["plan-1", "2"]],
+      ["/cont-step plan-1", "cont-step", ["plan-1"]],
+      ["/continue-dry-run plan-1 1", "continue-dry-run", ["plan-1", "1"]],
+      ["/continue-pause plan-1", "continue-pause", ["plan-1"]],
+      ["/continue-cancel plan-1", "continue-cancel", ["plan-1"]],
+      ["/continuations", "continuations", []],
+      ["/continue-show plan-1", "continue-show", ["plan-1"]],
+    ] as const) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+
+      expect(result.state.messageDraft).toBe("")
+      expect(result.state.lastCommand).toBe(command)
+      expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
+    }
+
+    for (const message of ["/tmp/repro/continue", "/path/continue-preview", ".continue wake=wake-1", ":continue-step plan-1"]) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("slash command arguments are redacted before entering system actions", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
