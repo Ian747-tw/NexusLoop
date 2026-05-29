@@ -1253,7 +1253,9 @@ export class FakeRuntimeClient implements RuntimeClient {
     const anchor = this.getCheckpointResumeAnchor(resumeId)
     const blockers: string[] = []
     if (!anchor) blockers.push("runtime resume anchor not found")
-    const nextDueAt = typeof (payload.nextDueAt ?? payload.next_due_at) === "string" ? redactText(String(payload.nextDueAt ?? payload.next_due_at)) : new Date(0).toISOString()
+    const nextDueAt = typeof (payload.nextDueAt ?? payload.next_due_at) === "string"
+      ? redactText(String(payload.nextDueAt ?? payload.next_due_at))
+      : new Date(intervalMs).toISOString()
     const policy = fakeWakeSchedulePolicy(payload.policy)
     return {
       resume_id: resumeId,

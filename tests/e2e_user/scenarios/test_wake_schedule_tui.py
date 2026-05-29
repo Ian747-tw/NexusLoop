@@ -45,8 +45,9 @@ def test_user_runs_wake_schedule_commands_through_tui(sandbox) -> None:
     assert "Wake schedules" in result.stdout
     assert "preview_resume=fake-resume-1" in result.stdout
     assert "selected_schedule=fake-wake-schedule-1" in result.stdout
-    assert "tick_preview due=1 eligible=1" in result.stdout
+    assert "tick_preview due=0 eligible=0" in result.stdout
     assert "last_tick=fake-wake-tick-1" in result.stdout
+    assert "processed=0" in result.stdout
     assert "recent_schedules" in result.stdout
     assert "recent_ticks" in result.stdout
     assert "token=abc123" not in result.stdout

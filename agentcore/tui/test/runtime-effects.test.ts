@@ -3234,20 +3234,32 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "schedule-wake", args: [`resume=${resumeId}`, "every=60s", "token=schedule-secret"] })
     const scheduleId = state.wakeSchedules?.selected?.schedule_id
     expect(scheduleId).toMatch(/^fake-wake-schedule-/)
+    expect(state.wakeSchedules?.selected?.next_due_at).toBe("1970-01-01T00:01:00.000Z")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-schedules" })
     expect(state.wakeSchedules?.recent.at(0)).toMatchObject({ schedule_id: scheduleId })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-schedule", args: [scheduleId ?? "missing"] })
     expect(state.wakeSchedules?.selected).toMatchObject({ schedule_id: scheduleId })
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick-preview" })
-    expect(state.wakeSchedules?.tickPreview).toMatchObject({ due_count: 1, eligible_count: 1 })
+    expect(state.wakeSchedules?.tickPreview).toMatchObject({ due_count: 0, eligible_count: 0 })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick-dry-run" })
-    expect(state.wakeSchedules?.lastTick).toMatchObject({ dry_run: true, processed_count: 1, wake_ids: [] })
+    expect(state.wakeSchedules?.lastTick).toMatchObject({ dry_run: true, processed_count: 0, wake_ids: [] })
     expect(state.wakeAssessment?.selected).toBeUndefined()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick" })
+    expect(state.wakeSchedules?.lastTick).toMatchObject({ dry_run: false, processed_count: 0, wake_ids: [] })
+    expect(state.continuation?.lastStepResult).toBeUndefined()
+    await runtime.command("runtime.create_wake_schedule", {
+      resumeId,
+      intervalMs: 60_000,
+      nextDueAt: "1970-01-01T00:00:00.000Z",
+      title: "explicitly due fake schedule",
+      requestedBy: "operator",
+    })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick-preview" })
+    expect(state.wakeSchedules?.tickPreview).toMatchObject({ due_count: 1, eligible_count: 1 })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-tick" })
     expect(state.wakeSchedules?.lastTick).toMatchObject({ dry_run: false, processed_count: 1 })
     expect(state.wakeSchedules?.lastTick?.wake_ids.at(0)).toMatch(/^fake-wake-/)
-    expect(state.continuation?.lastStepResult).toBeUndefined()
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "wake-ticks" })
     const tickId = state.wakeSchedules?.recentTicks.at(0)?.tick_id
     expect(tickId).toMatch(/^fake-wake-tick-/)
