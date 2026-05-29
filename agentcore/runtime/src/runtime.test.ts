@@ -5500,6 +5500,7 @@ describe("RuntimeServer core", () => {
     expect(preview.can_create).toBe(true)
     expect(preview.read_step_count).toBeGreaterThan(0)
     expect(preview.write_step_count).toBeGreaterThan(0)
+    expect(preview.steps.find((step) => step.command === "/missions")).toMatchObject({ allowed_by_default: true, blockers: [] })
     expect(preview.steps.find((step) => step.command.startsWith("/checkpoint "))?.blockers).toContain("continuation write commands are blocked by default")
     expect(await readJsonlEvents(dir)).toHaveLength(beforePreview.length)
 
@@ -5512,6 +5513,7 @@ describe("RuntimeServer core", () => {
     expect(plan).toMatchObject({ plan_id: "plan_continue_1", status: "proposed" })
     expect(plan.plan_hash).toMatch(/^[a-f0-9]{64}$/)
     expect(plan.steps[0]).toMatchObject({ step_id: "step_continue_1", command: "/resume-anchor resume_continue_1", status: "pending", allowed_by_default: true })
+    expect(plan.steps.find((step) => step.command === "/missions")).toMatchObject({ status: "pending", allowed_by_default: true, blockers: [] })
     expect(plan.steps.find((step) => step.command.startsWith("/checkpoint "))?.status).toBe("blocked")
     const events = await readJsonlEvents(dir)
     expect(events.at(-1)).toMatchObject({ kind: "runtime_continuation_plan_created", plan_id: "plan_continue_1", wake_id: "wake_continue_1" })
@@ -5556,6 +5558,11 @@ describe("RuntimeServer core", () => {
     const afterOne = await server.command("runtime.get_continuation_plan", { planId: plan.plan_id }) as { completed_step_count: number; steps: Array<{ status: string }> }
     expect(afterOne.completed_step_count).toBe(1)
     expect(afterOne.steps.filter((step) => step.status === "succeeded")).toHaveLength(1)
+    const missionsStep = plan.steps.find((step) => step.command === "/missions")
+    expect(missionsStep).toBeDefined()
+    const missionsResult = await server.command("runtime.execute_continuation_step", { planId: plan.plan_id, index: missionsStep!.index, requestedBy: "operator" }) as { status: string; command: string; result_summary?: string }
+    expect(missionsResult).toMatchObject({ status: "succeeded", command: "/missions" })
+    expect(missionsResult.result_summary).toContain("[]")
     const writeStep = plan.steps.find((step) => step.command.startsWith("/checkpoint "))
     expect(writeStep).toBeDefined()
     const beforeBlocked = await readJsonlEvents(dir)

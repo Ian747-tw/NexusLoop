@@ -1652,6 +1652,8 @@ export class RuntimeServer {
         return this.getOpenCodeHandoffFollowup(requiredString(args[0], "handoffId"))
       case "/queues":
         return this.commanderQueueSummary()
+      case "/missions":
+        return this.listRecentMissions(20)
       case "/cycles":
         return this.listCommanderCycles(20)
       case "/cycle-show":

@@ -414,7 +414,7 @@ function stepsFromSuggestions(suggestions: WakeSuggestedCommand[], input: Normal
 }
 
 export function supportedReadCommand(command: string): boolean {
-  if (command === "/reasoning" || command === "/handoff-followups" || command === "/handoff-active" || command === "/handoff-results" || command === "/handoff-failed" || command === "/handoff-blocked" || command === "/handoff-stale" || command === "/queues" || command === "/cycles" || command === "/syntheses" || command === "/wakes" || command === "/resume-anchors" || command === "/checkpoints") return true
+  if (command === "/reasoning" || command === "/handoff-followups" || command === "/handoff-active" || command === "/handoff-results" || command === "/handoff-failed" || command === "/handoff-blocked" || command === "/handoff-stale" || command === "/queues" || command === "/missions" || command === "/cycles" || command === "/syntheses" || command === "/wakes" || command === "/resume-anchors" || command === "/checkpoints") return true
   return /^\/resume-anchor\s+\S+$/.test(command)
     || /^\/restore-preview\s+\S+$/.test(command)
     || /^\/checkpoint-show\s+\S+$/.test(command)
