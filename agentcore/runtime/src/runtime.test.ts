@@ -6646,6 +6646,7 @@ describe("RuntimeServer core", () => {
     })
     await timeout(20)
     expect(stopResolved).toBe(false)
+    await expect(service.start({ intervalMs: 10, requestedBy: "operator" })).rejects.toThrow("wake scheduler is already running or stopping")
 
     unblockTick()
     await stopPromise

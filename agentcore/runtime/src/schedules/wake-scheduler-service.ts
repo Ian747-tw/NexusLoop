@@ -78,7 +78,7 @@ export class WakeSchedulerService {
     const normalized = normalizeStartInput(input, this.minIntervalMs(), this.minHeartbeatIntervalMs())
     const blockers: string[] = []
     const warnings: string[] = []
-    if (this.state.status === "starting" || this.state.status === "running") blockers.push("wake scheduler is already running")
+    if (this.state.status === "starting" || this.state.status === "running" || this.state.status === "stopping") blockers.push("wake scheduler is already running or stopping")
     if (this.options.canRun && !this.options.canRun()) blockers.push("wake scheduler requires active started runtime with run lock")
     const duePreview = await this.options.wakeScheduleService.previewTick({
       max_due_items: normalized.config.max_due_items,
