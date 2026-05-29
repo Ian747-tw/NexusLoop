@@ -6601,6 +6601,65 @@ describe("RuntimeServer core", () => {
     await service.stop({ requestedBy: "operator" })
   })
 
+  test("wake scheduler stop waits for in-flight tick before recording stopped state", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const timers: Array<() => void> = []
+    let executeCount = 0
+    let resolveStarted!: () => void
+    let unblockTick!: () => void
+    const tickStarted = new Promise<void>((resolve) => {
+      resolveStarted = resolve
+    })
+    const tickBlocked = new Promise<void>((resolve) => {
+      unblockTick = resolve
+    })
+    const service = new WakeSchedulerService({
+      eventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:16:00.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: () => undefined,
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => ({ now: "2026-05-11T14:16:00.000Z", due_count: 1, eligible_count: 1, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }),
+        executeTick: async () => {
+          executeCount += 1
+          resolveStarted()
+          await tickBlocked
+          return { tick_id: "tick_stopped_in_flight", now: "2026-05-11T14:16:00.000Z", processed_count: 1, wake_ids: ["wake_stopped_in_flight"], plan_ids: [], skipped: [], created_at: "2026-05-11T14:16:00.000Z", requested_by: "wake-scheduler", dry_run: false }
+        },
+      } as unknown as WakeScheduleService,
+    })
+    await service.start({ intervalMs: 10, requestedBy: "operator" })
+    timers.shift()?.()
+    await tickStarted
+
+    let stopResolved = false
+    const stopPromise = service.stop({ reason: "operator stop while tick active", requestedBy: "operator" }).then(() => {
+      stopResolved = true
+    })
+    await timeout(20)
+    expect(stopResolved).toBe(false)
+
+    unblockTick()
+    await stopPromise
+    expect(executeCount).toBe(1)
+    expect(service.status()).toMatchObject({ status: "stopped", tick_count: 0 })
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).toEqual([
+      "runtime_wake_scheduler_started",
+      "runtime_wake_scheduler_stopped",
+    ])
+    expect(JSON.stringify(events)).not.toContain("tick_stopped_in_flight")
+    expect(JSON.stringify(events)).not.toContain("wake_stopped_in_flight")
+  })
+
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

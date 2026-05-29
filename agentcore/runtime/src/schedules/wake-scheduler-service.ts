@@ -63,6 +63,7 @@ export class WakeSchedulerService {
   private state: WakeSchedulerState
   private timer: unknown | null = null
   private tickInFlight = false
+  private activeTick: Promise<void> | null = null
 
   constructor(private readonly options: WakeSchedulerServiceOptions) {
     this.state = {
@@ -127,14 +128,22 @@ export class WakeSchedulerService {
 
   async stop(input: WakeSchedulerStopInput = {}): Promise<WakeSchedulerState> {
     const normalized = normalizeStopInput(input)
+    return await this.stopScheduler(normalized, true)
+  }
+
+  private async stopScheduler(normalized: NormalizedStopInput, waitForTick: boolean): Promise<WakeSchedulerState> {
     if (this.state.status === "stopped") return redactValue(this.state)
     this.clearScheduledTimer()
     const stoppedAt = this.now()
+    const tickToWait = waitForTick ? this.activeTick : null
     this.state = {
       ...this.state,
       status: "stopping",
       stopped_at: stoppedAt,
       stopped_by: normalized.requested_by,
+    }
+    if (tickToWait) {
+      await tickToWait.catch(() => undefined)
     }
     await this.appendSchedulerEvent("runtime_wake_scheduler_stopped", {
       scheduler_status: "stopped",
@@ -170,7 +179,11 @@ export class WakeSchedulerService {
     if (this.state.status !== "running") return
     const setTimer = this.options.setTimer ?? ((callback: () => void, delay: number) => setTimeout(callback, delay))
     this.timer = setTimer(() => {
-      void this.runScheduledTick()
+      const activeTick = this.runScheduledTick()
+      this.activeTick = activeTick
+      void activeTick.finally(() => {
+        if (this.activeTick === activeTick) this.activeTick = null
+      })
     }, delayMs)
   }
 
@@ -192,6 +205,7 @@ export class WakeSchedulerService {
         dry_run: this.state.config.dry_run,
         requested_by: "wake-scheduler",
       })
+      if (this.state.status !== "running") return
       this.state.tick_count += 1
       this.state.last_tick_id = tick.tick_id
       this.state.last_tick_at = tick.created_at
@@ -204,10 +218,11 @@ export class WakeSchedulerService {
       })
       await this.maybeHeartbeat()
       if (this.state.config.max_ticks_per_run !== undefined && this.state.tick_count >= this.state.config.max_ticks_per_run) {
-        await this.stop({ reason: "wake scheduler max_ticks_per_run reached", requested_by: "wake-scheduler" })
+        await this.stopScheduler({ reason: "wake scheduler max_ticks_per_run reached", requested_by: "wake-scheduler" }, false)
         return
       }
     } catch (error) {
+      if (this.state.status !== "running") return
       await this.failAndMaybeStop(error instanceof Error ? error.message : String(error), this.state.config.stop_on_error)
       return
     } finally {
