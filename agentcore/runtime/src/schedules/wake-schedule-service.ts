@@ -45,7 +45,7 @@ type WakeScheduleEvent = JsonlEvent & {
     | "runtime_wake_schedule_tick_completed"
   schedule?: WakeSchedule
   tick?: WakeScheduleTickResult
-  processed_schedules?: Array<{ schedule_id: string; next_due_at: string; last_wake_id?: string; last_plan_id?: string }>
+  processed_schedules?: Array<{ schedule_id: string; next_due_at: string; last_wake_id?: string | null; last_plan_id?: string | null }>
 }
 
 type NormalizedScheduleInput = {
@@ -244,7 +244,7 @@ export class WakeScheduleService {
     const createdAt = this.now()
     const wakeIds: string[] = []
     const planIds: string[] = []
-    const processed: Array<{ schedule_id: string; next_due_at: string; last_wake_id?: string; last_plan_id?: string }> = []
+    const processed: Array<{ schedule_id: string; next_due_at: string; last_wake_id?: string | null; last_plan_id?: string | null }> = []
     if (!input.dry_run) {
       for (const item of eligible) {
         const schedule = await this.get(item.schedule_id)
@@ -283,8 +283,8 @@ export class WakeScheduleService {
         processed.push({
           schedule_id: schedule.schedule_id,
           next_due_at: advanceDueAt(schedule.next_due_at, schedule.interval_ms, input.now),
-          last_wake_id: wakeId,
-          last_plan_id: planId,
+          last_wake_id: wakeId ?? null,
+          last_plan_id: planId ?? null,
         })
       }
     }
@@ -452,8 +452,14 @@ function updateProcessedSchedule(schedules: Map<string, WakeSchedule>, processed
   schedule.last_tick_at = tickAt
   schedule.updated_at = tickAt ?? schedule.updated_at
   if (typeof processed.next_due_at === "string") schedule.next_due_at = processed.next_due_at
-  if (typeof processed.last_wake_id === "string") schedule.last_wake_id = redactText(processed.last_wake_id)
-  if (typeof processed.last_plan_id === "string") schedule.last_plan_id = redactText(processed.last_plan_id)
+  if ("last_wake_id" in processed) {
+    if (typeof processed.last_wake_id === "string") schedule.last_wake_id = redactText(processed.last_wake_id)
+    else if (processed.last_wake_id === null) delete schedule.last_wake_id
+  }
+  if ("last_plan_id" in processed) {
+    if (typeof processed.last_plan_id === "string") schedule.last_plan_id = redactText(processed.last_plan_id)
+    else if (processed.last_plan_id === null) delete schedule.last_plan_id
+  }
   schedule.schedule_hash = sha256(stableStringify({ ...schedule, schedule_hash: undefined }))
 }
 

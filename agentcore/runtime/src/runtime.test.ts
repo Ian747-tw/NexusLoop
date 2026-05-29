@@ -6218,6 +6218,56 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake schedule tick clears stale plan id after later continuation failure", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let wakeId = 0
+    let planId = 0
+    let continuationStepIndex = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_tick_clear_plan_1",
+      runtimeResumeId: () => "resume_tick_clear_plan_1",
+      runtimeWakeId: () => `wake_tick_clear_plan_${++wakeId}`,
+      runtimeContinuationId: () => {
+        planId += 1
+        if (planId === 1) return "plan_tick_clear_plan_1"
+        throw new Error("continuation token=clear-plan-secret failed")
+      },
+      runtimeContinuationStepId: () => `step_tick_clear_plan_${++continuationStepIndex}`,
+      runtimeWakeScheduleId: () => "schedule_tick_clear_plan_1",
+      runtimeWakeScheduleTickId: () => `tick_clear_plan_${wakeId + 1}`,
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T13:25:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_tick_clear_plan_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_schedule", {
+      resumeId: "resume_tick_clear_plan_1",
+      intervalMs: 60_000,
+      nextDueAt: "2026-05-11T13:23:00.000Z",
+      policy: { createContinuationPlan: true, maxContinuationPlansPerTick: 1 },
+      requestedBy: "operator",
+    })
+
+    const first = await server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:24:00.000Z", requestedBy: "operator" }) as { wake_ids: string[]; plan_ids: string[] }
+    expect(first).toMatchObject({ wake_ids: ["wake_tick_clear_plan_1"], plan_ids: ["plan_tick_clear_plan_1"] })
+    const afterFirst = await server.command("runtime.get_wake_schedule", { scheduleId: "schedule_tick_clear_plan_1" }) as { last_wake_id?: string; last_plan_id?: string; next_due_at: string }
+    expect(afterFirst).toMatchObject({ last_wake_id: "wake_tick_clear_plan_1", last_plan_id: "plan_tick_clear_plan_1", next_due_at: "2026-05-11T13:25:00.000Z" })
+
+    const second = await server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:25:00.000Z", requestedBy: "operator" }) as { wake_ids: string[]; plan_ids: string[]; skipped: Array<{ blockers: string[] }> }
+    expect(second.wake_ids).toEqual(["wake_tick_clear_plan_2"])
+    expect(second.plan_ids).toEqual([])
+    expect(JSON.stringify(second.skipped)).not.toContain("clear-plan-secret")
+    const afterSecond = await server.command("runtime.get_wake_schedule", { scheduleId: "schedule_tick_clear_plan_1" }) as { last_wake_id?: string; last_plan_id?: string; next_due_at: string }
+    expect(afterSecond.last_wake_id).toBe("wake_tick_clear_plan_2")
+    expect(afterSecond.last_plan_id).toBeUndefined()
+    expect(afterSecond.next_due_at).toBe("2026-05-11T13:26:00.000Z")
+    await server.shutdown()
+  })
+
   test("wake schedule write gates preserve read surfaces", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
