@@ -64,6 +64,7 @@ export class WakeSchedulerService {
   private timer: unknown | null = null
   private tickInFlight = false
   private activeTick: Promise<void> | null = null
+  private lifecycleTransition: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: WakeSchedulerServiceOptions) {
     this.state = {
@@ -102,33 +103,38 @@ export class WakeSchedulerService {
   }
 
   async start(input: WakeSchedulerStartInput = {}): Promise<WakeSchedulerState> {
-    const normalized = normalizeStartInput(input, this.minIntervalMs(), this.minHeartbeatIntervalMs())
-    const preview = await this.previewStart(input)
-    if (!preview.can_start) throw new Error(preview.blockers[0] ?? "wake scheduler cannot start")
-    const startedAt = this.now()
-    this.state = {
-      status: "starting",
-      config: normalized.config,
-      started_at: startedAt,
-      tick_count: 0,
-      heartbeat_count: 0,
-      next_tick_at: new Date(Date.parse(startedAt) + normalized.config.interval_ms).toISOString(),
-      started_by: normalized.requested_by,
-    }
-    await this.appendSchedulerEvent("runtime_wake_scheduler_started", {
-      scheduler_status: "running",
-      scheduler_config: normalized.config,
-      message: "wake scheduler started",
-      requested_by: normalized.requested_by,
+    if (this.state.status === "stopping") throw new Error("wake scheduler is already running or stopping")
+    return await this.withLifecycleLock(async () => {
+      const normalized = normalizeStartInput(input, this.minIntervalMs(), this.minHeartbeatIntervalMs())
+      const preview = await this.previewStart(input)
+      if (!preview.can_start) throw new Error(preview.blockers[0] ?? "wake scheduler cannot start")
+      const startedAt = this.now()
+      this.state = {
+        status: "starting",
+        config: normalized.config,
+        started_at: startedAt,
+        tick_count: 0,
+        heartbeat_count: 0,
+        next_tick_at: new Date(Date.parse(startedAt) + normalized.config.interval_ms).toISOString(),
+        started_by: normalized.requested_by,
+      }
+      await this.appendSchedulerEvent("runtime_wake_scheduler_started", {
+        scheduler_status: "running",
+        scheduler_config: normalized.config,
+        message: "wake scheduler started",
+        requested_by: normalized.requested_by,
+      })
+      this.state.status = "running"
+      this.scheduleNext(normalized.config.interval_ms)
+      return redactValue(this.state)
     })
-    this.state.status = "running"
-    this.scheduleNext(normalized.config.interval_ms)
-    return redactValue(this.state)
   }
 
   async stop(input: WakeSchedulerStopInput = {}): Promise<WakeSchedulerState> {
-    const normalized = normalizeStopInput(input)
-    return await this.stopScheduler(normalized, true)
+    return await this.withLifecycleLock(async () => {
+      const normalized = normalizeStopInput(input)
+      return await this.stopScheduler(normalized, true)
+    })
   }
 
   private async stopScheduler(normalized: NormalizedStopInput, waitForTick: boolean): Promise<WakeSchedulerState> {
@@ -305,6 +311,20 @@ export class WakeSchedulerService {
 
   private minHeartbeatIntervalMs(): number {
     return this.options.minHeartbeatIntervalMs ?? this.minIntervalMs()
+  }
+
+  private async withLifecycleLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.lifecycleTransition
+    let release!: () => void
+    this.lifecycleTransition = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous.catch(() => undefined)
+    try {
+      return await operation()
+    } finally {
+      release()
+    }
   }
 }
 
