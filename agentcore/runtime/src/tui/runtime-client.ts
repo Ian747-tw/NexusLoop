@@ -20,6 +20,7 @@ import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHan
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAssessmentRecord } from "../wake/wake-hook-types"
+import type { ContinuationPlan, ContinuationPlanDecisionInput, ContinuationPlanInput, ContinuationPlanPreview, ContinuationPlanRecord, ContinuationStepInput, ContinuationStepResult } from "../continuation/continuation-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -213,6 +214,13 @@ export interface RuntimeClient {
   command(name: "runtime.create_wake_assessment", payload: WakeAssessmentInput): Promise<WakeAssessment>
   command(name: "runtime.get_wake_assessment", payload: { wakeId: string } | { wake_id: string }): Promise<WakeAssessment | null>
   command(name: "runtime.list_wake_assessments", payload?: { limit?: number }): Promise<WakeAssessmentRecord[]>
+  command(name: "runtime.preview_continuation_plan", payload: ContinuationPlanInput): Promise<ContinuationPlanPreview>
+  command(name: "runtime.create_continuation_plan", payload: ContinuationPlanInput): Promise<ContinuationPlan>
+  command(name: "runtime.get_continuation_plan", payload: { planId: string } | { plan_id: string }): Promise<ContinuationPlan | null>
+  command(name: "runtime.list_continuation_plans", payload?: { limit?: number }): Promise<ContinuationPlanRecord[]>
+  command(name: "runtime.execute_continuation_step", payload: ContinuationStepInput): Promise<ContinuationStepResult>
+  command(name: "runtime.pause_continuation_plan", payload: ContinuationPlanDecisionInput): Promise<ContinuationPlan>
+  command(name: "runtime.cancel_continuation_plan", payload: ContinuationPlanDecisionInput): Promise<ContinuationPlan>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -321,6 +329,13 @@ export interface RuntimeCommandEnvelope {
     | "runtime.create_wake_assessment"
     | "runtime.get_wake_assessment"
     | "runtime.list_wake_assessments"
+    | "runtime.preview_continuation_plan"
+    | "runtime.create_continuation_plan"
+    | "runtime.get_continuation_plan"
+    | "runtime.list_continuation_plans"
+    | "runtime.execute_continuation_step"
+    | "runtime.pause_continuation_plan"
+    | "runtime.cancel_continuation_plan"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"
