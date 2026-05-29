@@ -5633,6 +5633,82 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(events)).not.toContain("late-cancel-secret")
   })
 
+  test("continuation completion write failures do not corrupt succeeded steps", async () => {
+    const dir = await tempProject()
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const failingEventStore = {
+      append: async (event: Record<string, unknown>) => {
+        if (event.kind === "runtime_continuation_plan_completed") throw new Error("completion write failed")
+        return eventStore.append(event)
+      },
+      readAll: () => eventStore.readAll(),
+    } as unknown as EventStore
+    const service = new ContinuationService({
+      eventStore: failingEventStore,
+      wakeService: {
+        get: async () => ({
+          wake_id: "wake_continue_complete_1",
+          trigger_kind: "manual",
+          created_at: "2026-05-11T12:20:00.000Z",
+          requested_by: "operator",
+          allowed: true,
+          blockers: [],
+          warnings: [],
+          current_event_count: 1,
+          sections: {},
+          suggested_commands: [{ label: "List missions", command: "/missions", command_type: "read" }],
+          assessment_hash: "wake-complete-hash",
+        }),
+      } as unknown as WakeAssessmentService,
+      executeReadCommand: () => [],
+      idFactory: () => "plan_continue_complete_1",
+      stepIdFactory: () => "step_continue_complete_1",
+      now: () => new Date("2026-05-11T12:20:00.000Z"),
+    })
+
+    await service.create({ wake_id: "wake_continue_complete_1", requested_by: "operator" })
+    await expect(service.executeStep({ plan_id: "plan_continue_complete_1", requested_by: "operator" })).rejects.toThrow("completion write failed")
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).toContain("runtime_continuation_step_succeeded")
+    expect(events.map((event) => event.kind)).not.toContain("runtime_continuation_step_failed")
+    expect(events.map((event) => event.kind)).not.toContain("runtime_continuation_plan_completed")
+    const projected = await service.get("plan_continue_complete_1")
+    expect(projected).toMatchObject({ status: "active", completed_step_count: 1, failed_step_count: 0 })
+    expect(projected?.steps[0]).toMatchObject({ status: "succeeded" })
+  })
+
+  test("continuation plan creation blocks wakes with no executable steps", async () => {
+    const dir = await tempProject()
+    const service = new ContinuationService({
+      eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")),
+      wakeService: {
+        get: async () => ({
+          wake_id: "wake_continue_blocked_1",
+          trigger_kind: "manual",
+          created_at: "2026-05-11T12:25:00.000Z",
+          requested_by: "operator",
+          allowed: true,
+          blockers: [],
+          warnings: [],
+          current_event_count: 1,
+          sections: {},
+          suggested_commands: [
+            { label: "Unsupported read", command: "/unsupported-read", command_type: "read" },
+            { label: "Checkpoint", command: "/checkpoint full blocked token=blocked-step-secret", command_type: "write" },
+          ],
+          assessment_hash: "wake-blocked-hash",
+        }),
+      } as unknown as WakeAssessmentService,
+      executeReadCommand: () => [],
+    })
+
+    const preview = await service.preview({ wake_id: "wake_continue_blocked_1", requested_by: "operator" })
+    expect(preview).toMatchObject({ can_create: false })
+    expect(preview.blockers).toContain("wake assessment has no executable continuation steps")
+    expect(JSON.stringify(preview)).not.toContain("blocked-step-secret")
+    await expect(service.create({ wake_id: "wake_continue_blocked_1", requested_by: "operator" })).rejects.toThrow("wake assessment has no executable continuation steps")
+  })
+
   test("continuation plan max_bytes accounts for persisted event payload", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

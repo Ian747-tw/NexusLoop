@@ -177,25 +177,9 @@ export class ContinuationService {
       started_at: startedAt,
       requested_by: normalized.requested_by,
     })
+    let value: unknown
     try {
-      const value = await this.options.executeReadCommand(step.command)
-      const completedAt = this.now()
-      const result: ContinuationStepResult = {
-        plan_id: plan.plan_id,
-        step_id: step.step_id,
-        index: step.index,
-        status: "succeeded",
-        command: step.command,
-        result_summary: previewText(stableStringify(redactValue(value))),
-        started_at: startedAt,
-        completed_at: completedAt,
-      }
-      await this.options.eventStore.append({ kind: "runtime_continuation_step_succeeded", plan_id: plan.plan_id, step_id: step.step_id, result })
-      const afterSuccess = await this.requirePlan(plan.plan_id)
-      if (afterSuccess.status === "active" && afterSuccess.steps.every((item) => item.status !== "pending" && item.status !== "running")) {
-        await this.options.eventStore.append({ kind: "runtime_continuation_plan_completed", plan_id: plan.plan_id, completed_at: completedAt, requested_by: normalized.requested_by })
-      }
-      return redactValue(result)
+      value = await this.options.executeReadCommand(step.command)
     } catch (error) {
       const completedAt = this.now()
       const result: ContinuationStepResult = {
@@ -211,6 +195,23 @@ export class ContinuationService {
       await this.options.eventStore.append({ kind: "runtime_continuation_step_failed", plan_id: plan.plan_id, step_id: step.step_id, result })
       return redactValue(result)
     }
+    const completedAt = this.now()
+    const result: ContinuationStepResult = {
+      plan_id: plan.plan_id,
+      step_id: step.step_id,
+      index: step.index,
+      status: "succeeded",
+      command: step.command,
+      result_summary: previewText(stableStringify(redactValue(value))),
+      started_at: startedAt,
+      completed_at: completedAt,
+    }
+    await this.options.eventStore.append({ kind: "runtime_continuation_step_succeeded", plan_id: plan.plan_id, step_id: step.step_id, result })
+    const afterSuccess = await this.requirePlan(plan.plan_id)
+    if (afterSuccess.status === "active" && afterSuccess.steps.every((item) => item.status !== "pending" && item.status !== "running")) {
+      await this.options.eventStore.append({ kind: "runtime_continuation_plan_completed", plan_id: plan.plan_id, completed_at: completedAt, requested_by: normalized.requested_by })
+    }
+    return redactValue(result)
   }
 
   async pause(input: ContinuationPlanDecisionInput): Promise<ContinuationPlan> {
@@ -250,10 +251,11 @@ export class ContinuationService {
     const stepPreviews = wake ? stepsFromSuggestions(wake.suggested_commands, input) : []
     if (wake && stepPreviews.length === 0) blockers.push("wake assessment has no continuation-compatible suggested commands")
     warnings.push(...(wake?.warnings ?? []))
-    const cleanBlockers = unique(blockers)
     const readCount = stepPreviews.filter((step) => step.command_type === "read").length
     const writeCount = stepPreviews.filter((step) => step.command_type === "write").length
     const checkpointCount = stepPreviews.filter((step) => step.step_kind === "operator_checkpoint").length
+    if (wake && stepPreviews.length > 0 && stepPreviews.every((step) => !step.allowed_by_default)) blockers.push("wake assessment has no executable continuation steps")
+    const cleanBlockers = unique(blockers)
     return redactValue({
       wake_id: input.wake_id,
       resume_id: wake?.resume_id,
