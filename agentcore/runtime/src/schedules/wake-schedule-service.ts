@@ -257,7 +257,15 @@ export class WakeScheduleService {
             wakeId = wake.wake_id
             wakeIds.push(wake.wake_id)
           }
-          if (wakeId && schedule.policy.create_continuation_plan && schedule.policy.max_continuation_plans_per_tick > 0) {
+        } catch (error) {
+          skipped.push({
+            ...item,
+            blockers: unique([...item.blockers, error instanceof Error ? error.message : String(error)]),
+          })
+          continue
+        }
+        if (wakeId && schedule.policy.create_continuation_plan && schedule.policy.max_continuation_plans_per_tick > 0) {
+          try {
             const plan = await this.options.continuationService.create({
               wake_id: wakeId,
               requested_by: input.requested_by,
@@ -265,19 +273,19 @@ export class WakeScheduleService {
             })
             planId = plan.plan_id
             planIds.push(plan.plan_id)
+          } catch (error) {
+            skipped.push({
+              ...item,
+              blockers: unique([...item.blockers, error instanceof Error ? error.message : String(error)]),
+            })
           }
-          processed.push({
-            schedule_id: schedule.schedule_id,
-            next_due_at: advanceDueAt(schedule.next_due_at, schedule.interval_ms, input.now),
-            last_wake_id: wakeId,
-            last_plan_id: planId,
-          })
-        } catch (error) {
-          skipped.push({
-            ...item,
-            blockers: unique([...item.blockers, error instanceof Error ? error.message : String(error)]),
-          })
         }
+        processed.push({
+          schedule_id: schedule.schedule_id,
+          next_due_at: advanceDueAt(schedule.next_due_at, schedule.interval_ms, input.now),
+          last_wake_id: wakeId,
+          last_plan_id: planId,
+        })
       }
     }
     const result: WakeScheduleTickResult = {

@@ -6173,6 +6173,51 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake schedule tick advances schedule when continuation creation fails after wake creation", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let wakeId = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_tick_partial_1",
+      runtimeResumeId: () => "resume_tick_partial_1",
+      runtimeWakeId: () => `wake_tick_partial_${++wakeId}`,
+      runtimeContinuationId: () => {
+        throw new Error("continuation token=partial-secret failed")
+      },
+      runtimeWakeScheduleId: () => "schedule_tick_partial_1",
+      runtimeWakeScheduleTickId: () => "tick_partial_1",
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T13:20:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_tick_partial_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_schedule", {
+      resumeId: "resume_tick_partial_1",
+      intervalMs: 60_000,
+      nextDueAt: "2026-05-11T13:19:00.000Z",
+      policy: { createContinuationPlan: true, maxContinuationPlansPerTick: 1 },
+      requestedBy: "operator",
+    })
+
+    const result = await server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:20:00.000Z", requestedBy: "operator" }) as { processed_count: number; wake_ids: string[]; plan_ids: string[]; skipped: Array<{ blockers: string[] }> }
+    expect(result.processed_count).toBe(1)
+    expect(result.wake_ids).toEqual(["wake_tick_partial_1"])
+    expect(result.plan_ids).toEqual([])
+    expect(JSON.stringify(result.skipped)).toContain("[REDACTED]")
+    expect(JSON.stringify(result.skipped)).not.toContain("partial-secret")
+    const schedule = await server.command("runtime.get_wake_schedule", { scheduleId: "schedule_tick_partial_1" }) as { last_wake_id?: string; next_due_at: string }
+    expect(schedule).toMatchObject({ last_wake_id: "wake_tick_partial_1", next_due_at: "2026-05-11T13:21:00.000Z" })
+
+    const rerun = await server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:20:30.000Z", requestedBy: "operator" }) as { processed_count: number; wake_ids: string[] }
+    expect(rerun).toMatchObject({ processed_count: 0, wake_ids: [] })
+    const events = await readJsonlEvents(dir)
+    expect(events.filter((event) => event.kind === "runtime_wake_assessment_created")).toHaveLength(1)
+    await server.shutdown()
+  })
+
   test("wake schedule write gates preserve read surfaces", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
