@@ -1370,6 +1370,61 @@ export type WakeSchedulesState = {
   commandError?: string
 }
 
+export type WakeSchedulerStatusSummary = "stopped" | "starting" | "running" | "stopping" | "failed" | string
+
+export type WakeSchedulerConfigSummary = {
+  enabled: boolean
+  interval_ms: number
+  max_due_items: number
+  dry_run: boolean
+  started_by?: string
+  heartbeat_interval_ms?: number
+  max_ticks_per_run?: number
+  stop_on_error: boolean
+}
+
+export type WakeSchedulerPreviewSummary = {
+  can_start: boolean
+  status: WakeSchedulerStatusSummary
+  config: WakeSchedulerConfigSummary
+  blockers: string[]
+  warnings: string[]
+  due_preview?: WakeScheduleTickPreviewSummary
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerStateSummary = {
+  status: WakeSchedulerStatusSummary
+  config: WakeSchedulerConfigSummary
+  started_at?: string
+  stopped_at?: string
+  last_tick_id?: string
+  last_tick_at?: string
+  last_error?: string
+  tick_count: number
+  heartbeat_count: number
+  next_tick_at?: string
+  started_by?: string
+  stopped_by?: string
+}
+
+export type WakeSchedulerEventRecordSummary = {
+  event_id?: string
+  kind: string
+  scheduler_status: WakeSchedulerStatusSummary
+  tick_id?: string
+  message?: string
+  created_at: string
+  requested_by?: string
+}
+
+export type WakeSchedulerUiState = {
+  preview?: WakeSchedulerPreviewSummary | null
+  status?: WakeSchedulerStateSummary | null
+  events: WakeSchedulerEventRecordSummary[]
+  commandError?: string
+}
+
 export type ResearchTopicSummary = {
   id: string
   title: string
@@ -1470,6 +1525,7 @@ export type UiState = {
   wakeAssessment?: WakeAssessmentState
   continuation?: ContinuationState
   wakeSchedules?: WakeSchedulesState
+  wakeScheduler?: WakeSchedulerUiState
 }
 
 export function initialState(projectDir: string): UiState {

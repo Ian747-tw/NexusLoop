@@ -84,6 +84,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...wakeAssessmentLines(state))
   out.push(...continuationLines(state))
   out.push(...wakeScheduleLines(state))
+  out.push(...wakeSchedulerLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -593,6 +594,42 @@ function wakeScheduleLines(state: UiState): string[] {
   if (schedules.recentTicks.length === 0) out.push("    - empty")
   else out.push(...schedules.recentTicks.slice(0, 10).map((tick) => `    - ${tick.tick_id} dry_run=${tick.dry_run} processed=${tick.processed_count}`))
   if (schedules.commandError) out.push(`  command_error=${redactText(schedules.commandError)}`)
+  return out
+}
+
+function wakeSchedulerLines(state: UiState): string[] {
+  const scheduler = state.wakeScheduler
+  const out = ["Wake scheduler"]
+  if (!scheduler) {
+    out.push("  status=stopped")
+    return out
+  }
+  if (scheduler.preview) {
+    const previewRecord = scheduler.preview
+    out.push(`  preview can_start=${previewRecord.can_start} status=${previewRecord.status} every_ms=${previewRecord.config.interval_ms} dry_run=${previewRecord.config.dry_run} max=${previewRecord.config.max_due_items}`)
+    if (previewRecord.due_preview) out.push(`  preview_due=${previewRecord.due_preview.due_count} eligible=${previewRecord.due_preview.eligible_count}`)
+    if (previewRecord.blockers.length > 0) {
+      out.push("  preview_blockers")
+      out.push(...previewRecord.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (scheduler.status) {
+    const status = scheduler.status
+    out.push(`  status=${status.status} ticks=${status.tick_count} heartbeats=${status.heartbeat_count} dry_run=${status.config.dry_run} every_ms=${status.config.interval_ms}`)
+    if (status.next_tick_at) out.push(`  next_tick=${status.next_tick_at}`)
+    if (status.last_tick_id) out.push(`  last_tick=${status.last_tick_id}`)
+    if (status.last_tick_at) out.push(`  last_tick_at=${status.last_tick_at}`)
+    if (status.last_error) out.push(`  last_error=${preview(redactText(status.last_error))}`)
+  } else {
+    out.push("  status=none")
+  }
+  out.push(`  events=${scheduler.events.length}`)
+  out.push("  recent_events")
+  if (scheduler.events.length === 0) out.push("    - empty")
+  else out.push(...scheduler.events.slice(0, 10).map((event) => `    - ${event.kind} status=${event.scheduler_status}${event.tick_id ? ` tick=${event.tick_id}` : ""}${event.message ? `: ${preview(redactText(event.message))}` : ""}`))
+  if (scheduler.commandError) out.push(`  command_error=${redactText(scheduler.commandError)}`)
   return out
 }
 

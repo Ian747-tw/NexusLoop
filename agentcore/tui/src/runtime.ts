@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerEventRecordSummary, WakeSchedulerPreviewSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -54,6 +54,8 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly continuationPlans: ContinuationPlanSummary[] = []
   private readonly wakeSchedules: WakeScheduleSummary[] = []
   private readonly wakeScheduleTicks: WakeScheduleTickResultSummary[] = []
+  private wakeSchedulerStatusRecord: WakeSchedulerStateSummary = fakeWakeSchedulerStatus()
+  private readonly wakeSchedulerEvents: WakeSchedulerEventRecordSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -399,6 +401,16 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.listWakeScheduleTicks(readLimit(payload.limit, 20))
       case "runtime.get_wake_schedule_tick":
         return this.getWakeScheduleTick(String(payload.tickId ?? payload.tick_id ?? ""))
+      case "runtime.preview_wake_scheduler_start":
+        return this.previewWakeSchedulerStart(payload)
+      case "runtime.start_wake_scheduler":
+        return this.startWakeScheduler(payload)
+      case "runtime.stop_wake_scheduler":
+        return this.stopWakeScheduler(payload)
+      case "runtime.wake_scheduler_status":
+        return this.wakeSchedulerStatus()
+      case "runtime.list_wake_scheduler_events":
+        return this.listWakeSchedulerEvents(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -1408,6 +1420,78 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private listWakeScheduleTicks(limit: number): WakeScheduleTickResultSummary[] {
     return this.wakeScheduleTicks.slice(0, limit)
+  }
+
+  private previewWakeSchedulerStart(payload: Record<string, unknown>): WakeSchedulerPreviewSummary {
+    const intervalMs = readNumber(payload.intervalMs ?? payload.interval_ms, 60_000)
+    if (intervalMs < 60_000) throw new Error("interval_ms must be at least 60000")
+    const maxDueItems = readLimit(payload.maxDueItems ?? payload.max_due_items, 5)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const blockers = this.wakeSchedulerStatusRecord.status === "running" ? ["wake scheduler is already running"] : []
+    return {
+      can_start: blockers.length === 0,
+      status: this.wakeSchedulerStatusRecord.status,
+      config: {
+        enabled: true,
+        interval_ms: intervalMs,
+        max_due_items: maxDueItems,
+        dry_run: dryRun,
+        heartbeat_interval_ms: intervalMs,
+        stop_on_error: payload.stopOnError === true || payload.stop_on_error === true,
+        started_by: "operator",
+      },
+      blockers,
+      warnings: [],
+      due_preview: this.previewWakeScheduleTick({ maxDueItems: maxDueItems, dryRun: true }),
+      redacted_summary_preview: `fake wake scheduler interval_ms=${intervalMs} dry_run=${dryRun}`,
+    }
+  }
+
+  private startWakeScheduler(payload: Record<string, unknown>): WakeSchedulerStateSummary {
+    const preview = this.previewWakeSchedulerStart(payload)
+    if (!preview.can_start) throw new Error(preview.blockers[0] ?? "wake scheduler cannot start")
+    this.wakeSchedulerStatusRecord = {
+      status: "running",
+      config: preview.config,
+      started_at: new Date(0).toISOString(),
+      tick_count: 0,
+      heartbeat_count: 0,
+      next_tick_at: new Date(preview.config.interval_ms).toISOString(),
+      started_by: "operator",
+    }
+    this.recordWakeSchedulerEvent("runtime_wake_scheduler_started", "running", "fake wake scheduler started")
+    return this.wakeSchedulerStatusRecord
+  }
+
+  private stopWakeScheduler(payload: Record<string, unknown>): WakeSchedulerStateSummary {
+    if (this.wakeSchedulerStatusRecord.status === "stopped") return this.wakeSchedulerStatusRecord
+    this.wakeSchedulerStatusRecord = {
+      ...this.wakeSchedulerStatusRecord,
+      status: "stopped",
+      stopped_at: new Date(0).toISOString(),
+      stopped_by: redactText(String(payload.requestedBy ?? payload.requested_by ?? "operator")),
+    }
+    this.recordWakeSchedulerEvent("runtime_wake_scheduler_stopped", "stopped", typeof payload.reason === "string" ? payload.reason : "fake wake scheduler stopped")
+    return this.wakeSchedulerStatusRecord
+  }
+
+  private wakeSchedulerStatus(): WakeSchedulerStateSummary {
+    return this.wakeSchedulerStatusRecord
+  }
+
+  private listWakeSchedulerEvents(limit: number): WakeSchedulerEventRecordSummary[] {
+    return this.wakeSchedulerEvents.slice(0, limit)
+  }
+
+  private recordWakeSchedulerEvent(kind: string, status: string, message: string): void {
+    this.wakeSchedulerEvents.unshift({
+      event_id: `fake-wake-scheduler-event-${this.wakeSchedulerEvents.length + 1}`,
+      kind,
+      scheduler_status: status,
+      message: redactText(message),
+      created_at: new Date(0).toISOString(),
+      requested_by: "operator",
+    })
   }
 
   private previewContinuationPlan(payload: Record<string, unknown>): ContinuationPlanPreviewSummary {
@@ -3362,6 +3446,22 @@ function fakeWakeSchedulePolicy(value: unknown): WakeSchedulePreviewSummary["pol
     include_write_steps: input.includeWriteSteps === true || input.include_write_steps === true,
     max_wake_assessments_per_tick: readLimit(input.maxWakeAssessmentsPerTick ?? input.max_wake_assessments_per_tick, 1),
     max_continuation_plans_per_tick: readLimit(input.maxContinuationPlansPerTick ?? input.max_continuation_plans_per_tick, createContinuationPlan ? 1 : 0),
+  }
+}
+
+function fakeWakeSchedulerStatus(): WakeSchedulerStateSummary {
+  return {
+    status: "stopped",
+    config: {
+      enabled: false,
+      interval_ms: 60_000,
+      max_due_items: 5,
+      dry_run: false,
+      heartbeat_interval_ms: 60_000,
+      stop_on_error: false,
+    },
+    tick_count: 0,
+    heartbeat_count: 0,
   }
 }
 
