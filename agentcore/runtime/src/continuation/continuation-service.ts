@@ -192,7 +192,7 @@ export class ContinuationService {
       }
       await this.options.eventStore.append({ kind: "runtime_continuation_step_succeeded", plan_id: plan.plan_id, step_id: step.step_id, result })
       const afterSuccess = await this.requirePlan(plan.plan_id)
-      if (afterSuccess.steps.every((item) => item.status !== "pending" && item.status !== "running")) {
+      if (afterSuccess.status === "active" && afterSuccess.steps.every((item) => item.status !== "pending" && item.status !== "running")) {
         await this.options.eventStore.append({ kind: "runtime_continuation_plan_completed", plan_id: plan.plan_id, completed_at: completedAt, requested_by: normalized.requested_by })
       }
       return redactValue(result)
@@ -339,7 +339,7 @@ function applyContinuationEvent(plans: Map<string, ContinuationPlan>, event: Con
   const updatedAt = stringField(event.completed_at) ?? stringField(event.paused_at) ?? stringField(event.cancelled_at) ?? stringField(event.timestamp) ?? plan.updated_at
   if (event.kind === "runtime_continuation_step_started") {
     updateStep(plan, stringField(event.step_id), { status: "running", started_at: stringField(event.started_at) ?? updatedAt })
-    plan.status = "active"
+    if (!preservePlanStatusAgainstStepResult(plan.status)) plan.status = "active"
     plan.updated_at = updatedAt
     plan.current_step_index = typeof event.index === "number" ? event.index : plan.current_step_index
     refreshCounts(plan)
@@ -354,7 +354,7 @@ function applyContinuationEvent(plans: Map<string, ContinuationPlan>, event: Con
       started_at: result.started_at,
       completed_at: result.completed_at,
     })
-    plan.status = result.status === "failed" ? "failed" : "active"
+    if (!preservePlanStatusAgainstStepResult(plan.status)) plan.status = result.status === "failed" ? "failed" : "active"
     plan.updated_at = result.completed_at
     refreshCounts(plan)
     return
@@ -376,6 +376,10 @@ function refreshCounts(plan: ContinuationPlan): void {
   plan.completed_step_count = plan.steps.filter((step) => step.status === "succeeded" || step.status === "skipped").length
   plan.failed_step_count = plan.steps.filter((step) => step.status === "failed").length
   plan.current_step_index = nextPendingIndex(plan.steps)
+}
+
+function preservePlanStatusAgainstStepResult(status: ContinuationPlanStatus): boolean {
+  return status === "paused" || status === "cancelled" || status === "completed" || status === "failed"
 }
 
 function stepsFromSuggestions(suggestions: WakeSuggestedCommand[], input: NormalizedPlanInput): ContinuationStepPreview[] {

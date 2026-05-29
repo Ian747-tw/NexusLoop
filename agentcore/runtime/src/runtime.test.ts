@@ -13,6 +13,7 @@ import { RuntimeEventBus } from "./events/event-bus"
 import type { RuntimeEvent } from "./events/event-types"
 import type { RuntimeRestoreService } from "./checkpoints/runtime-restore-service"
 import { WakeAssessmentService } from "./wake/wake-hook-service"
+import { ContinuationService } from "./continuation/continuation-service"
 import { MissionRegistry } from "./missions/mission-registry"
 import { ReviewRegistry } from "./missions/review-registry"
 import { ProposalRegistry } from "./missions/proposal-registry"
@@ -5569,6 +5570,65 @@ describe("RuntimeServer core", () => {
     await expect(server.command("runtime.execute_continuation_step", { planId: plan.plan_id, index: writeStep!.index, allowWrite: true, requestedBy: "operator" })).rejects.toThrow("continuation write commands are blocked by default")
     expect(await readJsonlEvents(dir)).toHaveLength(beforeBlocked.length)
     await server.shutdown()
+  })
+
+  test("continuation late step results preserve cancelled plan state", async () => {
+    const dir = await tempProject()
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    let releaseRead!: (value: unknown) => void
+    let markReadStarted!: () => void
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve
+    })
+    const readResult = new Promise<unknown>((resolve) => {
+      releaseRead = resolve
+    })
+    const service = new ContinuationService({
+      eventStore,
+      wakeService: {
+        get: async () => ({
+          wake_id: "wake_continue_cancel_1",
+          trigger_kind: "manual",
+          resume_id: "resume_continue_cancel_1",
+          checkpoint_id: "checkpoint_continue_cancel_1",
+          created_at: "2026-05-11T12:10:00.000Z",
+          requested_by: "operator",
+          allowed: true,
+          blockers: [],
+          warnings: [],
+          current_event_count: 1,
+          sections: {},
+          suggested_commands: [{ label: "List missions", command: "/missions", command_type: "read" }],
+          assessment_hash: "wake-hash",
+        }),
+      } as unknown as WakeAssessmentService,
+      executeReadCommand: async () => {
+        markReadStarted()
+        return readResult
+      },
+      idFactory: () => "plan_continue_cancel_1",
+      stepIdFactory: () => "step_continue_cancel_1",
+      now: () => new Date("2026-05-11T12:10:00.000Z"),
+    })
+
+    await service.create({ wake_id: "wake_continue_cancel_1", requested_by: "operator" })
+    const running = service.executeStep({ plan_id: "plan_continue_cancel_1", requested_by: "operator" })
+    await readStarted
+    const cancelled = await service.cancel({ plan_id: "plan_continue_cancel_1", requested_by: "operator", reason: "operator stop token=late-cancel-secret" })
+    expect(cancelled.status).toBe("cancelled")
+    releaseRead([])
+    await expect(running).resolves.toMatchObject({ status: "succeeded", command: "/missions" })
+
+    const projected = await service.get("plan_continue_cancel_1")
+    expect(projected).toMatchObject({
+      plan_id: "plan_continue_cancel_1",
+      status: "cancelled",
+      completed_step_count: 1,
+    })
+    expect(projected?.steps[0]).toMatchObject({ status: "succeeded", command: "/missions" })
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).not.toContain("runtime_continuation_plan_completed")
+    expect(JSON.stringify(events)).not.toContain("late-cancel-secret")
   })
 
   test("continuation plan max_bytes accounts for persisted event payload", async () => {
