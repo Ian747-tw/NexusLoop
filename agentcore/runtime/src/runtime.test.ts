@@ -5569,6 +5569,8 @@ describe("RuntimeServer core", () => {
     const beforeBlocked = await readJsonlEvents(dir)
     await expect(server.command("runtime.execute_continuation_step", { planId: plan.plan_id, index: writeStep!.index, allowWrite: true, requestedBy: "operator" })).rejects.toThrow("continuation write commands are blocked by default")
     expect(await readJsonlEvents(dir)).toHaveLength(beforeBlocked.length)
+    await expect(server.command("runtime.execute_continuation_step", { planId: plan.plan_id, index: 999, requestedBy: "operator" })).rejects.toThrow("index must be no greater than 49")
+    expect(await readJsonlEvents(dir)).toHaveLength(beforeBlocked.length)
     await server.shutdown()
   })
 

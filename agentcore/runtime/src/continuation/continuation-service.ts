@@ -577,7 +577,8 @@ function optionalPositiveInteger(value: unknown, field: string, max: number): nu
 function optionalNonnegativeInteger(value: unknown, field: string, max: number): number | undefined {
   if (value === undefined) return undefined
   if (!Number.isInteger(value) || Number(value) < 0) throw new Error(`${field} must be a nonnegative integer`)
-  return Math.min(Number(value), max)
+  if (Number(value) > max) throw new Error(`${field} must be no greater than ${max}`)
+  return Number(value)
 }
 
 function optionalString(value: unknown, field: string): string | undefined {
