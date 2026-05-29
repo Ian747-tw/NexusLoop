@@ -5547,11 +5547,12 @@ describe("RuntimeServer core", () => {
       steps: Array<{ index: number; command: string; status: string }>
     }
     const beforeDryRun = await readJsonlEvents(dir)
-    const dryRun = await server.command("runtime.execute_continuation_step", { planId: plan.plan_id, dryRun: true, requestedBy: "operator" }) as { dry_run: boolean; status: string }
+    const dryRun = await server.command("runtime.execute_continuation_step", { planId: plan.plan_id, index: 0, dryRun: true, requestedBy: "operator" }) as { dry_run: boolean; status: string; index: number }
     expect(dryRun).toMatchObject({ dry_run: true, status: "succeeded" })
+    expect(dryRun.index).toBe(0)
     expect(await readJsonlEvents(dir)).toHaveLength(beforeDryRun.length)
-    const result = await server.command("runtime.execute_continuation_step", { planId: plan.plan_id, requestedBy: "operator" }) as { step_id: string; status: string; command: string }
-    expect(result).toMatchObject({ step_id: "step_continue_step_1", status: "succeeded", command: "/resume-anchor resume_continue_step_1" })
+    const result = await server.command("runtime.execute_continuation_step", { planId: plan.plan_id, index: 0, requestedBy: "operator" }) as { step_id: string; status: string; command: string; index: number }
+    expect(result).toMatchObject({ step_id: "step_continue_step_1", status: "succeeded", command: "/resume-anchor resume_continue_step_1", index: 0 })
     const afterOne = await server.command("runtime.get_continuation_plan", { planId: plan.plan_id }) as { completed_step_count: number; steps: Array<{ status: string }> }
     expect(afterOne.completed_step_count).toBe(1)
     expect(afterOne.steps.filter((step) => step.status === "succeeded")).toHaveLength(1)

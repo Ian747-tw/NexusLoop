@@ -308,7 +308,7 @@ export function readContinuationStepInput(payload: Record<string, unknown>): Con
   return {
     plan_id: optionalString(payload.planId ?? payload.plan_id, "planId"),
     step_id: optionalString(payload.stepId ?? payload.step_id, "stepId"),
-    index: optionalPositiveInteger(payload.index, "index", HARD_MAX_STEPS),
+    index: optionalNonnegativeInteger(payload.index, "index", HARD_MAX_STEPS - 1),
     dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
     allow_write: optionalBoolean(payload.allowWrite ?? payload.allow_write, "allowWrite"),
     requested_by: optionalString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
@@ -546,6 +546,12 @@ function readLimit(value: unknown): number {
 function optionalPositiveInteger(value: unknown, field: string, max: number): number | undefined {
   if (value === undefined) return undefined
   if (!Number.isInteger(value) || Number(value) < 1) throw new Error(`${field} must be a positive integer`)
+  return Math.min(Number(value), max)
+}
+
+function optionalNonnegativeInteger(value: unknown, field: string, max: number): number | undefined {
+  if (value === undefined) return undefined
+  if (!Number.isInteger(value) || Number(value) < 0) throw new Error(`${field} must be a nonnegative integer`)
   return Math.min(Number(value), max)
 }
 
