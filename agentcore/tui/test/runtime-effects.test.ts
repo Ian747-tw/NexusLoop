@@ -2668,6 +2668,13 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.lastResult).toMatchObject({ command: "/handoff missing-proposal", ok: false })
     expect(state.operatorActions?.commandError).toContain("not found")
     expect(state.operatorActions?.staged?.command).toBe("/handoff missing-proposal")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/schedule-wake", "resume=missing-resume", "every=60s"] })
+    expect(state.operatorActions?.staged?.command).toBe("/schedule-wake resume=missing-resume every=60s")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/schedule-wake resume=missing-resume every=60s", ok: false })
+    expect(state.operatorActions?.commandError).toContain("runtime resume anchor not found")
+    expect(state.operatorActions?.staged?.command).toBe("/schedule-wake resume=missing-resume every=60s")
   })
 
   test("fake commander queue ordering applies priority tie-break before target id", () => {

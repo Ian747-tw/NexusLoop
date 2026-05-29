@@ -1971,6 +1971,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError
   if (wakeAssessmentCommands.has(command)) return state.wakeAssessment?.commandError
   if (continuationCommands.has(command)) return state.continuation?.commandError
+  if (wakeScheduleCommands.has(command)) return state.wakeSchedules?.commandError
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
