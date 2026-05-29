@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -52,6 +52,8 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
   private readonly wakeAssessments: WakeAssessmentSummary[] = []
   private readonly continuationPlans: ContinuationPlanSummary[] = []
+  private readonly wakeSchedules: WakeScheduleSummary[] = []
+  private readonly wakeScheduleTicks: WakeScheduleTickResultSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -375,6 +377,28 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.pauseContinuationPlan(payload)
       case "runtime.cancel_continuation_plan":
         return this.cancelContinuationPlan(payload)
+      case "runtime.preview_wake_schedule":
+        return this.previewWakeSchedule(payload)
+      case "runtime.create_wake_schedule":
+        return this.createWakeSchedule(payload)
+      case "runtime.get_wake_schedule":
+        return this.getWakeSchedule(String(payload.scheduleId ?? payload.schedule_id ?? ""))
+      case "runtime.list_wake_schedules":
+        return this.listWakeSchedules(readLimit(payload.limit, 20))
+      case "runtime.pause_wake_schedule":
+        return this.pauseWakeSchedule(payload)
+      case "runtime.resume_wake_schedule":
+        return this.resumeWakeSchedule(payload)
+      case "runtime.cancel_wake_schedule":
+        return this.cancelWakeSchedule(payload)
+      case "runtime.preview_wake_schedule_tick":
+        return this.previewWakeScheduleTick(payload)
+      case "runtime.execute_wake_schedule_tick":
+        return this.executeWakeScheduleTick(payload)
+      case "runtime.list_wake_schedule_ticks":
+        return this.listWakeScheduleTicks(readLimit(payload.limit, 20))
+      case "runtime.get_wake_schedule_tick":
+        return this.getWakeScheduleTick(String(payload.tickId ?? payload.tick_id ?? ""))
       case "runtime.submit_user_message":
         return this.createMission(String(payload.message ?? ""))
       case "runtime.resume":
@@ -1220,6 +1244,164 @@ export class FakeRuntimeClient implements RuntimeClient {
       summary_preview: `fake wake checkpoint=${wake.checkpoint_id ?? "none"} allowed=${wake.allowed}`,
       assessment_hash: wake.assessment_hash,
     }))
+  }
+
+  private previewWakeSchedule(payload: Record<string, unknown>): WakeSchedulePreviewSummary {
+    const resumeId = requiredString(String(payload.resumeId ?? payload.resume_id ?? ""), "resumeId")
+    const intervalMs = readNumber(payload.intervalMs ?? payload.interval_ms, 60_000)
+    if (intervalMs < 60_000) throw new Error("interval_ms must be at least 60000")
+    const anchor = this.getCheckpointResumeAnchor(resumeId)
+    const blockers: string[] = []
+    if (!anchor) blockers.push("runtime resume anchor not found")
+    const nextDueAt = typeof (payload.nextDueAt ?? payload.next_due_at) === "string" ? redactText(String(payload.nextDueAt ?? payload.next_due_at)) : new Date(0).toISOString()
+    const policy = fakeWakeSchedulePolicy(payload.policy)
+    return {
+      resume_id: resumeId,
+      checkpoint_id: anchor?.checkpoint_id,
+      title: redactText(String(payload.title ?? "Manual wake schedule")),
+      interval_ms: intervalMs,
+      next_due_at: nextDueAt,
+      policy,
+      can_create: blockers.length === 0,
+      blockers: blockers.map(redactText),
+      warnings: [],
+      redacted_summary_preview: `fake wake schedule resume=${resumeId} interval_ms=${intervalMs}`,
+    }
+  }
+
+  private createWakeSchedule(payload: Record<string, unknown>): WakeScheduleSummary {
+    const preview = this.previewWakeSchedule(payload)
+    if (!preview.can_create) throw new Error(preview.blockers[0] ?? "wake schedule is blocked")
+    const number = this.wakeSchedules.length + 1
+    const schedule: WakeScheduleSummary = {
+      schedule_id: `fake-wake-schedule-${number}`,
+      resume_id: preview.resume_id,
+      checkpoint_id: preview.checkpoint_id,
+      status: "active",
+      title: preview.title,
+      interval_ms: preview.interval_ms,
+      next_due_at: preview.next_due_at,
+      created_at: new Date(0).toISOString(),
+      created_by: redactText(String(payload.createdBy ?? payload.created_by ?? payload.requestedBy ?? payload.requested_by ?? "operator")),
+      updated_at: new Date(0).toISOString(),
+      policy: preview.policy,
+      reason: typeof payload.reason === "string" ? redactText(payload.reason) : undefined,
+      schedule_hash: `fake-wake-schedule-hash-${number}`,
+      warnings: preview.warnings,
+    }
+    this.wakeSchedules.unshift(schedule)
+    return schedule
+  }
+
+  private getWakeSchedule(scheduleId: string): WakeScheduleSummary | null {
+    const id = requiredString(scheduleId, "scheduleId")
+    return this.wakeSchedules.find((schedule) => schedule.schedule_id === id) ?? null
+  }
+
+  private listWakeSchedules(limit: number): WakeScheduleRecordSummary[] {
+    return this.wakeSchedules.slice(0, limit).map((schedule) => wakeScheduleRecord(schedule))
+  }
+
+  private pauseWakeSchedule(payload: Record<string, unknown>): WakeScheduleSummary {
+    return this.setWakeScheduleStatus(String(payload.scheduleId ?? payload.schedule_id ?? ""), "paused")
+  }
+
+  private resumeWakeSchedule(payload: Record<string, unknown>): WakeScheduleSummary {
+    return this.setWakeScheduleStatus(String(payload.scheduleId ?? payload.schedule_id ?? ""), "active")
+  }
+
+  private cancelWakeSchedule(payload: Record<string, unknown>): WakeScheduleSummary {
+    return this.setWakeScheduleStatus(String(payload.scheduleId ?? payload.schedule_id ?? ""), "cancelled")
+  }
+
+  private setWakeScheduleStatus(scheduleId: string, status: "active" | "paused" | "cancelled"): WakeScheduleSummary {
+    const schedule = this.getWakeSchedule(scheduleId)
+    if (!schedule) throw new Error("wake schedule not found")
+    if (schedule.status === "cancelled") throw new Error("wake schedule is cancelled")
+    schedule.status = status
+    schedule.updated_at = new Date(0).toISOString()
+    return schedule
+  }
+
+  private previewWakeScheduleTick(payload: Record<string, unknown>): WakeScheduleTickPreviewSummary {
+    const now = typeof payload.now === "string" ? payload.now : new Date(0).toISOString()
+    const maxItems = readLimit(payload.maxDueItems ?? payload.max_due_items, 5)
+    const items = this.wakeSchedules.slice().sort((left, right) => left.next_due_at.localeCompare(right.next_due_at)).slice(0, maxItems).map((schedule) => {
+      const due = schedule.status === "active" && Date.parse(schedule.next_due_at) <= Date.parse(now)
+      const blockers = schedule.status === "active" ? [] : [`wake schedule is ${schedule.status}`]
+      return {
+        schedule_id: schedule.schedule_id,
+        resume_id: schedule.resume_id,
+        checkpoint_id: schedule.checkpoint_id,
+        due,
+        status: schedule.status,
+        next_due_at: schedule.next_due_at,
+        last_tick_at: schedule.last_tick_at,
+        blockers,
+        warnings: [],
+        would_create_wake: due && blockers.length === 0 && schedule.policy.create_wake_assessment,
+        would_create_continuation_plan: due && blockers.length === 0 && schedule.policy.create_wake_assessment && schedule.policy.create_continuation_plan,
+      }
+    })
+    return {
+      now,
+      due_count: items.filter((item) => item.due).length,
+      eligible_count: items.filter((item) => item.due && item.blockers.length === 0).length,
+      blocked_count: items.filter((item) => item.due && item.blockers.length > 0).length,
+      items,
+      max_items: maxItems,
+      blockers: [],
+      warnings: [],
+    }
+  }
+
+  private executeWakeScheduleTick(payload: Record<string, unknown>): WakeScheduleTickResultSummary {
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const preview = this.previewWakeScheduleTick(payload)
+    const wakeIds: string[] = []
+    const planIds: string[] = []
+    if (!dryRun) {
+      for (const item of preview.items.filter((entry) => entry.due && entry.blockers.length === 0)) {
+        const schedule = this.getWakeSchedule(item.schedule_id)
+        if (!schedule) continue
+        let wakeId: string | undefined
+        if (schedule.policy.create_wake_assessment) {
+          const wake = this.createWakeAssessment({ resumeId: schedule.resume_id, requestedBy: payload.requestedBy ?? payload.requested_by ?? "operator" })
+          wakeId = wake.wake_id
+          wakeIds.push(wake.wake_id)
+        }
+        if (wakeId && schedule.policy.create_continuation_plan) {
+          const plan = this.createContinuationPlan({ wakeId, requestedBy: payload.requestedBy ?? payload.requested_by ?? "operator" })
+          planIds.push(plan.plan_id)
+          schedule.last_plan_id = plan.plan_id
+        }
+        schedule.last_tick_at = preview.now
+        schedule.last_wake_id = wakeId
+        schedule.next_due_at = new Date(Date.parse(preview.now) + schedule.interval_ms).toISOString()
+      }
+    }
+    const tick: WakeScheduleTickResultSummary = {
+      tick_id: `fake-wake-tick-${this.wakeScheduleTicks.length + 1}`,
+      now: preview.now,
+      processed_count: preview.items.filter((entry) => entry.due && entry.blockers.length === 0).length,
+      wake_ids: dryRun ? [] : wakeIds,
+      plan_ids: dryRun ? [] : planIds,
+      skipped: preview.items.filter((entry) => entry.blockers.length > 0),
+      created_at: new Date(0).toISOString(),
+      requested_by: redactText(String(payload.requestedBy ?? payload.requested_by ?? "operator")),
+      dry_run: dryRun,
+    }
+    if (!dryRun) this.wakeScheduleTicks.unshift(tick)
+    return tick
+  }
+
+  private getWakeScheduleTick(tickId: string): WakeScheduleTickResultSummary | null {
+    const id = requiredString(tickId, "tickId")
+    return this.wakeScheduleTicks.find((tick) => tick.tick_id === id) ?? null
+  }
+
+  private listWakeScheduleTicks(limit: number): WakeScheduleTickResultSummary[] {
+    return this.wakeScheduleTicks.slice(0, limit)
   }
 
   private previewContinuationPlan(payload: Record<string, unknown>): ContinuationPlanPreviewSummary {
@@ -3148,6 +3330,32 @@ function continuationRecord(plan: ContinuationPlanSummary): ContinuationPlanReco
     failed_step_count: plan.failed_step_count,
     summary_preview: `fake continuation wake=${plan.wake_id} status=${plan.status}`,
     plan_hash: plan.plan_hash,
+  }
+}
+
+function wakeScheduleRecord(schedule: WakeScheduleSummary): WakeScheduleRecordSummary {
+  return {
+    schedule_id: schedule.schedule_id,
+    resume_id: schedule.resume_id,
+    status: schedule.status,
+    title: schedule.title,
+    next_due_at: schedule.next_due_at,
+    last_tick_at: schedule.last_tick_at,
+    last_wake_id: schedule.last_wake_id,
+    last_plan_id: schedule.last_plan_id,
+    summary_preview: `fake wake schedule resume=${schedule.resume_id} status=${schedule.status}`,
+  }
+}
+
+function fakeWakeSchedulePolicy(value: unknown): WakeSchedulePreviewSummary["policy"] {
+  const input = isRecord(value) ? value : {}
+  const createContinuationPlan = input.createContinuationPlan === true || input.create_continuation_plan === true
+  return {
+    create_wake_assessment: input.createWakeAssessment === false || input.create_wake_assessment === false ? false : true,
+    create_continuation_plan: createContinuationPlan,
+    include_write_steps: input.includeWriteSteps === true || input.include_write_steps === true,
+    max_wake_assessments_per_tick: readLimit(input.maxWakeAssessmentsPerTick ?? input.max_wake_assessments_per_tick, 1),
+    max_continuation_plans_per_tick: readLimit(input.maxContinuationPlansPerTick ?? input.max_continuation_plans_per_tick, createContinuationPlan ? 1 : 0),
   }
 }
 

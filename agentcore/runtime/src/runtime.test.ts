@@ -5905,6 +5905,174 @@ describe("RuntimeServer core", () => {
     await viewServer.shutdown()
   })
 
+  test("wake schedules preview create list and pause resume cancel through durable events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_schedule_1",
+      runtimeResumeId: () => "resume_schedule_1",
+      runtimeWakeScheduleId: () => "schedule_1",
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T13:00:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_schedule_1", requestedBy: "operator" })
+
+    const preview = await server.command("runtime.preview_wake_schedule", {
+      resumeId: "resume_schedule_1",
+      intervalMs: 60_000,
+      title: "schedule token=schedule-secret",
+      requestedBy: "operator",
+    }) as { can_create: boolean; next_due_at: string; title: string }
+    expect(preview).toMatchObject({ can_create: true, next_due_at: "2026-05-11T13:01:00.000Z" })
+    expect(JSON.stringify(preview)).not.toContain("schedule-secret")
+
+    const schedule = await server.command("runtime.create_wake_schedule", {
+      resumeId: "resume_schedule_1",
+      intervalMs: 60_000,
+      title: "schedule token=schedule-secret",
+      reason: "reason token=schedule-secret",
+      requestedBy: "operator",
+    }) as { schedule_id: string; status: string; reason: string }
+    expect(schedule).toMatchObject({ schedule_id: "schedule_1", status: "active" })
+    expect(JSON.stringify(schedule)).not.toContain("schedule-secret")
+
+    const paused = await server.command("runtime.pause_wake_schedule", { scheduleId: "schedule_1", requestedBy: "operator" }) as { status: string }
+    expect(paused.status).toBe("paused")
+    const resumed = await server.command("runtime.resume_wake_schedule", { scheduleId: "schedule_1", requestedBy: "operator" }) as { status: string }
+    expect(resumed.status).toBe("active")
+    const cancelled = await server.command("runtime.cancel_wake_schedule", { scheduleId: "schedule_1", requestedBy: "operator" }) as { status: string }
+    expect(cancelled.status).toBe("cancelled")
+    const listed = await server.command("runtime.list_wake_schedules", { limit: 10 }) as Array<{ schedule_id: string; status: string }>
+    expect(listed[0]).toMatchObject({ schedule_id: "schedule_1", resume_id: "resume_schedule_1", status: "cancelled", title: "schedule [REDACTED]", next_due_at: "2026-05-11T13:01:00.000Z", summary_preview: expect.any(String) })
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_schedule_created")
+    expect(JSON.stringify(events)).not.toContain("schedule-secret")
+    await server.shutdown()
+  })
+
+  test("wake schedule tick creates bounded wake assessments and optional continuation plans without executing steps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let continuationStepIndex = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_tick_1",
+      runtimeResumeId: () => "resume_tick_1",
+      runtimeWakeId: () => "wake_tick_assessment_1",
+      runtimeContinuationId: () => "plan_tick_1",
+      runtimeContinuationStepId: () => `step_tick_${++continuationStepIndex}`,
+      runtimeWakeScheduleId: () => "schedule_tick_1",
+      runtimeWakeScheduleTickId: () => "tick_1",
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T13:05:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_tick_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_schedule", {
+      resumeId: "resume_tick_1",
+      intervalMs: 60_000,
+      nextDueAt: "2026-05-11T13:04:00.000Z",
+      policy: { createContinuationPlan: true, maxContinuationPlansPerTick: 1 },
+      requestedBy: "operator",
+    })
+    const preview = await server.command("runtime.preview_wake_schedule_tick", { now: "2026-05-11T13:05:00.000Z", maxDueItems: 5 }) as { due_count: number; eligible_count: number; items: Array<{ would_create_wake: boolean; would_create_continuation_plan: boolean }> }
+    expect(preview.due_count).toBe(1)
+    expect(preview.eligible_count).toBe(1)
+    expect(preview.items[0]).toMatchObject({ would_create_wake: true, would_create_continuation_plan: true })
+
+    const beforeDryRun = await readJsonlEvents(dir)
+    const dryRun = await server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:05:00.000Z", dryRun: true, requestedBy: "operator" }) as { dry_run: boolean; processed_count: number; wake_ids: string[]; plan_ids: string[] }
+    expect(dryRun).toMatchObject({ dry_run: true, processed_count: 1, wake_ids: [], plan_ids: [] })
+    expect(await readJsonlEvents(dir)).toHaveLength(beforeDryRun.length)
+
+    const result = await server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:05:00.000Z", requestedBy: "operator" }) as { processed_count: number; wake_ids: string[]; plan_ids: string[] }
+    expect(result).toMatchObject({ processed_count: 1, wake_ids: ["wake_tick_assessment_1"], plan_ids: ["plan_tick_1"] })
+    const schedule = await server.command("runtime.get_wake_schedule", { scheduleId: "schedule_tick_1" }) as { last_wake_id?: string; last_plan_id?: string; next_due_at: string }
+    expect(schedule).toMatchObject({ last_wake_id: "wake_tick_assessment_1", last_plan_id: "plan_tick_1", next_due_at: "2026-05-11T13:06:00.000Z" })
+    const plan = await server.command("runtime.get_continuation_plan", { planId: "plan_tick_1" }) as { completed_step_count: number; steps: Array<{ status: string }> }
+    expect(plan.completed_step_count).toBe(0)
+    expect(plan.steps.some((step) => step.status === "pending")).toBe(true)
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_schedule_tick_completed")
+    expect(events.map((event) => event.kind)).not.toContain("runtime_continuation_step_started")
+
+    const rerun = await server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:05:30.000Z", requestedBy: "operator" }) as { processed_count: number; wake_ids: string[] }
+    expect(rerun).toMatchObject({ processed_count: 0, wake_ids: [] })
+    await server.shutdown()
+  })
+
+  test("wake schedule concurrent manual ticks do not duplicate a due wake assessment", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let tickId = 0
+    let wakeId = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_tick_concurrent_1",
+      runtimeResumeId: () => "resume_tick_concurrent_1",
+      runtimeWakeId: () => `wake_tick_concurrent_${++wakeId}`,
+      runtimeWakeScheduleId: () => "schedule_tick_concurrent_1",
+      runtimeWakeScheduleTickId: () => `tick_concurrent_${++tickId}`,
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T13:10:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_tick_concurrent_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_schedule", {
+      resumeId: "resume_tick_concurrent_1",
+      intervalMs: 60_000,
+      nextDueAt: "2026-05-11T13:09:00.000Z",
+      requestedBy: "operator",
+    })
+
+    const [first, second] = await Promise.all([
+      server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:10:00.000Z", requestedBy: "operator" }),
+      server.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:10:00.000Z", requestedBy: "operator" }),
+    ]) as Array<{ processed_count: number; wake_ids: string[] }>
+    expect(first.processed_count + second.processed_count).toBe(1)
+    expect([...first.wake_ids, ...second.wake_ids]).toEqual(["wake_tick_concurrent_1"])
+    const events = await readJsonlEvents(dir)
+    expect(events.filter((event) => event.kind === "runtime_wake_assessment_created")).toHaveLength(1)
+    await server.shutdown()
+  })
+
+  test("wake schedule write gates preserve read surfaces", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_schedule_gate_1",
+      runtimeResumeId: () => "resume_schedule_gate_1",
+      runtimeWakeScheduleId: () => "schedule_gate_1",
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T13:15:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_schedule_gate_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_schedule", { resumeId: "resume_schedule_gate_1", intervalMs: 60_000, requestedBy: "operator" })
+    await server.shutdown()
+
+    const viewServer = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    const preview = await viewServer.command("runtime.preview_wake_schedule_tick", { now: "2026-05-11T13:16:00.000Z" }) as { due_count: number }
+    expect(preview.due_count).toBe(1)
+    const listed = await viewServer.command("runtime.list_wake_schedules", { limit: 10 }) as Array<{ schedule_id: string }>
+    expect(listed.map((item) => item.schedule_id)).toEqual(["schedule_gate_1"])
+    await expect(viewServer.command("runtime.create_wake_schedule", { resumeId: "resume_schedule_gate_1", intervalMs: 60_000, requestedBy: "operator" })).rejects.toThrow("runtime.create_wake_schedule requires active mode")
+    await expect(viewServer.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:16:00.000Z", requestedBy: "operator" })).rejects.toThrow("runtime.execute_wake_schedule_tick requires active mode")
+    await expect(viewServer.command("runtime.preview_wake_schedule", { resumeId: "resume_schedule_gate_1", intervalMs: 1, requestedBy: "operator" })).rejects.toThrow("interval_ms must be at least 60000")
+    await viewServer.shutdown()
+  })
+
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

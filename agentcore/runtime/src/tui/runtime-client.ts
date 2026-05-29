@@ -21,6 +21,7 @@ import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPrevie
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAssessmentRecord } from "../wake/wake-hook-types"
 import type { ContinuationPlan, ContinuationPlanDecisionInput, ContinuationPlanInput, ContinuationPlanPreview, ContinuationPlanRecord, ContinuationStepInput, ContinuationStepResult } from "../continuation/continuation-types"
+import type { WakeSchedule, WakeScheduleDecisionInput, WakeScheduleInput, WakeSchedulePreview, WakeScheduleRecord, WakeScheduleTickInput, WakeScheduleTickPreview, WakeScheduleTickResult } from "../schedules/wake-schedule-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -221,6 +222,17 @@ export interface RuntimeClient {
   command(name: "runtime.execute_continuation_step", payload: ContinuationStepInput): Promise<ContinuationStepResult>
   command(name: "runtime.pause_continuation_plan", payload: ContinuationPlanDecisionInput): Promise<ContinuationPlan>
   command(name: "runtime.cancel_continuation_plan", payload: ContinuationPlanDecisionInput): Promise<ContinuationPlan>
+  command(name: "runtime.preview_wake_schedule", payload: WakeScheduleInput): Promise<WakeSchedulePreview>
+  command(name: "runtime.create_wake_schedule", payload: WakeScheduleInput): Promise<WakeSchedule>
+  command(name: "runtime.get_wake_schedule", payload: { scheduleId: string } | { schedule_id: string }): Promise<WakeSchedule | null>
+  command(name: "runtime.list_wake_schedules", payload?: { limit?: number }): Promise<WakeScheduleRecord[]>
+  command(name: "runtime.pause_wake_schedule", payload: WakeScheduleDecisionInput): Promise<WakeSchedule>
+  command(name: "runtime.resume_wake_schedule", payload: WakeScheduleDecisionInput): Promise<WakeSchedule>
+  command(name: "runtime.cancel_wake_schedule", payload: WakeScheduleDecisionInput): Promise<WakeSchedule>
+  command(name: "runtime.preview_wake_schedule_tick", payload?: WakeScheduleTickInput): Promise<WakeScheduleTickPreview>
+  command(name: "runtime.execute_wake_schedule_tick", payload?: WakeScheduleTickInput): Promise<WakeScheduleTickResult>
+  command(name: "runtime.list_wake_schedule_ticks", payload?: { limit?: number }): Promise<WakeScheduleTickResult[]>
+  command(name: "runtime.get_wake_schedule_tick", payload: { tickId: string } | { tick_id: string }): Promise<WakeScheduleTickResult | null>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
   command(name: "research.list_events", payload?: { options?: ListResearchEventsOptions }): Promise<ResearchEvent[]>
@@ -336,6 +348,17 @@ export interface RuntimeCommandEnvelope {
     | "runtime.execute_continuation_step"
     | "runtime.pause_continuation_plan"
     | "runtime.cancel_continuation_plan"
+    | "runtime.preview_wake_schedule"
+    | "runtime.create_wake_schedule"
+    | "runtime.get_wake_schedule"
+    | "runtime.list_wake_schedules"
+    | "runtime.pause_wake_schedule"
+    | "runtime.resume_wake_schedule"
+    | "runtime.cancel_wake_schedule"
+    | "runtime.preview_wake_schedule_tick"
+    | "runtime.execute_wake_schedule_tick"
+    | "runtime.list_wake_schedule_ticks"
+    | "runtime.get_wake_schedule_tick"
     | "research.list_topics"
     | "research.get_topic_snapshot"
     | "research.list_events"

@@ -56,6 +56,8 @@ import { WakeAssessmentService, readWakeAssessmentInput } from "./wake/wake-hook
 import type { WakeAssessment, WakeAssessmentPreview, WakeAssessmentRecord } from "./wake/wake-hook-types"
 import { ContinuationService, readContinuationPlanDecisionInput, readContinuationPlanInput, readContinuationStepInput } from "./continuation/continuation-service"
 import type { ContinuationPlan, ContinuationPlanPreview, ContinuationPlanRecord, ContinuationStepResult } from "./continuation/continuation-types"
+import { WakeScheduleService, readWakeScheduleDecisionInput, readWakeScheduleInput, readWakeScheduleTickInput } from "./schedules/wake-schedule-service"
+import type { WakeSchedule, WakeSchedulePreview, WakeScheduleRecord, WakeScheduleTickPreview, WakeScheduleTickResult } from "./schedules/wake-schedule-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -111,6 +113,9 @@ export interface RuntimeServerOptions {
   runtimeContinuationNow?: () => Date
   runtimeContinuationId?: () => string
   runtimeContinuationStepId?: () => string
+  runtimeWakeScheduleNow?: () => Date
+  runtimeWakeScheduleId?: () => string
+  runtimeWakeScheduleTickId?: () => string
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -174,6 +179,9 @@ export class RuntimeServer {
   private readonly runtimeContinuationNow?: () => Date
   private readonly runtimeContinuationId?: () => string
   private readonly runtimeContinuationStepId?: () => string
+  private readonly runtimeWakeScheduleNow?: () => Date
+  private readonly runtimeWakeScheduleId?: () => string
+  private readonly runtimeWakeScheduleTickId?: () => string
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -184,6 +192,7 @@ export class RuntimeServer {
   private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
   private wakeAssessmentServiceInstance: WakeAssessmentService | null = null
   private continuationServiceInstance: ContinuationService | null = null
+  private wakeScheduleServiceInstance: WakeScheduleService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -230,6 +239,9 @@ export class RuntimeServer {
     this.runtimeContinuationNow = options.runtimeContinuationNow
     this.runtimeContinuationId = options.runtimeContinuationId
     this.runtimeContinuationStepId = options.runtimeContinuationStepId
+    this.runtimeWakeScheduleNow = options.runtimeWakeScheduleNow
+    this.runtimeWakeScheduleId = options.runtimeWakeScheduleId
+    this.runtimeWakeScheduleTickId = options.runtimeWakeScheduleTickId
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -654,6 +666,28 @@ export class RuntimeServer {
         return this.pauseContinuationPlan(readContinuationPlanDecisionInput(payload))
       case "runtime.cancel_continuation_plan":
         return this.cancelContinuationPlan(readContinuationPlanDecisionInput(payload))
+      case "runtime.preview_wake_schedule":
+        return this.previewWakeSchedule(readWakeScheduleInput(payload))
+      case "runtime.create_wake_schedule":
+        return this.createWakeSchedule(readWakeScheduleInput(payload))
+      case "runtime.get_wake_schedule":
+        return this.getWakeSchedule(requiredString(payload.scheduleId ?? payload.schedule_id, "scheduleId"))
+      case "runtime.list_wake_schedules":
+        return this.listWakeSchedules(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.pause_wake_schedule":
+        return this.pauseWakeSchedule(readWakeScheduleDecisionInput(payload))
+      case "runtime.resume_wake_schedule":
+        return this.resumeWakeSchedule(readWakeScheduleDecisionInput(payload))
+      case "runtime.cancel_wake_schedule":
+        return this.cancelWakeSchedule(readWakeScheduleDecisionInput(payload))
+      case "runtime.preview_wake_schedule_tick":
+        return this.previewWakeScheduleTick(readWakeScheduleTickInput(payload))
+      case "runtime.execute_wake_schedule_tick":
+        return this.executeWakeScheduleTick(readWakeScheduleTickInput(payload))
+      case "runtime.list_wake_schedule_ticks":
+        return this.listWakeScheduleTicks(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.get_wake_schedule_tick":
+        return this.getWakeScheduleTick(requiredString(payload.tickId ?? payload.tick_id, "tickId"))
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -1197,6 +1231,55 @@ export class RuntimeServer {
     return this.continuationService().cancel(input)
   }
 
+  async previewWakeSchedule(input: Parameters<WakeScheduleService["preview"]>[0]): Promise<WakeSchedulePreview> {
+    return this.wakeScheduleService().preview(input)
+  }
+
+  async createWakeSchedule(input: Parameters<WakeScheduleService["create"]>[0]): Promise<WakeSchedule> {
+    this.requireContinuationWriteRuntime("runtime.create_wake_schedule")
+    return this.wakeScheduleService().create(input)
+  }
+
+  async getWakeSchedule(scheduleId: string): Promise<WakeSchedule | null> {
+    return this.wakeScheduleService().get(scheduleId)
+  }
+
+  async listWakeSchedules(limit = 20): Promise<WakeScheduleRecord[]> {
+    return this.wakeScheduleService().list(limit)
+  }
+
+  async pauseWakeSchedule(input: Parameters<WakeScheduleService["pause"]>[0]): Promise<WakeSchedule> {
+    this.requireContinuationWriteRuntime("runtime.pause_wake_schedule")
+    return this.wakeScheduleService().pause(input)
+  }
+
+  async resumeWakeSchedule(input: Parameters<WakeScheduleService["resume"]>[0]): Promise<WakeSchedule> {
+    this.requireContinuationWriteRuntime("runtime.resume_wake_schedule")
+    return this.wakeScheduleService().resume(input)
+  }
+
+  async cancelWakeSchedule(input: Parameters<WakeScheduleService["cancel"]>[0]): Promise<WakeSchedule> {
+    this.requireContinuationWriteRuntime("runtime.cancel_wake_schedule")
+    return this.wakeScheduleService().cancel(input)
+  }
+
+  async previewWakeScheduleTick(input: Parameters<WakeScheduleService["previewTick"]>[0]): Promise<WakeScheduleTickPreview> {
+    return this.wakeScheduleService().previewTick(input)
+  }
+
+  async executeWakeScheduleTick(input: Parameters<WakeScheduleService["executeTick"]>[0]): Promise<WakeScheduleTickResult> {
+    this.requireContinuationWriteRuntime("runtime.execute_wake_schedule_tick")
+    return this.wakeScheduleService().executeTick(input)
+  }
+
+  async getWakeScheduleTick(tickId: string): Promise<WakeScheduleTickResult | null> {
+    return this.wakeScheduleService().getTick(tickId)
+  }
+
+  async listWakeScheduleTicks(limit = 20): Promise<WakeScheduleTickResult[]> {
+    return this.wakeScheduleService().listTicks(limit)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1629,6 +1712,19 @@ export class RuntimeServer {
       executeReadCommand: (command) => this.executeContinuationReadCommand(command),
     })
     return this.continuationServiceInstance
+  }
+
+  private wakeScheduleService(): WakeScheduleService {
+    this.wakeScheduleServiceInstance ??= new WakeScheduleService({
+      eventStore: this.eventStore,
+      restoreService: this.runtimeRestoreService(),
+      wakeService: this.wakeAssessmentService(),
+      continuationService: this.continuationService(),
+      now: this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow,
+      idFactory: this.runtimeWakeScheduleId ? () => this.runtimeWakeScheduleId!() : undefined,
+      tickIdFactory: this.runtimeWakeScheduleTickId ? () => this.runtimeWakeScheduleTickId!() : undefined,
+    })
+    return this.wakeScheduleServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

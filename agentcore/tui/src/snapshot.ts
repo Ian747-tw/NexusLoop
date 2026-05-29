@@ -83,6 +83,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...runtimeRestoreLines(state))
   out.push(...wakeAssessmentLines(state))
   out.push(...continuationLines(state))
+  out.push(...wakeScheduleLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
 }
@@ -544,6 +545,54 @@ function continuationLines(state: UiState): string[] {
   if (continuation.recent.length === 0) out.push("    - empty")
   else out.push(...continuation.recent.slice(0, 10).map((record) => `    - ${record.plan_id} status=${record.status} wake=${record.wake_id}: ${preview(redactText(record.summary_preview))}`))
   if (continuation.commandError) out.push(`  command_error=${redactText(continuation.commandError)}`)
+  return out
+}
+
+function wakeScheduleLines(state: UiState): string[] {
+  const schedules = state.wakeSchedules
+  const out = ["Wake schedules"]
+  if (!schedules) {
+    out.push("  schedules=0")
+    return out
+  }
+  if (schedules.preview) {
+    const previewRecord = schedules.preview
+    out.push(`  preview_resume=${previewRecord.resume_id} can_create=${previewRecord.can_create} every_ms=${previewRecord.interval_ms} next_due=${previewRecord.next_due_at}`)
+    if (previewRecord.blockers.length > 0) {
+      out.push("  preview_blockers")
+      out.push(...previewRecord.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (schedules.selected) {
+    const selected = schedules.selected
+    out.push(`  selected_schedule=${selected.schedule_id} status=${selected.status} resume=${selected.resume_id} next_due=${selected.next_due_at}`)
+    if (selected.last_wake_id) out.push(`  last_wake=${selected.last_wake_id}`)
+    if (selected.last_plan_id) out.push(`  last_plan=${selected.last_plan_id}`)
+  } else {
+    out.push("  selected_schedule=none")
+  }
+  if (schedules.tickPreview) {
+    const tickPreview = schedules.tickPreview
+    out.push(`  tick_preview due=${tickPreview.due_count} eligible=${tickPreview.eligible_count} blocked=${tickPreview.blocked_count}`)
+    out.push("  tick_preview_rows")
+    if (tickPreview.items.length === 0) out.push("    - empty")
+    else out.push(...tickPreview.items.slice(0, 10).map((item) => `    - ${item.schedule_id} due=${item.due} wake=${item.would_create_wake} plan=${item.would_create_continuation_plan}`))
+  }
+  if (schedules.lastTick) {
+    const tick = schedules.lastTick
+    out.push(`  last_tick=${tick.tick_id} dry_run=${tick.dry_run} processed=${tick.processed_count} wakes=${tick.wake_ids.length} plans=${tick.plan_ids.length}`)
+  }
+  out.push(`  schedules=${schedules.recent.length}`)
+  out.push("  recent_schedules")
+  if (schedules.recent.length === 0) out.push("    - empty")
+  else out.push(...schedules.recent.slice(0, 10).map((record) => `    - ${record.schedule_id} status=${record.status} resume=${record.resume_id} next_due=${record.next_due_at}: ${preview(redactText(record.summary_preview))}`))
+  out.push(`  ticks=${schedules.recentTicks.length}`)
+  out.push("  recent_ticks")
+  if (schedules.recentTicks.length === 0) out.push("    - empty")
+  else out.push(...schedules.recentTicks.slice(0, 10).map((tick) => `    - ${tick.tick_id} dry_run=${tick.dry_run} processed=${tick.processed_count}`))
+  if (schedules.commandError) out.push(`  command_error=${redactText(schedules.commandError)}`)
   return out
 }
 

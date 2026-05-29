@@ -68,6 +68,13 @@ import type {
   ContinuationStepPreviewSummary,
   ContinuationStepResultSummary,
   ContinuationStepSummary,
+  WakeScheduleDueItemSummary,
+  WakeSchedulePreviewSummary,
+  WakeScheduleRecordSummary,
+  WakeSchedulesState,
+  WakeScheduleSummary,
+  WakeScheduleTickPreviewSummary,
+  WakeScheduleTickResultSummary,
   ExternalApiAuditRecordSummary,
   ExternalApiConnectorSummary,
   ExternalApiResearchIngestionPreviewSummary,
@@ -234,6 +241,17 @@ export type RuntimeUiEffect =
   | { type: "execute-continuation-step"; planId: string; index?: number; dryRun?: boolean }
   | { type: "pause-continuation-plan"; planId: string }
   | { type: "cancel-continuation-plan"; planId: string }
+  | { type: "preview-wake-schedule"; resumeId: string; intervalMs: number; title?: string }
+  | { type: "create-wake-schedule"; resumeId: string; intervalMs: number; title?: string }
+  | { type: "load-wake-schedule"; scheduleId: string }
+  | { type: "load-wake-schedules"; limit?: number }
+  | { type: "pause-wake-schedule"; scheduleId: string }
+  | { type: "resume-wake-schedule"; scheduleId: string }
+  | { type: "cancel-wake-schedule"; scheduleId: string }
+  | { type: "preview-wake-schedule-tick" }
+  | { type: "execute-wake-schedule-tick"; dryRun?: boolean }
+  | { type: "load-wake-schedule-ticks"; limit?: number }
+  | { type: "load-wake-schedule-tick"; tickId: string }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -838,6 +856,64 @@ export async function applyRuntimeUiEffect(
         )
         return await loadContinuationPlans(next, runtime, CHECKPOINT_LIMIT)
       }
+      case "preview-wake-schedule":
+        return applyWakeSchedulePreview(
+          state,
+          await runtime.command("runtime.preview_wake_schedule", { resumeId: effect.resumeId, intervalMs: effect.intervalMs, title: effect.title, requestedBy: "operator" }),
+        )
+      case "create-wake-schedule": {
+        const next = applyWakeSchedule(
+          state,
+          await runtime.command("runtime.create_wake_schedule", { resumeId: effect.resumeId, intervalMs: effect.intervalMs, title: effect.title, requestedBy: "operator" }),
+        )
+        return await loadWakeSchedules(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "load-wake-schedule":
+        return applyWakeSchedule(
+          state,
+          await runtime.command("runtime.get_wake_schedule", { scheduleId: effect.scheduleId }),
+          effect.scheduleId,
+        )
+      case "load-wake-schedules":
+        return await loadWakeSchedules(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
+      case "pause-wake-schedule": {
+        const next = applyWakeSchedule(
+          state,
+          await runtime.command("runtime.pause_wake_schedule", { scheduleId: effect.scheduleId, requestedBy: "operator" }),
+        )
+        return await loadWakeSchedules(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "resume-wake-schedule": {
+        const next = applyWakeSchedule(
+          state,
+          await runtime.command("runtime.resume_wake_schedule", { scheduleId: effect.scheduleId, requestedBy: "operator" }),
+        )
+        return await loadWakeSchedules(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "cancel-wake-schedule": {
+        const next = applyWakeSchedule(
+          state,
+          await runtime.command("runtime.cancel_wake_schedule", { scheduleId: effect.scheduleId, requestedBy: "operator" }),
+        )
+        return await loadWakeSchedules(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "preview-wake-schedule-tick":
+        return applyWakeScheduleTickPreview(state, await runtime.command("runtime.preview_wake_schedule_tick", { requestedBy: "operator" }))
+      case "execute-wake-schedule-tick": {
+        const next = applyWakeScheduleTickResult(
+          state,
+          await runtime.command("runtime.execute_wake_schedule_tick", { dryRun: effect.dryRun === true, requestedBy: "operator" }),
+        )
+        return effect.dryRun ? next : await loadWakeScheduleTicks(await loadWakeSchedules(next, runtime, CHECKPOINT_LIMIT), runtime, CHECKPOINT_LIMIT)
+      }
+      case "load-wake-schedule-ticks":
+        return await loadWakeScheduleTicks(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
+      case "load-wake-schedule-tick":
+        return applyWakeScheduleTickResult(
+          state,
+          await runtime.command("runtime.get_wake_schedule_tick", { tickId: effect.tickId }),
+          effect.tickId,
+        )
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -869,6 +945,7 @@ export async function applyRuntimeUiEffect(
     if (isRuntimeRestoreEffect(effect)) return recordRuntimeRestoreCommandError(state, error)
     if (isWakeAssessmentEffect(effect)) return recordWakeAssessmentCommandError(state, error)
     if (isContinuationEffect(effect)) return recordContinuationCommandError(state, error)
+    if (isWakeScheduleEffect(effect)) return recordWakeScheduleCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
@@ -1610,6 +1687,94 @@ function applyContinuationStepResult(state: UiState, value: unknown): UiState {
   }
 }
 
+async function loadWakeSchedules(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const recent = readWakeScheduleRecordList(await runtime.command("runtime.list_wake_schedules", { limit }), "runtime.list_wake_schedules", limit)
+  return {
+    ...state,
+    wakeSchedules: {
+      ...wakeSchedulesState(state),
+      recent,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake schedules loaded", detail: `records=${recent.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+async function loadWakeScheduleTicks(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const recentTicks = readWakeScheduleTickResultList(await runtime.command("runtime.list_wake_schedule_ticks", { limit }), "runtime.list_wake_schedule_ticks", limit)
+  return {
+    ...state,
+    wakeSchedules: {
+      ...wakeSchedulesState(state),
+      recentTicks,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake schedule ticks loaded", detail: `records=${recentTicks.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulePreview(state: UiState, value: unknown): UiState {
+  const preview = readWakeSchedulePreview(value)
+  return {
+    ...state,
+    wakeSchedules: {
+      ...wakeSchedulesState(state),
+      preview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake schedule preview", detail: `resume_id=${preview.resume_id} every=${preview.interval_ms}ms`, status: preview.can_create ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyWakeSchedule(state: UiState, value: unknown, scheduleId?: string): UiState {
+  const schedule = readWakeSchedule(value)
+  if (!schedule && value !== null) throw new Error("runtime.get_wake_schedule returned invalid schedule")
+  const selectedId = schedule?.schedule_id ?? (scheduleId ? redactText(scheduleId) : undefined)
+  return {
+    ...state,
+    wakeSchedules: {
+      ...wakeSchedulesState(state),
+      selected: schedule,
+      recent: schedule ? [recordFromWakeSchedule(schedule), ...wakeSchedulesState(state).recent.filter((item) => item.schedule_id !== schedule.schedule_id)].slice(0, CHECKPOINT_LIMIT) : wakeSchedulesState(state).recent,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "wake schedule selected", detail: `schedule_id=${selectedId}`, status: schedule ? schedule.status : "missing" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
+function applyWakeScheduleTickPreview(state: UiState, value: unknown): UiState {
+  const tickPreview = readWakeScheduleTickPreview(value)
+  return {
+    ...state,
+    wakeSchedules: {
+      ...wakeSchedulesState(state),
+      tickPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake tick preview", detail: `due=${tickPreview.due_count} eligible=${tickPreview.eligible_count}`, status: tickPreview.blocked_count > 0 ? "blocked" : "ready" }].slice(-12),
+  }
+}
+
+function applyWakeScheduleTickResult(state: UiState, value: unknown, tickId?: string): UiState {
+  const tick = readWakeScheduleTickResult(value)
+  if (!tick && value !== null) throw new Error("runtime.get_wake_schedule_tick returned invalid tick")
+  const selectedId = tick?.tick_id ?? (tickId ? redactText(tickId) : undefined)
+  return {
+    ...state,
+    wakeSchedules: {
+      ...wakeSchedulesState(state),
+      lastTick: tick ?? wakeSchedulesState(state).lastTick,
+      recentTicks: tick ? [tick, ...wakeSchedulesState(state).recentTicks.filter((item) => item.tick_id !== tick.tick_id)].slice(0, CHECKPOINT_LIMIT) : wakeSchedulesState(state).recentTicks,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "wake tick result", detail: `tick_id=${selectedId}`, status: tick ? (tick.dry_run ? "dry-run" : "completed") : "missing" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -1831,6 +1996,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (runtimeRestoreCommands.has(command)) return { ...state, runtimeRestore: { ...runtimeRestoreState(state), commandError: undefined } }
   if (wakeAssessmentCommands.has(command)) return { ...state, wakeAssessment: { ...wakeAssessmentState(state), commandError: undefined } }
   if (continuationCommands.has(command)) return { ...state, continuation: { ...continuationState(state), commandError: undefined } }
+  if (wakeScheduleCommands.has(command)) return { ...state, wakeSchedules: { ...wakeSchedulesState(state), commandError: undefined } }
   if (reasoningProviderCommands.has(command)) return { ...state, reasoningProvider: { ...reasoningProviderState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
@@ -1985,6 +2151,30 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-continuation-plans", limit: CHECKPOINT_LIMIT })
     case "continue-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-continuation-plan", planId: requiredArg(args, 0, "planId") })
+    case "schedule-wake-preview":
+      return applyRuntimeUiEffect(commandState, runtime, wakeScheduleEffect("preview-wake-schedule", args))
+    case "schedule-wake":
+      return applyRuntimeUiEffect(commandState, runtime, wakeScheduleEffect("create-wake-schedule", args))
+    case "wake-schedules":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-schedules", limit: CHECKPOINT_LIMIT })
+    case "wake-schedule":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-schedule", scheduleId: requiredArg(args, 0, "scheduleId") })
+    case "wake-schedule-pause":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "pause-wake-schedule", scheduleId: requiredArg(args, 0, "scheduleId") })
+    case "wake-schedule-resume":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "resume-wake-schedule", scheduleId: requiredArg(args, 0, "scheduleId") })
+    case "wake-schedule-cancel":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-wake-schedule", scheduleId: requiredArg(args, 0, "scheduleId") })
+    case "wake-tick-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-schedule-tick" })
+    case "wake-tick":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-wake-schedule-tick" })
+    case "wake-tick-dry-run":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-wake-schedule-tick", dryRun: true })
+    case "wake-ticks":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-schedule-ticks", limit: CHECKPOINT_LIMIT })
+    case "wake-tick-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-schedule-tick", tickId: requiredArg(args, 0, "tickId") })
     case "reasoning":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-status" })
         .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-reasoning-provider-health" }))
@@ -2435,6 +2625,11 @@ function isContinuationEffect(effect: RuntimeUiEffect): boolean {
   return continuationCommands.has(effect.command)
 }
 
+function isWakeScheduleEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return wakeScheduleEffectTypes.has(effect.type)
+  return wakeScheduleCommands.has(effect.command)
+}
+
 function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return reasoningProviderEffectTypes.has(effect.type)
   return reasoningProviderCommands.has(effect.command)
@@ -2609,6 +2804,21 @@ const continuationCommands = new Set([
   "continue-show",
 ])
 
+const wakeScheduleCommands = new Set([
+  "schedule-wake-preview",
+  "schedule-wake",
+  "wake-schedules",
+  "wake-schedule",
+  "wake-schedule-pause",
+  "wake-schedule-resume",
+  "wake-schedule-cancel",
+  "wake-tick-preview",
+  "wake-tick",
+  "wake-tick-dry-run",
+  "wake-ticks",
+  "wake-tick-show",
+])
+
 const reasoningProviderCommands = new Set([
   "reasoning",
   "reasoning-health",
@@ -2685,6 +2895,20 @@ const continuationEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "execute-continuation-step",
   "pause-continuation-plan",
   "cancel-continuation-plan",
+])
+
+const wakeScheduleEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-wake-schedule",
+  "create-wake-schedule",
+  "load-wake-schedule",
+  "load-wake-schedules",
+  "pause-wake-schedule",
+  "resume-wake-schedule",
+  "cancel-wake-schedule",
+  "preview-wake-schedule-tick",
+  "execute-wake-schedule-tick",
+  "load-wake-schedule-ticks",
+  "load-wake-schedule-tick",
 ])
 
 const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -3499,6 +3723,18 @@ function recordContinuationCommandError(state: UiState, error: unknown): UiState
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "continuation command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordWakeScheduleCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    wakeSchedules: {
+      ...wakeSchedulesState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "wake schedule command error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
@@ -4377,6 +4613,151 @@ function recordFromContinuationPlan(plan: ContinuationPlanSummary): Continuation
   }
 }
 
+function readWakeSchedulePolicy(value: unknown): WakeSchedulePreviewSummary["policy"] {
+  if (!isRecord(value)) {
+    return {
+      create_wake_assessment: true,
+      create_continuation_plan: false,
+      include_write_steps: false,
+      max_wake_assessments_per_tick: 1,
+      max_continuation_plans_per_tick: 0,
+    }
+  }
+  return {
+    create_wake_assessment: value.create_wake_assessment !== false,
+    create_continuation_plan: value.create_continuation_plan === true,
+    include_write_steps: value.include_write_steps === true,
+    max_wake_assessments_per_tick: readNumber(value.max_wake_assessments_per_tick, 1),
+    max_continuation_plans_per_tick: readNumber(value.max_continuation_plans_per_tick, 0),
+  }
+}
+
+function readWakeSchedulePreview(value: unknown): WakeSchedulePreviewSummary {
+  if (!isRecord(value) || typeof value.resume_id !== "string") throw new Error("runtime.preview_wake_schedule returned invalid preview")
+  return {
+    resume_id: redactText(value.resume_id),
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    title: preview(readString(value.title, "")),
+    interval_ms: readNumber(value.interval_ms, 0),
+    next_due_at: readString(value.next_due_at, ""),
+    policy: readWakeSchedulePolicy(value.policy),
+    can_create: readBoolean(value.can_create),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeSchedule(value: unknown): WakeScheduleSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.schedule_id !== "string") throw new Error("runtime.get_wake_schedule returned invalid schedule")
+  return {
+    schedule_id: redactText(value.schedule_id),
+    resume_id: readString(value.resume_id, ""),
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    status: readString(value.status, "active"),
+    title: preview(readString(value.title, "")),
+    interval_ms: readNumber(value.interval_ms, 0),
+    next_due_at: readString(value.next_due_at, ""),
+    last_tick_at: typeof value.last_tick_at === "string" ? redactText(value.last_tick_at) : undefined,
+    last_wake_id: typeof value.last_wake_id === "string" ? redactText(value.last_wake_id) : undefined,
+    last_plan_id: typeof value.last_plan_id === "string" ? redactText(value.last_plan_id) : undefined,
+    created_at: readString(value.created_at, ""),
+    created_by: readString(value.created_by, "operator"),
+    updated_at: readString(value.updated_at, ""),
+    policy: readWakeSchedulePolicy(value.policy),
+    reason: typeof value.reason === "string" ? preview(redactText(value.reason)) : undefined,
+    schedule_hash: readString(value.schedule_hash, ""),
+    warnings: readStringList(value.warnings, 10).map(preview),
+  }
+}
+
+function readWakeScheduleRecordList(value: unknown, commandName: string, limit: number): WakeScheduleRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeScheduleRecord).filter((record): record is WakeScheduleRecordSummary => record !== null).slice(0, limit)
+}
+
+function readWakeScheduleRecord(value: unknown): WakeScheduleRecordSummary | null {
+  if (!isRecord(value) || typeof value.schedule_id !== "string") return null
+  return {
+    schedule_id: redactText(value.schedule_id),
+    resume_id: readString(value.resume_id, ""),
+    status: readString(value.status, "active"),
+    title: preview(readString(value.title, "")),
+    next_due_at: readString(value.next_due_at, ""),
+    last_tick_at: typeof value.last_tick_at === "string" ? redactText(value.last_tick_at) : undefined,
+    last_wake_id: typeof value.last_wake_id === "string" ? redactText(value.last_wake_id) : undefined,
+    last_plan_id: typeof value.last_plan_id === "string" ? redactText(value.last_plan_id) : undefined,
+    summary_preview: preview(readString(value.summary_preview, "")),
+  }
+}
+
+function recordFromWakeSchedule(schedule: WakeScheduleSummary): WakeScheduleRecordSummary {
+  return {
+    schedule_id: schedule.schedule_id,
+    resume_id: schedule.resume_id,
+    status: schedule.status,
+    title: schedule.title,
+    next_due_at: schedule.next_due_at,
+    last_tick_at: schedule.last_tick_at,
+    last_wake_id: schedule.last_wake_id,
+    last_plan_id: schedule.last_plan_id,
+    summary_preview: `wake schedule resume=${schedule.resume_id} status=${schedule.status}`,
+  }
+}
+
+function readWakeScheduleDueItem(value: unknown): WakeScheduleDueItemSummary | null {
+  if (!isRecord(value) || typeof value.schedule_id !== "string") return null
+  return {
+    schedule_id: redactText(value.schedule_id),
+    resume_id: readString(value.resume_id, ""),
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    due: readBoolean(value.due),
+    status: readString(value.status, "active"),
+    next_due_at: readString(value.next_due_at, ""),
+    last_tick_at: typeof value.last_tick_at === "string" ? redactText(value.last_tick_at) : undefined,
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    would_create_wake: readBoolean(value.would_create_wake),
+    would_create_continuation_plan: readBoolean(value.would_create_continuation_plan),
+  }
+}
+
+function readWakeScheduleTickPreview(value: unknown): WakeScheduleTickPreviewSummary {
+  if (!isRecord(value) || typeof value.now !== "string") throw new Error("runtime.preview_wake_schedule_tick returned invalid preview")
+  return {
+    now: redactText(value.now),
+    due_count: readNumber(value.due_count, 0),
+    eligible_count: readNumber(value.eligible_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    items: Array.isArray(value.items) ? value.items.map(readWakeScheduleDueItem).filter((item): item is WakeScheduleDueItemSummary => item !== null).slice(0, 20) : [],
+    max_items: readNumber(value.max_items, 0),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+  }
+}
+
+function readWakeScheduleTickResult(value: unknown): WakeScheduleTickResultSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.tick_id !== "string") throw new Error("runtime.get_wake_schedule_tick returned invalid tick")
+  return {
+    tick_id: redactText(value.tick_id),
+    now: readString(value.now, ""),
+    processed_count: readNumber(value.processed_count, 0),
+    wake_ids: readStringList(value.wake_ids, 20),
+    plan_ids: readStringList(value.plan_ids, 20),
+    skipped: Array.isArray(value.skipped) ? value.skipped.map(readWakeScheduleDueItem).filter((item): item is WakeScheduleDueItemSummary => item !== null).slice(0, 20) : [],
+    created_at: readString(value.created_at, ""),
+    requested_by: readString(value.requested_by, "operator"),
+    dry_run: readBoolean(value.dry_run),
+  }
+}
+
+function readWakeScheduleTickResultList(value: unknown, commandName: string, limit: number): WakeScheduleTickResultSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeScheduleTickResult).filter((tick): tick is WakeScheduleTickResultSummary => tick !== null).slice(0, limit)
+}
+
 function readRuntimeCheckpointSections(value: unknown): RuntimeCheckpointSectionSummary[] {
   if (!Array.isArray(value)) return []
   return value.map((item) => {
@@ -5125,6 +5506,10 @@ function continuationState(state: UiState): ContinuationState {
   return state.continuation ?? { preview: null, selected: null, lastStepResult: null, recent: [] }
 }
 
+function wakeSchedulesState(state: UiState): WakeSchedulesState {
+  return state.wakeSchedules ?? { preview: null, selected: null, recent: [], tickPreview: null, lastTick: null, recentTicks: [] }
+}
+
 function reasoningProviderState(state: UiState) {
   return state.reasoningProvider ?? {
     kind: "fake",
@@ -5460,6 +5845,37 @@ function wakeIdArg(args: string[]): string {
   const value = rest.join("=").trim()
   if (key !== "wake" || !value) throw new Error("continuation command requires wake=<wakeId>")
   return value
+}
+
+function wakeScheduleEffect(type: "preview-wake-schedule" | "create-wake-schedule", args: string[]): Extract<RuntimeUiEffect, { type: "preview-wake-schedule" | "create-wake-schedule" }> {
+  let resumeId: string | undefined
+  let intervalMs: number | undefined
+  const title: string[] = []
+  for (const arg of args) {
+    if (arg.startsWith("resume=")) {
+      resumeId = arg.slice("resume=".length).trim()
+      if (!resumeId) throw new Error("schedule wake requires resume=<resumeId>")
+    } else if (arg.startsWith("every=")) {
+      intervalMs = parseScheduleDuration(arg.slice("every=".length).trim())
+    } else {
+      title.push(arg)
+    }
+  }
+  if (!resumeId) throw new Error("schedule wake requires resume=<resumeId>")
+  if (intervalMs === undefined) throw new Error("schedule wake requires every=<duration>")
+  return { type, resumeId, intervalMs, title: title.length ? title.join(" ") : undefined }
+}
+
+function parseScheduleDuration(value: string): number {
+  const match = /^(\d+)(ms|s|m|h|d)?$/.exec(value)
+  if (!match) throw new Error("schedule duration must be 60s, 5m, 1h, 1d, or milliseconds")
+  const amount = Number(match[1])
+  const unit = match[2] ?? "ms"
+  const multipliers: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }
+  const duration = amount * multipliers[unit]
+  if (duration < 60_000) throw new Error("schedule duration must be at least 60s")
+  if (duration > 30 * 24 * 60 * 60 * 1000) throw new Error("schedule duration must be no greater than 30d")
+  return duration
 }
 
 function optionalIndexArg(args: string[], index: number): number | undefined {
