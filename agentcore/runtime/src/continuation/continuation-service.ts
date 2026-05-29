@@ -461,10 +461,19 @@ function fitPlan(input: Omit<ContinuationPlan, "plan_hash">, maxBytes: number): 
   if (persistedEventByteLength(eventPayloadFromPlan(plan)) <= maxBytes) return redactValue(plan)
   const warning = `continuation plan truncated to fit max_bytes=${maxBytes}`
   for (let stepCount = Math.max(1, input.steps.length - 1); stepCount >= 1; stepCount--) {
-    const candidate = finalizePlan({ ...input, warnings: unique([...input.warnings, warning]), steps: input.steps.slice(0, stepCount) })
+    const steps = truncateStepsWithExecutable(input.steps, stepCount)
+    if (steps.length === 0 || steps.every((step) => step.status !== "pending")) continue
+    const candidate = finalizePlan({ ...input, warnings: unique([...input.warnings, warning]), steps, current_step_index: nextPendingIndex(steps) })
     if (persistedEventByteLength(eventPayloadFromPlan(candidate)) <= maxBytes) return redactValue(candidate)
   }
   throw new Error("minimal continuation plan exceeds max_bytes")
+}
+
+function truncateStepsWithExecutable(steps: ContinuationStep[], count: number): ContinuationStep[] {
+  const executable = steps.filter((step) => step.status === "pending" && step.allowed_by_default)
+  const blocked = steps.filter((step) => !(step.status === "pending" && step.allowed_by_default))
+  const retained = [...executable, ...blocked].slice(0, count).sort((left, right) => left.index - right.index)
+  return retained.map((step, index) => ({ ...step, index }))
 }
 
 function eventPayloadFromPlan(plan: ContinuationPlan): JsonlEvent {

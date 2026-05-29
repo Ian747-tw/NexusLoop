@@ -5750,6 +5750,47 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(events)).not.toContain("failed-plan-secret")
   })
 
+  test("continuation truncation preserves an executable step", async () => {
+    const dir = await tempProject()
+    const blockedSuggestions = Array.from({ length: 30 }, (_, index) => ({
+      label: `Unsupported read ${index} ${"x".repeat(120)}`,
+      command: `/unsupported-${index}-${"y".repeat(180)}`,
+      command_type: "read" as const,
+    }))
+    const service = new ContinuationService({
+      eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")),
+      wakeService: {
+        get: async () => ({
+          wake_id: "wake_continue_truncate_1",
+          trigger_kind: "manual",
+          created_at: "2026-05-11T12:35:00.000Z",
+          requested_by: "operator",
+          allowed: true,
+          blockers: [],
+          warnings: [],
+          current_event_count: 1,
+          sections: {},
+          suggested_commands: [...blockedSuggestions, { label: "List missions", command: "/missions", command_type: "read" }],
+          assessment_hash: "wake-truncate-hash",
+        }),
+      } as unknown as WakeAssessmentService,
+      executeReadCommand: () => [],
+      idFactory: () => "plan_continue_truncate_1",
+      stepIdFactory: (() => {
+        let index = 0
+        return () => `step_continue_truncate_${++index}`
+      })(),
+    })
+
+    const preview = await service.preview({ wake_id: "wake_continue_truncate_1", requested_by: "operator", max_steps: 50, max_bytes: 4096 })
+    expect(preview).toMatchObject({ can_create: true })
+    const plan = await service.create({ wake_id: "wake_continue_truncate_1", requested_by: "operator", max_steps: 50, max_bytes: 4096 })
+    expect(plan.warnings).toContain("continuation plan truncated to fit max_bytes=4096")
+    expect(plan.steps.some((step) => step.command === "/missions" && step.status === "pending")).toBe(true)
+    expect(plan.steps.every((step) => step.status !== "pending")).toBe(false)
+    expect(plan.current_step_index).toBe(plan.steps.find((step) => step.command === "/missions")?.index)
+  })
+
   test("continuation plan max_bytes accounts for persisted event payload", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
