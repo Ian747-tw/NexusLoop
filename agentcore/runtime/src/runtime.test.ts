@@ -6728,6 +6728,45 @@ describe("RuntimeServer core", () => {
     ])
   })
 
+  test("wake scheduler rejects starts requested while a stop is queued", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const timers: Array<() => void> = []
+    const service = new WakeSchedulerService({
+      eventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:17:30.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => ({ now: "2026-05-11T14:17:30.000Z", due_count: 0, eligible_count: 0, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }),
+        executeTick: async () => ({ tick_id: "tick_queued_stop", now: "2026-05-11T14:17:30.000Z", processed_count: 0, wake_ids: [], plan_ids: [], skipped: [], created_at: "2026-05-11T14:17:30.000Z", requested_by: "wake-scheduler", dry_run: false }),
+      } as unknown as WakeScheduleService,
+    })
+    await service.start({ intervalMs: 10, requestedBy: "operator" })
+
+    const stopPromise = service.stop({ requestedBy: "operator" })
+    await expect(service.start({ intervalMs: 10, requestedBy: "operator" })).rejects.toThrow("wake scheduler is already running or stopping")
+    await stopPromise
+
+    expect(service.status()).toMatchObject({ status: "stopped", tick_count: 0 })
+    expect(timers).toHaveLength(0)
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).toEqual([
+      "runtime_wake_scheduler_started",
+      "runtime_wake_scheduler_stopped",
+    ])
+  })
+
   test("wake scheduler consumes rejected scheduled tick cleanup promises", async () => {
     const timers: Array<() => void> = []
     const unhandled: unknown[] = []

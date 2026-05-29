@@ -103,7 +103,7 @@ export class WakeSchedulerService {
   }
 
   async start(input: WakeSchedulerStartInput = {}): Promise<WakeSchedulerState> {
-    if (this.state.status === "stopping") throw new Error("wake scheduler is already running or stopping")
+    if (this.state.status !== "stopped") throw new Error("wake scheduler is already running or stopping")
     return await this.withLifecycleLock(async () => {
       const normalized = normalizeStartInput(input, this.minIntervalMs(), this.minHeartbeatIntervalMs())
       const preview = await this.previewStart(input)
