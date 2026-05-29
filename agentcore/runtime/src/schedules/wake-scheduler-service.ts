@@ -205,7 +205,10 @@ export class WakeSchedulerService {
     }
 
     this.tickInFlight = true
+    let reachedTickAttempt = false
+    let countedTickAttempt = false
     try {
+      reachedTickAttempt = true
       const tick = await this.options.wakeScheduleService.executeTick({
         max_due_items: this.state.config.max_due_items,
         dry_run: this.state.config.dry_run,
@@ -213,6 +216,7 @@ export class WakeSchedulerService {
       })
       if (this.state.status !== "running") return
       this.state.tick_count += 1
+      countedTickAttempt = true
       this.state.last_tick_id = tick.tick_id
       this.state.last_tick_at = tick.created_at
       await this.appendSchedulerEvent("runtime_wake_scheduler_tick_succeeded", {
@@ -229,7 +233,12 @@ export class WakeSchedulerService {
       }
     } catch (error) {
       if (this.state.status !== "running") return
-      await this.failAndMaybeStop(error instanceof Error ? error.message : String(error), this.state.config.stop_on_error)
+      if (reachedTickAttempt && !countedTickAttempt) {
+        this.state.tick_count += 1
+        countedTickAttempt = true
+      }
+      const maxTicksReached = this.state.config.max_ticks_per_run !== undefined && this.state.tick_count >= this.state.config.max_ticks_per_run
+      await this.failAndMaybeStop(error instanceof Error ? error.message : String(error), this.state.config.stop_on_error || maxTicksReached)
       return
     } finally {
       this.tickInFlight = false

@@ -6766,10 +6766,59 @@ describe("RuntimeServer core", () => {
       timers.shift()?.()
       await timeout(20)
       expect(unhandled).toHaveLength(0)
-      expect(service.status()).toMatchObject({ status: "running", tick_count: 0 })
+      expect(service.status()).toMatchObject({ status: "running", tick_count: 1 })
     } finally {
       process.off("unhandledRejection", onUnhandled)
     }
+  })
+
+  test("wake scheduler counts failed tick attempts toward max_ticks_per_run", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const timers: Array<() => void> = []
+    let executeCount = 0
+    const service = new WakeSchedulerService({
+      eventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:19:00.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => ({ now: "2026-05-11T14:19:00.000Z", due_count: 1, eligible_count: 1, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }),
+        executeTick: async () => {
+          executeCount += 1
+          throw new Error(`scheduled tick failure ${executeCount}`)
+        },
+      } as unknown as WakeScheduleService,
+    })
+    await service.start({ intervalMs: 10, maxTicksPerRun: 2, requestedBy: "operator" })
+
+    timers.shift()?.()
+    await timeout(20)
+    expect(service.status()).toMatchObject({ status: "running", tick_count: 1 })
+    expect(timers).toHaveLength(1)
+
+    timers.shift()?.()
+    await timeout(20)
+    expect(executeCount).toBe(2)
+    expect(service.status()).toMatchObject({ status: "failed", tick_count: 2 })
+    expect(timers).toHaveLength(0)
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).toEqual([
+      "runtime_wake_scheduler_started",
+      "runtime_wake_scheduler_tick_failed",
+      "runtime_wake_scheduler_tick_failed",
+      "runtime_wake_scheduler_stopped",
+    ])
   })
 
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {
