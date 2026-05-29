@@ -217,7 +217,7 @@ export class ContinuationService {
   async pause(input: ContinuationPlanDecisionInput): Promise<ContinuationPlan> {
     const normalized = normalizeDecisionInput(input)
     const plan = await this.requirePlan(normalized.plan_id)
-    if (plan.status === "cancelled" || plan.status === "completed") throw new Error(`continuation plan is ${plan.status}`)
+    if (plan.status === "cancelled" || plan.status === "completed" || plan.status === "failed") throw new Error(`continuation plan is ${plan.status}`)
     await this.options.eventStore.append({
       kind: "runtime_continuation_plan_paused",
       plan_id: plan.plan_id,
@@ -231,7 +231,7 @@ export class ContinuationService {
   async cancel(input: ContinuationPlanDecisionInput): Promise<ContinuationPlan> {
     const normalized = normalizeDecisionInput(input)
     const plan = await this.requirePlan(normalized.plan_id)
-    if (plan.status === "completed") throw new Error("continuation plan is completed")
+    if (plan.status === "completed" || plan.status === "failed") throw new Error(`continuation plan is ${plan.status}`)
     await this.options.eventStore.append({
       kind: "runtime_continuation_plan_cancelled",
       plan_id: plan.plan_id,

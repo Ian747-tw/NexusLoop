@@ -5709,6 +5709,47 @@ describe("RuntimeServer core", () => {
     await expect(service.create({ wake_id: "wake_continue_blocked_1", requested_by: "operator" })).rejects.toThrow("wake assessment has no executable continuation steps")
   })
 
+  test("continuation failed plans cannot be paused or cancelled over failure state", async () => {
+    const dir = await tempProject()
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const service = new ContinuationService({
+      eventStore,
+      wakeService: {
+        get: async () => ({
+          wake_id: "wake_continue_failed_1",
+          trigger_kind: "manual",
+          created_at: "2026-05-11T12:30:00.000Z",
+          requested_by: "operator",
+          allowed: true,
+          blockers: [],
+          warnings: [],
+          current_event_count: 1,
+          sections: {},
+          suggested_commands: [{ label: "List missions", command: "/missions", command_type: "read" }],
+          assessment_hash: "wake-failed-hash",
+        }),
+      } as unknown as WakeAssessmentService,
+      executeReadCommand: () => {
+        throw new Error("read step token=failed-plan-secret")
+      },
+      idFactory: () => "plan_continue_failed_1",
+      stepIdFactory: () => "step_continue_failed_1",
+      now: () => new Date("2026-05-11T12:30:00.000Z"),
+    })
+
+    await service.create({ wake_id: "wake_continue_failed_1", requested_by: "operator" })
+    const result = await service.executeStep({ plan_id: "plan_continue_failed_1", requested_by: "operator" })
+    expect(result).toMatchObject({ status: "failed" })
+    await expect(service.pause({ plan_id: "plan_continue_failed_1", requested_by: "operator" })).rejects.toThrow("continuation plan is failed")
+    await expect(service.cancel({ plan_id: "plan_continue_failed_1", requested_by: "operator" })).rejects.toThrow("continuation plan is failed")
+    const projected = await service.get("plan_continue_failed_1")
+    expect(projected).toMatchObject({ status: "failed", failed_step_count: 1 })
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).not.toContain("runtime_continuation_plan_paused")
+    expect(events.map((event) => event.kind)).not.toContain("runtime_continuation_plan_cancelled")
+    expect(JSON.stringify(events)).not.toContain("failed-plan-secret")
+  })
+
   test("continuation plan max_bytes accounts for persisted event payload", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
