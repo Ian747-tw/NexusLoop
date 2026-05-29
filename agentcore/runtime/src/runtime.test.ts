@@ -6140,6 +6140,39 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake schedule tick preview reports uncapped due backlog before item slicing", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let scheduleId = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_tick_backlog_1",
+      runtimeResumeId: () => "resume_tick_backlog_1",
+      runtimeWakeScheduleId: () => `schedule_tick_backlog_${++scheduleId}`,
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T13:20:00.000Z"),
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_tick_backlog_1", requestedBy: "operator" })
+    for (const minute of [10, 11, 12, 13, 14, 15]) {
+      await server.command("runtime.create_wake_schedule", {
+        resumeId: "resume_tick_backlog_1",
+        intervalMs: 60_000,
+        nextDueAt: `2026-05-11T13:${minute}:00.000Z`,
+        requestedBy: "operator",
+      })
+    }
+
+    const preview = await server.command("runtime.preview_wake_schedule_tick", { now: "2026-05-11T13:20:00.000Z", maxDueItems: 2 }) as { due_count: number; eligible_count: number; items: Array<{ schedule_id: string }>; warnings: string[] }
+    expect(preview.due_count).toBe(6)
+    expect(preview.eligible_count).toBe(6)
+    expect(preview.items.map((item) => item.schedule_id)).toEqual(["schedule_tick_backlog_1", "schedule_tick_backlog_2"])
+    expect(preview.warnings).toContain("tick preview capped at 2 due schedules")
+    await server.shutdown()
+  })
+
   test("wake schedule write gates preserve read surfaces", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

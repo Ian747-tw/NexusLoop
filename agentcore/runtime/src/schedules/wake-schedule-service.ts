@@ -219,10 +219,11 @@ export class WakeScheduleService {
 
   private async previewTickNormalized(input: NormalizedTickInput): Promise<WakeScheduleTickPreview> {
     const schedules = await this.schedules()
-    const items = await this.dueItems(schedules, input.now, input.max_due_items)
-    const dueCount = items.filter((item) => item.due).length
-    const eligibleCount = items.filter((item) => item.due && item.blockers.length === 0).length
-    const blockedCount = items.filter((item) => item.due && item.blockers.length > 0).length
+    const allItems = await this.dueItems(schedules, input.now)
+    const items = allItems.slice(0, input.max_due_items)
+    const dueCount = allItems.filter((item) => item.due).length
+    const eligibleCount = allItems.filter((item) => item.due && item.blockers.length === 0).length
+    const blockedCount = allItems.filter((item) => item.due && item.blockers.length > 0).length
     return redactValue({
       now: input.now,
       due_count: dueCount,
@@ -231,7 +232,7 @@ export class WakeScheduleService {
       items,
       max_items: input.max_due_items,
       blockers: [],
-      warnings: items.length >= input.max_due_items && dueCount > input.max_due_items ? [`tick preview capped at ${input.max_due_items} due schedules`] : [],
+      warnings: dueCount > input.max_due_items ? [`tick preview capped at ${input.max_due_items} due schedules`] : [],
     })
   }
 
@@ -304,7 +305,7 @@ export class WakeScheduleService {
     return redactValue(result)
   }
 
-  private async dueItems(schedules: WakeSchedule[], now: string, limit: number): Promise<WakeScheduleDueItem[]> {
+  private async dueItems(schedules: WakeSchedule[], now: string): Promise<WakeScheduleDueItem[]> {
     const dueItems: WakeScheduleDueItem[] = []
     const otherItems: WakeScheduleDueItem[] = []
     for (const schedule of schedules.slice().sort((left, right) => left.next_due_at.localeCompare(right.next_due_at) || left.schedule_id.localeCompare(right.schedule_id))) {
@@ -338,7 +339,7 @@ export class WakeScheduleService {
       if (due) dueItems.push(item)
       else otherItems.push(item)
     }
-    return [...dueItems, ...otherItems].slice(0, limit)
+    return [...dueItems, ...otherItems]
   }
 
   private async schedules(): Promise<WakeSchedule[]> {
