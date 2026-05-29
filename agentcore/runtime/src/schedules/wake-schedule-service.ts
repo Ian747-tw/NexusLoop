@@ -305,10 +305,10 @@ export class WakeScheduleService {
   }
 
   private async dueItems(schedules: WakeSchedule[], now: string, limit: number): Promise<WakeScheduleDueItem[]> {
-    const out: WakeScheduleDueItem[] = []
+    const dueItems: WakeScheduleDueItem[] = []
+    const otherItems: WakeScheduleDueItem[] = []
     for (const schedule of schedules.slice().sort((left, right) => left.next_due_at.localeCompare(right.next_due_at) || left.schedule_id.localeCompare(right.schedule_id))) {
       const due = schedule.status === "active" && Date.parse(schedule.next_due_at) <= Date.parse(now)
-      if (!due && out.length >= limit) continue
       const blockers: string[] = []
       const warnings: string[] = []
       if (schedule.status !== "active") blockers.push(`wake schedule is ${schedule.status}`)
@@ -322,7 +322,7 @@ export class WakeScheduleService {
           blockers.push(error instanceof Error ? error.message : String(error))
         }
       }
-      out.push({
+      const item: WakeScheduleDueItem = {
         schedule_id: schedule.schedule_id,
         resume_id: schedule.resume_id,
         checkpoint_id: schedule.checkpoint_id,
@@ -334,10 +334,11 @@ export class WakeScheduleService {
         warnings: unique(warnings),
         would_create_wake: due && schedule.policy.create_wake_assessment && blockers.length === 0,
         would_create_continuation_plan: due && schedule.policy.create_wake_assessment && schedule.policy.create_continuation_plan && blockers.length === 0,
-      })
-      if (out.length >= limit && due) break
+      }
+      if (due) dueItems.push(item)
+      else otherItems.push(item)
     }
-    return out.slice(0, limit)
+    return [...dueItems, ...otherItems].slice(0, limit)
   }
 
   private async schedules(): Promise<WakeSchedule[]> {
