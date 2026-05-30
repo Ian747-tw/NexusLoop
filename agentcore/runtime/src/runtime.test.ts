@@ -6992,6 +6992,26 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler recovery workflow completed state is terminal against cancellation", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running", event_id: "workflow_completed_start" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string }
+    let workflow = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string; steps: Array<{ index: number }> }
+    for (const step of workflow.steps) {
+      workflow = await server.command("runtime.record_wake_scheduler_recovery_workflow_step", { workflowId: workflow.workflow_id, index: step.index, status: "manually_done", requestedBy: "operator" }) as typeof workflow & { status: string }
+    }
+    expect(workflow).toMatchObject({ status: "completed" })
+    await expect(server.command("runtime.cancel_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id, reason: "late cancel" })).rejects.toThrow("completed recovery workflow cannot be cancelled")
+    expect(await server.command("runtime.get_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id })).toMatchObject({ status: "completed" })
+    await server.eventStore.append({ kind: "runtime_wake_scheduler_recovery_workflow_cancelled", workflow_id: workflow.workflow_id, cancelled_at: "2026-05-11T15:30:00.000Z", requested_by: "legacy" })
+    expect(await server.command("runtime.get_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id })).toMatchObject({ status: "completed" })
+    await server.shutdown()
+  })
+
   test("wake scheduler recovery workflow verification is read-only and observes later recovery records", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

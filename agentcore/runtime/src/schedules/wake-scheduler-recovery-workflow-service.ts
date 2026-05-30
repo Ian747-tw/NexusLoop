@@ -170,6 +170,7 @@ export class WakeSchedulerRecoveryWorkflowService {
     const workflow = await this.get(normalized.workflow_id)
     if (!workflow) throw new Error("wake scheduler recovery workflow not found")
     if (workflow.status === "cancelled") return workflow
+    if (workflow.status === "completed") throw new Error("completed recovery workflow cannot be cancelled")
     await this.options.eventStore.append({
       kind: "runtime_wake_scheduler_recovery_workflow_cancelled",
       workflow_id: workflow.workflow_id,
@@ -237,6 +238,7 @@ export class WakeSchedulerRecoveryWorkflowService {
       } else if (event.kind === "runtime_wake_scheduler_recovery_workflow_cancelled") {
         const workflow = workflows.get(event.workflow_id)
         if (!workflow) continue
+        if (workflow.status === "completed") continue
         workflow.status = "cancelled"
         workflow.updated_at = event.cancelled_at
         workflow.blockers = event.reason ? [event.reason] : workflow.blockers
