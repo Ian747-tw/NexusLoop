@@ -72,6 +72,11 @@ import type {
   WakeSchedulePreviewSummary,
   WakeScheduleRecordSummary,
   WakeSchedulesState,
+  WakeSchedulerConfigSummary,
+  WakeSchedulerEventRecordSummary,
+  WakeSchedulerPreviewSummary,
+  WakeSchedulerStateSummary,
+  WakeSchedulerUiState,
   WakeScheduleSummary,
   WakeScheduleTickPreviewSummary,
   WakeScheduleTickResultSummary,
@@ -252,6 +257,11 @@ export type RuntimeUiEffect =
   | { type: "execute-wake-schedule-tick"; dryRun?: boolean }
   | { type: "load-wake-schedule-ticks"; limit?: number }
   | { type: "load-wake-schedule-tick"; tickId: string }
+  | { type: "preview-wake-scheduler-start"; intervalMs?: number; maxDueItems?: number; dryRun?: boolean }
+  | { type: "start-wake-scheduler"; intervalMs?: number; maxDueItems?: number; dryRun?: boolean }
+  | { type: "stop-wake-scheduler"; reason?: string }
+  | { type: "load-wake-scheduler-status" }
+  | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
   state: UiState,
@@ -914,6 +924,29 @@ export async function applyRuntimeUiEffect(
           await runtime.command("runtime.get_wake_schedule_tick", { tickId: effect.tickId }),
           effect.tickId,
         )
+      case "preview-wake-scheduler-start":
+        return applyWakeSchedulerPreview(
+          state,
+          await runtime.command("runtime.preview_wake_scheduler_start", { intervalMs: effect.intervalMs, maxDueItems: effect.maxDueItems, dryRun: effect.dryRun === true, requestedBy: "operator" }),
+        )
+      case "start-wake-scheduler": {
+        const next = applyWakeSchedulerStatus(
+          state,
+          await runtime.command("runtime.start_wake_scheduler", { intervalMs: effect.intervalMs, maxDueItems: effect.maxDueItems, dryRun: effect.dryRun === true, requestedBy: "operator" }),
+        )
+        return await loadWakeSchedulerEvents(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "stop-wake-scheduler": {
+        const next = applyWakeSchedulerStatus(
+          state,
+          await runtime.command("runtime.stop_wake_scheduler", { reason: effect.reason, requestedBy: "operator" }),
+        )
+        return await loadWakeSchedulerEvents(next, runtime, CHECKPOINT_LIMIT)
+      }
+      case "load-wake-scheduler-status":
+        return applyWakeSchedulerStatus(state, await runtime.command("runtime.wake_scheduler_status"))
+      case "load-wake-scheduler-events":
+        return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
         const result = await runtime.sendUserMessage(effect.message)
         const next = result ? applySubmissionResult(state, result) : state
@@ -946,6 +979,7 @@ export async function applyRuntimeUiEffect(
     if (isWakeAssessmentEffect(effect)) return recordWakeAssessmentCommandError(state, error)
     if (isContinuationEffect(effect)) return recordContinuationCommandError(state, error)
     if (isWakeScheduleEffect(effect)) return recordWakeScheduleCommandError(state, error)
+    if (isWakeSchedulerEffect(effect)) return recordWakeSchedulerCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
@@ -1775,6 +1809,45 @@ function applyWakeScheduleTickResult(state: UiState, value: unknown, tickId?: st
   }
 }
 
+async function loadWakeSchedulerEvents(state: UiState, runtime: RuntimeClient, limit: number): Promise<UiState> {
+  const events = readWakeSchedulerEventRecordList(await runtime.command("runtime.list_wake_scheduler_events", { limit }), "runtime.list_wake_scheduler_events", limit)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      events,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake scheduler events loaded", detail: `records=${events.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerPreview(state: UiState, value: unknown): UiState {
+  const previewResult = readWakeSchedulerPreview(value)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      preview: previewResult,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake scheduler preview", detail: `every=${previewResult.config.interval_ms}ms dry_run=${previewResult.config.dry_run}`, status: previewResult.can_start ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerStatus(state: UiState, value: unknown): UiState {
+  const status = readWakeSchedulerState(value)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      status,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake scheduler status", detail: `status=${status.status} ticks=${status.tick_count}`, status: status.status }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -1972,6 +2045,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (wakeAssessmentCommands.has(command)) return state.wakeAssessment?.commandError
   if (continuationCommands.has(command)) return state.continuation?.commandError
   if (wakeScheduleCommands.has(command)) return state.wakeSchedules?.commandError
+  if (wakeSchedulerCommands.has(command)) return state.wakeScheduler?.commandError
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
@@ -1998,6 +2072,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (wakeAssessmentCommands.has(command)) return { ...state, wakeAssessment: { ...wakeAssessmentState(state), commandError: undefined } }
   if (continuationCommands.has(command)) return { ...state, continuation: { ...continuationState(state), commandError: undefined } }
   if (wakeScheduleCommands.has(command)) return { ...state, wakeSchedules: { ...wakeSchedulesState(state), commandError: undefined } }
+  if (wakeSchedulerCommands.has(command)) return { ...state, wakeScheduler: { ...wakeSchedulerState(state), commandError: undefined } }
   if (reasoningProviderCommands.has(command)) return { ...state, reasoningProvider: { ...reasoningProviderState(state), commandError: undefined } }
   if (researchCommands.has(command)) return { ...state, research: { ...researchState(state), commandError: undefined } }
   return { ...state, runtimeCommandError: undefined }
@@ -2176,6 +2251,19 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-schedule-ticks", limit: CHECKPOINT_LIMIT })
     case "wake-tick-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-schedule-tick", tickId: requiredArg(args, 0, "tickId") })
+    case "scheduler-preview":
+    case "wake-scheduler-preview":
+      return applyRuntimeUiEffect(commandState, runtime, wakeSchedulerEffect("preview-wake-scheduler-start", args))
+    case "scheduler-start":
+    case "wake-scheduler-start":
+      return applyRuntimeUiEffect(commandState, runtime, wakeSchedulerEffect("start-wake-scheduler", args))
+    case "scheduler-stop":
+    case "wake-scheduler-stop":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "stop-wake-scheduler", reason: args.join(" ") || undefined })
+    case "scheduler-status":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-status" })
+    case "scheduler-events":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-reasoning-provider-status" })
         .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-reasoning-provider-health" }))
@@ -2631,6 +2719,11 @@ function isWakeScheduleEffect(effect: RuntimeUiEffect): boolean {
   return wakeScheduleCommands.has(effect.command)
 }
 
+function isWakeSchedulerEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return wakeSchedulerEffectTypes.has(effect.type)
+  return wakeSchedulerCommands.has(effect.command)
+}
+
 function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return reasoningProviderEffectTypes.has(effect.type)
   return reasoningProviderCommands.has(effect.command)
@@ -2820,6 +2913,17 @@ const wakeScheduleCommands = new Set([
   "wake-tick-show",
 ])
 
+const wakeSchedulerCommands = new Set([
+  "scheduler-preview",
+  "scheduler-start",
+  "scheduler-stop",
+  "scheduler-status",
+  "scheduler-events",
+  "wake-scheduler-preview",
+  "wake-scheduler-start",
+  "wake-scheduler-stop",
+])
+
 const reasoningProviderCommands = new Set([
   "reasoning",
   "reasoning-health",
@@ -2910,6 +3014,14 @@ const wakeScheduleEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "execute-wake-schedule-tick",
   "load-wake-schedule-ticks",
   "load-wake-schedule-tick",
+])
+
+const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-wake-scheduler-start",
+  "start-wake-scheduler",
+  "stop-wake-scheduler",
+  "load-wake-scheduler-status",
+  "load-wake-scheduler-events",
 ])
 
 const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -3736,6 +3848,18 @@ function recordWakeScheduleCommandError(state: UiState, error: unknown): UiState
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "wake schedule command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordWakeSchedulerCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "wake scheduler command error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
@@ -4759,6 +4883,71 @@ function readWakeScheduleTickResultList(value: unknown, commandName: string, lim
   return value.map(readWakeScheduleTickResult).filter((tick): tick is WakeScheduleTickResultSummary => tick !== null).slice(0, limit)
 }
 
+function readWakeSchedulerConfig(value: unknown): WakeSchedulerConfigSummary {
+  if (!isRecord(value)) {
+    return { enabled: false, interval_ms: 60_000, max_due_items: 5, dry_run: false, heartbeat_interval_ms: 60_000, stop_on_error: false }
+  }
+  return {
+    enabled: readBoolean(value.enabled),
+    interval_ms: readNumber(value.interval_ms, 60_000),
+    max_due_items: readNumber(value.max_due_items, 5),
+    dry_run: readBoolean(value.dry_run),
+    started_by: typeof value.started_by === "string" ? preview(redactText(value.started_by)) : undefined,
+    heartbeat_interval_ms: typeof value.heartbeat_interval_ms === "number" ? readNumber(value.heartbeat_interval_ms, 60_000) : undefined,
+    max_ticks_per_run: typeof value.max_ticks_per_run === "number" ? readNumber(value.max_ticks_per_run, 0) : undefined,
+    stop_on_error: readBoolean(value.stop_on_error),
+  }
+}
+
+function readWakeSchedulerPreview(value: unknown): WakeSchedulerPreviewSummary {
+  if (!isRecord(value) || !isRecord(value.config)) throw new Error("runtime.preview_wake_scheduler_start returned invalid preview")
+  return {
+    can_start: readBoolean(value.can_start),
+    status: readString(value.status, "stopped"),
+    config: readWakeSchedulerConfig(value.config),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    due_preview: isRecord(value.due_preview) ? readWakeScheduleTickPreview(value.due_preview) : undefined,
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeSchedulerState(value: unknown): WakeSchedulerStateSummary {
+  if (!isRecord(value) || !isRecord(value.config)) throw new Error("runtime.wake_scheduler_status returned invalid status")
+  return {
+    status: readString(value.status, "stopped"),
+    config: readWakeSchedulerConfig(value.config),
+    started_at: typeof value.started_at === "string" ? redactText(value.started_at) : undefined,
+    stopped_at: typeof value.stopped_at === "string" ? redactText(value.stopped_at) : undefined,
+    last_tick_id: typeof value.last_tick_id === "string" ? redactText(value.last_tick_id) : undefined,
+    last_tick_at: typeof value.last_tick_at === "string" ? redactText(value.last_tick_at) : undefined,
+    last_error: typeof value.last_error === "string" ? preview(redactText(value.last_error)) : undefined,
+    tick_count: readNumber(value.tick_count, 0),
+    heartbeat_count: readNumber(value.heartbeat_count, 0),
+    next_tick_at: typeof value.next_tick_at === "string" ? redactText(value.next_tick_at) : undefined,
+    started_by: typeof value.started_by === "string" ? preview(redactText(value.started_by)) : undefined,
+    stopped_by: typeof value.stopped_by === "string" ? preview(redactText(value.stopped_by)) : undefined,
+  }
+}
+
+function readWakeSchedulerEventRecordList(value: unknown, commandName: string, limit: number): WakeSchedulerEventRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeSchedulerEventRecord).filter((record): record is WakeSchedulerEventRecordSummary => record !== null).slice(0, limit)
+}
+
+function readWakeSchedulerEventRecord(value: unknown): WakeSchedulerEventRecordSummary | null {
+  if (!isRecord(value) || typeof value.kind !== "string") return null
+  return {
+    event_id: typeof value.event_id === "string" ? redactText(value.event_id) : undefined,
+    kind: readString(value.kind, ""),
+    scheduler_status: readString(value.scheduler_status, "stopped"),
+    tick_id: typeof value.tick_id === "string" ? redactText(value.tick_id) : undefined,
+    message: typeof value.message === "string" ? preview(redactText(value.message)) : undefined,
+    created_at: readString(value.created_at, ""),
+    requested_by: typeof value.requested_by === "string" ? preview(redactText(value.requested_by)) : undefined,
+  }
+}
+
 function readRuntimeCheckpointSections(value: unknown): RuntimeCheckpointSectionSummary[] {
   if (!Array.isArray(value)) return []
   return value.map((item) => {
@@ -5511,6 +5700,10 @@ function wakeSchedulesState(state: UiState): WakeSchedulesState {
   return state.wakeSchedules ?? { preview: null, selected: null, recent: [], tickPreview: null, lastTick: null, recentTicks: [] }
 }
 
+function wakeSchedulerState(state: UiState): WakeSchedulerUiState {
+  return state.wakeScheduler ?? { preview: null, status: null, events: [] }
+}
+
 function reasoningProviderState(state: UiState) {
   return state.reasoningProvider ?? {
     kind: "fake",
@@ -5865,6 +6058,26 @@ function wakeScheduleEffect(type: "preview-wake-schedule" | "create-wake-schedul
   if (!resumeId) throw new Error("schedule wake requires resume=<resumeId>")
   if (intervalMs === undefined) throw new Error("schedule wake requires every=<duration>")
   return { type, resumeId, intervalMs, title: title.length ? title.join(" ") : undefined }
+}
+
+function wakeSchedulerEffect(type: "preview-wake-scheduler-start" | "start-wake-scheduler", args: string[]): Extract<RuntimeUiEffect, { type: "preview-wake-scheduler-start" | "start-wake-scheduler" }> {
+  let intervalMs: number | undefined
+  let maxDueItems: number | undefined
+  let dryRun = false
+  for (const arg of args) {
+    if (arg === "dry-run" || arg === "dry_run") {
+      dryRun = true
+    } else if (arg.startsWith("every=")) {
+      intervalMs = parseScheduleDuration(arg.slice("every=".length).trim())
+    } else if (arg.startsWith("max=")) {
+      const parsed = Number(arg.slice("max=".length).trim())
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 20) throw new Error("scheduler max must be 1..20")
+      maxDueItems = parsed
+    } else {
+      throw new Error("scheduler args must be dry-run, every=<duration>, or max=<n>")
+    }
+  }
+  return { type, intervalMs, maxDueItems, dryRun }
 }
 
 function parseScheduleDuration(value: string): number {

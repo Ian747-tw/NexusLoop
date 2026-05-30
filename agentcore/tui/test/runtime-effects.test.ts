@@ -3314,4 +3314,54 @@ describe("runtime UI effects", () => {
     expect(state.wakeSchedules?.commandError).toContain("schedule duration")
     expect(JSON.stringify(state)).not.toContain("schedule-secret")
   })
+
+  test("wake scheduler slash commands preview start status stop events and redact secrets", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "checkpoint", args: ["full", "token=scheduler-secret"] })
+    const checkpointId = state.runtimeCheckpoints?.selected?.checkpoint_id ?? "missing"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "resume-mark", args: [checkpointId] })
+    const resumeId = state.runtimeRestore?.selectedAnchor?.resume_id ?? "missing"
+    await runtime.command("runtime.create_wake_schedule", {
+      resumeId,
+      intervalMs: 60_000,
+      nextDueAt: "1970-01-01T00:00:00.000Z",
+      title: "due fake scheduler schedule",
+      requestedBy: "operator",
+    })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-preview", args: ["dry-run", "every=60s", "max=5"] })
+    expect(state.wakeScheduler?.preview).toMatchObject({ can_start: true, status: "stopped", config: { dry_run: true, interval_ms: 60_000, max_due_items: 5 } })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Wake scheduler")
+    expect(snapshot).toContain("preview can_start=true")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-start", args: ["dry-run", "every=60s", "max=5"] })
+    expect(state.wakeScheduler?.status).toMatchObject({ status: "running", tick_count: 0, config: { dry_run: true } })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-status" })
+    expect(state.wakeScheduler?.status?.status).toBe("running")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-events" })
+    expect(state.wakeScheduler?.events.at(0)).toMatchObject({ kind: "runtime_wake_scheduler_started", scheduler_status: "running" })
+    expect(state.wakeSchedules?.lastTick).toBeUndefined()
+    expect(state.continuation?.lastStepResult).toBeUndefined()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-stop", args: ["e2e", "stop", "token=scheduler-secret"] })
+    expect(state.wakeScheduler?.status?.status).toBe("stopped")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-events" })
+    expect(state.wakeScheduler?.events.at(0)?.kind).toBe("runtime_wake_scheduler_stopped")
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("status=stopped")
+    expect(snapshot).not.toContain("scheduler-secret")
+    expect(JSON.stringify(state)).not.toContain("scheduler-secret")
+  })
+
+  test("wake scheduler invalid args propagate redacted command errors", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-preview", args: ["every=soon-token=scheduler-secret"] })
+    expect(state.wakeScheduler?.commandError).toContain("schedule duration")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-preview", args: ["max=0"] })
+    expect(state.wakeScheduler?.commandError).toContain("scheduler max must be 1..20")
+    expect(JSON.stringify(state)).not.toContain("scheduler-secret")
+  })
 })

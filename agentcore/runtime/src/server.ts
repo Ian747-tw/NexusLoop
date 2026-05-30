@@ -58,6 +58,8 @@ import { ContinuationService, readContinuationPlanDecisionInput, readContinuatio
 import type { ContinuationPlan, ContinuationPlanPreview, ContinuationPlanRecord, ContinuationStepResult } from "./continuation/continuation-types"
 import { WakeScheduleService, readWakeScheduleDecisionInput, readWakeScheduleInput, readWakeScheduleTickInput } from "./schedules/wake-schedule-service"
 import type { WakeSchedule, WakeSchedulePreview, WakeScheduleRecord, WakeScheduleTickPreview, WakeScheduleTickResult } from "./schedules/wake-schedule-types"
+import { WakeSchedulerService, readWakeSchedulerStartInput, readWakeSchedulerStopInput } from "./schedules/wake-scheduler-service"
+import type { WakeSchedulerEventRecord, WakeSchedulerPreview, WakeSchedulerState } from "./schedules/wake-scheduler-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -116,6 +118,11 @@ export interface RuntimeServerOptions {
   runtimeWakeScheduleNow?: () => Date
   runtimeWakeScheduleId?: () => string
   runtimeWakeScheduleTickId?: () => string
+  runtimeWakeSchedulerNow?: () => Date
+  runtimeWakeSchedulerSetTimer?: (callback: () => void, delayMs: number) => unknown
+  runtimeWakeSchedulerClearTimer?: (timer: unknown) => void
+  runtimeWakeSchedulerMinIntervalMs?: number
+  runtimeWakeSchedulerMinHeartbeatIntervalMs?: number
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -182,6 +189,11 @@ export class RuntimeServer {
   private readonly runtimeWakeScheduleNow?: () => Date
   private readonly runtimeWakeScheduleId?: () => string
   private readonly runtimeWakeScheduleTickId?: () => string
+  private readonly runtimeWakeSchedulerNow?: () => Date
+  private readonly runtimeWakeSchedulerSetTimer?: (callback: () => void, delayMs: number) => unknown
+  private readonly runtimeWakeSchedulerClearTimer?: (timer: unknown) => void
+  private readonly runtimeWakeSchedulerMinIntervalMs?: number
+  private readonly runtimeWakeSchedulerMinHeartbeatIntervalMs?: number
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -193,6 +205,7 @@ export class RuntimeServer {
   private wakeAssessmentServiceInstance: WakeAssessmentService | null = null
   private continuationServiceInstance: ContinuationService | null = null
   private wakeScheduleServiceInstance: WakeScheduleService | null = null
+  private wakeSchedulerServiceInstance: WakeSchedulerService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -242,6 +255,11 @@ export class RuntimeServer {
     this.runtimeWakeScheduleNow = options.runtimeWakeScheduleNow
     this.runtimeWakeScheduleId = options.runtimeWakeScheduleId
     this.runtimeWakeScheduleTickId = options.runtimeWakeScheduleTickId
+    this.runtimeWakeSchedulerNow = options.runtimeWakeSchedulerNow
+    this.runtimeWakeSchedulerSetTimer = options.runtimeWakeSchedulerSetTimer
+    this.runtimeWakeSchedulerClearTimer = options.runtimeWakeSchedulerClearTimer
+    this.runtimeWakeSchedulerMinIntervalMs = options.runtimeWakeSchedulerMinIntervalMs
+    this.runtimeWakeSchedulerMinHeartbeatIntervalMs = options.runtimeWakeSchedulerMinHeartbeatIntervalMs
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -688,6 +706,16 @@ export class RuntimeServer {
         return this.listWakeScheduleTicks(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.get_wake_schedule_tick":
         return this.getWakeScheduleTick(requiredString(payload.tickId ?? payload.tick_id, "tickId"))
+      case "runtime.preview_wake_scheduler_start":
+        return this.previewWakeSchedulerStart(readWakeSchedulerStartInput(payload))
+      case "runtime.start_wake_scheduler":
+        return this.startWakeScheduler(readWakeSchedulerStartInput(payload))
+      case "runtime.stop_wake_scheduler":
+        return this.stopWakeScheduler(readWakeSchedulerStopInput(payload))
+      case "runtime.wake_scheduler_status":
+        return this.wakeSchedulerStatus()
+      case "runtime.list_wake_scheduler_events":
+        return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
         return this.shutdown(String(payload.reason ?? "command"))
       default:
@@ -1280,6 +1308,28 @@ export class RuntimeServer {
     return this.wakeScheduleService().listTicks(limit)
   }
 
+  async previewWakeSchedulerStart(input: Parameters<WakeSchedulerService["previewStart"]>[0]): Promise<WakeSchedulerPreview> {
+    return this.wakeSchedulerService().previewStart(input)
+  }
+
+  async startWakeScheduler(input: Parameters<WakeSchedulerService["start"]>[0]): Promise<WakeSchedulerState> {
+    this.requireWakeSchedulerRuntime("runtime.start_wake_scheduler")
+    return this.wakeSchedulerService().start(input)
+  }
+
+  async stopWakeScheduler(input: Parameters<WakeSchedulerService["stop"]>[0]): Promise<WakeSchedulerState> {
+    this.requireWakeSchedulerRuntime("runtime.stop_wake_scheduler")
+    return this.wakeSchedulerService().stop(input)
+  }
+
+  async wakeSchedulerStatus(): Promise<WakeSchedulerState> {
+    return this.wakeSchedulerService().status()
+  }
+
+  async listWakeSchedulerEvents(limit = 20): Promise<WakeSchedulerEventRecord[]> {
+    return this.wakeSchedulerService().listEvents(limit)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1356,6 +1406,16 @@ export class RuntimeServer {
     let firstError: unknown = null
     if (this.started || this.runLock.isHeld()) {
       this.eventBus.emit({ type: "RuntimeShutdown", reason })
+      try {
+        await this.wakeSchedulerServiceInstance?.shutdown(reason)
+      } catch (error) {
+        firstError ??= error
+        this.eventBus.emit({
+          type: "ExecutorLifecycle",
+          phase: "runtime-wake-scheduler-shutdown-error",
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
       try {
         await this.adapter.shutdown()
         await this.drainExecutorEventPumpAfterShutdown()
@@ -1612,6 +1672,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before continuation writes")
   }
 
+  private requireWakeSchedulerRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before wake scheduler writes")
+  }
+
   private commanderApplyService(): CommanderApplyService {
     return new CommanderApplyService({
       proposalRegistry: this.proposalRegistry,
@@ -1725,6 +1790,20 @@ export class RuntimeServer {
       tickIdFactory: this.runtimeWakeScheduleTickId ? () => this.runtimeWakeScheduleTickId!() : undefined,
     })
     return this.wakeScheduleServiceInstance
+  }
+
+  private wakeSchedulerService(): WakeSchedulerService {
+    this.wakeSchedulerServiceInstance ??= new WakeSchedulerService({
+      eventStore: this.eventStore,
+      wakeScheduleService: this.wakeScheduleService(),
+      now: this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow,
+      setTimer: this.runtimeWakeSchedulerSetTimer,
+      clearTimer: this.runtimeWakeSchedulerClearTimer,
+      minIntervalMs: this.runtimeWakeSchedulerMinIntervalMs,
+      minHeartbeatIntervalMs: this.runtimeWakeSchedulerMinHeartbeatIntervalMs,
+      canRun: () => this.mode === "active" && this.started && this.runLock.isHeld(),
+    })
+    return this.wakeSchedulerServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

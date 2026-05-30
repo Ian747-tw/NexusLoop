@@ -15,6 +15,7 @@ import type { RuntimeRestoreService } from "./checkpoints/runtime-restore-servic
 import { WakeAssessmentService } from "./wake/wake-hook-service"
 import { ContinuationService } from "./continuation/continuation-service"
 import { WakeScheduleService } from "./schedules/wake-schedule-service"
+import { WakeSchedulerService } from "./schedules/wake-scheduler-service"
 import { MissionRegistry } from "./missions/mission-registry"
 import { ReviewRegistry } from "./missions/review-registry"
 import { ProposalRegistry } from "./missions/proposal-registry"
@@ -66,6 +67,15 @@ afterEach(async () => {
 
 function timeout(ms: number): Promise<"timeout"> {
   return new Promise((resolve) => setTimeout(() => resolve("timeout"), ms))
+}
+
+async function waitForCondition(predicate: () => Promise<boolean> | boolean, message: string, ms = NON_BLOCKING_START_TIMEOUT_MS): Promise<void> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (await predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(message)
 }
 
 async function readEventKinds(dir: string): Promise<string[]> {
@@ -6372,6 +6382,482 @@ describe("RuntimeServer core", () => {
     await expect(viewServer.command("runtime.execute_wake_schedule_tick", { now: "2026-05-11T13:16:00.000Z", requestedBy: "operator" })).rejects.toThrow("runtime.execute_wake_schedule_tick requires active mode")
     await expect(viewServer.command("runtime.preview_wake_schedule", { resumeId: "resume_schedule_gate_1", intervalMs: 1, requestedBy: "operator" })).rejects.toThrow("interval_ms must be at least 60000")
     await viewServer.shutdown()
+  })
+
+  test("wake scheduler start stop status and event history are explicit and do not tick immediately", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const timers: Array<() => void> = []
+    let wakeId = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_scheduler_1",
+      runtimeResumeId: () => "resume_scheduler_1",
+      runtimeWakeId: () => `wake_scheduler_${++wakeId}`,
+      runtimeWakeScheduleId: () => "schedule_scheduler_1",
+      runtimeWakeScheduleTickId: () => "tick_scheduler_1",
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T14:00:00.000Z"),
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T14:00:00.000Z"),
+      runtimeWakeSchedulerMinIntervalMs: 10,
+      runtimeWakeSchedulerMinHeartbeatIntervalMs: 10,
+      runtimeWakeSchedulerSetTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      runtimeWakeSchedulerClearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_scheduler_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_schedule", {
+      resumeId: "resume_scheduler_1",
+      intervalMs: 60_000,
+      nextDueAt: "2026-05-11T13:59:00.000Z",
+      requestedBy: "operator",
+    })
+
+    const preview = await server.command("runtime.preview_wake_scheduler_start", { intervalMs: 10, maxDueItems: 5, dryRun: true, requestedBy: "operator" }) as { can_start: boolean; due_preview?: { due_count: number } }
+    expect(preview.can_start).toBe(true)
+    expect(preview.due_preview?.due_count).toBe(1)
+
+    const started = await server.command("runtime.start_wake_scheduler", { intervalMs: 10, maxDueItems: 5, dryRun: true, requestedBy: "operator" }) as { status: string; tick_count: number; next_tick_at?: string }
+    expect(started).toMatchObject({ status: "running", tick_count: 0, next_tick_at: "2026-05-11T14:00:00.010Z" })
+    expect(await server.command("runtime.list_wake_schedule_ticks", { limit: 10 })).toEqual([])
+    await expect(server.command("runtime.start_wake_scheduler", { intervalMs: 10, requestedBy: "operator" })).rejects.toThrow("wake scheduler is already running")
+
+    timers.shift()?.()
+    await waitForCondition(async () => {
+      const status = await server.command("runtime.wake_scheduler_status") as { tick_count: number }
+      return status.tick_count === 1
+    }, "timed out waiting for scheduler dry-run tick")
+    await waitForCondition(async () => {
+      const events = await server.command("runtime.list_wake_scheduler_events", { limit: 10 }) as Array<{ kind: string }>
+      return events.some((event) => event.kind === "runtime_wake_scheduler_tick_succeeded")
+    }, "timed out waiting for scheduler tick event")
+    const status = await server.command("runtime.wake_scheduler_status") as { status: string; tick_count: number; last_tick_id?: string }
+    expect(status).toMatchObject({ status: "running", tick_count: 1, last_tick_id: "tick_scheduler_1" })
+    const schedule = await server.command("runtime.get_wake_schedule", { scheduleId: "schedule_scheduler_1" }) as { last_wake_id?: string }
+    expect(schedule.last_wake_id).toBeUndefined()
+    const events = await server.command("runtime.list_wake_scheduler_events", { limit: 10 }) as Array<{ kind: string; tick_id?: string }>
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_scheduler_started")
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_scheduler_tick_succeeded")
+
+    const stopped = await server.command("runtime.stop_wake_scheduler", { reason: "stop token=scheduler-secret", requestedBy: "operator" }) as { status: string }
+    expect(stopped.status).toBe("stopped")
+    const persisted = await readJsonlEvents(dir)
+    expect(persisted.map((event) => event.kind)).toContain("runtime_wake_scheduler_stopped")
+    expect(JSON.stringify(persisted)).not.toContain("scheduler-secret")
+    await server.shutdown()
+  })
+
+  test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const timers: Array<() => void> = []
+    let stepIndex = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeCheckpointId: () => "checkpoint_scheduler_real_1",
+      runtimeResumeId: () => "resume_scheduler_real_1",
+      runtimeWakeId: () => "wake_scheduler_real_1",
+      runtimeContinuationId: () => "plan_scheduler_real_1",
+      runtimeContinuationStepId: () => `step_scheduler_real_${++stepIndex}`,
+      runtimeWakeScheduleId: () => "schedule_scheduler_real_1",
+      runtimeWakeScheduleTickId: () => "tick_scheduler_real_1",
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T14:05:00.000Z"),
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T14:05:00.000Z"),
+      runtimeWakeSchedulerMinIntervalMs: 10,
+      runtimeWakeSchedulerMinHeartbeatIntervalMs: 10,
+      runtimeWakeSchedulerSetTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      runtimeWakeSchedulerClearTimer: () => undefined,
+    })
+    await server.start()
+    await server.command("runtime.create_runtime_checkpoint", { scope: "full", requestedBy: "operator" })
+    await server.command("runtime.mark_checkpoint_resume_anchor", { checkpointId: "checkpoint_scheduler_real_1", requestedBy: "operator" })
+    await server.command("runtime.create_wake_schedule", {
+      resumeId: "resume_scheduler_real_1",
+      intervalMs: 60_000,
+      nextDueAt: "2026-05-11T14:04:00.000Z",
+      policy: { createContinuationPlan: true, maxContinuationPlansPerTick: 1 },
+      requestedBy: "operator",
+    })
+
+    await server.command("runtime.start_wake_scheduler", { intervalMs: 10, maxDueItems: 5, requestedBy: "operator" })
+    timers.shift()?.()
+    await waitForCondition(async () => {
+      const schedule = await server.command("runtime.get_wake_schedule", { scheduleId: "schedule_scheduler_real_1" }) as { last_wake_id?: string }
+      return schedule.last_wake_id === "wake_scheduler_real_1"
+    }, "timed out waiting for scheduler real tick")
+    const schedule = await server.command("runtime.get_wake_schedule", { scheduleId: "schedule_scheduler_real_1" }) as { last_wake_id?: string; last_plan_id?: string }
+    expect(schedule).toMatchObject({ last_wake_id: "wake_scheduler_real_1", last_plan_id: "plan_scheduler_real_1" })
+    const plan = await server.command("runtime.get_continuation_plan", { planId: "plan_scheduler_real_1" }) as { completed_step_count: number }
+    expect(plan.completed_step_count).toBe(0)
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_schedule_tick_completed")
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_assessment_created")
+    expect(events.map((event) => event.kind)).toContain("runtime_continuation_plan_created")
+    expect(events.map((event) => event.kind)).not.toContain("runtime_continuation_step_started")
+    await server.shutdown()
+  })
+
+  test("wake scheduler stops on max tick count shutdown and write gates preserve read surfaces", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const timers: Array<() => void> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeScheduleTickId: () => `tick_scheduler_limit_${Date.now()}`,
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T14:10:00.000Z"),
+      runtimeWakeSchedulerMinIntervalMs: 10,
+      runtimeWakeSchedulerMinHeartbeatIntervalMs: 10,
+      runtimeWakeSchedulerSetTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      runtimeWakeSchedulerClearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+    })
+    await server.start()
+    await server.command("runtime.start_wake_scheduler", { intervalMs: 10, maxTicksPerRun: 1, requestedBy: "operator" })
+    timers.shift()?.()
+    await waitForCondition(async () => {
+      const status = await server.command("runtime.wake_scheduler_status") as { status: string; tick_count: number }
+      return status.status === "stopped" && status.tick_count === 1
+    }, "timed out waiting for scheduler max tick stop")
+    const stopped = await server.command("runtime.wake_scheduler_status") as { status: string; tick_count: number }
+    expect(stopped).toMatchObject({ status: "stopped", tick_count: 1 })
+    await server.command("runtime.start_wake_scheduler", { intervalMs: 10, requestedBy: "operator" })
+    await server.shutdown()
+    const afterShutdownEvents = await readJsonlEvents(dir)
+    expect(afterShutdownEvents.filter((event) => event.kind === "runtime_wake_scheduler_stopped").length).toBeGreaterThanOrEqual(2)
+
+    const viewServer = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
+    const status = await viewServer.command("runtime.wake_scheduler_status") as { status: string }
+    expect(status.status).toBe("stopped")
+    const listed = await viewServer.command("runtime.list_wake_scheduler_events", { limit: 20 }) as Array<{ kind: string }>
+    expect(listed.some((event) => event.kind === "runtime_wake_scheduler_started")).toBe(true)
+    await expect(viewServer.command("runtime.start_wake_scheduler", { intervalMs: 10, requestedBy: "operator" })).rejects.toThrow("runtime.start_wake_scheduler requires active mode")
+    await expect(viewServer.command("runtime.stop_wake_scheduler", { requestedBy: "operator" })).rejects.toThrow("runtime.stop_wake_scheduler requires active mode")
+    await viewServer.shutdown()
+  })
+
+  test("wake scheduler service does not overlap scheduled ticks", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const timers: Array<() => void> = []
+    let executeCount = 0
+    let resolveStarted!: () => void
+    let unblockTick!: () => void
+    const tickStarted = new Promise<void>((resolve) => {
+      resolveStarted = resolve
+    })
+    const tickBlocked = new Promise<void>((resolve) => {
+      unblockTick = resolve
+    })
+    const service = new WakeSchedulerService({
+      eventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:15:00.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: () => undefined,
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => ({ now: "2026-05-11T14:15:00.000Z", due_count: 1, eligible_count: 1, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }),
+        executeTick: async () => {
+          executeCount += 1
+          resolveStarted()
+          await tickBlocked
+          return { tick_id: `tick_no_overlap_${executeCount}`, now: "2026-05-11T14:15:00.000Z", processed_count: 0, wake_ids: [], plan_ids: [], skipped: [], created_at: "2026-05-11T14:15:00.000Z", requested_by: "wake-scheduler", dry_run: false }
+        },
+      } as unknown as WakeScheduleService,
+    })
+    await service.start({ intervalMs: 10, requestedBy: "operator" })
+    const first = timers.shift()
+    first?.()
+    await tickStarted
+    first?.()
+    unblockTick()
+    await timeout(0)
+    expect(executeCount).toBe(1)
+    await service.stop({ requestedBy: "operator" })
+  })
+
+  test("wake scheduler stop waits for in-flight tick before recording stopped state", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const timers: Array<() => void> = []
+    let executeCount = 0
+    let resolveStarted!: () => void
+    let unblockTick!: () => void
+    const tickStarted = new Promise<void>((resolve) => {
+      resolveStarted = resolve
+    })
+    const tickBlocked = new Promise<void>((resolve) => {
+      unblockTick = resolve
+    })
+    const service = new WakeSchedulerService({
+      eventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:16:00.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: () => undefined,
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => ({ now: "2026-05-11T14:16:00.000Z", due_count: 1, eligible_count: 1, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }),
+        executeTick: async () => {
+          executeCount += 1
+          resolveStarted()
+          await tickBlocked
+          return { tick_id: "tick_stopped_in_flight", now: "2026-05-11T14:16:00.000Z", processed_count: 1, wake_ids: ["wake_stopped_in_flight"], plan_ids: [], skipped: [], created_at: "2026-05-11T14:16:00.000Z", requested_by: "wake-scheduler", dry_run: false }
+        },
+      } as unknown as WakeScheduleService,
+    })
+    await service.start({ intervalMs: 10, requestedBy: "operator" })
+    timers.shift()?.()
+    await tickStarted
+
+    let stopResolved = false
+    const stopPromise = service.stop({ reason: "operator stop while tick active", requestedBy: "operator" }).then(() => {
+      stopResolved = true
+    })
+    await timeout(20)
+    expect(stopResolved).toBe(false)
+    await expect(service.start({ intervalMs: 10, requestedBy: "operator" })).rejects.toThrow("wake scheduler is already running or stopping")
+
+    unblockTick()
+    await stopPromise
+    expect(executeCount).toBe(1)
+    expect(service.status()).toMatchObject({ status: "stopped", tick_count: 0 })
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).toEqual([
+      "runtime_wake_scheduler_started",
+      "runtime_wake_scheduler_stopped",
+    ])
+    expect(JSON.stringify(events)).not.toContain("tick_stopped_in_flight")
+    expect(JSON.stringify(events)).not.toContain("wake_stopped_in_flight")
+  })
+
+  test("wake scheduler serializes start and stop while start preview is pending", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const timers: Array<() => void> = []
+    let previewCount = 0
+    let resolvePreviewStarted!: () => void
+    let unblockPreview!: () => void
+    const previewStarted = new Promise<void>((resolve) => {
+      resolvePreviewStarted = resolve
+    })
+    const previewBlocked = new Promise<void>((resolve) => {
+      unblockPreview = resolve
+    })
+    const service = new WakeSchedulerService({
+      eventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:17:00.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => {
+          previewCount += 1
+          if (previewCount === 1) {
+            resolvePreviewStarted()
+            await previewBlocked
+          }
+          return { now: "2026-05-11T14:17:00.000Z", due_count: 0, eligible_count: 0, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }
+        },
+        executeTick: async () => ({ tick_id: "tick_start_lock", now: "2026-05-11T14:17:00.000Z", processed_count: 0, wake_ids: [], plan_ids: [], skipped: [], created_at: "2026-05-11T14:17:00.000Z", requested_by: "wake-scheduler", dry_run: false }),
+      } as unknown as WakeScheduleService,
+    })
+
+    const firstStart = service.start({ intervalMs: 10, requestedBy: "operator" })
+    await previewStarted
+    const duplicateStart = service.start({ intervalMs: 10, requestedBy: "operator" }).then(
+      () => "started",
+      (error) => error instanceof Error ? error.message : String(error),
+    )
+    let stopResolved = false
+    const stopAfterStart = service.stop({ requestedBy: "operator" }).then(() => {
+      stopResolved = true
+    })
+    await timeout(20)
+    expect(stopResolved).toBe(false)
+
+    unblockPreview()
+    await firstStart
+    await expect(duplicateStart).resolves.toContain("wake scheduler is already running")
+    await stopAfterStart
+    expect(service.status()).toMatchObject({ status: "stopped", tick_count: 0 })
+    expect(timers).toHaveLength(0)
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).toEqual([
+      "runtime_wake_scheduler_started",
+      "runtime_wake_scheduler_stopped",
+    ])
+  })
+
+  test("wake scheduler rejects starts requested while a stop is queued", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const timers: Array<() => void> = []
+    const service = new WakeSchedulerService({
+      eventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:17:30.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => ({ now: "2026-05-11T14:17:30.000Z", due_count: 0, eligible_count: 0, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }),
+        executeTick: async () => ({ tick_id: "tick_queued_stop", now: "2026-05-11T14:17:30.000Z", processed_count: 0, wake_ids: [], plan_ids: [], skipped: [], created_at: "2026-05-11T14:17:30.000Z", requested_by: "wake-scheduler", dry_run: false }),
+      } as unknown as WakeScheduleService,
+    })
+    await service.start({ intervalMs: 10, requestedBy: "operator" })
+
+    const stopPromise = service.stop({ requestedBy: "operator" })
+    await expect(service.start({ intervalMs: 10, requestedBy: "operator" })).rejects.toThrow("wake scheduler is already running or stopping")
+    await stopPromise
+
+    expect(service.status()).toMatchObject({ status: "stopped", tick_count: 0 })
+    expect(timers).toHaveLength(0)
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).toEqual([
+      "runtime_wake_scheduler_started",
+      "runtime_wake_scheduler_stopped",
+    ])
+  })
+
+  test("wake scheduler consumes rejected scheduled tick cleanup promises", async () => {
+    const timers: Array<() => void> = []
+    const unhandled: unknown[] = []
+    const onUnhandled = (error: unknown) => {
+      unhandled.push(error)
+    }
+    process.on("unhandledRejection", onUnhandled)
+    let appendCount = 0
+    const service = new WakeSchedulerService({
+      eventStore: {
+        append: async () => {
+          appendCount += 1
+          if (appendCount > 1) throw new Error("scheduler event write failed token=abc123")
+          return `event_${appendCount}`
+        },
+        readAll: async () => [],
+      } as unknown as EventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:18:00.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: () => undefined,
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => ({ now: "2026-05-11T14:18:00.000Z", due_count: 1, eligible_count: 1, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }),
+        executeTick: async () => {
+          throw new Error("tick failed")
+        },
+      } as unknown as WakeScheduleService,
+    })
+    try {
+      await service.start({ intervalMs: 10, requestedBy: "operator" })
+      timers.shift()?.()
+      await timeout(20)
+      expect(unhandled).toHaveLength(0)
+      expect(service.status()).toMatchObject({ status: "running", tick_count: 1 })
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+    }
+  })
+
+  test("wake scheduler counts failed tick attempts toward max_ticks_per_run", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const timers: Array<() => void> = []
+    let executeCount = 0
+    const service = new WakeSchedulerService({
+      eventStore,
+      minIntervalMs: 10,
+      minHeartbeatIntervalMs: 10,
+      now: () => new Date("2026-05-11T14:19:00.000Z"),
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+      canRun: () => true,
+      wakeScheduleService: {
+        previewTick: async () => ({ now: "2026-05-11T14:19:00.000Z", due_count: 1, eligible_count: 1, blocked_count: 0, items: [], max_items: 1, blockers: [], warnings: [] }),
+        executeTick: async () => {
+          executeCount += 1
+          throw new Error(`scheduled tick failure ${executeCount}`)
+        },
+      } as unknown as WakeScheduleService,
+    })
+    await service.start({ intervalMs: 10, maxTicksPerRun: 2, requestedBy: "operator" })
+
+    timers.shift()?.()
+    await timeout(20)
+    expect(service.status()).toMatchObject({ status: "running", tick_count: 1 })
+    expect(timers).toHaveLength(1)
+
+    timers.shift()?.()
+    await timeout(20)
+    expect(executeCount).toBe(2)
+    expect(service.status()).toMatchObject({ status: "failed", tick_count: 2 })
+    expect(timers).toHaveLength(0)
+    const events = await eventStore.readAll()
+    expect(events.map((event) => event.kind)).toEqual([
+      "runtime_wake_scheduler_started",
+      "runtime_wake_scheduler_tick_failed",
+      "runtime_wake_scheduler_tick_failed",
+      "runtime_wake_scheduler_stopped",
+    ])
   })
 
   test("minimax disabled surfaces fail closed instead of falling back to fake providers", async () => {

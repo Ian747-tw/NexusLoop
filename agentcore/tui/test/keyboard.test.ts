@@ -639,6 +639,14 @@ describe("TUI keyboard command model", () => {
       ["/wake-tick-dry-run", "wake-tick-dry-run", []],
       ["/wake-ticks", "wake-ticks", []],
       ["/wake-tick-show tick-1", "wake-tick-show", ["tick-1"]],
+      ["/scheduler-preview dry-run every=60s max=5", "scheduler-preview", ["dry-run", "every=60s", "max=5"]],
+      ["/scheduler-start dry-run every=60s max=5", "scheduler-start", ["dry-run", "every=60s", "max=5"]],
+      ["/scheduler-status", "scheduler-status", []],
+      ["/scheduler-stop e2e stop", "scheduler-stop", ["e2e", "stop"]],
+      ["/scheduler-events", "scheduler-events", []],
+      ["/wake-scheduler-preview every=60s", "wake-scheduler-preview", ["every=60s"]],
+      ["/wake-scheduler-start dry-run", "wake-scheduler-start", ["dry-run"]],
+      ["/wake-scheduler-stop stop", "wake-scheduler-stop", ["stop"]],
     ] as const) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
@@ -652,7 +660,7 @@ describe("TUI keyboard command model", () => {
       expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
     }
 
-    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1"]) {
+    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start"]) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",
