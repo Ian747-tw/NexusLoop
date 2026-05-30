@@ -6,7 +6,7 @@ import { FakeRuntimeClient } from "../src/runtime"
 import { reduceRuntimeEvent } from "../src/reducer"
 import { initialState } from "../src/state"
 import { createTuiRuntimeClient, isTuiRuntimeEvent, readRuntimeClientKind, TuiRuntimeServerClient } from "../src/runtime-client-factory"
-import { ExternalApiConnectorRegistry, FakeExternalApiTransport, FakeOpenCodeAdapter, ResearchDb, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
+import { EventStore, ExternalApiConnectorRegistry, FakeExternalApiTransport, FakeOpenCodeAdapter, ResearchDb, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 
 const cleanup: string[] = []
@@ -211,6 +211,34 @@ describe("TUI runtime client factory", () => {
       can_bootstrap: false,
     })
     expect((await client.runtime.command("runtime.wake_scheduler_status") as { status: string }).status).toBe("stopped")
+    await client.runtime.shutdown()
+  })
+
+  test("real runtime client exposes scheduler recovery stale fixture without starting scheduler", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:00:00.000Z",
+      scheduler_status: "running",
+      tick_id: "stale_tick_tui_1",
+      requested_by: "prior",
+    })
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+
+    let state = await applyRuntimeUiEffect(initialState(dir), client, { type: "send-command", command: "scheduler-recovery" })
+    expect(state.wakeScheduler?.recoveryPreview).toMatchObject({
+      stale_detected: true,
+      status: "detected",
+      prior_tick_id: "stale_tick_tui_1",
+    })
+    expect((await client.runtime.command("runtime.wake_scheduler_status") as { status: string }).status).toBe("stopped")
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "scheduler-recoveries" })
+    expect(state.wakeScheduler?.recoveries.length).toBeGreaterThan(0)
     await client.runtime.shutdown()
   })
 

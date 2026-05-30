@@ -62,6 +62,8 @@ import { WakeSchedulerService, readWakeSchedulerStartInput, readWakeSchedulerSto
 import type { WakeSchedulerEventRecord, WakeSchedulerPreview, WakeSchedulerState } from "./schedules/wake-scheduler-types"
 import { WakeSchedulerBootstrapService } from "./schedules/wake-scheduler-bootstrap-service"
 import type { WakeSchedulerBootstrapConfig, WakeSchedulerBootstrapStatus } from "./schedules/wake-scheduler-bootstrap-types"
+import { WakeSchedulerRecoveryService, readWakeSchedulerRecoveryAcknowledgeInput } from "./schedules/wake-scheduler-recovery-service"
+import type { WakeSchedulerRecovery, WakeSchedulerRecoveryPreview, WakeSchedulerRecoveryRecord } from "./schedules/wake-scheduler-recovery-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -211,6 +213,7 @@ export class RuntimeServer {
   private wakeScheduleServiceInstance: WakeScheduleService | null = null
   private wakeSchedulerServiceInstance: WakeSchedulerService | null = null
   private wakeSchedulerBootstrapServiceInstance: WakeSchedulerBootstrapService | null = null
+  private wakeSchedulerRecoveryServiceInstance: WakeSchedulerRecoveryService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -734,6 +737,14 @@ export class RuntimeServer {
         return this.wakeSchedulerBootstrapStatus()
       case "runtime.preview_wake_scheduler_bootstrap":
         return this.previewWakeSchedulerBootstrap()
+      case "runtime.preview_wake_scheduler_recovery":
+        return this.previewWakeSchedulerRecovery()
+      case "runtime.get_wake_scheduler_recovery":
+        return this.getWakeSchedulerRecovery(requiredString(payload.recoveryId ?? payload.recovery_id, "recoveryId"))
+      case "runtime.list_wake_scheduler_recoveries":
+        return this.listWakeSchedulerRecoveries(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.acknowledge_wake_scheduler_recovery":
+        return this.acknowledgeWakeSchedulerRecovery(readWakeSchedulerRecoveryAcknowledgeInput(payload))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -767,6 +778,7 @@ export class RuntimeServer {
       wakeScheduler: {
         status: await this.wakeSchedulerStatus(),
         bootstrap: await this.wakeSchedulerBootstrapStatus(),
+        recovery: await this.previewWakeSchedulerRecovery(),
       },
       policy,
     })
@@ -1362,6 +1374,23 @@ export class RuntimeServer {
     return this.wakeSchedulerBootstrapService().preview()
   }
 
+  async previewWakeSchedulerRecovery(): Promise<WakeSchedulerRecoveryPreview> {
+    return this.wakeSchedulerRecoveryService().preview()
+  }
+
+  async getWakeSchedulerRecovery(recoveryId: string): Promise<WakeSchedulerRecovery | null> {
+    return this.wakeSchedulerRecoveryService().get(recoveryId)
+  }
+
+  async listWakeSchedulerRecoveries(limit = 20): Promise<WakeSchedulerRecoveryRecord[]> {
+    return this.wakeSchedulerRecoveryService().list(limit)
+  }
+
+  async acknowledgeWakeSchedulerRecovery(input: Parameters<WakeSchedulerRecoveryService["acknowledge"]>[0]): Promise<WakeSchedulerRecovery> {
+    this.requireWakeSchedulerRuntime("runtime.acknowledge_wake_scheduler_recovery")
+    return this.wakeSchedulerRecoveryService().acknowledge(input)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1846,6 +1875,17 @@ export class RuntimeServer {
       now: this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow,
     })
     return this.wakeSchedulerBootstrapServiceInstance
+  }
+
+  private wakeSchedulerRecoveryService(): WakeSchedulerRecoveryService {
+    this.wakeSchedulerRecoveryServiceInstance ??= new WakeSchedulerRecoveryService({
+      eventStore: this.eventStore,
+      scheduler: this.wakeSchedulerService(),
+      bootstrap: this.wakeSchedulerBootstrapService(),
+      wakeScheduleService: this.wakeScheduleService(),
+      now: this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow,
+    })
+    return this.wakeSchedulerRecoveryServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

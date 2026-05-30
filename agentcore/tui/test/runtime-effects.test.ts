@@ -3392,4 +3392,58 @@ describe("runtime UI effects", () => {
     snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("bootstrap_due=0 eligible=0")
   })
+
+  test("wake scheduler recovery slash commands render no-stale and stale acknowledgement states", async () => {
+    const previous = process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE
+    process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE = "1"
+    try {
+      const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+      let state = initialState("/tmp/demo")
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery" })
+      expect(state.wakeScheduler?.recoveryPreview).toMatchObject({ stale_detected: true, status: "detected", recovery_id: "fake-recovery-1" })
+      let snapshot = layoutSnapshot(state)
+      expect(snapshot).toContain("recovery")
+      expect(snapshot).toContain("stale_detected=true")
+      expect(snapshot).toContain("/scheduler-recovery-ack fake-recovery-1")
+
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-ack", args: ["fake-recovery-1", "operator", "saw", "token=recovery-secret"] })
+      expect(state.wakeScheduler?.selectedRecovery).toMatchObject({ recovery_id: "fake-recovery-1", status: "acknowledged" })
+      expect(state.wakeScheduler?.recoveries.at(0)).toMatchObject({ recovery_id: "fake-recovery-1", status: "acknowledged" })
+      expect(state.wakeScheduler?.status?.status).not.toBe("running")
+      expect(state.wakeSchedules?.lastTick).toBeUndefined()
+      expect(state.continuation?.lastStepResult).toBeUndefined()
+
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-resolve", args: ["fake-recovery-1", "resolved", "token=recovery-secret"] })
+      expect(state.wakeScheduler?.selectedRecovery).toMatchObject({ recovery_id: "fake-recovery-1", status: "resolved" })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-dismiss", args: ["fake-recovery-1", "dismissed", "token=recovery-secret"] })
+      expect(state.wakeScheduler?.selectedRecovery).toMatchObject({ recovery_id: "fake-recovery-1", status: "dismissed" })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recoveries" })
+      expect(state.wakeScheduler?.recoveries.length).toBeGreaterThan(0)
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-show", args: ["fake-recovery-1"] })
+      expect(state.wakeScheduler?.selectedRecovery?.recovery_id).toBe("fake-recovery-1")
+      snapshot = layoutSnapshot(state)
+      expect(snapshot).toContain("recent_recoveries")
+      expect(snapshot).not.toContain("recovery-secret")
+      expect(JSON.stringify(state)).not.toContain("recovery-secret")
+    } finally {
+      if (previous === undefined) delete process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE
+      else process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE = previous
+    }
+  })
+
+  test("wake scheduler recovery missing args and default fake no-stale path are bounded", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-preview" })
+    expect(state.wakeScheduler?.recoveryPreview).toMatchObject({ stale_detected: false, status: "none" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("stale_detected=false")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-ack", args: [] })
+    expect(state.wakeScheduler?.commandError).toContain("recoveryId")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-show", args: ["missing-token=recovery-secret"] })
+    expect(state.wakeScheduler?.commandError).toContain("[REDACTED]")
+    expect(JSON.stringify(state)).not.toContain("recovery-secret")
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).not.toContain("recovery-secret")
+  })
 })

@@ -1445,11 +1445,64 @@ export type WakeSchedulerEventRecordSummary = {
   requested_by?: string
 }
 
+export type WakeSchedulerRecoveryCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type WakeSchedulerRecoveryStatusSummary = "none" | "detected" | "acknowledged" | "resolved" | "dismissed" | string
+
+export type WakeSchedulerRecoveryPreviewSummary = {
+  recovery_id?: string
+  stale_detected: boolean
+  status: WakeSchedulerRecoveryStatusSummary
+  prior_started_at?: string
+  prior_event_id?: string
+  prior_tick_id?: string
+  scheduler_status: WakeSchedulerStatusSummary
+  current_event_count: number
+  due_schedule_count: number
+  eligible_due_schedule_count: number
+  blocked_due_schedule_count: number
+  missed_window_estimate_count?: number
+  warnings: string[]
+  blockers: string[]
+  recommended_commands: WakeSchedulerRecoveryCommandSummary[]
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerRecoverySummary = WakeSchedulerRecoveryPreviewSummary & {
+  recovery_id: string
+  acknowledged_at?: string
+  acknowledged_by?: string
+  resolution_reason?: string
+  created_at: string
+  updated_at: string
+  recovery_hash: string
+}
+
+export type WakeSchedulerRecoveryRecordSummary = {
+  recovery_id: string
+  status: WakeSchedulerRecoveryStatusSummary
+  stale_detected: boolean
+  prior_started_at?: string
+  acknowledged_at?: string
+  updated_at: string
+  summary_preview: string
+  recovery_hash: string
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
   bootstrapStatus?: WakeSchedulerBootstrapStatusSummary | null
   bootstrapPreview?: WakeSchedulerBootstrapStatusSummary | null
+  recoveryPreview?: WakeSchedulerRecoveryPreviewSummary | null
+  selectedRecovery?: WakeSchedulerRecoverySummary | null
+  recoveries: WakeSchedulerRecoveryRecordSummary[]
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

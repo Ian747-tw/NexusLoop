@@ -6632,6 +6632,167 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler recovery preview reports none without stale prior run", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+    const preview = await server.command("runtime.preview_wake_scheduler_recovery") as { stale_detected: boolean; status: string; recommended_commands: Array<{ command: string; command_type: string }> }
+    expect(preview).toMatchObject({ stale_detected: false, status: "none" })
+    expect(preview.recommended_commands.some((command) => command.command === "/wake-tick-preview" && command.command_type === "read")).toBe(true)
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery preview detects stale prior run and due counts without mutating", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:00:00.000Z",
+      scheduler_status: "running",
+      tick_id: "stale_tick_1",
+      requested_by: "scheduler token=secret",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_schedule_created",
+      schedule_id: "wake_schedule_stale_1",
+      resume_id: "missing_resume",
+      schedule: {
+        schedule_id: "wake_schedule_stale_1",
+        resume_id: "missing_resume",
+        status: "active",
+        title: "stale schedule token=secret",
+        interval_ms: 60_000,
+        next_due_at: "2026-05-11T15:01:00.000Z",
+        created_at: "2026-05-11T15:00:00.000Z",
+        created_by: "test",
+        updated_at: "2026-05-11T15:00:00.000Z",
+        policy: { create_wake_assessment: true, create_continuation_plan: true, include_write_steps: false, max_wake_assessments_per_tick: 1, max_continuation_plans_per_tick: 1 },
+        schedule_hash: "hash",
+        warnings: [],
+      },
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T15:05:00.000Z"),
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:05:00.000Z"),
+    })
+    await server.start()
+    const preview = await server.command("runtime.preview_wake_scheduler_recovery") as {
+      stale_detected: boolean
+      recovery_id: string
+      prior_tick_id?: string
+      due_schedule_count: number
+      eligible_due_schedule_count: number
+      blocked_due_schedule_count: number
+      missed_window_estimate_count?: number
+      recommended_commands: Array<{ command: string; command_type: string; requires_active_runtime?: boolean }>
+    }
+    expect(preview.stale_detected).toBe(true)
+    expect(preview.recovery_id.startsWith("wake_scheduler_recovery_")).toBe(true)
+    expect(preview.prior_tick_id).toBe("stale_tick_1")
+    expect(preview.due_schedule_count).toBe(1)
+    expect(preview.eligible_due_schedule_count).toBe(0)
+    expect(preview.blocked_due_schedule_count).toBe(1)
+    expect(preview.missed_window_estimate_count).toBeGreaterThan(0)
+    expect(preview.recommended_commands.some((command) => command.command === "/wake-tick-preview" && command.command_type === "read")).toBe(true)
+    expect(preview.recommended_commands.some((command) => command.command.startsWith("/scheduler-recovery-ack") && command.command_type === "write" && command.requires_active_runtime)).toBe(true)
+    expect(await server.command("runtime.list_wake_schedule_ticks", { limit: 10 })).toEqual([])
+    expect(JSON.stringify(preview)).not.toContain("secret")
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery preview does not flag current running scheduler as stale", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const timers: Array<() => void> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerMinIntervalMs: 10,
+      runtimeWakeSchedulerSetTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      runtimeWakeSchedulerClearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+    })
+    await server.start()
+    await server.command("runtime.start_wake_scheduler", { intervalMs: 10, maxDueItems: 5, dryRun: true, requestedBy: "operator" })
+    const preview = await server.command("runtime.preview_wake_scheduler_recovery") as { stale_detected: boolean; status: string; scheduler_status: string }
+    expect(preview).toMatchObject({ stale_detected: false, status: "none", scheduler_status: "running" })
+    expect(timers).toHaveLength(1)
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery acknowledgement is explicit write-only and fingerprint scoped", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:00:00.000Z",
+      scheduler_status: "running",
+      tick_id: "old_tick_1",
+      requested_by: "prior",
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:05:00.000Z"),
+    })
+    await server.start()
+    const preview = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string; stale_detected: boolean }
+    expect(preview.stale_detected).toBe(true)
+    const acknowledged = await server.command("runtime.acknowledge_wake_scheduler_recovery", { recoveryId: preview.recovery_id, resolution: "acknowledged", reason: "operator saw token=secret", requestedBy: "operator token=secret" }) as { status: string; recovery_id: string; acknowledged_by?: string; resolution_reason?: string }
+    expect(acknowledged).toMatchObject({ status: "acknowledged", recovery_id: preview.recovery_id })
+    expect(JSON.stringify(acknowledged)).not.toContain("secret")
+    expect(await server.command("runtime.wake_scheduler_status")).toMatchObject({ status: "stopped", tick_count: 0 })
+    expect(await server.command("runtime.list_wake_schedule_ticks", { limit: 10 })).toEqual([])
+    let records = await server.command("runtime.list_wake_scheduler_recoveries", { limit: 10 }) as Array<{ recovery_id: string; status: string }>
+    expect(records).toEqual(expect.arrayContaining([expect.objectContaining({ recovery_id: preview.recovery_id, status: "acknowledged" })]))
+
+    await server.eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T16:00:00.000Z",
+      scheduler_status: "running",
+      tick_id: "new_tick_1",
+      requested_by: "prior",
+    })
+    const later = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string; status: string; prior_tick_id?: string }
+    expect(later.recovery_id).not.toBe(preview.recovery_id)
+    expect(later).toMatchObject({ status: "detected", prior_tick_id: "new_tick_1" })
+    records = await server.command("runtime.list_wake_scheduler_recoveries", { limit: 10 }) as Array<{ recovery_id: string; status: string }>
+    expect(records.some((record) => record.recovery_id === later.recovery_id)).toBe(true)
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery acknowledgement requires active started run lock while preview works in read mode", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:00:00.000Z",
+      scheduler_status: "running",
+      requested_by: "prior",
+    })
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await statusServer.start()
+    const preview = await statusServer.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string; stale_detected: boolean }
+    expect(preview.stale_detected).toBe(true)
+    expect(await statusServer.command("runtime.get_wake_scheduler_recovery", { recoveryId: preview.recovery_id })).toMatchObject({ recovery_id: preview.recovery_id })
+    await expect(statusServer.command("runtime.acknowledge_wake_scheduler_recovery", { recoveryId: preview.recovery_id, resolution: "dismissed", requestedBy: "operator" })).rejects.toThrow("requires active mode")
+    await statusServer.shutdown()
+  })
+
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
