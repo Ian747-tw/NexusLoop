@@ -651,12 +651,22 @@ describe("TUI keyboard command model", () => {
       ["/scheduler-recovery-ack recovery-1 saw it", "scheduler-recovery-ack", ["recovery-1", "saw", "it"]],
       ["/scheduler-recovery-resolve recovery-1 fixed", "scheduler-recovery-resolve", ["recovery-1", "fixed"]],
       ["/scheduler-recovery-dismiss recovery-1 ignore", "scheduler-recovery-dismiss", ["recovery-1", "ignore"]],
+      ["/scheduler-recovery-workflow-preview recovery-1", "scheduler-recovery-workflow-preview", ["recovery-1"]],
+      ["/scheduler-recovery-workflow recovery-1", "scheduler-recovery-workflow", ["recovery-1"]],
+      ["/scheduler-recovery-workflows", "scheduler-recovery-workflows", []],
+      ["/scheduler-recovery-workflow-show workflow-1", "scheduler-recovery-workflow-show", ["workflow-1"]],
+      ["/scheduler-recovery-workflow-verify workflow-1", "scheduler-recovery-workflow-verify", ["workflow-1"]],
+      ["/scheduler-recovery-step-done workflow-1 0 note", "scheduler-recovery-step-done", ["workflow-1", "0", "note"]],
+      ["/scheduler-recovery-step-skip workflow-1 1 note", "scheduler-recovery-step-skip", ["workflow-1", "1", "note"]],
+      ["/scheduler-recovery-step-block workflow-1 2 note", "scheduler-recovery-step-block", ["workflow-1", "2", "note"]],
+      ["/scheduler-recovery-workflow-cancel workflow-1 stop", "scheduler-recovery-workflow-cancel", ["workflow-1", "stop"]],
       ["/scheduler-stop e2e stop", "scheduler-stop", ["e2e", "stop"]],
       ["/scheduler-events", "scheduler-events", []],
       ["/wake-scheduler-preview every=60s", "wake-scheduler-preview", ["every=60s"]],
       ["/wake-scheduler-start dry-run", "wake-scheduler-start", ["dry-run"]],
       ["/wake-scheduler-stop stop", "wake-scheduler-stop", ["stop"]],
       ["/wake-scheduler-recovery", "wake-scheduler-recovery", []],
+      ["/wake-scheduler-recovery-workflow recovery-1", "wake-scheduler-recovery-workflow", ["recovery-1"]],
     ] as const) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
@@ -670,7 +680,7 @@ describe("TUI keyboard command model", () => {
       expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
     }
 
-    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap", "/tmp/repro/scheduler-recovery", "/path/scheduler-recovery-ack", ".scheduler-recovery", ":scheduler-recovery"]) {
+    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap", "/tmp/repro/scheduler-recovery", "/path/scheduler-recovery-ack", ".scheduler-recovery", ":scheduler-recovery", "/tmp/repro/scheduler-recovery-workflow", "/path/scheduler-recovery-step-done", ".scheduler-recovery-workflow", ":scheduler-recovery-step-done"]) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",

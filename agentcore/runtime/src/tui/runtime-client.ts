@@ -25,6 +25,7 @@ import type { WakeSchedule, WakeScheduleDecisionInput, WakeScheduleInput, WakeSc
 import type { WakeSchedulerEventRecord, WakeSchedulerPreview, WakeSchedulerStartInput, WakeSchedulerState, WakeSchedulerStopInput } from "../schedules/wake-scheduler-types"
 import type { WakeSchedulerBootstrapStatus } from "../schedules/wake-scheduler-bootstrap-types"
 import type { WakeSchedulerRecovery, WakeSchedulerRecoveryAcknowledgeInput, WakeSchedulerRecoveryPreview, WakeSchedulerRecoveryRecord } from "../schedules/wake-scheduler-recovery-types"
+import type { WakeSchedulerRecoveryWorkflow, WakeSchedulerRecoveryWorkflowCancelInput, WakeSchedulerRecoveryWorkflowInput, WakeSchedulerRecoveryWorkflowPreview, WakeSchedulerRecoveryWorkflowRecord, WakeSchedulerRecoveryWorkflowStepRecordInput, WakeSchedulerRecoveryWorkflowVerification } from "../schedules/wake-scheduler-recovery-workflow-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -246,6 +247,13 @@ export interface RuntimeClient {
   command(name: "runtime.get_wake_scheduler_recovery", payload: { recoveryId: string } | { recovery_id: string }): Promise<WakeSchedulerRecovery | null>
   command(name: "runtime.list_wake_scheduler_recoveries", payload?: { limit?: number }): Promise<WakeSchedulerRecoveryRecord[]>
   command(name: "runtime.acknowledge_wake_scheduler_recovery", payload: WakeSchedulerRecoveryAcknowledgeInput): Promise<WakeSchedulerRecovery>
+  command(name: "runtime.preview_wake_scheduler_recovery_workflow", payload?: WakeSchedulerRecoveryWorkflowInput): Promise<WakeSchedulerRecoveryWorkflowPreview>
+  command(name: "runtime.create_wake_scheduler_recovery_workflow", payload?: WakeSchedulerRecoveryWorkflowInput): Promise<WakeSchedulerRecoveryWorkflow>
+  command(name: "runtime.get_wake_scheduler_recovery_workflow", payload: { workflowId: string } | { workflow_id: string }): Promise<WakeSchedulerRecoveryWorkflow | null>
+  command(name: "runtime.list_wake_scheduler_recovery_workflows", payload?: { limit?: number }): Promise<WakeSchedulerRecoveryWorkflowRecord[]>
+  command(name: "runtime.record_wake_scheduler_recovery_workflow_step", payload: WakeSchedulerRecoveryWorkflowStepRecordInput): Promise<WakeSchedulerRecoveryWorkflow>
+  command(name: "runtime.cancel_wake_scheduler_recovery_workflow", payload: WakeSchedulerRecoveryWorkflowCancelInput): Promise<WakeSchedulerRecoveryWorkflow>
+  command(name: "runtime.verify_wake_scheduler_recovery_workflow", payload: { workflowId: string } | { workflow_id: string }): Promise<WakeSchedulerRecoveryWorkflowVerification>
   command(name: "runtime.list_wake_scheduler_events", payload?: { limit?: number }): Promise<WakeSchedulerEventRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
@@ -383,6 +391,13 @@ export interface RuntimeCommandEnvelope {
     | "runtime.get_wake_scheduler_recovery"
     | "runtime.list_wake_scheduler_recoveries"
     | "runtime.acknowledge_wake_scheduler_recovery"
+    | "runtime.preview_wake_scheduler_recovery_workflow"
+    | "runtime.create_wake_scheduler_recovery_workflow"
+    | "runtime.get_wake_scheduler_recovery_workflow"
+    | "runtime.list_wake_scheduler_recovery_workflows"
+    | "runtime.record_wake_scheduler_recovery_workflow_step"
+    | "runtime.cancel_wake_scheduler_recovery_workflow"
+    | "runtime.verify_wake_scheduler_recovery_workflow"
     | "runtime.list_wake_scheduler_events"
     | "research.list_topics"
     | "research.get_topic_snapshot"

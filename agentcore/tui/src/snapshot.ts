@@ -678,6 +678,36 @@ function wakeSchedulerLines(state: UiState): string[] {
   out.push("  recent_recoveries")
   if (scheduler.recoveries.length === 0) out.push("    - empty")
   else out.push(...scheduler.recoveries.slice(0, 10).map((record) => `    - ${record.recovery_id} status=${record.status}${record.prior_started_at ? ` prior=${record.prior_started_at}` : ""}: ${preview(redactText(record.summary_preview))}`))
+  out.push("  recovery_workflow")
+  if (scheduler.recoveryWorkflowPreview) {
+    const workflow = scheduler.recoveryWorkflowPreview
+    out.push(`    preview recovery_id=${workflow.recovery_id} can_create=${workflow.can_create} steps=${workflow.step_count} reads=${workflow.read_step_count} writes=${workflow.write_step_count}`)
+    if (workflow.blockers.length > 0) out.push(...workflow.blockers.slice(0, 10).map((blocker) => `    blocker=${preview(redactText(blocker))}`))
+    out.push("    preview_steps")
+    if (workflow.steps.length === 0) out.push("      - empty")
+    else out.push(...workflow.steps.slice(0, 10).map((step) => `      - ${step.index} ${step.step_kind}/${step.command_type}: ${preview(redactText(step.command))}`))
+  } else {
+    out.push("    preview=none")
+  }
+  if (scheduler.selectedRecoveryWorkflow) {
+    const workflow = scheduler.selectedRecoveryWorkflow
+    out.push(`    selected_workflow=${workflow.workflow_id} status=${workflow.status} recovery_id=${workflow.recovery_id}`)
+    out.push(`    progress done=${workflow.completed_step_count} skipped=${workflow.skipped_step_count} blocked=${workflow.blocked_step_count} total=${workflow.steps.length}`)
+    out.push("    steps")
+    if (workflow.steps.length === 0) out.push("      - empty")
+    else out.push(...workflow.steps.slice(0, 10).map((step) => `      - ${step.index} ${step.status ?? "pending"} ${step.step_kind}: ${preview(redactText(step.command))}${step.note ? ` note=${preview(redactText(step.note))}` : ""}`))
+  } else {
+    out.push("    selected_workflow=none")
+  }
+  if (scheduler.recoveryWorkflowVerification) {
+    const verification = scheduler.recoveryWorkflowVerification
+    out.push(`    verification workflow_id=${verification.workflow_id} updates=${verification.step_updates.length} events=${verification.observable_events.length}`)
+    if (verification.warnings.length > 0) out.push(...verification.warnings.slice(0, 10).map((warning) => `    verification_warning=${preview(redactText(warning))}`))
+  }
+  out.push(`  recovery_workflows=${scheduler.recoveryWorkflows.length}`)
+  out.push("  recent_recovery_workflows")
+  if (scheduler.recoveryWorkflows.length === 0) out.push("    - empty")
+  else out.push(...scheduler.recoveryWorkflows.slice(0, 10).map((record) => `    - ${record.workflow_id} status=${record.status} steps=${record.step_count} done=${record.completed_step_count}: ${preview(redactText(record.summary_preview))}`))
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")
