@@ -178,6 +178,35 @@ describe("TUI runtime client factory", () => {
     await client.runtime.shutdown()
   })
 
+  test("real runtime client exposes injected wake scheduler bootstrap config without starting it", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: {
+        NXL_RUNTIME_CLIENT: "real",
+        NXL_OPENCODE_ADAPTER: "fake",
+        NXL_WAKE_SCHEDULER_INTERVAL_MS: "60000",
+        NXL_WAKE_SCHEDULER_DRY_RUN: "1",
+      },
+    }) as TuiRuntimeServerClient
+
+    let state = await applyRuntimeUiEffect(initialState(dir), client, { type: "send-command", command: "scheduler-bootstrap" })
+    expect(state.wakeScheduler?.bootstrapStatus).toMatchObject({
+      autostart_enabled: false,
+      configured: true,
+      scheduler_status: "stopped",
+    })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "scheduler-bootstrap-preview" })
+    expect(state.wakeScheduler?.bootstrapPreview).toMatchObject({
+      autostart_enabled: false,
+      configured: true,
+      can_bootstrap: false,
+    })
+    expect((await client.runtime.command("runtime.wake_scheduler_status") as { status: string }).status).toBe("stopped")
+    await client.runtime.shutdown()
+  })
+
   test("real runtime client path can claim a submitted mission through TUI effects", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)

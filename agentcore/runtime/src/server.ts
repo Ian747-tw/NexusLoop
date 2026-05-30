@@ -60,6 +60,8 @@ import { WakeScheduleService, readWakeScheduleDecisionInput, readWakeScheduleInp
 import type { WakeSchedule, WakeSchedulePreview, WakeScheduleRecord, WakeScheduleTickPreview, WakeScheduleTickResult } from "./schedules/wake-schedule-types"
 import { WakeSchedulerService, readWakeSchedulerStartInput, readWakeSchedulerStopInput } from "./schedules/wake-scheduler-service"
 import type { WakeSchedulerEventRecord, WakeSchedulerPreview, WakeSchedulerState } from "./schedules/wake-scheduler-types"
+import { WakeSchedulerBootstrapService } from "./schedules/wake-scheduler-bootstrap-service"
+import type { WakeSchedulerBootstrapConfig, WakeSchedulerBootstrapStatus } from "./schedules/wake-scheduler-bootstrap-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -123,6 +125,7 @@ export interface RuntimeServerOptions {
   runtimeWakeSchedulerClearTimer?: (timer: unknown) => void
   runtimeWakeSchedulerMinIntervalMs?: number
   runtimeWakeSchedulerMinHeartbeatIntervalMs?: number
+  wakeSchedulerBootstrapConfig?: WakeSchedulerBootstrapConfig
   researchProjectionMode?: RuntimeResearchProjectionMode
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
@@ -194,6 +197,7 @@ export class RuntimeServer {
   private readonly runtimeWakeSchedulerClearTimer?: (timer: unknown) => void
   private readonly runtimeWakeSchedulerMinIntervalMs?: number
   private readonly runtimeWakeSchedulerMinHeartbeatIntervalMs?: number
+  private readonly wakeSchedulerBootstrapConfig?: WakeSchedulerBootstrapConfig
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
@@ -206,6 +210,7 @@ export class RuntimeServer {
   private continuationServiceInstance: ContinuationService | null = null
   private wakeScheduleServiceInstance: WakeScheduleService | null = null
   private wakeSchedulerServiceInstance: WakeSchedulerService | null = null
+  private wakeSchedulerBootstrapServiceInstance: WakeSchedulerBootstrapService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -260,6 +265,7 @@ export class RuntimeServer {
     this.runtimeWakeSchedulerClearTimer = options.runtimeWakeSchedulerClearTimer
     this.runtimeWakeSchedulerMinIntervalMs = options.runtimeWakeSchedulerMinIntervalMs
     this.runtimeWakeSchedulerMinHeartbeatIntervalMs = options.runtimeWakeSchedulerMinHeartbeatIntervalMs
+    this.wakeSchedulerBootstrapConfig = options.wakeSchedulerBootstrapConfig
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
@@ -294,6 +300,7 @@ export class RuntimeServer {
       }
       const recordsBeforeStart = await this.eventStore.readAll()
       const runtimeStartedId = await this.eventStore.append({ kind: "runtime_started", mode: this.mode })
+      await this.wakeSchedulerBootstrapService().bootstrapOnRuntimeStart()
       this.emitStartupReadyEvents(recordsBeforeStart.length + 1, runtimeStartedId)
     } catch (error) {
       await this.cleanupFailedStartup()
@@ -714,6 +721,10 @@ export class RuntimeServer {
         return this.stopWakeScheduler(readWakeSchedulerStopInput(payload))
       case "runtime.wake_scheduler_status":
         return this.wakeSchedulerStatus()
+      case "runtime.wake_scheduler_bootstrap_status":
+        return this.wakeSchedulerBootstrapStatus()
+      case "runtime.preview_wake_scheduler_bootstrap":
+        return this.previewWakeSchedulerBootstrap()
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -744,6 +755,10 @@ export class RuntimeServer {
       playbookDrafts: await this.commanderPlaybookDraftRegistry.statusSummary(),
       reasoningProvider: this.reasoningProviderStatus(),
       researchProjection: this.researchProjectionHealth,
+      wakeScheduler: {
+        status: await this.wakeSchedulerStatus(),
+        bootstrap: await this.wakeSchedulerBootstrapStatus(),
+      },
       policy,
     })
   }
@@ -1330,6 +1345,14 @@ export class RuntimeServer {
     return this.wakeSchedulerService().listEvents(limit)
   }
 
+  async wakeSchedulerBootstrapStatus(): Promise<WakeSchedulerBootstrapStatus> {
+    return this.wakeSchedulerBootstrapService().status()
+  }
+
+  async previewWakeSchedulerBootstrap(): Promise<WakeSchedulerBootstrapStatus> {
+    return this.wakeSchedulerBootstrapService().preview()
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1804,6 +1827,16 @@ export class RuntimeServer {
       canRun: () => this.mode === "active" && this.started && this.runLock.isHeld(),
     })
     return this.wakeSchedulerServiceInstance
+  }
+
+  private wakeSchedulerBootstrapService(): WakeSchedulerBootstrapService {
+    this.wakeSchedulerBootstrapServiceInstance ??= new WakeSchedulerBootstrapService({
+      eventStore: this.eventStore,
+      scheduler: this.wakeSchedulerService(),
+      config: this.wakeSchedulerBootstrapConfig,
+      now: this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow,
+    })
+    return this.wakeSchedulerBootstrapServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

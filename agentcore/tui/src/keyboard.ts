@@ -324,6 +324,8 @@ const runtimeCommands = new Set([
   "scheduler-start",
   "scheduler-stop",
   "scheduler-status",
+  "scheduler-bootstrap",
+  "scheduler-bootstrap-preview",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",

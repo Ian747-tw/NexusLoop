@@ -625,6 +625,24 @@ function wakeSchedulerLines(state: UiState): string[] {
   } else {
     out.push("  status=none")
   }
+  const bootstrap = scheduler.bootstrapPreview ?? scheduler.bootstrapStatus
+  if (bootstrap) {
+    out.push(`  bootstrap autostart=${bootstrap.autostart_enabled ? "enabled" : "disabled"} configured=${bootstrap.configured} can_bootstrap=${bootstrap.can_bootstrap} scheduler_status=${bootstrap.scheduler_status}`)
+    out.push(`  bootstrap_config every_ms=${bootstrap.config.interval_ms} dry_run=${bootstrap.config.dry_run} max=${bootstrap.config.max_due_items} require_due=${bootstrap.config.require_due_schedule === true}`)
+    if (bootstrap.stale_prior_run?.detected) out.push(`  stale_prior_run=${preview(redactText(bootstrap.stale_prior_run.reason ?? "detected"))}`)
+    if (bootstrap.due_preview) out.push(`  bootstrap_due=${bootstrap.due_preview.due_count} eligible=${bootstrap.due_preview.eligible_count}`)
+    if (bootstrap.last_bootstrap_event_id) out.push(`  last_bootstrap_event=${bootstrap.last_bootstrap_event_id}`)
+    if (bootstrap.blockers.length > 0) {
+      out.push("  bootstrap_blockers")
+      out.push(...bootstrap.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (bootstrap.warnings.length > 0) {
+      out.push("  bootstrap_warnings")
+      out.push(...bootstrap.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+  } else {
+    out.push("  bootstrap=none")
+  }
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")
