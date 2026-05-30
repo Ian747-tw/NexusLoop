@@ -3097,6 +3097,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   const proposalBundleSummary = readProposalBundleSummary(value.proposalBundles)
   const workbenchSummary = readWorkbenchSummary(value.playbookDrafts)
   const reasoningProvider = readReasoningProviderStatus(value.reasoningProvider)
+  const wakeScheduler = readRuntimeStatusWakeScheduler(value.wakeScheduler)
   return {
     ...state,
     runtimeStatus,
@@ -3108,6 +3109,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
     proposals: proposalSummary ? { ...proposalsState(state), summary: proposalSummary } : state.proposals,
     proposalBundles: proposalBundleSummary ? { ...proposalBundlesState(state), summary: proposalBundleSummary } : state.proposalBundles,
     commanderWorkbench: workbenchSummary ? { ...commanderWorkbenchState(state), summary: workbenchSummary } : state.commanderWorkbench,
+    wakeScheduler: wakeScheduler ? { ...wakeSchedulerState(state), ...wakeScheduler, commandError: undefined } : state.wakeScheduler,
     runtimeCommandError: undefined,
     header: {
       ...state.header,
@@ -3115,6 +3117,17 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
       runtimeStatus: runtimeStatus.runtimeStatus,
       activeMissionId: missions?.last_mission_id ?? state.header.activeMissionId,
     },
+  }
+}
+
+function readRuntimeStatusWakeScheduler(value: unknown): Pick<WakeSchedulerUiState, "status" | "bootstrapStatus"> | null {
+  if (!isRecord(value)) return null
+  const status = isRecord(value.status) ? readWakeSchedulerState(value.status) : null
+  const bootstrapStatus = isRecord(value.bootstrap) ? readWakeSchedulerBootstrapStatus(value.bootstrap, "runtime.status.wakeScheduler.bootstrap") : null
+  if (!status && !bootstrapStatus) return null
+  return {
+    status,
+    bootstrapStatus,
   }
 }
 

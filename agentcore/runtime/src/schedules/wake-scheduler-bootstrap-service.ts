@@ -152,7 +152,7 @@ export class WakeSchedulerBootstrapService {
     if (!openStart) return { detected: false }
     const current = this.options.scheduler.status()
     const openStartedAt = typeof openStart.created_at === "string" ? openStart.created_at : typeof openStart.timestamp === "string" ? openStart.timestamp : undefined
-    if (current.status === "running" && current.started_at && openStartedAt === current.started_at) return { detected: false }
+    if (current.status === "running") return { detected: false }
     return redactValue({
       detected: true,
       prior_started_at: openStartedAt,

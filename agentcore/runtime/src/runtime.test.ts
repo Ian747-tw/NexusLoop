@@ -6503,11 +6503,12 @@ describe("RuntimeServer core", () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
     const timers: Array<() => void> = []
+    let nowMs = Date.parse("2026-05-11T15:00:00.000Z")
     const server = new RuntimeServer({
       projectDir: dir,
       mode: "active",
       researchProjectionMode: "disabled",
-      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:00:00.000Z"),
+      runtimeWakeSchedulerNow: () => new Date(nowMs++),
       runtimeWakeSchedulerMinIntervalMs: 10,
       runtimeWakeSchedulerMinHeartbeatIntervalMs: 10,
       runtimeWakeSchedulerSetTimer: (callback) => {

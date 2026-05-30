@@ -191,7 +191,14 @@ describe("TUI runtime client factory", () => {
       },
     }) as TuiRuntimeServerClient
 
-    let state = await applyRuntimeUiEffect(initialState(dir), client, { type: "send-command", command: "scheduler-bootstrap" })
+    let state = await applyRuntimeUiEffect(initialState(dir), client, { type: "send-command", command: "status" })
+    expect(state.wakeScheduler?.status).toMatchObject({ status: "stopped" })
+    expect(state.wakeScheduler?.bootstrapStatus).toMatchObject({
+      autostart_enabled: false,
+      configured: true,
+      scheduler_status: "stopped",
+    })
+    state = await applyRuntimeUiEffect(state, client, { type: "send-command", command: "scheduler-bootstrap" })
     expect(state.wakeScheduler?.bootstrapStatus).toMatchObject({
       autostart_enabled: false,
       configured: true,
