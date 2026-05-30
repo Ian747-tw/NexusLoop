@@ -150,9 +150,12 @@ export class WakeSchedulerBootstrapService {
       }
     }
     if (!openStart) return { detected: false }
+    const current = this.options.scheduler.status()
+    const openStartedAt = typeof openStart.created_at === "string" ? openStart.created_at : typeof openStart.timestamp === "string" ? openStart.timestamp : undefined
+    if (current.status === "running" && current.started_at && openStartedAt === current.started_at) return { detected: false }
     return redactValue({
       detected: true,
-      prior_started_at: typeof openStart.created_at === "string" ? openStart.created_at : typeof openStart.timestamp === "string" ? openStart.timestamp : undefined,
+      prior_started_at: openStartedAt,
       prior_status: openStart.scheduler_status ?? "running",
       prior_tick_id: typeof openStart.tick_id === "string" ? openStart.tick_id : undefined,
       prior_event_id: typeof openStart.event_id === "string" ? openStart.event_id : undefined,

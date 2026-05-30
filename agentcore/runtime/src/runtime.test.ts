@@ -6533,8 +6533,12 @@ describe("RuntimeServer core", () => {
     const status = await server.command("runtime.wake_scheduler_status") as { status: string; tick_count: number; started_by?: string }
     expect(status).toMatchObject({ status: "running", tick_count: 0 })
     expect(JSON.stringify(status)).not.toContain("secret")
+    const bootstrap = await server.command("runtime.wake_scheduler_bootstrap_status") as { stale_prior_run?: { detected: boolean } }
+    expect(bootstrap.stale_prior_run).toMatchObject({ detected: false })
     const events = await readJsonlEvents(dir)
     expect(events.map((event) => event.kind)).toContain("runtime_wake_scheduler_bootstrap_started")
+    const startedEvent = events.find((event) => event.kind === "runtime_wake_scheduler_bootstrap_started")
+    expect(startedEvent?.stale_prior_run).toBeUndefined()
     expect(JSON.stringify(events)).not.toContain("secret")
     await server.shutdown()
   })
