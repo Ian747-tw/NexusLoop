@@ -367,6 +367,15 @@ export class RuntimeServer {
     this.executorStreamAbort = true
     this.started = false
     try {
+      await this.wakeSchedulerServiceInstance?.shutdown("runtime startup failed")
+    } catch (error) {
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-wake-scheduler-startup-cleanup-error",
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+    try {
       await this.adapter.shutdown()
     } catch (error) {
       this.eventBus.emit({

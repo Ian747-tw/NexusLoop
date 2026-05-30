@@ -6544,6 +6544,49 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler bootstrap startup failure stops scheduled timer before releasing lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const timers: Array<() => void> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:00:00.000Z"),
+      runtimeWakeSchedulerMinIntervalMs: 10,
+      runtimeWakeSchedulerSetTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      runtimeWakeSchedulerClearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 10,
+        max_due_items: 5,
+        dry_run: true,
+        stop_on_error: false,
+      },
+    })
+    const append = server.eventStore.append.bind(server.eventStore)
+    server.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if (event.kind === "runtime_wake_scheduler_bootstrap_started") {
+        expect(timers).toHaveLength(1)
+        throw new Error("bootstrap started append failed token=secret")
+      }
+      return append(event)
+    }
+    await expect(server.start()).rejects.toThrow("bootstrap started append failed")
+    expect(timers).toHaveLength(0)
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect(await server.wakeSchedulerStatus()).toMatchObject({ status: "stopped" })
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_scheduler_stopped")
+    expect(JSON.stringify(events)).not.toContain("secret")
+  })
+
   test("wake scheduler bootstrap require_due blocks without starting and stale prior run is informational", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
