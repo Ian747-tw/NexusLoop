@@ -1594,7 +1594,11 @@ export class FakeRuntimeClient implements RuntimeClient {
       recovery_hash: `fake-${previewResult.recovery_id}`,
     }
     this.wakeSchedulerRecoveries.unshift(recovery)
-    this.wakeSchedulerRecoveryPreviewRecord = { ...previewResult, status: resolution }
+    this.wakeSchedulerRecoveryPreviewRecord = {
+      ...previewResult,
+      status: resolution,
+      recommended_commands: previewResult.recommended_commands.filter((command) => !command.command.startsWith("/scheduler-recovery-ack")),
+    }
     return recovery
   }
 

@@ -3408,7 +3408,11 @@ describe("runtime UI effects", () => {
 
       state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-ack", args: ["fake-recovery-1", "operator", "saw", "token=recovery-secret"] })
       expect(state.wakeScheduler?.selectedRecovery).toMatchObject({ recovery_id: "fake-recovery-1", status: "acknowledged" })
+      expect(state.wakeScheduler?.recoveryPreview).toMatchObject({ recovery_id: "fake-recovery-1", status: "acknowledged" })
       expect(state.wakeScheduler?.recoveries.at(0)).toMatchObject({ recovery_id: "fake-recovery-1", status: "acknowledged" })
+      snapshot = layoutSnapshot(state)
+      expect(snapshot).toContain("status=acknowledged")
+      expect(snapshot).not.toContain("/scheduler-recovery-ack fake-recovery-1")
       expect(state.wakeScheduler?.status?.status).not.toBe("running")
       expect(state.wakeSchedules?.lastTick).toBeUndefined()
       expect(state.continuation?.lastStepResult).toBeUndefined()

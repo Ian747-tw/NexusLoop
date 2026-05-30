@@ -972,7 +972,8 @@ export async function applyRuntimeUiEffect(
           reason: effect.reason,
           requestedBy: "operator",
         }), effect.recoveryId)
-        return applyWakeSchedulerRecoveries(next, await runtime.command("runtime.list_wake_scheduler_recoveries", { limit: CHECKPOINT_LIMIT }), CHECKPOINT_LIMIT)
+        const withPreview = applyWakeSchedulerRecoveryPreview(next, await runtime.command("runtime.preview_wake_scheduler_recovery"))
+        return applyWakeSchedulerRecoveries(withPreview, await runtime.command("runtime.list_wake_scheduler_recoveries", { limit: CHECKPOINT_LIMIT }), CHECKPOINT_LIMIT)
       }
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
