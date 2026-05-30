@@ -6973,6 +6973,25 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler recovery workflow create is idempotent and preserves manual progress", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running", event_id: "workflow_idempotent_start" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string }
+    const workflow = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string }
+    await server.command("runtime.record_wake_scheduler_recovery_workflow_step", { workflowId: workflow.workflow_id, index: 0, status: "manually_done", note: "preserved", requestedBy: "operator" })
+    const repeated = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string; completed_step_count: number; steps: Array<{ status: string; note?: string }> }
+    expect(repeated.workflow_id).toBe(workflow.workflow_id)
+    expect(repeated.completed_step_count).toBe(1)
+    expect(repeated.steps[0]).toMatchObject({ status: "manually_done", note: "preserved" })
+    const createEvents = (await readJsonlEvents(dir)).filter((event) => event.kind === "runtime_wake_scheduler_recovery_workflow_created")
+    expect(createEvents).toHaveLength(1)
+    await server.shutdown()
+  })
+
   test("wake scheduler recovery workflow verification is read-only and observes later recovery records", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

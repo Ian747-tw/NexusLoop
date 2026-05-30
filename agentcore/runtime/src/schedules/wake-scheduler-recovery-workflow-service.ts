@@ -100,8 +100,11 @@ export class WakeSchedulerRecoveryWorkflowService {
       status: "pending" as const,
     }))
     const recoveryHash = recoveryHashOf(recovery)
+    const workflow_id = workflowId(preview.recovery_id, recoveryHash, steps)
+    const existing = (await this.projectWorkflows()).get(workflow_id)
+    if (existing) return existing
     const draft = {
-      workflow_id: workflowId(preview.recovery_id, recoveryHash, steps),
+      workflow_id,
       recovery_id: preview.recovery_id,
       recovery_hash: recoveryHash,
       status: "active" as const,
