@@ -171,9 +171,11 @@ export class WakeSchedulerRecoveryService {
     if (bootstrapStatus.stale_prior_run?.detected) return bootstrapStatus.stale_prior_run
     const events = (await this.options.eventStore.readAll()) as SchedulerEvent[]
     let openStart: SchedulerEvent | null = null
+    let staleCandidate: SchedulerEvent | null = null
     let runtimeStartedAfterOpenStart = false
     for (const event of events) {
       if (event.kind === "runtime_wake_scheduler_started") {
+        if (openStart && !staleCandidate) staleCandidate = openStart
         openStart = event
         runtimeStartedAfterOpenStart = false
       } else if (event.kind === "runtime_started" && openStart) {
@@ -187,6 +189,7 @@ export class WakeSchedulerRecoveryService {
         openStart = null
       }
     }
+    openStart = staleCandidate ?? openStart
     if (!openStart) return { detected: false }
     return redactValue({
       detected: true,

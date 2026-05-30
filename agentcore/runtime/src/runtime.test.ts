@@ -6781,6 +6781,48 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler recovery preview preserves older stale run across later clean scheduler run", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:00:00.000Z",
+      scheduler_status: "running",
+      event_id: "older_stale_start",
+      tick_id: "older_stale_tick",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:10:00.000Z",
+      scheduler_status: "running",
+      event_id: "later_clean_start",
+      tick_id: "later_clean_tick",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_stopped",
+      created_at: "2026-05-11T15:11:00.000Z",
+      scheduler_status: "stopped",
+    })
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:15:00.000Z"),
+    })
+    await server.start()
+    const preview = await server.command("runtime.preview_wake_scheduler_recovery") as {
+      stale_detected: boolean
+      prior_event_id?: string
+      prior_tick_id?: string
+    }
+    expect(preview.stale_detected).toBe(true)
+    expect(preview.prior_event_id).toBe("older_stale_start")
+    expect(preview.prior_tick_id).toBe("older_stale_tick")
+    await server.shutdown()
+  })
+
   test("wake scheduler recovery preview does not flag current running scheduler as stale", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
