@@ -6717,6 +6717,11 @@ describe("RuntimeServer core", () => {
       tick_id: "stale_tick_1",
     })
     await eventStore.append({
+      kind: "runtime_started",
+      created_at: "2026-05-11T15:00:30.000Z",
+      mode: "status",
+    })
+    await eventStore.append({
       kind: "runtime_shutdown",
       created_at: "2026-05-11T15:01:00.000Z",
       reason: "status workbench exit",
@@ -6739,6 +6744,40 @@ describe("RuntimeServer core", () => {
     expect(preview.prior_event_id).toBe("stale_start_1")
     expect(preview.prior_tick_id).toBe("stale_tick_1")
     expect(preview.blockers).toEqual([])
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery preview treats same-runtime shutdown as closing scheduler start", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_started",
+      created_at: "2026-05-11T14:59:00.000Z",
+      mode: "active",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:00:00.000Z",
+      scheduler_status: "running",
+      event_id: "clean_start_1",
+      tick_id: "clean_tick_1",
+    })
+    await eventStore.append({
+      kind: "runtime_shutdown",
+      created_at: "2026-05-11T15:01:00.000Z",
+      reason: "clean shutdown",
+    })
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:05:00.000Z"),
+    })
+    await server.start()
+    const preview = await server.command("runtime.preview_wake_scheduler_recovery") as { stale_detected: boolean; status: string }
+    expect(preview).toMatchObject({ stale_detected: false, status: "none" })
     await server.shutdown()
   })
 

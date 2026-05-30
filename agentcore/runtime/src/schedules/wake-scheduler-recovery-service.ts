@@ -171,11 +171,19 @@ export class WakeSchedulerRecoveryService {
     if (bootstrapStatus.stale_prior_run?.detected) return bootstrapStatus.stale_prior_run
     const events = (await this.options.eventStore.readAll()) as SchedulerEvent[]
     let openStart: SchedulerEvent | null = null
+    let runtimeStartedAfterOpenStart = false
     for (const event of events) {
-      if (event.kind === "runtime_wake_scheduler_started") openStart = event
-      else if ((event.kind === "runtime_wake_scheduler_tick_succeeded" || event.kind === "runtime_wake_scheduler_tick_failed") && openStart && typeof event.tick_id === "string") {
+      if (event.kind === "runtime_wake_scheduler_started") {
+        openStart = event
+        runtimeStartedAfterOpenStart = false
+      } else if (event.kind === "runtime_started" && openStart) {
+        runtimeStartedAfterOpenStart = true
+      } else if ((event.kind === "runtime_wake_scheduler_tick_succeeded" || event.kind === "runtime_wake_scheduler_tick_failed") && openStart && typeof event.tick_id === "string") {
         openStart = Object.assign({}, openStart, { tick_id: event.tick_id })
       } else if (event.kind === "runtime_wake_scheduler_stopped") {
+        openStart = null
+        runtimeStartedAfterOpenStart = false
+      } else if (event.kind === "runtime_shutdown" && openStart && !runtimeStartedAfterOpenStart) {
         openStart = null
       }
     }
@@ -186,7 +194,7 @@ export class WakeSchedulerRecoveryService {
       prior_status: openStart.scheduler_status ?? "running",
       prior_tick_id: typeof openStart.tick_id === "string" ? openStart.tick_id : undefined,
       prior_event_id: typeof openStart.event_id === "string" ? openStart.event_id : undefined,
-      reason: "previous scheduler start has no matching stop event",
+      reason: "previous scheduler start has no matching stop or correlated shutdown event",
     })
   }
 
