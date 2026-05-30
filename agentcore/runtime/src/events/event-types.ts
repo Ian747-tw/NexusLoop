@@ -1,4 +1,5 @@
 import type { WakeSchedulerBootstrapStatus } from "../schedules/wake-scheduler-bootstrap-types"
+import type { WakeSchedulerRecoveryPreview } from "../schedules/wake-scheduler-recovery-types"
 import type { WakeSchedulerState } from "../schedules/wake-scheduler-types"
 
 export type RuntimeMode = "active" | "status" | "view-records"
@@ -131,6 +132,7 @@ export interface RuntimeStatus {
   wakeScheduler?: {
     status: WakeSchedulerState
     bootstrap: WakeSchedulerBootstrapStatus
+    recovery?: WakeSchedulerRecoveryPreview
   }
   policy: Record<string, unknown>
 }

@@ -24,6 +24,7 @@ import type { ContinuationPlan, ContinuationPlanDecisionInput, ContinuationPlanI
 import type { WakeSchedule, WakeScheduleDecisionInput, WakeScheduleInput, WakeSchedulePreview, WakeScheduleRecord, WakeScheduleTickInput, WakeScheduleTickPreview, WakeScheduleTickResult } from "../schedules/wake-schedule-types"
 import type { WakeSchedulerEventRecord, WakeSchedulerPreview, WakeSchedulerStartInput, WakeSchedulerState, WakeSchedulerStopInput } from "../schedules/wake-scheduler-types"
 import type { WakeSchedulerBootstrapStatus } from "../schedules/wake-scheduler-bootstrap-types"
+import type { WakeSchedulerRecovery, WakeSchedulerRecoveryAcknowledgeInput, WakeSchedulerRecoveryPreview, WakeSchedulerRecoveryRecord } from "../schedules/wake-scheduler-recovery-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -241,6 +242,10 @@ export interface RuntimeClient {
   command(name: "runtime.wake_scheduler_status", payload?: Record<string, never>): Promise<WakeSchedulerState>
   command(name: "runtime.wake_scheduler_bootstrap_status", payload?: Record<string, never>): Promise<WakeSchedulerBootstrapStatus>
   command(name: "runtime.preview_wake_scheduler_bootstrap", payload?: Record<string, never>): Promise<WakeSchedulerBootstrapStatus>
+  command(name: "runtime.preview_wake_scheduler_recovery", payload?: Record<string, never>): Promise<WakeSchedulerRecoveryPreview>
+  command(name: "runtime.get_wake_scheduler_recovery", payload: { recoveryId: string } | { recovery_id: string }): Promise<WakeSchedulerRecovery | null>
+  command(name: "runtime.list_wake_scheduler_recoveries", payload?: { limit?: number }): Promise<WakeSchedulerRecoveryRecord[]>
+  command(name: "runtime.acknowledge_wake_scheduler_recovery", payload: WakeSchedulerRecoveryAcknowledgeInput): Promise<WakeSchedulerRecovery>
   command(name: "runtime.list_wake_scheduler_events", payload?: { limit?: number }): Promise<WakeSchedulerEventRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
@@ -374,6 +379,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.wake_scheduler_status"
     | "runtime.wake_scheduler_bootstrap_status"
     | "runtime.preview_wake_scheduler_bootstrap"
+    | "runtime.preview_wake_scheduler_recovery"
+    | "runtime.get_wake_scheduler_recovery"
+    | "runtime.list_wake_scheduler_recoveries"
+    | "runtime.acknowledge_wake_scheduler_recovery"
     | "runtime.list_wake_scheduler_events"
     | "research.list_topics"
     | "research.get_topic_snapshot"

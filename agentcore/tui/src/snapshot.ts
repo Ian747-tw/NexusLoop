@@ -643,6 +643,41 @@ function wakeSchedulerLines(state: UiState): string[] {
   } else {
     out.push("  bootstrap=none")
   }
+  const recovery = scheduler.recoveryPreview
+  out.push("  recovery")
+  if (recovery) {
+    out.push(`    stale_detected=${recovery.stale_detected} status=${recovery.status} scheduler_status=${recovery.scheduler_status}`)
+    if (recovery.recovery_id) out.push(`    recovery_id=${recovery.recovery_id}`)
+    if (recovery.prior_started_at) out.push(`    prior_started_at=${recovery.prior_started_at}`)
+    if (recovery.prior_event_id) out.push(`    prior_event=${recovery.prior_event_id}`)
+    if (recovery.prior_tick_id) out.push(`    prior_tick=${recovery.prior_tick_id}`)
+    out.push(`    due=${recovery.due_schedule_count} eligible=${recovery.eligible_due_schedule_count} blocked=${recovery.blocked_due_schedule_count}`)
+    if (recovery.missed_window_estimate_count !== undefined) out.push(`    missed_window_estimate=${recovery.missed_window_estimate_count}`)
+    if (recovery.recommended_commands.length > 0) {
+      out.push("    recommended_commands")
+      out.push(...recovery.recommended_commands.slice(0, 10).map((command) => `      - ${command.command_type}${command.requires_active_runtime ? "/active" : ""}: ${preview(redactText(command.command))}`))
+    }
+    if (recovery.blockers.length > 0) {
+      out.push("    recovery_blockers")
+      out.push(...recovery.blockers.slice(0, 10).map((blocker) => `      - ${preview(redactText(blocker))}`))
+    }
+    if (recovery.warnings.length > 0) {
+      out.push("    recovery_warnings")
+      out.push(...recovery.warnings.slice(0, 10).map((warning) => `      - ${preview(redactText(warning))}`))
+    }
+  } else {
+    out.push("    preview=none")
+  }
+  if (scheduler.selectedRecovery) {
+    const selected = scheduler.selectedRecovery
+    out.push(`  selected_recovery=${selected.recovery_id} status=${selected.status}`)
+    if (selected.acknowledged_at) out.push(`    acknowledged_at=${selected.acknowledged_at}`)
+    if (selected.resolution_reason) out.push(`    reason=${preview(redactText(selected.resolution_reason))}`)
+  }
+  out.push(`  recoveries=${scheduler.recoveries.length}`)
+  out.push("  recent_recoveries")
+  if (scheduler.recoveries.length === 0) out.push("    - empty")
+  else out.push(...scheduler.recoveries.slice(0, 10).map((record) => `    - ${record.recovery_id} status=${record.status}${record.prior_started_at ? ` prior=${record.prior_started_at}` : ""}: ${preview(redactText(record.summary_preview))}`))
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

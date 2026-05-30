@@ -644,11 +644,19 @@ describe("TUI keyboard command model", () => {
       ["/scheduler-status", "scheduler-status", []],
       ["/scheduler-bootstrap", "scheduler-bootstrap", []],
       ["/scheduler-bootstrap-preview", "scheduler-bootstrap-preview", []],
+      ["/scheduler-recovery", "scheduler-recovery", []],
+      ["/scheduler-recovery-preview", "scheduler-recovery-preview", []],
+      ["/scheduler-recoveries", "scheduler-recoveries", []],
+      ["/scheduler-recovery-show recovery-1", "scheduler-recovery-show", ["recovery-1"]],
+      ["/scheduler-recovery-ack recovery-1 saw it", "scheduler-recovery-ack", ["recovery-1", "saw", "it"]],
+      ["/scheduler-recovery-resolve recovery-1 fixed", "scheduler-recovery-resolve", ["recovery-1", "fixed"]],
+      ["/scheduler-recovery-dismiss recovery-1 ignore", "scheduler-recovery-dismiss", ["recovery-1", "ignore"]],
       ["/scheduler-stop e2e stop", "scheduler-stop", ["e2e", "stop"]],
       ["/scheduler-events", "scheduler-events", []],
       ["/wake-scheduler-preview every=60s", "wake-scheduler-preview", ["every=60s"]],
       ["/wake-scheduler-start dry-run", "wake-scheduler-start", ["dry-run"]],
       ["/wake-scheduler-stop stop", "wake-scheduler-stop", ["stop"]],
+      ["/wake-scheduler-recovery", "wake-scheduler-recovery", []],
     ] as const) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
@@ -662,7 +670,7 @@ describe("TUI keyboard command model", () => {
       expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
     }
 
-    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap"]) {
+    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap", "/tmp/repro/scheduler-recovery", "/path/scheduler-recovery-ack", ".scheduler-recovery", ":scheduler-recovery"]) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",

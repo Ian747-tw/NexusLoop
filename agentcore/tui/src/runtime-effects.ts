@@ -76,6 +76,9 @@ import type {
   WakeSchedulerEventRecordSummary,
   WakeSchedulerBootstrapStatusSummary,
   WakeSchedulerPreviewSummary,
+  WakeSchedulerRecoveryPreviewSummary,
+  WakeSchedulerRecoveryRecordSummary,
+  WakeSchedulerRecoverySummary,
   WakeSchedulerStateSummary,
   WakeSchedulerUiState,
   WakeScheduleSummary,
@@ -264,6 +267,10 @@ export type RuntimeUiEffect =
   | { type: "load-wake-scheduler-status" }
   | { type: "load-wake-scheduler-bootstrap-status" }
   | { type: "preview-wake-scheduler-bootstrap" }
+  | { type: "preview-wake-scheduler-recovery" }
+  | { type: "load-wake-scheduler-recoveries"; limit?: number }
+  | { type: "load-wake-scheduler-recovery"; recoveryId: string }
+  | { type: "acknowledge-wake-scheduler-recovery"; recoveryId?: string; resolution: "acknowledged" | "resolved" | "dismissed"; reason?: string }
   | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
@@ -952,6 +959,22 @@ export async function applyRuntimeUiEffect(
         return applyWakeSchedulerBootstrapStatus(state, await runtime.command("runtime.wake_scheduler_bootstrap_status"))
       case "preview-wake-scheduler-bootstrap":
         return applyWakeSchedulerBootstrapPreview(state, await runtime.command("runtime.preview_wake_scheduler_bootstrap"))
+      case "preview-wake-scheduler-recovery":
+        return applyWakeSchedulerRecoveryPreview(state, await runtime.command("runtime.preview_wake_scheduler_recovery"))
+      case "load-wake-scheduler-recoveries":
+        return applyWakeSchedulerRecoveries(state, await runtime.command("runtime.list_wake_scheduler_recoveries", { limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.limit ?? CHECKPOINT_LIMIT)
+      case "load-wake-scheduler-recovery":
+        return applyWakeSchedulerRecovery(state, await runtime.command("runtime.get_wake_scheduler_recovery", { recoveryId: effect.recoveryId }), effect.recoveryId)
+      case "acknowledge-wake-scheduler-recovery": {
+        const next = applyWakeSchedulerRecovery(state, await runtime.command("runtime.acknowledge_wake_scheduler_recovery", {
+          recoveryId: effect.recoveryId,
+          resolution: effect.resolution,
+          reason: effect.reason,
+          requestedBy: "operator",
+        }), effect.recoveryId)
+        const withPreview = applyWakeSchedulerRecoveryPreview(next, await runtime.command("runtime.preview_wake_scheduler_recovery"))
+        return applyWakeSchedulerRecoveries(withPreview, await runtime.command("runtime.list_wake_scheduler_recoveries", { limit: CHECKPOINT_LIMIT }), CHECKPOINT_LIMIT)
+      }
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
@@ -1890,6 +1913,45 @@ function applyWakeSchedulerBootstrapPreview(state: UiState, value: unknown): UiS
   }
 }
 
+function applyWakeSchedulerRecoveryPreview(state: UiState, value: unknown): UiState {
+  const previewResult = readWakeSchedulerRecoveryPreview(value, "runtime.preview_wake_scheduler_recovery")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      recoveryPreview: previewResult,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler recovery preview", detail: `status=${previewResult.status} stale=${previewResult.stale_detected}`, status: previewResult.status }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerRecoveries(state: UiState, value: unknown, limit: number): UiState {
+  const recoveries = readWakeSchedulerRecoveryRecordList(value, "runtime.list_wake_scheduler_recoveries", limit)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      recoveries,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler recoveries loaded", detail: `records=${recoveries.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerRecovery(state: UiState, value: unknown, requestedId?: string): UiState {
+  const recovery = readWakeSchedulerRecovery(value, "runtime.get_wake_scheduler_recovery")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      selectedRecovery: recovery,
+      commandError: recovery ? undefined : `scheduler recovery not found: ${redactText(requestedId ?? "")}`,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler recovery", detail: recovery ? `id=${recovery.recovery_id} status=${recovery.status}` : `missing=${redactText(requestedId ?? "")}`, status: recovery?.status ?? "missing" }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -2308,6 +2370,20 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-bootstrap-status" })
     case "scheduler-bootstrap-preview":
       return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-scheduler-bootstrap" })
+    case "scheduler-recovery":
+    case "wake-scheduler-recovery":
+    case "scheduler-recovery-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-scheduler-recovery" })
+    case "scheduler-recoveries":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-recoveries", limit: CHECKPOINT_LIMIT })
+    case "scheduler-recovery-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-recovery", recoveryId: requiredArg(args, 0, "recoveryId") })
+    case "scheduler-recovery-ack":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "acknowledge-wake-scheduler-recovery", recoveryId: requiredArg(args, 0, "recoveryId"), resolution: "acknowledged", reason: args.slice(1).join(" ") || undefined })
+    case "scheduler-recovery-resolve":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "acknowledge-wake-scheduler-recovery", recoveryId: requiredArg(args, 0, "recoveryId"), resolution: "resolved", reason: args.slice(1).join(" ") || undefined })
+    case "scheduler-recovery-dismiss":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "acknowledge-wake-scheduler-recovery", recoveryId: requiredArg(args, 0, "recoveryId"), resolution: "dismissed", reason: args.slice(1).join(" ") || undefined })
     case "scheduler-events":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
@@ -2966,10 +3042,18 @@ const wakeSchedulerCommands = new Set([
   "scheduler-status",
   "scheduler-bootstrap",
   "scheduler-bootstrap-preview",
+  "scheduler-recovery",
+  "scheduler-recovery-preview",
+  "scheduler-recoveries",
+  "scheduler-recovery-show",
+  "scheduler-recovery-ack",
+  "scheduler-recovery-resolve",
+  "scheduler-recovery-dismiss",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",
   "wake-scheduler-stop",
+  "wake-scheduler-recovery",
 ])
 
 const reasoningProviderCommands = new Set([
@@ -3071,6 +3155,10 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-wake-scheduler-status",
   "load-wake-scheduler-bootstrap-status",
   "preview-wake-scheduler-bootstrap",
+  "preview-wake-scheduler-recovery",
+  "load-wake-scheduler-recoveries",
+  "load-wake-scheduler-recovery",
+  "acknowledge-wake-scheduler-recovery",
   "load-wake-scheduler-events",
 ])
 
@@ -3120,14 +3208,16 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   }
 }
 
-function readRuntimeStatusWakeScheduler(value: unknown): Pick<WakeSchedulerUiState, "status" | "bootstrapStatus"> | null {
+function readRuntimeStatusWakeScheduler(value: unknown): Pick<WakeSchedulerUiState, "status" | "bootstrapStatus" | "recoveryPreview"> | null {
   if (!isRecord(value)) return null
   const status = isRecord(value.status) ? readWakeSchedulerState(value.status) : null
   const bootstrapStatus = isRecord(value.bootstrap) ? readWakeSchedulerBootstrapStatus(value.bootstrap, "runtime.status.wakeScheduler.bootstrap") : null
-  if (!status && !bootstrapStatus) return null
+  const recoveryPreview = isRecord(value.recovery) ? readWakeSchedulerRecoveryPreview(value.recovery, "runtime.status.wakeScheduler.recovery") : null
+  if (!status && !bootstrapStatus && !recoveryPreview) return null
   return {
     status,
     bootstrapStatus,
+    recoveryPreview,
   }
 }
 
@@ -5014,6 +5104,80 @@ function readWakeSchedulerStaleRun(value: unknown): WakeSchedulerBootstrapStatus
   }
 }
 
+function readWakeSchedulerRecoveryPreview(value: unknown, commandName: string): WakeSchedulerRecoveryPreviewSummary {
+  if (!isRecord(value)) throw new Error(`${commandName} returned invalid recovery preview`)
+  return {
+    recovery_id: typeof value.recovery_id === "string" ? redactText(value.recovery_id) : undefined,
+    stale_detected: readBoolean(value.stale_detected),
+    status: readString(value.status, "none"),
+    prior_started_at: typeof value.prior_started_at === "string" ? redactText(value.prior_started_at) : undefined,
+    prior_event_id: typeof value.prior_event_id === "string" ? redactText(value.prior_event_id) : undefined,
+    prior_tick_id: typeof value.prior_tick_id === "string" ? redactText(value.prior_tick_id) : undefined,
+    scheduler_status: readString(value.scheduler_status, "stopped"),
+    current_event_count: readNumber(value.current_event_count, 0),
+    due_schedule_count: readNumber(value.due_schedule_count, 0),
+    eligible_due_schedule_count: readNumber(value.eligible_due_schedule_count, 0),
+    blocked_due_schedule_count: readNumber(value.blocked_due_schedule_count, 0),
+    missed_window_estimate_count: typeof value.missed_window_estimate_count === "number" ? readNumber(value.missed_window_estimate_count, 0) : undefined,
+    warnings: readStringList(value.warnings, 10).map(preview),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    recommended_commands: readWakeSchedulerRecoveryCommands(value.recommended_commands),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeSchedulerRecovery(value: unknown, commandName: string): WakeSchedulerRecoverySummary | null {
+  if (value === null || value === undefined) return null
+  const previewResult = readWakeSchedulerRecoveryPreview(value, commandName)
+  if (!previewResult.recovery_id || !isRecord(value)) throw new Error(`${commandName} returned invalid recovery`)
+  return {
+    ...previewResult,
+    recovery_id: previewResult.recovery_id,
+    acknowledged_at: typeof value.acknowledged_at === "string" ? redactText(value.acknowledged_at) : undefined,
+    acknowledged_by: typeof value.acknowledged_by === "string" ? preview(redactText(value.acknowledged_by)) : undefined,
+    resolution_reason: typeof value.resolution_reason === "string" ? preview(redactText(value.resolution_reason)) : undefined,
+    created_at: typeof value.created_at === "string" ? redactText(value.created_at) : "",
+    updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : "",
+    recovery_hash: typeof value.recovery_hash === "string" ? redactText(value.recovery_hash) : "",
+  }
+}
+
+function readWakeSchedulerRecoveryRecordList(value: unknown, commandName: string, limit: number): WakeSchedulerRecoveryRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeSchedulerRecoveryRecord).filter((record): record is WakeSchedulerRecoveryRecordSummary => record !== null).slice(0, limit)
+}
+
+function readWakeSchedulerRecoveryRecord(value: unknown): WakeSchedulerRecoveryRecordSummary | null {
+  if (!isRecord(value) || typeof value.recovery_id !== "string") return null
+  return {
+    recovery_id: redactText(value.recovery_id),
+    status: readString(value.status, "none"),
+    stale_detected: readBoolean(value.stale_detected),
+    prior_started_at: typeof value.prior_started_at === "string" ? redactText(value.prior_started_at) : undefined,
+    acknowledged_at: typeof value.acknowledged_at === "string" ? redactText(value.acknowledged_at) : undefined,
+    updated_at: typeof value.updated_at === "string" ? redactText(value.updated_at) : "",
+    summary_preview: typeof value.summary_preview === "string" ? preview(redactText(value.summary_preview)) : "",
+    recovery_hash: typeof value.recovery_hash === "string" ? redactText(value.recovery_hash) : "",
+  }
+}
+
+function readWakeSchedulerRecoveryCommands(value: unknown): WakeSchedulerRecoveryPreviewSummary["recommended_commands"] {
+  if (!Array.isArray(value)) return []
+  const out: WakeSchedulerRecoveryPreviewSummary["recommended_commands"] = []
+  for (const item of value) {
+    if (!isRecord(item)) continue
+    out.push({
+      label: preview(readString(item.label, "")),
+      command: preview(redactText(readString(item.command, ""))),
+      command_type: readString(item.command_type, "read"),
+      requires_active_runtime: typeof item.requires_active_runtime === "boolean" ? item.requires_active_runtime : undefined,
+      notes: typeof item.notes === "string" ? preview(redactText(item.notes)) : undefined,
+    })
+    if (out.length >= 10) break
+  }
+  return out
+}
+
 function readWakeSchedulerState(value: unknown): WakeSchedulerStateSummary {
   if (!isRecord(value) || !isRecord(value.config)) throw new Error("runtime.wake_scheduler_status returned invalid status")
   return {
@@ -5803,7 +5967,18 @@ function wakeSchedulesState(state: UiState): WakeSchedulesState {
 }
 
 function wakeSchedulerState(state: UiState): WakeSchedulerUiState {
-  return state.wakeScheduler ?? { preview: null, status: null, events: [] }
+  const scheduler: Partial<WakeSchedulerUiState> = state.wakeScheduler ?? {}
+  return {
+    preview: scheduler.preview ?? null,
+    status: scheduler.status ?? null,
+    bootstrapStatus: scheduler.bootstrapStatus ?? null,
+    bootstrapPreview: scheduler.bootstrapPreview ?? null,
+    recoveryPreview: scheduler.recoveryPreview ?? null,
+    selectedRecovery: scheduler.selectedRecovery ?? null,
+    recoveries: scheduler.recoveries ?? [],
+    events: scheduler.events ?? [],
+    commandError: scheduler.commandError,
+  }
 }
 
 function reasoningProviderState(state: UiState) {
