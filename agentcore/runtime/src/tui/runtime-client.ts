@@ -23,6 +23,7 @@ import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAs
 import type { ContinuationPlan, ContinuationPlanDecisionInput, ContinuationPlanInput, ContinuationPlanPreview, ContinuationPlanRecord, ContinuationStepInput, ContinuationStepResult } from "../continuation/continuation-types"
 import type { WakeSchedule, WakeScheduleDecisionInput, WakeScheduleInput, WakeSchedulePreview, WakeScheduleRecord, WakeScheduleTickInput, WakeScheduleTickPreview, WakeScheduleTickResult } from "../schedules/wake-schedule-types"
 import type { WakeSchedulerEventRecord, WakeSchedulerPreview, WakeSchedulerStartInput, WakeSchedulerState, WakeSchedulerStopInput } from "../schedules/wake-scheduler-types"
+import type { WakeSchedulerBootstrapStatus } from "../schedules/wake-scheduler-bootstrap-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -238,6 +239,8 @@ export interface RuntimeClient {
   command(name: "runtime.start_wake_scheduler", payload?: WakeSchedulerStartInput): Promise<WakeSchedulerState>
   command(name: "runtime.stop_wake_scheduler", payload?: WakeSchedulerStopInput): Promise<WakeSchedulerState>
   command(name: "runtime.wake_scheduler_status", payload?: Record<string, never>): Promise<WakeSchedulerState>
+  command(name: "runtime.wake_scheduler_bootstrap_status", payload?: Record<string, never>): Promise<WakeSchedulerBootstrapStatus>
+  command(name: "runtime.preview_wake_scheduler_bootstrap", payload?: Record<string, never>): Promise<WakeSchedulerBootstrapStatus>
   command(name: "runtime.list_wake_scheduler_events", payload?: { limit?: number }): Promise<WakeSchedulerEventRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
@@ -369,6 +372,8 @@ export interface RuntimeCommandEnvelope {
     | "runtime.start_wake_scheduler"
     | "runtime.stop_wake_scheduler"
     | "runtime.wake_scheduler_status"
+    | "runtime.wake_scheduler_bootstrap_status"
+    | "runtime.preview_wake_scheduler_bootstrap"
     | "runtime.list_wake_scheduler_events"
     | "research.list_topics"
     | "research.get_topic_snapshot"

@@ -1393,6 +1393,33 @@ export type WakeSchedulerPreviewSummary = {
   redacted_summary_preview: string
 }
 
+export type WakeSchedulerStaleRunSummary = {
+  detected: boolean
+  prior_started_at?: string
+  prior_status?: WakeSchedulerStatusSummary
+  prior_tick_id?: string
+  prior_event_id?: string
+  reason?: string
+}
+
+export type WakeSchedulerBootstrapStatusSummary = {
+  autostart_enabled: boolean
+  configured: boolean
+  can_bootstrap: boolean
+  scheduler_status: WakeSchedulerStatusSummary
+  config: WakeSchedulerConfigSummary & {
+    require_due_schedule?: boolean
+    requested_by?: string
+  }
+  blockers: string[]
+  warnings: string[]
+  last_bootstrap_event_id?: string
+  last_bootstrap_at?: string
+  stale_prior_run?: WakeSchedulerStaleRunSummary
+  due_preview?: WakeScheduleTickPreviewSummary
+  redacted_summary_preview: string
+}
+
 export type WakeSchedulerStateSummary = {
   status: WakeSchedulerStatusSummary
   config: WakeSchedulerConfigSummary
@@ -1421,6 +1448,8 @@ export type WakeSchedulerEventRecordSummary = {
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
+  bootstrapStatus?: WakeSchedulerBootstrapStatusSummary | null
+  bootstrapPreview?: WakeSchedulerBootstrapStatusSummary | null
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

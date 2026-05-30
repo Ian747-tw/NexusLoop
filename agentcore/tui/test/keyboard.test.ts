@@ -642,6 +642,8 @@ describe("TUI keyboard command model", () => {
       ["/scheduler-preview dry-run every=60s max=5", "scheduler-preview", ["dry-run", "every=60s", "max=5"]],
       ["/scheduler-start dry-run every=60s max=5", "scheduler-start", ["dry-run", "every=60s", "max=5"]],
       ["/scheduler-status", "scheduler-status", []],
+      ["/scheduler-bootstrap", "scheduler-bootstrap", []],
+      ["/scheduler-bootstrap-preview", "scheduler-bootstrap-preview", []],
       ["/scheduler-stop e2e stop", "scheduler-stop", ["e2e", "stop"]],
       ["/scheduler-events", "scheduler-events", []],
       ["/wake-scheduler-preview every=60s", "wake-scheduler-preview", ["every=60s"]],
@@ -660,7 +662,7 @@ describe("TUI keyboard command model", () => {
       expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
     }
 
-    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start"]) {
+    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap"]) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",

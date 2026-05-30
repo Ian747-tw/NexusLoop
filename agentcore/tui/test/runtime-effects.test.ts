@@ -3364,4 +3364,32 @@ describe("runtime UI effects", () => {
     expect(state.wakeScheduler?.commandError).toContain("scheduler max must be 1..20")
     expect(JSON.stringify(state)).not.toContain("scheduler-secret")
   })
+
+  test("wake scheduler bootstrap status and preview slash commands are read-only", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-bootstrap" })
+    expect(state.wakeScheduler?.bootstrapStatus).toMatchObject({
+      autostart_enabled: false,
+      configured: false,
+      can_bootstrap: false,
+      scheduler_status: "stopped",
+    })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("bootstrap autostart=disabled")
+    expect(snapshot).toContain("wake scheduler autostart disabled")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-bootstrap-preview" })
+    expect(state.wakeScheduler?.bootstrapPreview).toMatchObject({
+      autostart_enabled: false,
+      can_bootstrap: false,
+      due_preview: { due_count: 0 },
+    })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-status" })
+    expect(state.wakeScheduler?.status?.status).toBe("stopped")
+    expect(state.wakeScheduler?.events).toEqual([])
+    expect(state.continuation?.lastStepResult).toBeUndefined()
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("bootstrap_due=0 eligible=0")
+  })
 })

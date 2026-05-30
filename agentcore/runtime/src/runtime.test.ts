@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
 import type { RuntimeResearchDbProjection } from "./server"
-import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv } from "./launch-config"
+import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv, readWakeSchedulerBootstrapConfigFromEnv } from "./launch-config"
 import { RuntimeServerClient } from "./tui/runtime-server-client"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
@@ -6452,6 +6452,183 @@ describe("RuntimeServer core", () => {
     const persisted = await readJsonlEvents(dir)
     expect(persisted.map((event) => event.kind)).toContain("runtime_wake_scheduler_stopped")
     expect(JSON.stringify(persisted)).not.toContain("scheduler-secret")
+    await server.shutdown()
+  })
+
+  test("wake scheduler bootstrap is disabled by default and start does not schedule timers", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const timers: Array<() => void> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerMinIntervalMs: 10,
+      runtimeWakeSchedulerSetTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+    })
+    await server.start()
+    const bootstrap = await server.command("runtime.wake_scheduler_bootstrap_status") as { autostart_enabled: boolean; configured: boolean; can_bootstrap: boolean; blockers: string[] }
+    expect(bootstrap).toMatchObject({ autostart_enabled: false, configured: false, can_bootstrap: false })
+    expect(bootstrap.blockers).toContain("wake scheduler autostart disabled")
+    expect(timers).toHaveLength(0)
+    expect((await server.command("runtime.wake_scheduler_status") as { status: string }).status).toBe("stopped")
+    expect((await readJsonlEvents(dir)).some((event) => String(event.kind ?? "").startsWith("runtime_wake_scheduler_bootstrap"))).toBe(false)
+    await server.shutdown()
+  })
+
+  test("wake scheduler bootstrap env parsing requires explicit autostart flag and redacts status", async () => {
+    expect(readWakeSchedulerBootstrapConfigFromEnv({ NXL_WAKE_SCHEDULER_INTERVAL_MS: "60000" })).toMatchObject({
+      autostart_enabled: false,
+      interval_ms: 60_000,
+    })
+    expect(readWakeSchedulerBootstrapConfigFromEnv({
+      NXL_WAKE_SCHEDULER_AUTOSTART: "1",
+      NXL_WAKE_SCHEDULER_INTERVAL_MS: "60000",
+      NXL_WAKE_SCHEDULER_MAX_DUE_ITEMS: "5",
+      NXL_WAKE_SCHEDULER_DRY_RUN: "1",
+      NXL_WAKE_SCHEDULER_STOP_ON_ERROR: "0",
+      NXL_WAKE_SCHEDULER_REQUIRE_DUE: "1",
+    })).toMatchObject({
+      autostart_enabled: true,
+      dry_run: true,
+      require_due_schedule: true,
+    })
+    expect(() => readWakeSchedulerBootstrapConfigFromEnv({ NXL_WAKE_SCHEDULER_AUTOSTART: "true" })).toThrow("NXL_WAKE_SCHEDULER_AUTOSTART must be 0 or 1")
+  })
+
+  test("wake scheduler bootstrap autostart starts after runtime start without immediate tick", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const timers: Array<() => void> = []
+    let nowMs = Date.parse("2026-05-11T15:00:00.000Z")
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date(nowMs++),
+      runtimeWakeSchedulerMinIntervalMs: 10,
+      runtimeWakeSchedulerMinHeartbeatIntervalMs: 10,
+      runtimeWakeSchedulerSetTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      runtimeWakeSchedulerClearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 10,
+        max_due_items: 5,
+        dry_run: true,
+        stop_on_error: false,
+        requested_by: "bootstrap token=secret",
+      },
+    })
+    await server.start()
+    expect(timers).toHaveLength(1)
+    expect(await server.command("runtime.list_wake_schedule_ticks", { limit: 10 })).toEqual([])
+    const status = await server.command("runtime.wake_scheduler_status") as { status: string; tick_count: number; started_by?: string }
+    expect(status).toMatchObject({ status: "running", tick_count: 0 })
+    expect(JSON.stringify(status)).not.toContain("secret")
+    const bootstrap = await server.command("runtime.wake_scheduler_bootstrap_status") as { stale_prior_run?: { detected: boolean } }
+    expect(bootstrap.stale_prior_run).toMatchObject({ detected: false })
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_scheduler_bootstrap_started")
+    const startedEvent = events.find((event) => event.kind === "runtime_wake_scheduler_bootstrap_started")
+    expect(startedEvent?.stale_prior_run).toBeUndefined()
+    expect(JSON.stringify(events)).not.toContain("secret")
+    await server.shutdown()
+  })
+
+  test("wake scheduler bootstrap startup failure stops scheduled timer before releasing lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const timers: Array<() => void> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:00:00.000Z"),
+      runtimeWakeSchedulerMinIntervalMs: 10,
+      runtimeWakeSchedulerSetTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      runtimeWakeSchedulerClearTimer: (timer) => {
+        const index = timers.indexOf(timer as () => void)
+        if (index >= 0) timers.splice(index, 1)
+      },
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 10,
+        max_due_items: 5,
+        dry_run: true,
+        stop_on_error: false,
+      },
+    })
+    const append = server.eventStore.append.bind(server.eventStore)
+    server.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if (event.kind === "runtime_wake_scheduler_bootstrap_started") {
+        expect(timers).toHaveLength(1)
+        throw new Error("bootstrap started append failed token=secret")
+      }
+      return append(event)
+    }
+    await expect(server.start()).rejects.toThrow("bootstrap started append failed")
+    expect(timers).toHaveLength(0)
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect(await server.wakeSchedulerStatus()).toMatchObject({ status: "stopped" })
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_scheduler_stopped")
+    expect(JSON.stringify(events)).not.toContain("secret")
+  })
+
+  test("wake scheduler bootstrap require_due blocks without starting and stale prior run is informational", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:10:00.000Z",
+      scheduler_status: "running",
+      tick_id: "prior_tick_1",
+      requested_by: "prior",
+    })
+    const timers: Array<() => void> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeScheduleNow: () => new Date("2026-05-11T15:11:00.000Z"),
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:11:00.000Z"),
+      runtimeWakeSchedulerMinIntervalMs: 10,
+      runtimeWakeSchedulerSetTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 10,
+        max_due_items: 5,
+        dry_run: false,
+        stop_on_error: false,
+        require_due_schedule: true,
+      },
+    })
+    await server.start()
+    const bootstrap = await server.command("runtime.wake_scheduler_bootstrap_status") as { can_bootstrap: boolean; stale_prior_run?: { detected: boolean; prior_tick_id?: string }; blockers: string[] }
+    expect(bootstrap.can_bootstrap).toBe(false)
+    expect(bootstrap.blockers).toContain("wake scheduler bootstrap requires an eligible due schedule")
+    expect(bootstrap.stale_prior_run).toMatchObject({ detected: true, prior_tick_id: "prior_tick_1" })
+    expect(timers).toHaveLength(0)
+    expect(await server.command("runtime.list_wake_schedule_ticks", { limit: 10 })).toEqual([])
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_scheduler_stale_run_detected")
+    expect(events.map((event) => event.kind)).toContain("runtime_wake_scheduler_bootstrap_blocked")
     await server.shutdown()
   })
 

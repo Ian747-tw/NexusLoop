@@ -74,6 +74,7 @@ import type {
   WakeSchedulesState,
   WakeSchedulerConfigSummary,
   WakeSchedulerEventRecordSummary,
+  WakeSchedulerBootstrapStatusSummary,
   WakeSchedulerPreviewSummary,
   WakeSchedulerStateSummary,
   WakeSchedulerUiState,
@@ -261,6 +262,8 @@ export type RuntimeUiEffect =
   | { type: "start-wake-scheduler"; intervalMs?: number; maxDueItems?: number; dryRun?: boolean }
   | { type: "stop-wake-scheduler"; reason?: string }
   | { type: "load-wake-scheduler-status" }
+  | { type: "load-wake-scheduler-bootstrap-status" }
+  | { type: "preview-wake-scheduler-bootstrap" }
   | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
@@ -944,7 +947,11 @@ export async function applyRuntimeUiEffect(
         return await loadWakeSchedulerEvents(next, runtime, CHECKPOINT_LIMIT)
       }
       case "load-wake-scheduler-status":
-        return applyWakeSchedulerStatus(state, await runtime.command("runtime.wake_scheduler_status"))
+        return await loadWakeSchedulerStatusWithBootstrap(state, runtime)
+      case "load-wake-scheduler-bootstrap-status":
+        return applyWakeSchedulerBootstrapStatus(state, await runtime.command("runtime.wake_scheduler_bootstrap_status"))
+      case "preview-wake-scheduler-bootstrap":
+        return applyWakeSchedulerBootstrapPreview(state, await runtime.command("runtime.preview_wake_scheduler_bootstrap"))
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
@@ -1822,6 +1829,15 @@ async function loadWakeSchedulerEvents(state: UiState, runtime: RuntimeClient, l
   }
 }
 
+async function loadWakeSchedulerStatusWithBootstrap(state: UiState, runtime: RuntimeClient): Promise<UiState> {
+  const withStatus = applyWakeSchedulerStatus(state, await runtime.command("runtime.wake_scheduler_status"))
+  try {
+    return applyWakeSchedulerBootstrapStatus(withStatus, await runtime.command("runtime.wake_scheduler_bootstrap_status"))
+  } catch (error) {
+    return recordWakeSchedulerCommandError(withStatus, error)
+  }
+}
+
 function applyWakeSchedulerPreview(state: UiState, value: unknown): UiState {
   const previewResult = readWakeSchedulerPreview(value)
   return {
@@ -1845,6 +1861,32 @@ function applyWakeSchedulerStatus(state: UiState, value: unknown): UiState {
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "wake scheduler status", detail: `status=${status.status} ticks=${status.tick_count}`, status: status.status }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerBootstrapStatus(state: UiState, value: unknown): UiState {
+  const status = readWakeSchedulerBootstrapStatus(value, "runtime.wake_scheduler_bootstrap_status")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      bootstrapStatus: status,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake scheduler bootstrap", detail: `autostart=${status.autostart_enabled} can_bootstrap=${status.can_bootstrap}`, status: status.can_bootstrap ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerBootstrapPreview(state: UiState, value: unknown): UiState {
+  const previewResult = readWakeSchedulerBootstrapStatus(value, "runtime.preview_wake_scheduler_bootstrap")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      bootstrapPreview: previewResult,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "wake scheduler bootstrap preview", detail: `autostart=${previewResult.autostart_enabled} can_bootstrap=${previewResult.can_bootstrap}`, status: previewResult.can_bootstrap ? "ready" : "blocked" }].slice(-12),
   }
 }
 
@@ -2262,6 +2304,10 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "stop-wake-scheduler", reason: args.join(" ") || undefined })
     case "scheduler-status":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-status" })
+    case "scheduler-bootstrap":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-bootstrap-status" })
+    case "scheduler-bootstrap-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-scheduler-bootstrap" })
     case "scheduler-events":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
@@ -2918,6 +2964,8 @@ const wakeSchedulerCommands = new Set([
   "scheduler-start",
   "scheduler-stop",
   "scheduler-status",
+  "scheduler-bootstrap",
+  "scheduler-bootstrap-preview",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",
@@ -3021,6 +3069,8 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "start-wake-scheduler",
   "stop-wake-scheduler",
   "load-wake-scheduler-status",
+  "load-wake-scheduler-bootstrap-status",
+  "preview-wake-scheduler-bootstrap",
   "load-wake-scheduler-events",
 ])
 
@@ -3047,6 +3097,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   const proposalBundleSummary = readProposalBundleSummary(value.proposalBundles)
   const workbenchSummary = readWorkbenchSummary(value.playbookDrafts)
   const reasoningProvider = readReasoningProviderStatus(value.reasoningProvider)
+  const wakeScheduler = readRuntimeStatusWakeScheduler(value.wakeScheduler)
   return {
     ...state,
     runtimeStatus,
@@ -3058,6 +3109,7 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
     proposals: proposalSummary ? { ...proposalsState(state), summary: proposalSummary } : state.proposals,
     proposalBundles: proposalBundleSummary ? { ...proposalBundlesState(state), summary: proposalBundleSummary } : state.proposalBundles,
     commanderWorkbench: workbenchSummary ? { ...commanderWorkbenchState(state), summary: workbenchSummary } : state.commanderWorkbench,
+    wakeScheduler: wakeScheduler ? { ...wakeSchedulerState(state), ...wakeScheduler, commandError: undefined } : state.wakeScheduler,
     runtimeCommandError: undefined,
     header: {
       ...state.header,
@@ -3065,6 +3117,17 @@ function applyRuntimeStatus(state: UiState, value: unknown): UiState {
       runtimeStatus: runtimeStatus.runtimeStatus,
       activeMissionId: missions?.last_mission_id ?? state.header.activeMissionId,
     },
+  }
+}
+
+function readRuntimeStatusWakeScheduler(value: unknown): Pick<WakeSchedulerUiState, "status" | "bootstrapStatus"> | null {
+  if (!isRecord(value)) return null
+  const status = isRecord(value.status) ? readWakeSchedulerState(value.status) : null
+  const bootstrapStatus = isRecord(value.bootstrap) ? readWakeSchedulerBootstrapStatus(value.bootstrap, "runtime.status.wakeScheduler.bootstrap") : null
+  if (!status && !bootstrapStatus) return null
+  return {
+    status,
+    bootstrapStatus,
   }
 }
 
@@ -4909,6 +4972,45 @@ function readWakeSchedulerPreview(value: unknown): WakeSchedulerPreviewSummary {
     warnings: readStringList(value.warnings, 10).map(preview),
     due_preview: isRecord(value.due_preview) ? readWakeScheduleTickPreview(value.due_preview) : undefined,
     redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeSchedulerBootstrapStatus(value: unknown, commandName: string): WakeSchedulerBootstrapStatusSummary {
+  if (!isRecord(value) || !isRecord(value.config)) throw new Error(`${commandName} returned invalid bootstrap status`)
+  const config = value.config
+  return {
+    autostart_enabled: readBoolean(value.autostart_enabled),
+    configured: readBoolean(value.configured),
+    can_bootstrap: readBoolean(value.can_bootstrap),
+    scheduler_status: readString(value.scheduler_status, "stopped"),
+    config: {
+      ...readWakeSchedulerConfig({
+        ...config,
+        enabled: value.autostart_enabled,
+        started_by: config.requested_by,
+      }),
+      require_due_schedule: readBoolean(config.require_due_schedule),
+      requested_by: typeof config.requested_by === "string" ? preview(redactText(config.requested_by)) : undefined,
+    },
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    last_bootstrap_event_id: typeof value.last_bootstrap_event_id === "string" ? redactText(value.last_bootstrap_event_id) : undefined,
+    last_bootstrap_at: typeof value.last_bootstrap_at === "string" ? redactText(value.last_bootstrap_at) : undefined,
+    stale_prior_run: readWakeSchedulerStaleRun(value.stale_prior_run),
+    due_preview: isRecord(value.due_preview) ? readWakeScheduleTickPreview(value.due_preview) : undefined,
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeSchedulerStaleRun(value: unknown): WakeSchedulerBootstrapStatusSummary["stale_prior_run"] {
+  if (!isRecord(value)) return undefined
+  return {
+    detected: readBoolean(value.detected),
+    prior_started_at: typeof value.prior_started_at === "string" ? redactText(value.prior_started_at) : undefined,
+    prior_status: typeof value.prior_status === "string" ? readString(value.prior_status, "running") : undefined,
+    prior_tick_id: typeof value.prior_tick_id === "string" ? redactText(value.prior_tick_id) : undefined,
+    prior_event_id: typeof value.prior_event_id === "string" ? redactText(value.prior_event_id) : undefined,
+    reason: typeof value.reason === "string" ? preview(redactText(value.reason)) : undefined,
   }
 }
 

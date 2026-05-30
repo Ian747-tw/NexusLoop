@@ -1,3 +1,6 @@
+import type { WakeSchedulerBootstrapStatus } from "../schedules/wake-scheduler-bootstrap-types"
+import type { WakeSchedulerState } from "../schedules/wake-scheduler-types"
+
 export type RuntimeMode = "active" | "status" | "view-records"
 
 export type RuntimeEvent =
@@ -125,5 +128,9 @@ export interface RuntimeStatus {
     enabled_for: Array<"research_synthesis" | "commander_cycle">
   }
   researchProjection: RuntimeResearchProjectionHealth
+  wakeScheduler?: {
+    status: WakeSchedulerState
+    bootstrap: WakeSchedulerBootstrapStatus
+  }
   policy: Record<string, unknown>
 }
