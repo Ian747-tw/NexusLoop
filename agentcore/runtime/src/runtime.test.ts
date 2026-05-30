@@ -7031,6 +7031,25 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler recovery workflow verification ignores same-timestamp pre-create events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running", event_id: "workflow_verify_pre_start" })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:00:00.000Z"),
+    })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string }
+    const workflow = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string }
+    const verification = await server.command("runtime.verify_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id }) as { step_updates: Array<{ verification_summary: string }> }
+    expect(verification.step_updates.some((update) => update.verification_summary.includes("scheduler start event"))).toBe(false)
+    await server.shutdown()
+  })
+
   test("wake scheduler recovery workflow write commands require active mode while read commands work in status mode", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

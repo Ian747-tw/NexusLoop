@@ -185,7 +185,7 @@ export class WakeSchedulerRecoveryWorkflowService {
     const workflow = await this.get(workflowId)
     if (!workflow) throw new Error("wake scheduler recovery workflow not found")
     const events = await this.options.eventStore.readAll()
-    const after = events.filter((event) => eventTime(event) >= workflow.created_at)
+    const after = eventsAfterWorkflowCreated(events, workflow)
     const observable: WakeSchedulerRecoveryWorkflowObservableEvent[] = []
     const stepUpdates: WakeSchedulerRecoveryWorkflowVerification["step_updates"] = []
     const warnings: string[] = []
@@ -331,6 +331,18 @@ function matchStep(step: WakeSchedulerRecoveryWorkflowStep, workflow: WakeSchedu
     return event ? { event, summary: "scheduler recovery record observed after workflow creation" } : { summary: "" }
   }
   return { summary: "" }
+}
+
+function eventsAfterWorkflowCreated(events: JsonlEvent[], workflow: WakeSchedulerRecoveryWorkflow): JsonlEvent[] {
+  const createdIndex = events.findIndex((event) => event.kind === "runtime_wake_scheduler_recovery_workflow_created" && workflowEventId(event) === workflow.workflow_id)
+  if (createdIndex >= 0) return events.slice(createdIndex + 1)
+  return events.filter((event) => eventTime(event) > workflow.created_at)
+}
+
+function workflowEventId(event: JsonlEvent): string | undefined {
+  if (typeof event.workflow_id === "string") return event.workflow_id
+  if (event.workflow && typeof event.workflow === "object" && "workflow_id" in event.workflow && typeof event.workflow.workflow_id === "string") return event.workflow.workflow_id
+  return undefined
 }
 
 function observableFromEvent(event: JsonlEvent, command: string): WakeSchedulerRecoveryWorkflowObservableEvent {
