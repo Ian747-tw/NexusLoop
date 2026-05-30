@@ -6705,6 +6705,43 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler recovery preview preserves stale prior run across unrelated runtime shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:00:00.000Z",
+      scheduler_status: "running",
+      event_id: "stale_start_1",
+      tick_id: "stale_tick_1",
+    })
+    await eventStore.append({
+      kind: "runtime_shutdown",
+      created_at: "2026-05-11T15:01:00.000Z",
+      reason: "status workbench exit",
+    })
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:05:00.000Z"),
+    })
+    await server.start()
+    const preview = await server.command("runtime.preview_wake_scheduler_recovery") as {
+      stale_detected: boolean
+      prior_event_id?: string
+      prior_tick_id?: string
+      blockers: string[]
+    }
+    expect(preview.stale_detected).toBe(true)
+    expect(preview.prior_event_id).toBe("stale_start_1")
+    expect(preview.prior_tick_id).toBe("stale_tick_1")
+    expect(preview.blockers).toEqual([])
+    await server.shutdown()
+  })
+
   test("wake scheduler recovery preview does not flag current running scheduler as stale", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

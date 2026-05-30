@@ -175,7 +175,7 @@ export class WakeSchedulerRecoveryService {
       if (event.kind === "runtime_wake_scheduler_started") openStart = event
       else if ((event.kind === "runtime_wake_scheduler_tick_succeeded" || event.kind === "runtime_wake_scheduler_tick_failed") && openStart && typeof event.tick_id === "string") {
         openStart = Object.assign({}, openStart, { tick_id: event.tick_id })
-      } else if (event.kind === "runtime_wake_scheduler_stopped" || event.kind === "runtime_shutdown") {
+      } else if (event.kind === "runtime_wake_scheduler_stopped") {
         openStart = null
       }
     }
@@ -186,7 +186,7 @@ export class WakeSchedulerRecoveryService {
       prior_status: openStart.scheduler_status ?? "running",
       prior_tick_id: typeof openStart.tick_id === "string" ? openStart.tick_id : undefined,
       prior_event_id: typeof openStart.event_id === "string" ? openStart.event_id : undefined,
-      reason: "previous scheduler start has no matching stop or runtime shutdown event",
+      reason: "previous scheduler start has no matching stop event",
     })
   }
 
