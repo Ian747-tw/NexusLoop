@@ -61,7 +61,7 @@ export class WakeSchedulerAuditService {
     const incidents = buildIncidents(entries)
     const latestScheduler = [...entries].reverse().find((entry) => entry.source_kind === "scheduler_lifecycle")
     const latestBootstrap = [...entries].reverse().find((entry) => entry.source_kind === "scheduler_bootstrap")
-    const latestRecovery = [...entries].reverse().find((entry) => entry.source_kind === "scheduler_recovery")
+    const latestRecovery = [...entries].reverse().find((entry) => entry.source_kind === "scheduler_recovery" || entry.source_event_kind === "runtime_wake_scheduler_stale_run_detected")
     return redactValue({
       event_count: entries.length,
       checkpoint_count: entries.filter((entry) => entry.source_kind === "checkpoint").length,

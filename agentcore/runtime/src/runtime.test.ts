@@ -7077,11 +7077,12 @@ describe("RuntimeServer core", () => {
     await eventStore.append({ kind: "runtime_continuation_plan_created", created_at: "2026-05-11T15:05:00.000Z", plan_id: "plan_audit_1", wake_id: "wake_audit_1", plan: { plan_id: "plan_audit_1", wake_id: "wake_audit_1" } })
     await eventStore.append({ kind: "runtime_wake_scheduler_tick_failed", created_at: "2026-05-11T15:06:00.000Z", scheduler_status: "running", tick_id: "tick_failed_audit_1", error: "failed token=audit-secret" })
     await eventStore.append({ kind: "runtime_wake_scheduler_bootstrap_blocked", created_at: "2026-05-11T15:07:00.000Z", message: "blocked token=audit-secret" })
+    await eventStore.append({ kind: "runtime_wake_scheduler_stale_run_detected", created_at: "2026-05-11T15:08:00.000Z", stale_prior_run: { detected: true, prior_event_id: "prior_event_open_audit_1" } })
     const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
     await server.start()
     const beforeAuditEventCount = (await readJsonlEvents(dir)).length
-    const summary = await server.command("runtime.wake_scheduler_audit_summary") as { event_count: number; checkpoint_count: number; tick_count: number; scheduler_failure_count: number; bootstrap_blocked_count: number; unresolved_incident_count: number }
-    expect(summary).toMatchObject({ checkpoint_count: 1, tick_count: 2, scheduler_failure_count: 1, bootstrap_blocked_count: 1 })
+    const summary = await server.command("runtime.wake_scheduler_audit_summary") as { event_count: number; checkpoint_count: number; tick_count: number; scheduler_failure_count: number; bootstrap_blocked_count: number; unresolved_incident_count: number; latest_recovery_status?: string }
+    expect(summary).toMatchObject({ checkpoint_count: 1, tick_count: 2, scheduler_failure_count: 1, bootstrap_blocked_count: 1, latest_recovery_status: "detected" })
     expect(summary.event_count).toBeGreaterThanOrEqual(8)
     expect(summary.unresolved_incident_count).toBeGreaterThanOrEqual(2)
     const timeline = await server.command("runtime.wake_scheduler_audit_timeline", { limit: 5, kind: "wake_tick" }) as Array<{ source_kind: string; summary: string; related_ids: Record<string, string[]> }>
