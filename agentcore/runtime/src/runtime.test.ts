@@ -7065,6 +7065,114 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler audit summary timeline chain and incidents are read-only event projections", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_checkpoint_created", created_at: "2026-05-11T15:00:00.000Z", checkpoint_id: "checkpoint_audit_1", checkpoint: { checkpoint_id: "checkpoint_audit_1" } })
+    await eventStore.append({ kind: "runtime_resume_anchor_marked", created_at: "2026-05-11T15:01:00.000Z", resume_id: "resume_audit_1", checkpoint_id: "checkpoint_audit_1" })
+    await eventStore.append({ kind: "runtime_wake_schedule_created", created_at: "2026-05-11T15:02:00.000Z", schedule_id: "schedule_audit_1", schedule: { schedule_id: "schedule_audit_1", resume_id: "resume_audit_1" } })
+    await eventStore.append({ kind: "runtime_wake_schedule_tick_completed", created_at: "2026-05-11T15:03:00.000Z", tick_id: "tick_audit_1", schedule_id: "schedule_audit_1", wake_ids: ["wake_audit_1"], plan_ids: ["plan_audit_1"], processed_schedules: [{ schedule_id: "schedule_audit_1", wake_id: "wake_audit_1", plan_id: "plan_audit_1" }] })
+    await eventStore.append({ kind: "runtime_wake_assessment_created", created_at: "2026-05-11T15:04:00.000Z", wake_id: "wake_audit_1", resume_id: "resume_audit_1", checkpoint_id: "checkpoint_audit_1", assessment: { wake_id: "wake_audit_1" } })
+    await eventStore.append({ kind: "runtime_continuation_plan_created", created_at: "2026-05-11T15:05:00.000Z", plan_id: "plan_audit_1", wake_id: "wake_audit_1", plan: { plan_id: "plan_audit_1", wake_id: "wake_audit_1" } })
+    await eventStore.append({ kind: "runtime_wake_scheduler_tick_failed", created_at: "2026-05-11T15:06:00.000Z", scheduler_status: "running", tick_id: "tick_failed_audit_1", error: "failed token=audit-secret" })
+    await eventStore.append({ kind: "runtime_wake_scheduler_bootstrap_blocked", created_at: "2026-05-11T15:07:00.000Z", message: "blocked token=audit-secret" })
+    await eventStore.append({ kind: "runtime_wake_scheduler_stale_run_detected", created_at: "2026-05-11T15:08:00.000Z", stale_prior_run: { detected: true, prior_event_id: "prior_event_open_audit_1" } })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const beforeAuditEventCount = (await readJsonlEvents(dir)).length
+    const summary = await server.command("runtime.wake_scheduler_audit_summary") as { event_count: number; checkpoint_count: number; tick_count: number; scheduler_failure_count: number; bootstrap_blocked_count: number; unresolved_incident_count: number; latest_recovery_status?: string }
+    expect(summary).toMatchObject({ checkpoint_count: 1, tick_count: 2, scheduler_failure_count: 1, bootstrap_blocked_count: 1, latest_recovery_status: "detected" })
+    expect(summary.event_count).toBeGreaterThanOrEqual(8)
+    expect(summary.unresolved_incident_count).toBeGreaterThanOrEqual(2)
+    const timeline = await server.command("runtime.wake_scheduler_audit_timeline", { limit: 5, kind: "wake_tick" }) as Array<{ source_kind: string; summary: string; related_ids: Record<string, string[]> }>
+    expect(timeline.every((entry) => entry.source_kind === "wake_tick")).toBe(true)
+    expect(JSON.stringify(timeline)).not.toContain("audit-secret")
+    const related = await server.command("runtime.wake_scheduler_audit_timeline", { relatedId: "schedule_audit_1" }) as Array<{ related_ids: Record<string, string[]> }>
+    expect(related.length).toBeGreaterThan(0)
+    const chain = await server.command("runtime.wake_scheduler_audit_chain", { relatedId: "schedule_audit_1" }) as { entries: Array<{ source_event_kind: string }>; related_ids: Record<string, string[]> }
+    expect(chain.related_ids.schedule_id).toContain("schedule_audit_1")
+    expect(chain.entries.some((entry) => entry.source_event_kind === "runtime_wake_schedule_tick_completed")).toBe(true)
+    const incidents = await server.command("runtime.wake_scheduler_audit_incidents", { severity: "error" }) as Array<{ title: string; severity: string }>
+    expect(incidents.some((incident) => incident.title.includes("Scheduler tick failed"))).toBe(true)
+    expect(await server.command("runtime.wake_scheduler_status")).toMatchObject({ status: "stopped", tick_count: 0 })
+    expect((await readJsonlEvents(dir))).toHaveLength(beforeAuditEventCount)
+    await server.shutdown()
+  })
+
+  test("wake scheduler audit links recovery workflows and reports advisory gaps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_stale_run_detected", created_at: "2026-05-11T15:00:00.000Z", stale_prior_run: { detected: true, prior_event_id: "prior_event_audit_1", prior_tick_id: "prior_tick_audit_1" } })
+    await eventStore.append({ kind: "runtime_wake_scheduler_recovery_recorded", created_at: "2026-05-11T15:01:00.000Z", recovery_id: "recovery_audit_1", recovery_hash: "hash_audit_1", resolution: "resolved", stale_prior_event_id: "prior_event_audit_1", prior_tick_id: "prior_tick_audit_1" })
+    await eventStore.append({ kind: "runtime_wake_scheduler_recovery_workflow_created", created_at: "2026-05-11T15:02:00.000Z", workflow_id: "workflow_audit_1", recovery_id: "recovery_audit_1", workflow: { workflow_id: "workflow_audit_1", recovery_id: "recovery_audit_1" } })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const chain = await server.command("runtime.wake_scheduler_audit_chain", { relatedId: "recovery_audit_1" }) as { entries: Array<{ source_event_kind: string }>; gaps: Array<{ message: string }> }
+    expect(chain.entries.map((entry) => entry.source_event_kind)).toEqual(expect.arrayContaining(["runtime_wake_scheduler_stale_run_detected", "runtime_wake_scheduler_recovery_recorded", "runtime_wake_scheduler_recovery_workflow_created"]))
+    expect(chain.gaps.some((gap) => gap.message.includes("workflow has no recorded step"))).toBe(true)
+    const incidents = await server.command("runtime.wake_scheduler_audit_incidents", { status: "resolved" }) as Array<{ status: string; title: string }>
+    expect(incidents).toEqual(expect.arrayContaining([expect.objectContaining({ status: "resolved", title: "Stale scheduler run detected" })]))
+    await server.shutdown()
+  })
+
+  test("wake scheduler audit detects later unmatched scheduler starts after closed runs", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", event_id: "scheduler_audit_closed_start", scheduler_status: "running" })
+    await eventStore.append({ kind: "runtime_wake_scheduler_stopped", created_at: "2026-05-11T15:01:00.000Z", event_id: "scheduler_audit_closed_stop", scheduler_status: "stopped" })
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:02:00.000Z", event_id: "scheduler_audit_open_start", scheduler_status: "running" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const incidents = await server.command("runtime.wake_scheduler_audit_incidents", { status: "open" }) as Array<{ title: string; related_entries: Array<{ event_id?: string }> }>
+    const openStartIncident = incidents.find((incident) => incident.title === "Scheduler start without stop")
+    expect(openStartIncident?.related_entries.map((entry) => entry.event_id)).toEqual(["scheduler_audit_open_start"])
+    const chain = await server.command("runtime.wake_scheduler_audit_chain", { relatedId: "scheduler_audit_open_start" }) as { gaps: Array<{ message: string }> }
+    expect(chain.gaps.some((gap) => gap.message.includes("scheduler start has no matching stop"))).toBe(true)
+    await server.shutdown()
+  })
+
+  test("wake scheduler audit summary uses lifecycle event scheduler statuses", async () => {
+    const heartbeatDir = await tempProject()
+    await makeProject(heartbeatDir, { approvedSpec: true })
+    const heartbeatStore = new EventStore(join(heartbeatDir, ".nxl", "events.jsonl"))
+    await heartbeatStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running" })
+    await heartbeatStore.append({ kind: "runtime_wake_scheduler_heartbeat", created_at: "2026-05-11T15:01:00.000Z", scheduler_status: "running" })
+    const heartbeatServer = new RuntimeServer({ projectDir: heartbeatDir, mode: "status", researchProjectionMode: "disabled" })
+    await heartbeatServer.start()
+    await expect(heartbeatServer.command("runtime.wake_scheduler_audit_summary")).resolves.toMatchObject({ latest_scheduler_status: "running" })
+    await heartbeatServer.shutdown()
+
+    const failedStopDir = await tempProject()
+    await makeProject(failedStopDir, { approvedSpec: true })
+    const failedStopStore = new EventStore(join(failedStopDir, ".nxl", "events.jsonl"))
+    await failedStopStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running" })
+    await failedStopStore.append({ kind: "runtime_wake_scheduler_stopped", created_at: "2026-05-11T15:01:00.000Z", scheduler_status: "failed" })
+    const failedStopServer = new RuntimeServer({ projectDir: failedStopDir, mode: "status", researchProjectionMode: "disabled" })
+    await failedStopServer.start()
+    await expect(failedStopServer.command("runtime.wake_scheduler_audit_summary")).resolves.toMatchObject({ latest_scheduler_status: "failed" })
+    await failedStopServer.shutdown()
+  })
+
+  test("wake scheduler audit validates filters clearly", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_schedule_created", created_at: "2026-05-11T15:00:00.000Z", schedule_id: "schedule_related_alias" })
+    await eventStore.append({ kind: "runtime_wake_schedule_created", created_at: "2026-05-11T15:01:00.000Z", schedule_id: "schedule_unrelated_alias" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const relatedAlias = await server.command("runtime.wake_scheduler_audit_timeline", { related: "schedule_related_alias" }) as Array<{ related_ids: Record<string, string[]> }>
+    expect(relatedAlias).toHaveLength(1)
+    expect(relatedAlias[0]?.related_ids.schedule_id).toEqual(["schedule_related_alias"])
+    await expect(server.command("runtime.wake_scheduler_audit_timeline", { limit: 0 })).rejects.toThrow("scheduler audit limit must be a positive integer")
+    await expect(server.command("runtime.wake_scheduler_audit_timeline", { kind: "mission" })).rejects.toThrow("scheduler audit kind is invalid")
+    await expect(server.command("runtime.wake_scheduler_audit_timeline", { since: "not-a-date" })).rejects.toThrow("scheduler audit since must be an ISO timestamp")
+    await server.shutdown()
+  })
+
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

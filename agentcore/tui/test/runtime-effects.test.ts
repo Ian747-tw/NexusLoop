@@ -3501,4 +3501,44 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("workflow-secret")
     expect(JSON.stringify(state)).not.toContain("workflow-secret")
   })
+
+  test("wake scheduler audit slash commands render summary timeline chain and incidents", async () => {
+    const previous = process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE
+    process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE = "1"
+    try {
+      const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+      let state = initialState("/tmp/demo")
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-audit" })
+      expect(state.wakeScheduler?.auditSummary?.event_count).toBeGreaterThan(0)
+      expect(state.wakeScheduler?.auditTimeline.length).toBeGreaterThan(0)
+      let snapshot = layoutSnapshot(state)
+      expect(snapshot).toContain("scheduler_audit")
+      expect(snapshot).toContain("timeline_rows")
+
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-audit-summary" })
+      expect(state.wakeScheduler?.auditSummary?.stale_recovery_count).toBe(1)
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-audit-timeline", args: ["limit=5", "related=fake-recovery-1"] })
+      expect(state.wakeScheduler?.auditTimeline.every((entry) => Object.values(entry.related_ids).some((values) => values.includes("fake-recovery-1")))).toBe(true)
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-audit-chain", args: ["fake-recovery-1"] })
+      expect(state.wakeScheduler?.selectedAuditChain).toMatchObject({ root_id: "fake-recovery-1" })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-audit-incidents" })
+      expect(state.wakeScheduler?.auditIncidents.length).toBeGreaterThan(0)
+      expect(state.wakeScheduler?.status?.status).not.toBe("running")
+      expect(state.wakeSchedules?.lastTick).toBeUndefined()
+      expect(state.continuation?.lastStepResult).toBeUndefined()
+      snapshot = layoutSnapshot(state)
+      expect(snapshot).toContain("incident_rows")
+    } finally {
+      if (previous === undefined) delete process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE
+      else process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE = previous
+    }
+  })
+
+  test("wake scheduler audit errors are redacted", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-audit-timeline", args: ["bad=token=audit-secret"] })
+    expect(state.wakeScheduler?.commandError).toContain("scheduler audit timeline arg is invalid")
+    expect(JSON.stringify(state)).not.toContain("audit-secret")
+  })
 })

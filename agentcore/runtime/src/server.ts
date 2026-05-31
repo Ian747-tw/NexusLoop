@@ -66,6 +66,8 @@ import { WakeSchedulerRecoveryService, readWakeSchedulerRecoveryAcknowledgeInput
 import type { WakeSchedulerRecovery, WakeSchedulerRecoveryPreview, WakeSchedulerRecoveryRecord } from "./schedules/wake-scheduler-recovery-types"
 import { WakeSchedulerRecoveryWorkflowService, readWakeSchedulerRecoveryWorkflowCancelInput, readWakeSchedulerRecoveryWorkflowInput, readWakeSchedulerRecoveryWorkflowStepRecordInput } from "./schedules/wake-scheduler-recovery-workflow-service"
 import type { WakeSchedulerRecoveryWorkflow, WakeSchedulerRecoveryWorkflowPreview, WakeSchedulerRecoveryWorkflowRecord, WakeSchedulerRecoveryWorkflowVerification } from "./schedules/wake-scheduler-recovery-workflow-types"
+import { WakeSchedulerAuditService, readWakeSchedulerAuditQuery } from "./schedules/wake-scheduler-audit-service"
+import type { WakeSchedulerAuditChain, WakeSchedulerAuditIncident, WakeSchedulerAuditQuery, WakeSchedulerAuditSummary, WakeSchedulerAuditTimelineEntry } from "./schedules/wake-scheduler-audit-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -217,6 +219,7 @@ export class RuntimeServer {
   private wakeSchedulerBootstrapServiceInstance: WakeSchedulerBootstrapService | null = null
   private wakeSchedulerRecoveryServiceInstance: WakeSchedulerRecoveryService | null = null
   private wakeSchedulerRecoveryWorkflowServiceInstance: WakeSchedulerRecoveryWorkflowService | null = null
+  private wakeSchedulerAuditServiceInstance: WakeSchedulerAuditService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -762,6 +765,18 @@ export class RuntimeServer {
         return this.cancelWakeSchedulerRecoveryWorkflow(readWakeSchedulerRecoveryWorkflowCancelInput(payload))
       case "runtime.verify_wake_scheduler_recovery_workflow":
         return this.verifyWakeSchedulerRecoveryWorkflow(requiredString(payload.workflowId ?? payload.workflow_id, "workflowId"))
+      case "runtime.wake_scheduler_audit_summary":
+        return this.wakeSchedulerAuditSummary()
+      case "runtime.wake_scheduler_audit_timeline":
+        return this.wakeSchedulerAuditTimeline(readWakeSchedulerAuditQuery(payload))
+      case "runtime.wake_scheduler_audit_chain":
+        return this.wakeSchedulerAuditChain(requiredString(payload.relatedId ?? payload.related_id, "relatedId"), optionalPositiveInteger(payload.limit, "limit", 200))
+      case "runtime.wake_scheduler_audit_incidents":
+        return this.wakeSchedulerAuditIncidents({
+          limit: optionalPositiveInteger(payload.limit, "limit", 200),
+          status: optionalString(payload.status, "status"),
+          severity: optionalString(payload.severity, "severity"),
+        })
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -1439,6 +1454,22 @@ export class RuntimeServer {
     return this.wakeSchedulerRecoveryWorkflowService().verify(workflowId)
   }
 
+  async wakeSchedulerAuditSummary(): Promise<WakeSchedulerAuditSummary> {
+    return this.wakeSchedulerAuditService().summary()
+  }
+
+  async wakeSchedulerAuditTimeline(query: WakeSchedulerAuditQuery = {}): Promise<WakeSchedulerAuditTimelineEntry[]> {
+    return this.wakeSchedulerAuditService().timeline(query)
+  }
+
+  async wakeSchedulerAuditChain(relatedId: string, limit?: number): Promise<WakeSchedulerAuditChain> {
+    return this.wakeSchedulerAuditService().chain(relatedId, limit)
+  }
+
+  async wakeSchedulerAuditIncidents(query: { limit?: number; status?: string; severity?: string } = {}): Promise<WakeSchedulerAuditIncident[]> {
+    return this.wakeSchedulerAuditService().incidents(query)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1943,6 +1974,11 @@ export class RuntimeServer {
       now: this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow,
     })
     return this.wakeSchedulerRecoveryWorkflowServiceInstance
+  }
+
+  private wakeSchedulerAuditService(): WakeSchedulerAuditService {
+    this.wakeSchedulerAuditServiceInstance ??= new WakeSchedulerAuditService(this.eventStore)
+    return this.wakeSchedulerAuditServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

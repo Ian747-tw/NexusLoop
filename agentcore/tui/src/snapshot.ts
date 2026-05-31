@@ -708,6 +708,30 @@ function wakeSchedulerLines(state: UiState): string[] {
   out.push("  recent_recovery_workflows")
   if (scheduler.recoveryWorkflows.length === 0) out.push("    - empty")
   else out.push(...scheduler.recoveryWorkflows.slice(0, 10).map((record) => `    - ${record.workflow_id} status=${record.status} steps=${record.step_count} done=${record.completed_step_count}: ${preview(redactText(record.summary_preview))}`))
+  out.push("  scheduler_audit")
+  if (scheduler.auditSummary) {
+    const summary = scheduler.auditSummary
+    out.push(`    summary events=${summary.event_count} checkpoints=${summary.checkpoint_count} wakes=${summary.wake_assessment_count} plans=${summary.continuation_plan_count} schedules=${summary.schedule_count} ticks=${summary.tick_count} incidents=${summary.unresolved_incident_count}`)
+    out.push(`    latest scheduler=${summary.latest_scheduler_status ?? "unknown"} bootstrap=${summary.latest_bootstrap_status ?? "unknown"} recovery=${summary.latest_recovery_status ?? "unknown"}`)
+  } else {
+    out.push("    summary=none")
+  }
+  out.push(`    timeline=${scheduler.auditTimeline.length}`)
+  out.push("    timeline_rows")
+  if (scheduler.auditTimeline.length === 0) out.push("      - empty")
+  else out.push(...scheduler.auditTimeline.slice(0, 10).map((entry) => `      - ${entry.severity} ${entry.source_kind}/${entry.source_event_kind}${entry.event_id ? ` event=${entry.event_id}` : ""}: ${preview(redactText(entry.summary))}`))
+  if (scheduler.selectedAuditChain) {
+    const chain = scheduler.selectedAuditChain
+    out.push(`    selected_chain=${chain.root_id} kind=${chain.root_kind} entries=${chain.entries.length} gaps=${chain.gaps.length}`)
+    if (chain.gaps.length > 0) out.push(...chain.gaps.slice(0, 10).map((gap) => `    chain_gap=${gap.severity}: ${preview(redactText(gap.message))}`))
+    if (chain.recommended_commands.length > 0) out.push(...chain.recommended_commands.slice(0, 10).map((command) => `    chain_command=${command.command_type}: ${preview(redactText(command.command))}`))
+  } else {
+    out.push("    selected_chain=none")
+  }
+  out.push(`    incidents=${scheduler.auditIncidents.length}`)
+  out.push("    incident_rows")
+  if (scheduler.auditIncidents.length === 0) out.push("      - empty")
+  else out.push(...scheduler.auditIncidents.slice(0, 10).map((incident) => `      - ${incident.severity}/${incident.status} ${incident.incident_id}: ${preview(redactText(incident.title))}`))
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")
