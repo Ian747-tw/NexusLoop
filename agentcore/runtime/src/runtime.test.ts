@@ -7173,6 +7173,113 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation board classifies audit commands without executing actions", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_schedule_created", created_at: "2026-05-11T15:00:00.000Z", schedule_id: "schedule_nav_1", schedule: { schedule_id: "schedule_nav_1" } })
+    await eventStore.append({ kind: "runtime_wake_scheduler_tick_failed", created_at: "2026-05-11T15:01:00.000Z", tick_id: "tick_nav_failed_1", schedule_id: "schedule_nav_1", error: "failed token=nav-secret" })
+    await eventStore.append({ kind: "runtime_wake_scheduler_stale_run_detected", created_at: "2026-05-11T15:02:00.000Z", stale_prior_run: { detected: true, prior_event_id: "prior_event_nav_1", prior_tick_id: "prior_tick_nav_1" } })
+    await eventStore.append({ kind: "runtime_wake_scheduler_recovery_workflow_created", created_at: "2026-05-11T15:03:00.000Z", workflow_id: "workflow_nav_1", recovery_id: "recovery_nav_1", workflow: { workflow_id: "workflow_nav_1", recovery_id: "recovery_nav_1" } })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const beforeNavigationEvents = (await readJsonlEvents(dir)).length
+
+    const defaultBoard = await server.command("runtime.wake_scheduler_navigation_board") as { source: { kind: string }; cards: Array<{ command: string; command_type: string; risk: string; supported: boolean }>; warnings: string[] }
+    expect(defaultBoard.source.kind).toBe("summary")
+    expect(defaultBoard.cards.some((card) => card.command === "/scheduler-audit")).toBe(true)
+    expect(defaultBoard.cards.every((card) => card.command_type === "read")).toBe(true)
+    expect(defaultBoard.cards.every((card) => card.risk === "safe_read")).toBe(true)
+
+    const relatedBoard = await server.command("runtime.wake_scheduler_navigation_board", { relatedId: "schedule_nav_1" }) as { source: { kind: string; related_id?: string }; cards: Array<{ command: string; target_kind: string }>; blockers: string[]; related_ids: Record<string, string[]> }
+    expect(relatedBoard.source).toMatchObject({ kind: "related_id", related_id: "schedule_nav_1" })
+    expect(relatedBoard.blockers).toEqual([])
+    expect(relatedBoard.related_ids.schedule_id).toContain("schedule_nav_1")
+    expect(relatedBoard.cards.some((card) => card.command === "/wake-schedule schedule_nav_1" && card.target_kind === "wake_schedule")).toBe(true)
+
+    const incidents = await server.command("runtime.wake_scheduler_audit_incidents", { limit: 10 }) as Array<{ incident_id: string; title: string }>
+    const tickIncident = incidents.find((incident) => incident.title === "Scheduler tick failed")
+    expect(tickIncident).toBeDefined()
+    const incidentBoard = await server.command("runtime.wake_scheduler_navigation_board", { incidentId: tickIncident!.incident_id }) as { source: { kind: string; incident_id?: string }; cards: Array<{ command: string }> }
+    expect(incidentBoard.source).toMatchObject({ kind: "incident", incident_id: tickIncident!.incident_id })
+    expect(incidentBoard.cards.some((card) => card.command === "/wake-tick-preview")).toBe(true)
+
+    const timeline = await server.command("runtime.wake_scheduler_audit_timeline", { relatedId: "schedule_nav_1" }) as Array<{ audit_id: string }>
+    const auditBoard = await server.command("runtime.wake_scheduler_navigation_board", { auditId: timeline[0]!.audit_id }) as { source: { kind: string; audit_id?: string }; cards: Array<{ command: string }> }
+    expect(auditBoard.source.kind).toBe("timeline")
+    expect(auditBoard.cards.length).toBeGreaterThan(0)
+
+    const noWriteBoard = await server.command("runtime.wake_scheduler_navigation_board", { command: "/wake-tick-dry-run token=nav-secret", includeWrite: false }) as { cards: unknown[]; warnings: string[]; blockers: string[] }
+    expect(noWriteBoard.cards).toHaveLength(0)
+    expect(noWriteBoard.warnings.join(" ")).toContain("omitted")
+    expect(JSON.stringify(noWriteBoard)).not.toContain("nav-secret")
+
+    const target = await server.command("runtime.get_wake_scheduler_navigation_target", { targetKind: "recovery", targetId: "recovery_nav_1" }) as { target_kind: string; related_commands: Array<{ command: string }>; audit_entries: unknown[] }
+    expect(target.target_kind).toBe("scheduler_recovery")
+    expect(target.related_commands.some((card) => card.command === "/scheduler-recovery-show recovery_nav_1")).toBe(true)
+    expect(target.audit_entries.length).toBeGreaterThan(0)
+
+    expect(await server.command("runtime.wake_scheduler_status")).toMatchObject({ status: "stopped", tick_count: 0 })
+    expect(await readJsonlEvents(dir)).toHaveLength(beforeNavigationEvents)
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation command preview risk classification is fail-closed", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const beforePreviewEvents = (await readJsonlEvents(dir)).length
+
+    await expect(server.command("runtime.preview_wake_scheduler_navigation_command", { command: "/scheduler-status" })).resolves.toMatchObject({
+      command_type: "read",
+      risk: "safe_read",
+      target_kind: "scheduler_status",
+      supported: true,
+    })
+    const writePreview = await server.command("runtime.preview_wake_scheduler_navigation_command", { command: "/wake-tick-dry-run token=abc123" }) as { command_type: string; risk: string; target_kind: string; supported: boolean; blockers: string[]; command: string }
+    expect(writePreview).toMatchObject({ command_type: "write", risk: "write_requires_operator", target_kind: "wake_tick", supported: true })
+    expect(writePreview.blockers.join(" ")).toContain("will not run")
+    expect(JSON.stringify(writePreview)).not.toContain("abc123")
+    const highImpact = await server.command("runtime.preview_wake_scheduler_navigation_command", { command: "/apply proposal_nav_1" }) as { command_type: string; risk: string; supported: boolean; blockers: string[] }
+    expect(highImpact).toMatchObject({ command_type: "write", risk: "high_impact_write", supported: false })
+    expect(highImpact.blockers.join(" ")).toContain("high-impact")
+    const unsupported = await server.command("runtime.preview_wake_scheduler_navigation_command", { command: "/unknown token=abc123" }) as { risk: string; supported: boolean; blockers: string[] }
+    expect(unsupported).toMatchObject({ risk: "unsupported", supported: false })
+    expect(unsupported.blockers.join(" ")).toContain("whitelist")
+    const pathLike = await server.command("runtime.preview_wake_scheduler_navigation_command", { command: "/tmp/repro" }) as { risk: string; supported: boolean; blockers: string[] }
+    expect(pathLike).toMatchObject({ risk: "unsupported", supported: false })
+    expect(pathLike.blockers.join(" ")).toContain("whitelisted slash commands")
+
+    expect(await server.command("runtime.wake_scheduler_status")).toMatchObject({ status: "stopped", tick_count: 0 })
+    expect(await readJsonlEvents(dir)).toHaveLength(beforePreviewEvents)
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation incident lookup searches beyond display caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    for (let index = 0; index < 60; index += 1) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_tick_failed",
+        event_id: `nav_many_failed_tick_${index}`,
+        created_at: `2026-05-11T15:${String(index).padStart(2, "0")}:00.000Z`,
+        tick_id: `nav_many_tick_${index}`,
+        error: `failed ${index}`,
+      })
+    }
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const incidents = await server.command("runtime.wake_scheduler_audit_incidents", { limit: 100 }) as Array<{ incident_id: string }>
+    expect(incidents.length).toBeGreaterThan(55)
+    const olderIncident = incidents[55]!
+    const board = await server.command("runtime.wake_scheduler_navigation_board", { incidentId: olderIncident.incident_id }) as { blockers: string[]; cards: Array<{ command: string }> }
+    expect(board.blockers).toEqual([])
+    expect(board.cards.some((card) => card.command === "/wake-tick-preview")).toBe(true)
+    await server.shutdown()
+  })
+
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

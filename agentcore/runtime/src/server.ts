@@ -68,6 +68,8 @@ import { WakeSchedulerRecoveryWorkflowService, readWakeSchedulerRecoveryWorkflow
 import type { WakeSchedulerRecoveryWorkflow, WakeSchedulerRecoveryWorkflowPreview, WakeSchedulerRecoveryWorkflowRecord, WakeSchedulerRecoveryWorkflowVerification } from "./schedules/wake-scheduler-recovery-workflow-types"
 import { WakeSchedulerAuditService, readWakeSchedulerAuditQuery } from "./schedules/wake-scheduler-audit-service"
 import type { WakeSchedulerAuditChain, WakeSchedulerAuditIncident, WakeSchedulerAuditQuery, WakeSchedulerAuditSummary, WakeSchedulerAuditTimelineEntry } from "./schedules/wake-scheduler-audit-types"
+import { WakeSchedulerNavigationService } from "./schedules/wake-scheduler-navigation-service"
+import type { WakeSchedulerNavigationBoard, WakeSchedulerNavigationCommandPreview, WakeSchedulerNavigationInput, WakeSchedulerNavigationTarget } from "./schedules/wake-scheduler-navigation-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -220,6 +222,7 @@ export class RuntimeServer {
   private wakeSchedulerRecoveryServiceInstance: WakeSchedulerRecoveryService | null = null
   private wakeSchedulerRecoveryWorkflowServiceInstance: WakeSchedulerRecoveryWorkflowService | null = null
   private wakeSchedulerAuditServiceInstance: WakeSchedulerAuditService | null = null
+  private wakeSchedulerNavigationServiceInstance: WakeSchedulerNavigationService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -777,6 +780,12 @@ export class RuntimeServer {
           status: optionalString(payload.status, "status"),
           severity: optionalString(payload.severity, "severity"),
         })
+      case "runtime.wake_scheduler_navigation_board":
+        return this.wakeSchedulerNavigationBoard(payload)
+      case "runtime.preview_wake_scheduler_navigation_command":
+        return this.previewWakeSchedulerNavigationCommand(requiredString(payload.command, "command"))
+      case "runtime.get_wake_scheduler_navigation_target":
+        return this.getWakeSchedulerNavigationTarget(requiredString(payload.targetKind ?? payload.target_kind, "targetKind"), requiredString(payload.targetId ?? payload.target_id, "targetId"))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -1470,6 +1479,18 @@ export class RuntimeServer {
     return this.wakeSchedulerAuditService().incidents(query)
   }
 
+  async wakeSchedulerNavigationBoard(input: WakeSchedulerNavigationInput = {}): Promise<WakeSchedulerNavigationBoard> {
+    return this.wakeSchedulerNavigationService().board(input)
+  }
+
+  async previewWakeSchedulerNavigationCommand(command: string): Promise<WakeSchedulerNavigationCommandPreview> {
+    return this.wakeSchedulerNavigationService().previewCommand(command)
+  }
+
+  async getWakeSchedulerNavigationTarget(targetKind: string, targetId: string): Promise<WakeSchedulerNavigationTarget> {
+    return this.wakeSchedulerNavigationService().target(targetKind, targetId)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -1979,6 +2000,11 @@ export class RuntimeServer {
   private wakeSchedulerAuditService(): WakeSchedulerAuditService {
     this.wakeSchedulerAuditServiceInstance ??= new WakeSchedulerAuditService(this.eventStore)
     return this.wakeSchedulerAuditServiceInstance
+  }
+
+  private wakeSchedulerNavigationService(): WakeSchedulerNavigationService {
+    this.wakeSchedulerNavigationServiceInstance ??= new WakeSchedulerNavigationService(this.wakeSchedulerAuditService())
+    return this.wakeSchedulerNavigationServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

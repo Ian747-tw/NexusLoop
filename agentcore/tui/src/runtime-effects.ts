@@ -89,6 +89,10 @@ import type {
   WakeSchedulerAuditIncidentSummary,
   WakeSchedulerAuditSummarySummary,
   WakeSchedulerAuditTimelineEntrySummary,
+  WakeSchedulerNavigationBoardSummary,
+  WakeSchedulerNavigationCardSummary,
+  WakeSchedulerNavigationCommandPreviewSummary,
+  WakeSchedulerNavigationTargetSummary,
   WakeSchedulerStateSummary,
   WakeSchedulerUiState,
   WakeScheduleSummary,
@@ -292,6 +296,9 @@ export type RuntimeUiEffect =
   | { type: "load-wake-scheduler-audit-timeline"; limit?: number; kind?: string; severity?: string; relatedId?: string }
   | { type: "load-wake-scheduler-audit-chain"; relatedId: string; limit?: number }
   | { type: "load-wake-scheduler-audit-incidents"; limit?: number; status?: string; severity?: string }
+  | { type: "load-wake-scheduler-navigation-board"; relatedId?: string; incidentId?: string; auditId?: string; command?: string; includeWrite?: boolean; limit?: number }
+  | { type: "preview-wake-scheduler-navigation-command"; command: string }
+  | { type: "load-wake-scheduler-navigation-target"; targetKind: string; targetId: string }
   | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
@@ -1018,6 +1025,19 @@ export async function applyRuntimeUiEffect(
         return applyWakeSchedulerAuditChain(state, await runtime.command("runtime.wake_scheduler_audit_chain", { relatedId: effect.relatedId, limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.relatedId)
       case "load-wake-scheduler-audit-incidents":
         return applyWakeSchedulerAuditIncidents(state, await runtime.command("runtime.wake_scheduler_audit_incidents", { limit: effect.limit ?? CHECKPOINT_LIMIT, status: effect.status, severity: effect.severity }), effect.limit ?? CHECKPOINT_LIMIT)
+      case "load-wake-scheduler-navigation-board":
+        return applyWakeSchedulerNavigationBoard(state, await runtime.command("runtime.wake_scheduler_navigation_board", {
+          relatedId: effect.relatedId,
+          incidentId: effect.incidentId,
+          auditId: effect.auditId,
+          command: effect.command,
+          includeWrite: effect.includeWrite,
+          limit: effect.limit ?? CHECKPOINT_LIMIT,
+        }))
+      case "preview-wake-scheduler-navigation-command":
+        return applyWakeSchedulerNavigationCommandPreview(state, await runtime.command("runtime.preview_wake_scheduler_navigation_command", { command: effect.command }))
+      case "load-wake-scheduler-navigation-target":
+        return applyWakeSchedulerNavigationTarget(state, await runtime.command("runtime.get_wake_scheduler_navigation_target", { targetKind: effect.targetKind, targetId: effect.targetId }))
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
@@ -2099,6 +2119,45 @@ function applyWakeSchedulerAuditIncidents(state: UiState, value: unknown, limit:
   }
 }
 
+function applyWakeSchedulerNavigationBoard(state: UiState, value: unknown): UiState {
+  const board = readWakeSchedulerNavigationBoard(value, "runtime.wake_scheduler_navigation_board")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      navigationBoard: board,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler navigation", detail: `cards=${board.cards.length} source=${board.source.kind}`, status: board.blockers.length > 0 ? "blocked" : "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationCommandPreview(state: UiState, value: unknown): UiState {
+  const commandPreview = readWakeSchedulerNavigationCommandPreview(value, "runtime.preview_wake_scheduler_navigation_command")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      navigationCommandPreview: commandPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler navigation command", detail: `${commandPreview.risk} ${commandPreview.target_kind}`, status: commandPreview.supported ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationTarget(state: UiState, value: unknown): UiState {
+  const target = readWakeSchedulerNavigationTarget(value, "runtime.get_wake_scheduler_navigation_target")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      navigationTarget: target,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler navigation target", detail: `${target.target_kind} ${target.target_id}`, status: target.warnings.length > 0 ? "warning" : "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -2564,6 +2623,16 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-audit-chain", relatedId: requiredArg(args, 0, "relatedId") })
     case "scheduler-audit-incidents":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-audit-incidents", status: args[0] })
+    case "scheduler-nav":
+    case "scheduler-navigation":
+    case "wake-scheduler-nav": {
+      const query = schedulerNavigationArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-board", ...query })
+    }
+    case "scheduler-nav-command":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-scheduler-navigation-command", command: requiredRest(args, 0, "command") })
+    case "scheduler-nav-target":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-target", targetKind: requiredArg(args, 0, "targetKind"), targetId: requiredArg(args, 1, "targetId") })
     case "scheduler-events":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
@@ -3243,6 +3312,10 @@ const wakeSchedulerCommands = new Set([
   "scheduler-audit-timeline",
   "scheduler-audit-chain",
   "scheduler-audit-incidents",
+  "scheduler-nav",
+  "scheduler-navigation",
+  "scheduler-nav-command",
+  "scheduler-nav-target",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",
@@ -3250,6 +3323,7 @@ const wakeSchedulerCommands = new Set([
   "wake-scheduler-recovery",
   "wake-scheduler-recovery-workflow",
   "wake-scheduler-audit",
+  "wake-scheduler-nav",
 ])
 
 const reasoningProviderCommands = new Set([
@@ -3366,6 +3440,9 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-wake-scheduler-audit-timeline",
   "load-wake-scheduler-audit-chain",
   "load-wake-scheduler-audit-incidents",
+  "load-wake-scheduler-navigation-board",
+  "preview-wake-scheduler-navigation-command",
+  "load-wake-scheduler-navigation-target",
   "load-wake-scheduler-events",
 ])
 
@@ -5580,6 +5657,72 @@ function readWakeSchedulerAuditIncidents(value: unknown, commandName: string, li
   }))
 }
 
+function readWakeSchedulerNavigationBoard(value: unknown, commandName: string): WakeSchedulerNavigationBoardSummary {
+  if (!isRecord(value) || typeof value.board_id !== "string" || !isRecord(value.source)) throw new Error(`${commandName} returned invalid navigation board`)
+  return {
+    board_id: redactText(value.board_id),
+    source: {
+      kind: readString(value.source.kind, "summary"),
+      related_id: typeof value.source.related_id === "string" ? preview(redactText(value.source.related_id)) : undefined,
+      incident_id: typeof value.source.incident_id === "string" ? preview(redactText(value.source.incident_id)) : undefined,
+      audit_id: typeof value.source.audit_id === "string" ? preview(redactText(value.source.audit_id)) : undefined,
+    },
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    cards: readWakeSchedulerNavigationCards(value.cards, 20),
+    related_ids: readRelatedIds(value.related_ids),
+    warnings: readStringList(value.warnings, 20).map(preview),
+    blockers: readStringList(value.blockers, 20).map(preview),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readWakeSchedulerNavigationCards(value: unknown, limit: number): WakeSchedulerNavigationCardSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, limit).map((card) => ({
+    card_id: readString(card.card_id, ""),
+    label: preview(readString(card.label, "")),
+    command: preview(readString(card.command, "")),
+    command_type: readString(card.command_type, "read"),
+    risk: readString(card.risk, "unsupported"),
+    target_kind: readString(card.target_kind, "unknown"),
+    target_id: typeof card.target_id === "string" ? preview(redactText(card.target_id)) : undefined,
+    supported: readBoolean(card.supported),
+    blockers: readStringList(card.blockers, 10).map(preview),
+    notes: readStringList(card.notes, 10).map(preview),
+    recommended_order: readNumber(card.recommended_order, 0),
+  }))
+}
+
+function readWakeSchedulerNavigationCommandPreview(value: unknown, commandName: string): WakeSchedulerNavigationCommandPreviewSummary {
+  if (!isRecord(value) || typeof value.command !== "string") throw new Error(`${commandName} returned invalid navigation command preview`)
+  return {
+    command: preview(readString(value.command, "")),
+    command_type: readString(value.command_type, "read"),
+    risk: readString(value.risk, "unsupported"),
+    target_kind: readString(value.target_kind, "unknown"),
+    target_id: typeof value.target_id === "string" ? preview(redactText(value.target_id)) : undefined,
+    supported: readBoolean(value.supported),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    notes: readStringList(value.notes, 10).map(preview),
+    equivalent_runtime_command: typeof value.equivalent_runtime_command === "string" ? preview(redactText(value.equivalent_runtime_command)) : undefined,
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeSchedulerNavigationTarget(value: unknown, commandName: string): WakeSchedulerNavigationTargetSummary {
+  if (!isRecord(value) || typeof value.target_id !== "string") throw new Error(`${commandName} returned invalid navigation target`)
+  return {
+    target_kind: readString(value.target_kind, "unknown"),
+    target_id: preview(readString(value.target_id, "")),
+    title: preview(readString(value.title, "")),
+    related_commands: readWakeSchedulerNavigationCards(value.related_commands, 20),
+    related_ids: readRelatedIds(value.related_ids),
+    audit_entries: readWakeSchedulerAuditTimeline(value.audit_entries, commandName, 20),
+    warnings: readStringList(value.warnings, 20).map(preview),
+  }
+}
+
 function readWakeSchedulerState(value: unknown): WakeSchedulerStateSummary {
   if (!isRecord(value) || !isRecord(value.config)) throw new Error("runtime.wake_scheduler_status returned invalid status")
   return {
@@ -6386,6 +6529,9 @@ function wakeSchedulerState(state: UiState): WakeSchedulerUiState {
     auditTimeline: scheduler.auditTimeline ?? [],
     selectedAuditChain: scheduler.selectedAuditChain ?? null,
     auditIncidents: scheduler.auditIncidents ?? [],
+    navigationBoard: scheduler.navigationBoard ?? null,
+    navigationCommandPreview: scheduler.navigationCommandPreview ?? null,
+    navigationTarget: scheduler.navigationTarget ?? null,
     events: scheduler.events ?? [],
     commandError: scheduler.commandError,
   }
@@ -6635,6 +6781,22 @@ function schedulerAuditTimelineArgs(args: string[]): { limit?: number; kind?: st
     else if (key === "severity") out.severity = value
     else if (key === "related") out.relatedId = value
     else throw new Error("scheduler audit timeline arg is invalid")
+  }
+  return out
+}
+
+function schedulerNavigationArgs(args: string[]): { relatedId?: string; incidentId?: string; auditId?: string; includeWrite?: boolean; limit?: number } {
+  const out: { relatedId?: string; incidentId?: string; auditId?: string; includeWrite?: boolean; limit?: number } = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("scheduler navigation args must use key=value")
+    if (key === "related") out.relatedId = value
+    else if (key === "incident") out.incidentId = value
+    else if (key === "audit") out.auditId = value
+    else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
+    else if (key === "include_write") out.includeWrite = value !== "0" && value !== "false"
+    else throw new Error("scheduler navigation arg is invalid")
   }
   return out
 }
