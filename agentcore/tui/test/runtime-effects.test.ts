@@ -3588,4 +3588,61 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("nav-secret")
     expect(JSON.stringify(state)).not.toContain("nav-secret")
   })
+
+  test("wake scheduler navigation staging slash commands stage only safe-read text", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage-preview", args: ["/scheduler-status"] })
+    expect(state.wakeScheduler?.navigationStagePreview?.eligibility).toMatchObject({ can_stage: true, risk: "safe_read", target_kind: "scheduler_status" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_navigation_staging")
+    expect(snapshot).toContain("can_stage=true")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/scheduler-status"] })
+    const stagedId = state.wakeScheduler?.selectedStagedNavigationCommand?.staged_id
+    expect(stagedId).toBeTruthy()
+    expect(state.wakeScheduler?.stagedNavigationCommands).toHaveLength(1)
+    expect(state.wakeScheduler?.stagedNavigationCommands[0]).toMatchObject({ command: "/scheduler-status", risk: "safe_read", target_kind: "scheduler_status" })
+    expect(state.operatorActions?.staged).toBeUndefined()
+    expect(runtime.sentCommands).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/scheduler-status"] })
+    expect(state.wakeScheduler?.stagedNavigationCommands).toHaveLength(1)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-staged" })
+    expect(state.wakeScheduler?.stagedNavigationCommands).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-unstage", args: [stagedId!] })
+    expect(state.wakeScheduler?.stagedNavigationCommands).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/scheduler-audit-summary"] })
+    expect(state.wakeScheduler?.stagedNavigationCommands).toHaveLength(1)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage-clear", args: ["reason"] })
+    expect(state.wakeScheduler?.stagedNavigationCommands).toEqual([])
+
+    expect(state.wakeScheduler?.status?.status).not.toBe("running")
+    expect(state.wakeSchedules?.lastTick).toBeUndefined()
+    expect(state.continuation?.lastStepResult).toBeUndefined()
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("staged navigation commands are not executed automatically")
+  })
+
+  test("wake scheduler navigation staging blocks write high-impact and secret-looking command text", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/wake-tick", "token=nav-stage-secret"] })
+    expect(state.wakeScheduler?.commandError).toContain("cannot be staged")
+    expect(state.wakeScheduler?.stagedNavigationCommands).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/handoff", "token=nav-stage-secret"] })
+    expect(state.wakeScheduler?.commandError).toContain("cannot be staged")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage-preview", args: ["/tmp/repro", "token=nav-stage-secret"] })
+    expect(state.wakeScheduler?.navigationStagePreview?.eligibility).toMatchObject({ can_stage: false, risk: "unsupported" })
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).not.toContain("nav-stage-secret")
+    expect(JSON.stringify(state)).not.toContain("nav-stage-secret")
+    expect(runtime.sentCommands).toEqual([])
+  })
 })

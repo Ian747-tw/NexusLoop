@@ -1735,6 +1735,60 @@ export type WakeSchedulerNavigationTargetSummary = {
   warnings: string[]
 }
 
+export type WakeSchedulerNavigationStageEligibilitySummary = {
+  can_stage: boolean
+  command: string
+  command_type: "read" | "write" | string
+  risk: WakeSchedulerNavigationRiskSummary
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id?: string
+  blockers: string[]
+  warnings: string[]
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerNavigationStagePreviewSummary = {
+  command: string
+  source_card_id?: string
+  source_board_id?: string
+  eligibility: WakeSchedulerNavigationStageEligibilitySummary
+  existing_staged_id?: string
+  blockers: string[]
+  warnings: string[]
+}
+
+export type WakeSchedulerNavigationStagedCommandSummary = {
+  staged_id: string
+  command: string
+  command_type: "read" | "write" | string
+  risk: WakeSchedulerNavigationRiskSummary
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id?: string
+  source_board_id?: string
+  source_card_id?: string
+  source_audit_id?: string
+  source_incident_id?: string
+  source_related_id?: string
+  label: string
+  notes: string[]
+  staged_at: string
+  staged_by: string
+  status: "staged" | string
+  stage_hash: string
+}
+
+export type WakeSchedulerNavigationStagedCommandRecordSummary = {
+  staged_id: string
+  command: string
+  risk: WakeSchedulerNavigationRiskSummary
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id?: string
+  staged_at: string
+  staged_by: string
+  summary_preview: string
+  stage_hash: string
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -1754,6 +1808,9 @@ export type WakeSchedulerUiState = {
   navigationBoard?: WakeSchedulerNavigationBoardSummary | null
   navigationCommandPreview?: WakeSchedulerNavigationCommandPreviewSummary | null
   navigationTarget?: WakeSchedulerNavigationTargetSummary | null
+  navigationStagePreview?: WakeSchedulerNavigationStagePreviewSummary | null
+  stagedNavigationCommands: WakeSchedulerNavigationStagedCommandRecordSummary[]
+  selectedStagedNavigationCommand?: WakeSchedulerNavigationStagedCommandSummary | null
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }
