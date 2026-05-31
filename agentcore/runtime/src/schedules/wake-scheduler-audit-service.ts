@@ -205,6 +205,8 @@ function normalizeRelatedKey(key: string): string | null {
   if (RELATED_KEYS.has(key)) return key
   if (key.endsWith("_ids") && RELATED_KEYS.has(`${key.slice(0, -4)}_id`)) return `${key.slice(0, -4)}_id`
   if (key === "stale_prior_event_id") return "event_id"
+  if (key === "prior_event_id") return "event_id"
+  if (key === "prior_tick_id") return "tick_id"
   return null
 }
 
