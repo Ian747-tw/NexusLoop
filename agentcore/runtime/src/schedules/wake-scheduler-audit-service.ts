@@ -134,7 +134,7 @@ export function readWakeSchedulerAuditQuery(payload: WakeSchedulerAuditQuery | R
     until: raw.until === undefined ? undefined : readIso(raw.until, "until"),
     kinds: readKinds(raw.kinds ?? raw.kind),
     severity: raw.severity === undefined ? undefined : readSeverity(raw.severity),
-    related_id: raw.related_id === undefined && raw.relatedId === undefined ? undefined : cleanString(raw.related_id ?? raw.relatedId, "relatedId"),
+    related_id: raw.related_id === undefined && raw.relatedId === undefined && raw.related === undefined ? undefined : cleanString(raw.related_id ?? raw.relatedId ?? raw.related, "relatedId"),
     include_commands: raw.include_commands !== false && raw.includeCommands !== false,
   }
 }
@@ -384,10 +384,17 @@ function recommendedForRelated(relatedIds: Record<string, string[]>, fallbackId:
 }
 
 function schedulerStatus(entry: WakeSchedulerAuditTimelineEntry): string {
+  const eventStatus = summaryField(entry.summary, "scheduler_status") ?? summaryField(entry.summary, "status")
+  if (eventStatus) return eventStatus
   if (entry.source_event_kind === "runtime_wake_scheduler_started") return "running"
   if (entry.source_event_kind === "runtime_wake_scheduler_stopped" || entry.source_event_kind === "runtime_shutdown") return "stopped"
   if (entry.source_event_kind === "runtime_wake_scheduler_tick_failed") return "error"
   return "unknown"
+}
+
+function summaryField(summary: string, key: string): string | undefined {
+  const match = summary.match(new RegExp(`(?:^| )${key}=([^ ]+)`))
+  return match?.[1]
 }
 
 function recoveryStatus(entry: WakeSchedulerAuditTimelineEntry): string {
