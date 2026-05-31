@@ -2212,11 +2212,14 @@ function applyWakeSchedulerNavigationStagedCommand(state: UiState, value: unknow
 
 function applyWakeSchedulerNavigationStagedCommands(state: UiState, value: unknown, limit: number): UiState {
   const staged = readWakeSchedulerNavigationStagedCommandRecords(value, "runtime.list_wake_scheduler_navigation_staged_commands", limit)
+  const currentSelection = wakeSchedulerState(state).selectedStagedNavigationCommand
+  const selected = currentSelection && staged.some((item) => item.staged_id === currentSelection.staged_id) ? currentSelection : null
   return {
     ...state,
     wakeScheduler: {
       ...wakeSchedulerState(state),
       stagedNavigationCommands: staged,
+      selectedStagedNavigationCommand: selected,
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "scheduler navigation staged commands", detail: `commands=${staged.length}`, status: "loaded" }].slice(-12),

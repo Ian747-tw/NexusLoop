@@ -3614,11 +3614,13 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-unstage", args: [stagedId!] })
     expect(state.wakeScheduler?.stagedNavigationCommands).toEqual([])
+    expect(state.wakeScheduler?.selectedStagedNavigationCommand).toBeNull()
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/scheduler-audit-summary"] })
     expect(state.wakeScheduler?.stagedNavigationCommands).toHaveLength(1)
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage-clear", args: ["reason"] })
     expect(state.wakeScheduler?.stagedNavigationCommands).toEqual([])
+    expect(state.wakeScheduler?.selectedStagedNavigationCommand).toBeNull()
 
     expect(state.wakeScheduler?.status?.status).not.toBe("running")
     expect(state.wakeSchedules?.lastTick).toBeUndefined()
