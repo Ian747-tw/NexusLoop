@@ -84,6 +84,11 @@ import type {
   WakeSchedulerRecoveryWorkflowStepSummary,
   WakeSchedulerRecoveryWorkflowSummary,
   WakeSchedulerRecoveryWorkflowVerificationSummary,
+  WakeSchedulerAuditChainSummary,
+  WakeSchedulerAuditCommandSummary,
+  WakeSchedulerAuditIncidentSummary,
+  WakeSchedulerAuditSummarySummary,
+  WakeSchedulerAuditTimelineEntrySummary,
   WakeSchedulerStateSummary,
   WakeSchedulerUiState,
   WakeScheduleSummary,
@@ -283,6 +288,10 @@ export type RuntimeUiEffect =
   | { type: "verify-wake-scheduler-recovery-workflow"; workflowId: string }
   | { type: "record-wake-scheduler-recovery-workflow-step"; workflowId: string; index: number; status: "manually_done" | "skipped" | "blocked"; note?: string }
   | { type: "cancel-wake-scheduler-recovery-workflow"; workflowId: string; reason?: string }
+  | { type: "load-wake-scheduler-audit-summary" }
+  | { type: "load-wake-scheduler-audit-timeline"; limit?: number; kind?: string; severity?: string; relatedId?: string }
+  | { type: "load-wake-scheduler-audit-chain"; relatedId: string; limit?: number }
+  | { type: "load-wake-scheduler-audit-incidents"; limit?: number; status?: string; severity?: string }
   | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
@@ -1001,6 +1010,14 @@ export async function applyRuntimeUiEffect(
         return applyWakeSchedulerRecoveryWorkflow(state, await runtime.command("runtime.record_wake_scheduler_recovery_workflow_step", { workflowId: effect.workflowId, index: effect.index, status: effect.status, note: effect.note, requestedBy: "operator" }), effect.workflowId)
       case "cancel-wake-scheduler-recovery-workflow":
         return applyWakeSchedulerRecoveryWorkflow(state, await runtime.command("runtime.cancel_wake_scheduler_recovery_workflow", { workflowId: effect.workflowId, reason: effect.reason, requestedBy: "operator" }), effect.workflowId)
+      case "load-wake-scheduler-audit-summary":
+        return applyWakeSchedulerAuditSummary(state, await runtime.command("runtime.wake_scheduler_audit_summary"))
+      case "load-wake-scheduler-audit-timeline":
+        return applyWakeSchedulerAuditTimeline(state, await runtime.command("runtime.wake_scheduler_audit_timeline", { limit: effect.limit ?? CHECKPOINT_LIMIT, kind: effect.kind, severity: effect.severity, relatedId: effect.relatedId }), effect.limit ?? CHECKPOINT_LIMIT)
+      case "load-wake-scheduler-audit-chain":
+        return applyWakeSchedulerAuditChain(state, await runtime.command("runtime.wake_scheduler_audit_chain", { relatedId: effect.relatedId, limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.relatedId)
+      case "load-wake-scheduler-audit-incidents":
+        return applyWakeSchedulerAuditIncidents(state, await runtime.command("runtime.wake_scheduler_audit_incidents", { limit: effect.limit ?? CHECKPOINT_LIMIT, status: effect.status, severity: effect.severity }), effect.limit ?? CHECKPOINT_LIMIT)
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
@@ -2030,6 +2047,58 @@ function applyWakeSchedulerRecoveryWorkflowVerification(state: UiState, value: u
   }
 }
 
+function applyWakeSchedulerAuditSummary(state: UiState, value: unknown): UiState {
+  const summary = readWakeSchedulerAuditSummary(value, "runtime.wake_scheduler_audit_summary")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      auditSummary: summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler audit summary", detail: `events=${summary.event_count} incidents=${summary.unresolved_incident_count}`, status: summary.unresolved_incident_count > 0 ? "warning" : "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerAuditTimeline(state: UiState, value: unknown, limit: number): UiState {
+  const timeline = readWakeSchedulerAuditTimeline(value, "runtime.wake_scheduler_audit_timeline", limit)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      auditTimeline: timeline,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler audit timeline", detail: `entries=${timeline.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerAuditChain(state: UiState, value: unknown, requestedId?: string): UiState {
+  const chain = readWakeSchedulerAuditChain(value, "runtime.wake_scheduler_audit_chain")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      selectedAuditChain: chain,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler audit chain", detail: `related=${redactText(requestedId ?? chain.root_id)} entries=${chain.entries.length}`, status: chain.gaps.length > 0 ? "warning" : "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerAuditIncidents(state: UiState, value: unknown, limit: number): UiState {
+  const incidents = readWakeSchedulerAuditIncidents(value, "runtime.wake_scheduler_audit_incidents", limit)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      auditIncidents: incidents,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler audit incidents", detail: `incidents=${incidents.length}`, status: incidents.some((incident) => incident.status === "open") ? "warning" : "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -2481,6 +2550,20 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "record-wake-scheduler-recovery-workflow-step", workflowId: requiredArg(args, 0, "workflowId"), index: requiredIndex(args, 1), status: "blocked", note: args.slice(2).join(" ") || undefined })
     case "scheduler-recovery-workflow-cancel":
       return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-wake-scheduler-recovery-workflow", workflowId: requiredArg(args, 0, "workflowId"), reason: args.slice(1).join(" ") || undefined })
+    case "scheduler-audit":
+    case "wake-scheduler-audit":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-audit-summary" })
+        .then((withSummary) => applyRuntimeUiEffect(withSummary, runtime, { type: "load-wake-scheduler-audit-timeline", limit: CHECKPOINT_LIMIT }))
+    case "scheduler-audit-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-audit-summary" })
+    case "scheduler-audit-timeline": {
+      const query = schedulerAuditTimelineArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-audit-timeline", ...query })
+    }
+    case "scheduler-audit-chain":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-audit-chain", relatedId: requiredArg(args, 0, "relatedId") })
+    case "scheduler-audit-incidents":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-audit-incidents", status: args[0] })
     case "scheduler-events":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
@@ -3155,12 +3238,18 @@ const wakeSchedulerCommands = new Set([
   "scheduler-recovery-step-skip",
   "scheduler-recovery-step-block",
   "scheduler-recovery-workflow-cancel",
+  "scheduler-audit",
+  "scheduler-audit-summary",
+  "scheduler-audit-timeline",
+  "scheduler-audit-chain",
+  "scheduler-audit-incidents",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",
   "wake-scheduler-stop",
   "wake-scheduler-recovery",
   "wake-scheduler-recovery-workflow",
+  "wake-scheduler-audit",
 ])
 
 const reasoningProviderCommands = new Set([
@@ -3273,6 +3362,10 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "verify-wake-scheduler-recovery-workflow",
   "record-wake-scheduler-recovery-workflow-step",
   "cancel-wake-scheduler-recovery-workflow",
+  "load-wake-scheduler-audit-summary",
+  "load-wake-scheduler-audit-timeline",
+  "load-wake-scheduler-audit-chain",
+  "load-wake-scheduler-audit-incidents",
   "load-wake-scheduler-events",
 ])
 
@@ -5398,6 +5491,95 @@ function readWakeSchedulerRecoveryWorkflowSteps(value: unknown): WakeSchedulerRe
   }))
 }
 
+function readWakeSchedulerAuditSummary(value: unknown, commandName: string): WakeSchedulerAuditSummarySummary {
+  if (!isRecord(value)) throw new Error(`${commandName} returned invalid audit summary`)
+  return {
+    event_count: readNumber(value.event_count, 0),
+    checkpoint_count: readNumber(value.checkpoint_count, 0),
+    resume_anchor_count: readNumber(value.resume_anchor_count, 0),
+    wake_assessment_count: readNumber(value.wake_assessment_count, 0),
+    continuation_plan_count: readNumber(value.continuation_plan_count, 0),
+    continuation_step_count: readNumber(value.continuation_step_count, 0),
+    schedule_count: readNumber(value.schedule_count, 0),
+    tick_count: readNumber(value.tick_count, 0),
+    scheduler_start_count: readNumber(value.scheduler_start_count, 0),
+    scheduler_stop_count: readNumber(value.scheduler_stop_count, 0),
+    scheduler_failure_count: readNumber(value.scheduler_failure_count, 0),
+    bootstrap_blocked_count: readNumber(value.bootstrap_blocked_count, 0),
+    stale_recovery_count: readNumber(value.stale_recovery_count, 0),
+    recovery_workflow_count: readNumber(value.recovery_workflow_count, 0),
+    unresolved_incident_count: readNumber(value.unresolved_incident_count, 0),
+    last_event_at: typeof value.last_event_at === "string" ? redactText(value.last_event_at) : undefined,
+    latest_scheduler_status: typeof value.latest_scheduler_status === "string" ? redactText(value.latest_scheduler_status) : undefined,
+    latest_bootstrap_status: typeof value.latest_bootstrap_status === "string" ? redactText(value.latest_bootstrap_status) : undefined,
+    latest_recovery_status: typeof value.latest_recovery_status === "string" ? redactText(value.latest_recovery_status) : undefined,
+  }
+}
+
+function readWakeSchedulerAuditTimeline(value: unknown, commandName: string, limit: number): WakeSchedulerAuditTimelineEntrySummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeSchedulerAuditTimelineEntry).filter((entry): entry is WakeSchedulerAuditTimelineEntrySummary => entry !== null).slice(0, limit)
+}
+
+function readWakeSchedulerAuditTimelineEntry(value: unknown): WakeSchedulerAuditTimelineEntrySummary | null {
+  if (!isRecord(value) || typeof value.audit_id !== "string") return null
+  return {
+    audit_id: redactText(value.audit_id),
+    event_id: typeof value.event_id === "string" ? redactText(value.event_id) : undefined,
+    source_kind: readString(value.source_kind, "other"),
+    source_event_kind: readString(value.source_event_kind, "unknown"),
+    severity: readString(value.severity, "info"),
+    created_at: readString(value.created_at, ""),
+    title: preview(readString(value.title, "")),
+    summary: preview(readString(value.summary, "")),
+    related_ids: readRelatedIds(value.related_ids),
+    recommended_commands: readWakeSchedulerAuditCommands(value.recommended_commands),
+  }
+}
+
+function readWakeSchedulerAuditCommands(value: unknown): WakeSchedulerAuditCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 10).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: readString(command.command_type, "read"),
+    requires_active_runtime: typeof command.requires_active_runtime === "boolean" ? command.requires_active_runtime : undefined,
+    notes: typeof command.notes === "string" ? preview(redactText(command.notes)) : undefined,
+  }))
+}
+
+function readWakeSchedulerAuditChain(value: unknown, commandName: string): WakeSchedulerAuditChainSummary {
+  if (!isRecord(value) || typeof value.chain_id !== "string") throw new Error(`${commandName} returned invalid audit chain`)
+  return {
+    chain_id: redactText(value.chain_id),
+    root_kind: readString(value.root_kind, "other"),
+    root_id: readString(value.root_id, ""),
+    entries: readWakeSchedulerAuditTimeline(value.entries, commandName, 20),
+    related_ids: readRelatedIds(value.related_ids),
+    gaps: Array.isArray(value.gaps) ? value.gaps.filter(isRecord).slice(0, 20).map((gap) => ({
+      severity: readString(gap.severity, "warning"),
+      message: preview(readString(gap.message, "")),
+      related_ids: readRelatedIds(gap.related_ids),
+    })) : [],
+    recommended_commands: readWakeSchedulerAuditCommands(value.recommended_commands),
+  }
+}
+
+function readWakeSchedulerAuditIncidents(value: unknown, commandName: string, limit: number): WakeSchedulerAuditIncidentSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.filter(isRecord).slice(0, limit).map((incident) => ({
+    incident_id: readString(incident.incident_id, ""),
+    severity: readString(incident.severity, "warning"),
+    status: readString(incident.status, "open"),
+    title: preview(readString(incident.title, "")),
+    summary: preview(readString(incident.summary, "")),
+    first_seen_at: typeof incident.first_seen_at === "string" ? redactText(incident.first_seen_at) : undefined,
+    last_seen_at: typeof incident.last_seen_at === "string" ? redactText(incident.last_seen_at) : undefined,
+    related_entries: readWakeSchedulerAuditTimeline(incident.related_entries, commandName, 10),
+    recommended_commands: readWakeSchedulerAuditCommands(incident.recommended_commands),
+  }))
+}
+
 function readWakeSchedulerState(value: unknown): WakeSchedulerStateSummary {
   if (!isRecord(value) || !isRecord(value.config)) throw new Error("runtime.wake_scheduler_status returned invalid status")
   return {
@@ -6200,6 +6382,10 @@ function wakeSchedulerState(state: UiState): WakeSchedulerUiState {
     selectedRecoveryWorkflow: scheduler.selectedRecoveryWorkflow ?? null,
     recoveryWorkflowVerification: scheduler.recoveryWorkflowVerification ?? null,
     recoveryWorkflows: scheduler.recoveryWorkflows ?? [],
+    auditSummary: scheduler.auditSummary ?? null,
+    auditTimeline: scheduler.auditTimeline ?? [],
+    selectedAuditChain: scheduler.selectedAuditChain ?? null,
+    auditIncidents: scheduler.auditIncidents ?? [],
     events: scheduler.events ?? [],
     commandError: scheduler.commandError,
   }
@@ -6438,6 +6624,21 @@ function auditChainEffect(args: string[]): Extract<RuntimeUiEffect, { type: "loa
   }
 }
 
+function schedulerAuditTimelineArgs(args: string[]): { limit?: number; kind?: string; severity?: string; relatedId?: string } {
+  const out: { limit?: number; kind?: string; severity?: string; relatedId?: string } = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("scheduler audit timeline args must use key=value")
+    if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
+    else if (key === "kind") out.kind = value
+    else if (key === "severity") out.severity = value
+    else if (key === "related") out.relatedId = value
+    else throw new Error("scheduler audit timeline arg is invalid")
+  }
+  return out
+}
+
 function requiredQueueKindArg(args: string[], index: number): CommanderQueueKind {
   return readQueueKind(requiredArg(args, index, "queue"))
 }
@@ -6605,6 +6806,12 @@ function requiredIndex(args: string[], index: number): number {
   const parsed = optionalIndexArg(args, index)
   if (parsed === undefined) throw new Error("workflow step index is required")
   return parsed
+}
+
+function readPositiveInteger(value: string, field: string, max: number): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${field} must be a positive integer`)
+  return Math.min(parsed, max)
 }
 
 function cycleArgs(args: string[]): { topicId?: string; missionId?: string; objective?: string } {

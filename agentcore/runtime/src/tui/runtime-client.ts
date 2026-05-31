@@ -26,6 +26,7 @@ import type { WakeSchedulerEventRecord, WakeSchedulerPreview, WakeSchedulerStart
 import type { WakeSchedulerBootstrapStatus } from "../schedules/wake-scheduler-bootstrap-types"
 import type { WakeSchedulerRecovery, WakeSchedulerRecoveryAcknowledgeInput, WakeSchedulerRecoveryPreview, WakeSchedulerRecoveryRecord } from "../schedules/wake-scheduler-recovery-types"
 import type { WakeSchedulerRecoveryWorkflow, WakeSchedulerRecoveryWorkflowCancelInput, WakeSchedulerRecoveryWorkflowInput, WakeSchedulerRecoveryWorkflowPreview, WakeSchedulerRecoveryWorkflowRecord, WakeSchedulerRecoveryWorkflowStepRecordInput, WakeSchedulerRecoveryWorkflowVerification } from "../schedules/wake-scheduler-recovery-workflow-types"
+import type { WakeSchedulerAuditChain, WakeSchedulerAuditIncident, WakeSchedulerAuditQuery, WakeSchedulerAuditSummary, WakeSchedulerAuditTimelineEntry } from "../schedules/wake-scheduler-audit-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -254,6 +255,10 @@ export interface RuntimeClient {
   command(name: "runtime.record_wake_scheduler_recovery_workflow_step", payload: WakeSchedulerRecoveryWorkflowStepRecordInput): Promise<WakeSchedulerRecoveryWorkflow>
   command(name: "runtime.cancel_wake_scheduler_recovery_workflow", payload: WakeSchedulerRecoveryWorkflowCancelInput): Promise<WakeSchedulerRecoveryWorkflow>
   command(name: "runtime.verify_wake_scheduler_recovery_workflow", payload: { workflowId: string } | { workflow_id: string }): Promise<WakeSchedulerRecoveryWorkflowVerification>
+  command(name: "runtime.wake_scheduler_audit_summary", payload?: Record<string, never>): Promise<WakeSchedulerAuditSummary>
+  command(name: "runtime.wake_scheduler_audit_timeline", payload?: WakeSchedulerAuditQuery | { limit?: number; kind?: string; kinds?: string[]; severity?: string; related?: string; related_id?: string; relatedId?: string; since?: string; until?: string }): Promise<WakeSchedulerAuditTimelineEntry[]>
+  command(name: "runtime.wake_scheduler_audit_chain", payload: { relatedId: string; limit?: number } | { related_id: string; limit?: number }): Promise<WakeSchedulerAuditChain>
+  command(name: "runtime.wake_scheduler_audit_incidents", payload?: { limit?: number; status?: string; severity?: string }): Promise<WakeSchedulerAuditIncident[]>
   command(name: "runtime.list_wake_scheduler_events", payload?: { limit?: number }): Promise<WakeSchedulerEventRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
@@ -398,6 +403,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.record_wake_scheduler_recovery_workflow_step"
     | "runtime.cancel_wake_scheduler_recovery_workflow"
     | "runtime.verify_wake_scheduler_recovery_workflow"
+    | "runtime.wake_scheduler_audit_summary"
+    | "runtime.wake_scheduler_audit_timeline"
+    | "runtime.wake_scheduler_audit_chain"
+    | "runtime.wake_scheduler_audit_incidents"
     | "runtime.list_wake_scheduler_events"
     | "research.list_topics"
     | "research.get_topic_snapshot"

@@ -11,6 +11,7 @@ export type { RuntimeClient, RuntimeCommandEnvelope, SubmitUserMessageResult } f
 export type { WakeSchedulerBootstrapConfig, WakeSchedulerBootstrapStatus, WakeSchedulerStaleRunInfo } from "./schedules/wake-scheduler-bootstrap-types"
 export type { WakeSchedulerRecovery, WakeSchedulerRecoveryAcknowledgeInput, WakeSchedulerRecoveryCommand, WakeSchedulerRecoveryPreview, WakeSchedulerRecoveryRecord, WakeSchedulerRecoveryStatus } from "./schedules/wake-scheduler-recovery-types"
 export type { WakeSchedulerRecoveryWorkflow, WakeSchedulerRecoveryWorkflowCancelInput, WakeSchedulerRecoveryWorkflowInput, WakeSchedulerRecoveryWorkflowPreview, WakeSchedulerRecoveryWorkflowRecord, WakeSchedulerRecoveryWorkflowStep, WakeSchedulerRecoveryWorkflowStepRecordInput, WakeSchedulerRecoveryWorkflowVerification } from "./schedules/wake-scheduler-recovery-workflow-types"
+export type { WakeSchedulerAuditChain, WakeSchedulerAuditCommand, WakeSchedulerAuditEventKind, WakeSchedulerAuditGap, WakeSchedulerAuditIncident, WakeSchedulerAuditQuery, WakeSchedulerAuditSeverity, WakeSchedulerAuditSummary, WakeSchedulerAuditTimelineEntry } from "./schedules/wake-scheduler-audit-types"
 export { SpecService } from "./spec/spec-service"
 export { PolicyService } from "./spec/policy-service"
 export { FakeOpenCodeAdapter } from "./opencode/fake-adapter"

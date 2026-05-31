@@ -1573,6 +1573,95 @@ export type WakeSchedulerRecoveryWorkflowVerificationSummary = {
   warnings: string[]
 }
 
+export type WakeSchedulerAuditEventKindSummary =
+  | "checkpoint"
+  | "resume_anchor"
+  | "wake_assessment"
+  | "continuation_plan"
+  | "continuation_step"
+  | "wake_schedule"
+  | "wake_tick"
+  | "scheduler_lifecycle"
+  | "scheduler_bootstrap"
+  | "scheduler_recovery"
+  | "scheduler_recovery_workflow"
+  | "incident"
+  | "other"
+  | string
+
+export type WakeSchedulerAuditSeveritySummary = "info" | "warning" | "error" | string
+
+export type WakeSchedulerAuditCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type WakeSchedulerAuditTimelineEntrySummary = {
+  audit_id: string
+  event_id?: string
+  source_kind: WakeSchedulerAuditEventKindSummary
+  source_event_kind: string
+  severity: WakeSchedulerAuditSeveritySummary
+  created_at: string
+  title: string
+  summary: string
+  related_ids: Record<string, string[]>
+  recommended_commands: WakeSchedulerAuditCommandSummary[]
+}
+
+export type WakeSchedulerAuditSummarySummary = {
+  event_count: number
+  checkpoint_count: number
+  resume_anchor_count: number
+  wake_assessment_count: number
+  continuation_plan_count: number
+  continuation_step_count: number
+  schedule_count: number
+  tick_count: number
+  scheduler_start_count: number
+  scheduler_stop_count: number
+  scheduler_failure_count: number
+  bootstrap_blocked_count: number
+  stale_recovery_count: number
+  recovery_workflow_count: number
+  unresolved_incident_count: number
+  last_event_at?: string
+  latest_scheduler_status?: string
+  latest_bootstrap_status?: string
+  latest_recovery_status?: string
+}
+
+export type WakeSchedulerAuditGapSummary = {
+  severity: WakeSchedulerAuditSeveritySummary
+  message: string
+  related_ids?: Record<string, string[]>
+}
+
+export type WakeSchedulerAuditChainSummary = {
+  chain_id: string
+  root_kind: WakeSchedulerAuditEventKindSummary
+  root_id: string
+  entries: WakeSchedulerAuditTimelineEntrySummary[]
+  related_ids: Record<string, string[]>
+  gaps: WakeSchedulerAuditGapSummary[]
+  recommended_commands: WakeSchedulerAuditCommandSummary[]
+}
+
+export type WakeSchedulerAuditIncidentSummary = {
+  incident_id: string
+  severity: WakeSchedulerAuditSeveritySummary
+  status: "open" | "acknowledged" | "resolved" | "unknown" | string
+  title: string
+  summary: string
+  first_seen_at?: string
+  last_seen_at?: string
+  related_entries: WakeSchedulerAuditTimelineEntrySummary[]
+  recommended_commands: WakeSchedulerAuditCommandSummary[]
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -1585,6 +1674,10 @@ export type WakeSchedulerUiState = {
   selectedRecoveryWorkflow?: WakeSchedulerRecoveryWorkflowSummary | null
   recoveryWorkflowVerification?: WakeSchedulerRecoveryWorkflowVerificationSummary | null
   recoveryWorkflows: WakeSchedulerRecoveryWorkflowRecordSummary[]
+  auditSummary?: WakeSchedulerAuditSummarySummary | null
+  auditTimeline: WakeSchedulerAuditTimelineEntrySummary[]
+  selectedAuditChain?: WakeSchedulerAuditChainSummary | null
+  auditIncidents: WakeSchedulerAuditIncidentSummary[]
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }
