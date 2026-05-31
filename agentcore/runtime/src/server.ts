@@ -70,6 +70,8 @@ import { WakeSchedulerAuditService, readWakeSchedulerAuditQuery } from "./schedu
 import type { WakeSchedulerAuditChain, WakeSchedulerAuditIncident, WakeSchedulerAuditQuery, WakeSchedulerAuditSummary, WakeSchedulerAuditTimelineEntry } from "./schedules/wake-scheduler-audit-types"
 import { WakeSchedulerNavigationService } from "./schedules/wake-scheduler-navigation-service"
 import type { WakeSchedulerNavigationBoard, WakeSchedulerNavigationCommandPreview, WakeSchedulerNavigationInput, WakeSchedulerNavigationTarget } from "./schedules/wake-scheduler-navigation-types"
+import { WakeSchedulerNavigationStagingService, readWakeSchedulerNavigationStageClearInput, readWakeSchedulerNavigationStageInput, readWakeSchedulerNavigationStageRemoveInput } from "./schedules/wake-scheduler-navigation-staging-service"
+import type { WakeSchedulerNavigationStagePreview, WakeSchedulerNavigationStagedCommand, WakeSchedulerNavigationStagedCommandRecord } from "./schedules/wake-scheduler-navigation-staging-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -223,6 +225,7 @@ export class RuntimeServer {
   private wakeSchedulerRecoveryWorkflowServiceInstance: WakeSchedulerRecoveryWorkflowService | null = null
   private wakeSchedulerAuditServiceInstance: WakeSchedulerAuditService | null = null
   private wakeSchedulerNavigationServiceInstance: WakeSchedulerNavigationService | null = null
+  private wakeSchedulerNavigationStagingServiceInstance: WakeSchedulerNavigationStagingService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -786,6 +789,16 @@ export class RuntimeServer {
         return this.previewWakeSchedulerNavigationCommand(requiredString(payload.command, "command"))
       case "runtime.get_wake_scheduler_navigation_target":
         return this.getWakeSchedulerNavigationTarget(requiredString(payload.targetKind ?? payload.target_kind, "targetKind"), requiredString(payload.targetId ?? payload.target_id, "targetId"))
+      case "runtime.preview_wake_scheduler_navigation_stage":
+        return this.previewWakeSchedulerNavigationStage(readWakeSchedulerNavigationStageInput(payload))
+      case "runtime.stage_wake_scheduler_navigation_command":
+        return this.stageWakeSchedulerNavigationCommand(readWakeSchedulerNavigationStageInput(payload))
+      case "runtime.list_wake_scheduler_navigation_staged_commands":
+        return this.listWakeSchedulerNavigationStagedCommands(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.remove_wake_scheduler_navigation_staged_command":
+        return this.removeWakeSchedulerNavigationStagedCommand(readWakeSchedulerNavigationStageRemoveInput(payload))
+      case "runtime.clear_wake_scheduler_navigation_staged_commands":
+        return this.clearWakeSchedulerNavigationStagedCommands(readWakeSchedulerNavigationStageClearInput(payload))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -1491,6 +1504,29 @@ export class RuntimeServer {
     return this.wakeSchedulerNavigationService().target(targetKind, targetId)
   }
 
+  async previewWakeSchedulerNavigationStage(input: Parameters<WakeSchedulerNavigationStagingService["preview"]>[0]): Promise<WakeSchedulerNavigationStagePreview> {
+    return this.wakeSchedulerNavigationStagingService().preview(input)
+  }
+
+  async stageWakeSchedulerNavigationCommand(input: Parameters<WakeSchedulerNavigationStagingService["stage"]>[0]): Promise<WakeSchedulerNavigationStagedCommand> {
+    this.requireWakeSchedulerRuntime("runtime.stage_wake_scheduler_navigation_command")
+    return this.wakeSchedulerNavigationStagingService().stage(input)
+  }
+
+  async listWakeSchedulerNavigationStagedCommands(limit = 20): Promise<WakeSchedulerNavigationStagedCommandRecord[]> {
+    return this.wakeSchedulerNavigationStagingService().list(limit)
+  }
+
+  async removeWakeSchedulerNavigationStagedCommand(input: Parameters<WakeSchedulerNavigationStagingService["remove"]>[0]): Promise<WakeSchedulerNavigationStagedCommand | null> {
+    this.requireWakeSchedulerRuntime("runtime.remove_wake_scheduler_navigation_staged_command")
+    return this.wakeSchedulerNavigationStagingService().remove(input)
+  }
+
+  async clearWakeSchedulerNavigationStagedCommands(input: Parameters<WakeSchedulerNavigationStagingService["clear"]>[0] = {}): Promise<WakeSchedulerNavigationStagedCommandRecord[]> {
+    this.requireWakeSchedulerRuntime("runtime.clear_wake_scheduler_navigation_staged_commands")
+    return this.wakeSchedulerNavigationStagingService().clear(input)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -2005,6 +2041,12 @@ export class RuntimeServer {
   private wakeSchedulerNavigationService(): WakeSchedulerNavigationService {
     this.wakeSchedulerNavigationServiceInstance ??= new WakeSchedulerNavigationService(this.wakeSchedulerAuditService())
     return this.wakeSchedulerNavigationServiceInstance
+  }
+
+  private wakeSchedulerNavigationStagingService(): WakeSchedulerNavigationStagingService {
+    const now = this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow ?? (() => new Date())
+    this.wakeSchedulerNavigationStagingServiceInstance ??= new WakeSchedulerNavigationStagingService(this.eventStore, () => now().toISOString())
+    return this.wakeSchedulerNavigationStagingServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

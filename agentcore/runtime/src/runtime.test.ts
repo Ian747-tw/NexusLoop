@@ -7256,6 +7256,127 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation staging stages only safe-read commands without executing them", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await expect(notStarted.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-status" })).rejects.toThrow("runtime must be started before wake scheduler writes")
+    await expect(notStarted.command("runtime.list_wake_scheduler_navigation_staged_commands")).resolves.toEqual([])
+
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await statusServer.start()
+    await expect(statusServer.command("runtime.preview_wake_scheduler_navigation_stage", { command: "/scheduler-status" })).resolves.toMatchObject({
+      eligibility: { can_stage: true, command_type: "read", risk: "safe_read", target_kind: "scheduler_status" },
+    })
+    await expect(statusServer.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-status" })).rejects.toThrow("requires active mode")
+    await statusServer.shutdown()
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-12T10:00:00.000Z"),
+    })
+    await server.start()
+    const beforeStageEvents = await readJsonlEvents(dir)
+    const staged = await server.command("runtime.stage_wake_scheduler_navigation_command", {
+      command: "/scheduler-status",
+      source_board_id: "board_stage_1",
+      source_card_id: "card_stage_1",
+      requested_by: "operator-stage-test",
+    }) as { staged_id: string; command: string; risk: string; target_kind: string; stage_hash: string; staged_by: string }
+    const expectedHash = createHash("sha256").update("/scheduler-status").digest("hex")
+    expect(staged).toMatchObject({
+      staged_id: `wake_scheduler_navigation_staged_${expectedHash.slice(0, 16)}`,
+      command: "/scheduler-status",
+      risk: "safe_read",
+      target_kind: "scheduler_status",
+      stage_hash: expectedHash,
+      staged_by: "operator-stage-test",
+    })
+
+    const duplicate = await server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-status", requested_by: "operator-stage-test-2" }) as { staged_id: string; staged_by: string }
+    expect(duplicate.staged_id).toBe(staged.staged_id)
+    expect(duplicate.staged_by).toBe("operator-stage-test")
+    const list = await server.command("runtime.list_wake_scheduler_navigation_staged_commands") as Array<{ staged_id: string; command: string }>
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ staged_id: staged.staged_id, command: "/scheduler-status" })
+
+    const eventsAfterDuplicate = await readJsonlEvents(dir)
+    expect(eventsAfterDuplicate.filter((event) => event.kind === "runtime_wake_scheduler_navigation_command_staged")).toHaveLength(1)
+    expect(eventsAfterDuplicate.length).toBe(beforeStageEvents.length + 1)
+    expect(await server.command("runtime.wake_scheduler_status")).toMatchObject({ status: "stopped", tick_count: 0 })
+    expect(eventsAfterDuplicate.map((event) => event.kind)).not.toContain("runtime_wake_schedule_tick_completed")
+    expect(eventsAfterDuplicate.map((event) => event.kind)).not.toContain("runtime_continuation_step_started")
+
+    await server.shutdown()
+
+    const replayServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await replayServer.start()
+    const replayList = await replayServer.command("runtime.list_wake_scheduler_navigation_staged_commands") as Array<{ staged_id: string; command: string }>
+    expect(replayList).toEqual(list)
+    await replayServer.shutdown()
+  })
+
+  test("wake scheduler navigation staging blocks write high-impact unsupported and secret-bearing commands", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+    const beforeEvents = await readJsonlEvents(dir)
+
+    const writePreview = await server.command("runtime.preview_wake_scheduler_navigation_stage", { command: "/wake-tick token=abc123" }) as { eligibility: { can_stage: boolean; blockers: string[]; command: string }; blockers: string[] }
+    expect(writePreview.eligibility.can_stage).toBe(false)
+    expect(writePreview.blockers.join(" ")).toContain("only safe-read")
+    expect(JSON.stringify(writePreview)).not.toContain("abc123")
+    await expect(server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/wake-tick token=abc123" })).rejects.toThrow("cannot be staged")
+
+    const highImpact = await server.command("runtime.preview_wake_scheduler_navigation_stage", { command: "/handoff token=abc123" }) as { eligibility: { can_stage: boolean; risk: string; blockers: string[] } }
+    expect(highImpact.eligibility).toMatchObject({ can_stage: false, risk: "high_impact_write" })
+    expect(highImpact.eligibility.blockers.join(" ")).toContain("high-impact")
+
+    const unsupported = await server.command("runtime.preview_wake_scheduler_navigation_stage", { command: "/unknown token=abc123" }) as { eligibility: { can_stage: boolean; risk: string; blockers: string[] } }
+    expect(unsupported.eligibility).toMatchObject({ can_stage: false, risk: "unsupported" })
+    const pathLike = await server.command("runtime.preview_wake_scheduler_navigation_stage", { command: "/tmp/repro" }) as { eligibility: { can_stage: boolean; risk: string; blockers: string[] } }
+    expect(pathLike.eligibility).toMatchObject({ can_stage: false, risk: "unsupported" })
+
+    const afterBlocked = await readJsonlEvents(dir)
+    expect(afterBlocked).toHaveLength(beforeEvents.length)
+    expect(JSON.stringify({ writePreview, highImpact, unsupported, pathLike })).not.toContain("abc123")
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation staging remove and clear update the event-log projection", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-12T11:00:00.000Z"),
+    })
+    await server.start()
+    const schedulerStatus = await server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-status" }) as { staged_id: string }
+    const auditStatus = await server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-audit-summary" }) as { staged_id: string }
+    expect(await server.command("runtime.list_wake_scheduler_navigation_staged_commands")).toHaveLength(2)
+
+    const removed = await server.command("runtime.remove_wake_scheduler_navigation_staged_command", { staged_id: schedulerStatus.staged_id, reason: "token=abc123", requested_by: "operator-stage-test" }) as { staged_id: string } | null
+    expect(removed?.staged_id).toBe(schedulerStatus.staged_id)
+    const afterRemove = await server.command("runtime.list_wake_scheduler_navigation_staged_commands") as Array<{ staged_id: string }>
+    expect(afterRemove.map((item) => item.staged_id)).toEqual([auditStatus.staged_id])
+
+    await server.command("runtime.clear_wake_scheduler_navigation_staged_commands", { reason: "token=abc123", requested_by: "operator-stage-test" })
+    expect(await server.command("runtime.list_wake_scheduler_navigation_staged_commands")).toEqual([])
+    const events = await readJsonlEvents(dir)
+    expect(events.filter((event) => event.kind === "runtime_wake_scheduler_navigation_command_staged")).toHaveLength(2)
+    expect(events.filter((event) => event.kind === "runtime_wake_scheduler_navigation_command_removed")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "runtime_wake_scheduler_navigation_commands_cleared")).toHaveLength(1)
+    expect(JSON.stringify(events)).not.toContain("abc123")
+    expect(events.map((event) => event.kind)).not.toContain("runtime_wake_scheduler_started")
+    expect(events.map((event) => event.kind)).not.toContain("runtime_wake_schedule_tick_completed")
+    await server.shutdown()
+  })
+
   test("wake scheduler navigation incident lookup searches beyond display caps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

@@ -27,7 +27,7 @@ interface NormalizedInput {
   include_write: boolean
 }
 
-interface ClassifiedCommand {
+export interface ClassifiedWakeSchedulerNavigationCommand {
   command: string
   command_type: WakeSchedulerNavigationCommandType
   risk: WakeSchedulerNavigationRisk
@@ -52,7 +52,7 @@ export class WakeSchedulerNavigationService {
   }
 
   previewCommand(command: string): WakeSchedulerNavigationCommandPreview {
-    const classified = classifyCommand(command)
+    const classified = classifyWakeSchedulerNavigationCommand(command)
     return redactValue({
       command: classified.command,
       command_type: classified.command_type,
@@ -176,7 +176,7 @@ export class WakeSchedulerNavigationService {
 
   private boardFromParts(parts: { source: WakeSchedulerNavigationBoard["source"]; title: string; summary: string; commands: WakeSchedulerAuditCommand[]; related_ids: Record<string, string[]>; warnings: string[]; blockers: string[]; input: NormalizedInput }): WakeSchedulerNavigationBoard {
     const cards = this.cardsFromCommands(parts.commands, parts.input)
-    const omitted = parts.input.include_write ? 0 : parts.commands.map((command) => classifyCommand(command.command)).filter((command) => command.command_type === "write").length
+    const omitted = parts.input.include_write ? 0 : parts.commands.map((command) => classifyWakeSchedulerNavigationCommand(command.command)).filter((command) => command.command_type === "write").length
     return redactValue({
       board_id: `wake_scheduler_navigation_${hashText(JSON.stringify(parts.source) + parts.summary).slice(0, 16)}`,
       source: parts.source,
@@ -194,7 +194,7 @@ export class WakeSchedulerNavigationService {
     const seen = new Set<string>()
     const cards: WakeSchedulerNavigationCard[] = []
     for (const command of commands) {
-      const classified = classifyCommand(command.command)
+      const classified = classifyWakeSchedulerNavigationCommand(command.command)
       if (!input.include_write && classified.command_type === "write") continue
       if (seen.has(classified.command)) continue
       seen.add(classified.command)
@@ -230,7 +230,7 @@ function normalizeInput(input: WakeSchedulerNavigationInput): NormalizedInput {
   }
 }
 
-function classifyCommand(value: string): ClassifiedCommand {
+export function classifyWakeSchedulerNavigationCommand(value: string): ClassifiedWakeSchedulerNavigationCommand {
   const command = cleanCommand(value)
   if (!command.startsWith("/") || command.startsWith("//") || command.startsWith("/tmp/") || command.startsWith("/path")) {
     return unsupported(command, "only exact whitelisted slash commands are supported")
@@ -261,19 +261,19 @@ const WRITE_COMMANDS = new Set([
 
 const HIGH_IMPACT = new Set(["/handoff", "/apply", "/approve", "/reject", "/complete", "/fail", "/cancel", "/api-call", "/synthesize", "/cycle"])
 
-function read(command: string, target_kind: WakeSchedulerNavigationTargetKind, target_id?: string): ClassifiedCommand {
+function read(command: string, target_kind: WakeSchedulerNavigationTargetKind, target_id?: string): ClassifiedWakeSchedulerNavigationCommand {
   return { command, command_type: "read", risk: "safe_read", target_kind, target_id: cleanOptionalId(target_id), supported: true, blockers: [], notes: ["read-only inspection command; navigation does not execute it"], equivalent_runtime_command: runtimeFor(command) }
 }
 
-function write(command: string, target_kind: WakeSchedulerNavigationTargetKind, target_id: string | undefined, note: string): ClassifiedCommand {
+function write(command: string, target_kind: WakeSchedulerNavigationTargetKind, target_id: string | undefined, note: string): ClassifiedWakeSchedulerNavigationCommand {
   return { command, command_type: "write", risk: "write_requires_operator", target_kind, target_id: cleanOptionalId(target_id), supported: true, blockers: ["navigation is read-only and will not run this command"], notes: [note], equivalent_runtime_command: runtimeFor(command) }
 }
 
-function highImpact(command: string, target_kind: WakeSchedulerNavigationTargetKind, target_id?: string): ClassifiedCommand {
+function highImpact(command: string, target_kind: WakeSchedulerNavigationTargetKind, target_id?: string): ClassifiedWakeSchedulerNavigationCommand {
   return { command, command_type: "write", risk: "high_impact_write", target_kind, target_id: cleanOptionalId(target_id), supported: false, blockers: ["high-impact command is not supported by scheduler navigation"], notes: ["shown only if encountered in recommendations; execute through the explicit owner surface, not navigation"] }
 }
 
-function unsupported(command: string, reason: string): ClassifiedCommand {
+function unsupported(command: string, reason: string): ClassifiedWakeSchedulerNavigationCommand {
   return { command, command_type: "read", risk: "unsupported", target_kind: "unknown", supported: false, blockers: [reason], notes: ["unsupported command is displayed as text only"] }
 }
 

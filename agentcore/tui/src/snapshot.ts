@@ -757,6 +757,27 @@ function wakeSchedulerLines(state: UiState): string[] {
     out.push(`    target=${target.target_kind}:${target.target_id} commands=${target.related_commands.length} audit_entries=${target.audit_entries.length}`)
     if (target.warnings.length > 0) out.push(...target.warnings.slice(0, 10).map((warning) => `    target_warning=${preview(redactText(warning))}`))
   }
+  out.push("  scheduler_navigation_staging")
+  if (scheduler.navigationStagePreview) {
+    const stagePreview = scheduler.navigationStagePreview
+    out.push(`    preview=${stagePreview.eligibility.risk}/${stagePreview.eligibility.command_type} target=${stagePreview.eligibility.target_kind}${stagePreview.eligibility.target_id ? `:${stagePreview.eligibility.target_id}` : ""} can_stage=${stagePreview.eligibility.can_stage}: ${preview(redactText(stagePreview.command))}`)
+    if (stagePreview.existing_staged_id) out.push(`    existing_staged_id=${stagePreview.existing_staged_id}`)
+    if (stagePreview.blockers.length > 0) out.push(...stagePreview.blockers.slice(0, 10).map((blocker) => `    stage_blocker=${preview(redactText(blocker))}`))
+    if (stagePreview.warnings.length > 0) out.push(...stagePreview.warnings.slice(0, 10).map((warning) => `    stage_warning=${preview(redactText(warning))}`))
+  } else {
+    out.push("    preview=none")
+  }
+  if (scheduler.selectedStagedNavigationCommand) {
+    const selected = scheduler.selectedStagedNavigationCommand
+    out.push(`    selected_staged=${selected.staged_id} ${selected.risk}/${selected.command_type} ${selected.target_kind}: ${preview(redactText(selected.command))}`)
+  } else {
+    out.push("    selected_staged=none")
+  }
+  out.push("    note=staged navigation commands are not executed automatically")
+  out.push(`    staged=${scheduler.stagedNavigationCommands.length}`)
+  out.push("    staged_rows")
+  if (scheduler.stagedNavigationCommands.length === 0) out.push("      - empty")
+  else out.push(...scheduler.stagedNavigationCommands.slice(0, 10).map((record) => `      - ${record.staged_id} ${record.risk} ${record.target_kind}${record.target_id ? `:${record.target_id}` : ""}: ${preview(redactText(record.command))}`))
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

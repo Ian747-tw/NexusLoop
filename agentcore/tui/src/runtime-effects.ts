@@ -92,6 +92,9 @@ import type {
   WakeSchedulerNavigationBoardSummary,
   WakeSchedulerNavigationCardSummary,
   WakeSchedulerNavigationCommandPreviewSummary,
+  WakeSchedulerNavigationStagePreviewSummary,
+  WakeSchedulerNavigationStagedCommandRecordSummary,
+  WakeSchedulerNavigationStagedCommandSummary,
   WakeSchedulerNavigationTargetSummary,
   WakeSchedulerStateSummary,
   WakeSchedulerUiState,
@@ -299,6 +302,11 @@ export type RuntimeUiEffect =
   | { type: "load-wake-scheduler-navigation-board"; relatedId?: string; incidentId?: string; auditId?: string; command?: string; includeWrite?: boolean; limit?: number }
   | { type: "preview-wake-scheduler-navigation-command"; command: string }
   | { type: "load-wake-scheduler-navigation-target"; targetKind: string; targetId: string }
+  | { type: "preview-wake-scheduler-navigation-stage"; command: string }
+  | { type: "stage-wake-scheduler-navigation-command"; command: string }
+  | { type: "load-wake-scheduler-navigation-staged-commands"; limit?: number }
+  | { type: "remove-wake-scheduler-navigation-staged-command"; stagedId: string }
+  | { type: "clear-wake-scheduler-navigation-staged-commands"; reason?: string }
   | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
@@ -1038,6 +1046,20 @@ export async function applyRuntimeUiEffect(
         return applyWakeSchedulerNavigationCommandPreview(state, await runtime.command("runtime.preview_wake_scheduler_navigation_command", { command: effect.command }))
       case "load-wake-scheduler-navigation-target":
         return applyWakeSchedulerNavigationTarget(state, await runtime.command("runtime.get_wake_scheduler_navigation_target", { targetKind: effect.targetKind, targetId: effect.targetId }))
+      case "preview-wake-scheduler-navigation-stage":
+        return applyWakeSchedulerNavigationStagePreview(state, await runtime.command("runtime.preview_wake_scheduler_navigation_stage", { command: effect.command, requestedBy: "operator" }))
+      case "stage-wake-scheduler-navigation-command": {
+        const next = applyWakeSchedulerNavigationStagedCommand(state, await runtime.command("runtime.stage_wake_scheduler_navigation_command", { command: effect.command, requestedBy: "operator" }))
+        return applyWakeSchedulerNavigationStagedCommands(next, await runtime.command("runtime.list_wake_scheduler_navigation_staged_commands", { limit: CHECKPOINT_LIMIT }), CHECKPOINT_LIMIT)
+      }
+      case "load-wake-scheduler-navigation-staged-commands":
+        return applyWakeSchedulerNavigationStagedCommands(state, await runtime.command("runtime.list_wake_scheduler_navigation_staged_commands", { limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.limit ?? CHECKPOINT_LIMIT)
+      case "remove-wake-scheduler-navigation-staged-command": {
+        const next = applyWakeSchedulerNavigationStagedCommand(state, await runtime.command("runtime.remove_wake_scheduler_navigation_staged_command", { stagedId: effect.stagedId, requestedBy: "operator" }), effect.stagedId)
+        return applyWakeSchedulerNavigationStagedCommands(next, await runtime.command("runtime.list_wake_scheduler_navigation_staged_commands", { limit: CHECKPOINT_LIMIT }), CHECKPOINT_LIMIT)
+      }
+      case "clear-wake-scheduler-navigation-staged-commands":
+        return applyWakeSchedulerNavigationStagedCommands(state, await runtime.command("runtime.clear_wake_scheduler_navigation_staged_commands", { reason: effect.reason, requestedBy: "operator" }), CHECKPOINT_LIMIT)
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
@@ -2158,6 +2180,52 @@ function applyWakeSchedulerNavigationTarget(state: UiState, value: unknown): UiS
   }
 }
 
+function applyWakeSchedulerNavigationStagePreview(state: UiState, value: unknown): UiState {
+  const stagePreview = readWakeSchedulerNavigationStagePreview(value, "runtime.preview_wake_scheduler_navigation_stage")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      navigationStagePreview: stagePreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler navigation stage preview", detail: `${stagePreview.eligibility.risk} can_stage=${stagePreview.eligibility.can_stage}`, status: stagePreview.eligibility.can_stage ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationStagedCommand(state: UiState, value: unknown, stagedId?: string): UiState {
+  const staged = readWakeSchedulerNavigationStagedCommand(value, "runtime.stage_wake_scheduler_navigation_command")
+  if (!staged && value !== null) throw new Error("runtime.stage_wake_scheduler_navigation_command returned invalid staged command")
+  const selectedId = staged?.staged_id ?? (stagedId ? redactText(stagedId) : undefined)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      selectedStagedNavigationCommand: staged,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "scheduler navigation staged", detail: `staged_id=${selectedId}`, status: staged ? "staged" : "removed" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
+function applyWakeSchedulerNavigationStagedCommands(state: UiState, value: unknown, limit: number): UiState {
+  const staged = readWakeSchedulerNavigationStagedCommandRecords(value, "runtime.list_wake_scheduler_navigation_staged_commands", limit)
+  const currentSelection = wakeSchedulerState(state).selectedStagedNavigationCommand
+  const selected = currentSelection && staged.some((item) => item.staged_id === currentSelection.staged_id) ? currentSelection : null
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      stagedNavigationCommands: staged,
+      selectedStagedNavigationCommand: selected,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler navigation staged commands", detail: `commands=${staged.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -2633,6 +2701,16 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-scheduler-navigation-command", command: requiredRest(args, 0, "command") })
     case "scheduler-nav-target":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-target", targetKind: requiredArg(args, 0, "targetKind"), targetId: requiredArg(args, 1, "targetId") })
+    case "scheduler-nav-stage-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-scheduler-navigation-stage", command: requiredRest(args, 0, "command") })
+    case "scheduler-nav-stage":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "stage-wake-scheduler-navigation-command", command: requiredRest(args, 0, "command") })
+    case "scheduler-nav-staged":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-staged-commands", limit: CHECKPOINT_LIMIT })
+    case "scheduler-nav-unstage":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "remove-wake-scheduler-navigation-staged-command", stagedId: requiredArg(args, 0, "stagedId") })
+    case "scheduler-nav-stage-clear":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "clear-wake-scheduler-navigation-staged-commands", reason: args.join(" ") || undefined })
     case "scheduler-events":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
@@ -3316,6 +3394,11 @@ const wakeSchedulerCommands = new Set([
   "scheduler-navigation",
   "scheduler-nav-command",
   "scheduler-nav-target",
+  "scheduler-nav-stage-preview",
+  "scheduler-nav-stage",
+  "scheduler-nav-staged",
+  "scheduler-nav-unstage",
+  "scheduler-nav-stage-clear",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",
@@ -3443,6 +3526,11 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-wake-scheduler-navigation-board",
   "preview-wake-scheduler-navigation-command",
   "load-wake-scheduler-navigation-target",
+  "preview-wake-scheduler-navigation-stage",
+  "stage-wake-scheduler-navigation-command",
+  "load-wake-scheduler-navigation-staged-commands",
+  "remove-wake-scheduler-navigation-staged-command",
+  "clear-wake-scheduler-navigation-staged-commands",
   "load-wake-scheduler-events",
 ])
 
@@ -5723,6 +5811,77 @@ function readWakeSchedulerNavigationTarget(value: unknown, commandName: string):
   }
 }
 
+function readWakeSchedulerNavigationStagePreview(value: unknown, commandName: string): WakeSchedulerNavigationStagePreviewSummary {
+  if (!isRecord(value) || typeof value.command !== "string" || !isRecord(value.eligibility)) throw new Error(`${commandName} returned invalid navigation stage preview`)
+  return {
+    command: preview(readString(value.command, "")),
+    source_card_id: typeof value.source_card_id === "string" ? preview(redactText(value.source_card_id)) : undefined,
+    source_board_id: typeof value.source_board_id === "string" ? preview(redactText(value.source_board_id)) : undefined,
+    eligibility: readWakeSchedulerNavigationStageEligibility(value.eligibility),
+    existing_staged_id: typeof value.existing_staged_id === "string" ? preview(redactText(value.existing_staged_id)) : undefined,
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+  }
+}
+
+function readWakeSchedulerNavigationStageEligibility(value: Record<string, unknown>) {
+  return {
+    can_stage: readBoolean(value.can_stage),
+    command: preview(readString(value.command, "")),
+    command_type: readString(value.command_type, "read"),
+    risk: readString(value.risk, "unsupported"),
+    target_kind: readString(value.target_kind, "unknown"),
+    target_id: typeof value.target_id === "string" ? preview(redactText(value.target_id)) : undefined,
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeSchedulerNavigationStagedCommandRecords(value: unknown, commandName: string, limit: number): WakeSchedulerNavigationStagedCommandRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeSchedulerNavigationStagedCommandRecord).filter((record): record is WakeSchedulerNavigationStagedCommandRecordSummary => record !== null).slice(0, limit)
+}
+
+function readWakeSchedulerNavigationStagedCommandRecord(value: unknown): WakeSchedulerNavigationStagedCommandRecordSummary | null {
+  if (!isRecord(value) || typeof value.staged_id !== "string" || typeof value.command !== "string") return null
+  return {
+    staged_id: redactText(value.staged_id),
+    command: preview(readString(value.command, "")),
+    risk: readString(value.risk, "unsupported"),
+    target_kind: readString(value.target_kind, "unknown"),
+    target_id: typeof value.target_id === "string" ? preview(redactText(value.target_id)) : undefined,
+    staged_at: readString(value.staged_at, ""),
+    staged_by: preview(readString(value.staged_by, "")),
+    summary_preview: preview(readString(value.summary_preview, "")),
+    stage_hash: redactText(readString(value.stage_hash, "")),
+  }
+}
+
+function readWakeSchedulerNavigationStagedCommand(value: unknown, commandName: string): WakeSchedulerNavigationStagedCommandSummary | null {
+  if (value === null) return null
+  if (!isRecord(value) || typeof value.staged_id !== "string" || typeof value.command !== "string") throw new Error(`${commandName} returned invalid staged navigation command`)
+  return {
+    staged_id: redactText(value.staged_id),
+    command: preview(readString(value.command, "")),
+    command_type: readString(value.command_type, "read"),
+    risk: readString(value.risk, "unsupported"),
+    target_kind: readString(value.target_kind, "unknown"),
+    target_id: typeof value.target_id === "string" ? preview(redactText(value.target_id)) : undefined,
+    source_board_id: typeof value.source_board_id === "string" ? preview(redactText(value.source_board_id)) : undefined,
+    source_card_id: typeof value.source_card_id === "string" ? preview(redactText(value.source_card_id)) : undefined,
+    source_audit_id: typeof value.source_audit_id === "string" ? preview(redactText(value.source_audit_id)) : undefined,
+    source_incident_id: typeof value.source_incident_id === "string" ? preview(redactText(value.source_incident_id)) : undefined,
+    source_related_id: typeof value.source_related_id === "string" ? preview(redactText(value.source_related_id)) : undefined,
+    label: preview(readString(value.label, "")),
+    notes: readStringList(value.notes, 10).map(preview),
+    staged_at: readString(value.staged_at, ""),
+    staged_by: preview(readString(value.staged_by, "")),
+    status: readString(value.status, "staged"),
+    stage_hash: redactText(readString(value.stage_hash, "")),
+  }
+}
+
 function readWakeSchedulerState(value: unknown): WakeSchedulerStateSummary {
   if (!isRecord(value) || !isRecord(value.config)) throw new Error("runtime.wake_scheduler_status returned invalid status")
   return {
@@ -6532,6 +6691,9 @@ function wakeSchedulerState(state: UiState): WakeSchedulerUiState {
     navigationBoard: scheduler.navigationBoard ?? null,
     navigationCommandPreview: scheduler.navigationCommandPreview ?? null,
     navigationTarget: scheduler.navigationTarget ?? null,
+    navigationStagePreview: scheduler.navigationStagePreview ?? null,
+    stagedNavigationCommands: scheduler.stagedNavigationCommands ?? [],
+    selectedStagedNavigationCommand: scheduler.selectedStagedNavigationCommand ?? null,
     events: scheduler.events ?? [],
     commandError: scheduler.commandError,
   }
