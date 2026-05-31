@@ -304,8 +304,7 @@ function mergeRelatedIds(entries: WakeSchedulerAuditTimelineEntry[]): Record<str
 
 function detectGaps(entries: WakeSchedulerAuditTimelineEntry[]): WakeSchedulerAuditGap[] {
   const gaps: WakeSchedulerAuditGap[] = []
-  if (entries.some((entry) => entry.source_event_kind === "runtime_wake_scheduler_started")
-    && !entries.some((entry) => entry.source_event_kind === "runtime_wake_scheduler_stopped" || entry.source_event_kind === "runtime_shutdown")) {
+  if (unmatchedSchedulerStarts(entries).length > 0) {
     gaps.push({ severity: "warning", message: "scheduler start has no matching stop or runtime shutdown in this chain" })
   }
   if (entries.some((entry) => entry.source_event_kind === "runtime_wake_scheduler_recovery_workflow_created")
@@ -325,9 +324,8 @@ function detectGaps(entries: WakeSchedulerAuditTimelineEntry[]): WakeSchedulerAu
 
 function buildIncidents(entries: WakeSchedulerAuditTimelineEntry[]): WakeSchedulerAuditIncident[] {
   const incidents: WakeSchedulerAuditIncident[] = []
-  const openStarts = entries.filter((entry) => entry.source_event_kind === "runtime_wake_scheduler_started")
-  const hasStop = entries.some((entry) => entry.source_event_kind === "runtime_wake_scheduler_stopped" || entry.source_event_kind === "runtime_shutdown")
-  if (openStarts.length > 0 && !hasStop) incidents.push(incident("scheduler_started_without_stop", "warning", "open", "Scheduler start without stop", "scheduler start has no matching stop or shutdown", openStarts))
+  const openStarts = unmatchedSchedulerStarts(entries)
+  if (openStarts.length > 0) incidents.push(incident("scheduler_started_without_stop", "warning", "open", "Scheduler start without stop", "scheduler start has no matching stop or shutdown", openStarts))
   for (const entry of entries.filter((item) => item.source_event_kind === "runtime_wake_scheduler_tick_failed")) incidents.push(incident(`tick_failed_${entry.event_id ?? entry.audit_id}`, "error", "open", "Scheduler tick failed", entry.summary, [entry]))
   for (const entry of entries.filter((item) => item.source_event_kind === "runtime_wake_scheduler_bootstrap_blocked")) incidents.push(incident(`bootstrap_blocked_${entry.event_id ?? entry.audit_id}`, "warning", "open", "Scheduler bootstrap blocked", entry.summary, [entry]))
   const recoveryRecords = entries.filter((item) => item.source_event_kind === "runtime_wake_scheduler_recovery_recorded")
@@ -339,6 +337,15 @@ function buildIncidents(entries: WakeSchedulerAuditTimelineEntry[]): WakeSchedul
   for (const entry of entries.filter((item) => item.source_event_kind === "runtime_wake_scheduler_recovery_workflow_cancelled")) incidents.push(incident(`workflow_cancelled_${entry.event_id ?? entry.audit_id}`, "warning", "open", "Recovery workflow cancelled", entry.summary, [entry]))
   for (const entry of entries.filter((item) => item.source_event_kind === "runtime_continuation_step_failed")) incidents.push(incident(`continuation_step_failed_${entry.event_id ?? entry.audit_id}`, "error", "open", "Continuation step failed", entry.summary, [entry]))
   return incidents.sort((left, right) => (right.last_seen_at ?? "").localeCompare(left.last_seen_at ?? ""))
+}
+
+function unmatchedSchedulerStarts(entries: WakeSchedulerAuditTimelineEntry[]): WakeSchedulerAuditTimelineEntry[] {
+  let openStarts: WakeSchedulerAuditTimelineEntry[] = []
+  for (const entry of entries) {
+    if (entry.source_event_kind === "runtime_wake_scheduler_started") openStarts = [entry]
+    if (entry.source_event_kind === "runtime_wake_scheduler_stopped" || entry.source_event_kind === "runtime_shutdown") openStarts = []
+  }
+  return openStarts
 }
 
 function incident(id: string, severity: WakeSchedulerAuditSeverity, status: WakeSchedulerAuditIncident["status"], title: string, summary: string, entries: WakeSchedulerAuditTimelineEntry[]): WakeSchedulerAuditIncident {

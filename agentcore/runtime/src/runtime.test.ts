@@ -7116,6 +7116,23 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler audit detects later unmatched scheduler starts after closed runs", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", event_id: "scheduler_audit_closed_start", scheduler_status: "running" })
+    await eventStore.append({ kind: "runtime_wake_scheduler_stopped", created_at: "2026-05-11T15:01:00.000Z", event_id: "scheduler_audit_closed_stop", scheduler_status: "stopped" })
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:02:00.000Z", event_id: "scheduler_audit_open_start", scheduler_status: "running" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const incidents = await server.command("runtime.wake_scheduler_audit_incidents", { status: "open" }) as Array<{ title: string; related_entries: Array<{ event_id?: string }> }>
+    const openStartIncident = incidents.find((incident) => incident.title === "Scheduler start without stop")
+    expect(openStartIncident?.related_entries.map((entry) => entry.event_id)).toEqual(["scheduler_audit_open_start"])
+    const chain = await server.command("runtime.wake_scheduler_audit_chain", { relatedId: "scheduler_audit_open_start" }) as { gaps: Array<{ message: string }> }
+    expect(chain.gaps.some((gap) => gap.message.includes("scheduler start has no matching stop"))).toBe(true)
+    await server.shutdown()
+  })
+
   test("wake scheduler audit validates filters clearly", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
