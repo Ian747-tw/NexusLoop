@@ -3450,4 +3450,55 @@ describe("runtime UI effects", () => {
     snapshot = layoutSnapshot(state)
     expect(snapshot).not.toContain("recovery-secret")
   })
+
+  test("wake scheduler recovery workflow slash commands render checklist and manual records without executing remediation", async () => {
+    const previous = process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE
+    process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE = "1"
+    try {
+      const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+      let state = initialState("/tmp/demo")
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-workflow-preview", args: ["fake-recovery-1"] })
+      expect(state.wakeScheduler?.recoveryWorkflowPreview).toMatchObject({ recovery_id: "fake-recovery-1", can_create: true })
+      let snapshot = layoutSnapshot(state)
+      expect(snapshot).toContain("recovery_workflow")
+      expect(snapshot).toContain("can_create=true")
+
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-workflow", args: ["fake-recovery-1"] })
+      const workflowId = state.wakeScheduler?.selectedRecoveryWorkflow?.workflow_id
+      expect(workflowId).toBe("fake-workflow-fake-recovery-1")
+      expect(state.wakeScheduler?.selectedRecoveryWorkflow?.steps.length).toBeGreaterThan(0)
+
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-step-done", args: [workflowId!, "0", "token=workflow-secret"] })
+      expect(state.wakeScheduler?.selectedRecoveryWorkflow?.completed_step_count).toBe(1)
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-workflow-verify", args: [workflowId!] })
+      expect(state.wakeScheduler?.recoveryWorkflowVerification).toMatchObject({ workflow_id: workflowId, recovery_id: "fake-recovery-1" })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-workflows" })
+      expect(state.wakeScheduler?.recoveryWorkflows.at(0)).toMatchObject({ workflow_id: workflowId, status: "active" })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-workflow-cancel", args: [workflowId!, "token=workflow-secret"] })
+      expect(state.wakeScheduler?.selectedRecoveryWorkflow?.status).toBe("cancelled")
+      expect(state.wakeScheduler?.status?.status).not.toBe("running")
+      expect(state.wakeSchedules?.lastTick).toBeUndefined()
+      expect(state.continuation?.lastStepResult).toBeUndefined()
+      snapshot = layoutSnapshot(state)
+      expect(snapshot).toContain("selected_workflow=fake-workflow-fake-recovery-1")
+      expect(snapshot).not.toContain("workflow-secret")
+      expect(JSON.stringify(state)).not.toContain("workflow-secret")
+    } finally {
+      if (previous === undefined) delete process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE
+      else process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE = previous
+    }
+  })
+
+  test("wake scheduler recovery workflow errors are redacted and default fake path blocks creation", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-workflow-preview", args: ["missing-token=workflow-secret"] })
+    expect(state.wakeScheduler?.recoveryWorkflowPreview).toMatchObject({ can_create: false })
+    expect(JSON.stringify(state.wakeScheduler?.recoveryWorkflowPreview)).not.toContain("workflow-secret")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-recovery-step-done", args: ["workflow-1"] })
+    expect(state.wakeScheduler?.commandError).toContain("workflow step index")
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).not.toContain("workflow-secret")
+    expect(JSON.stringify(state)).not.toContain("workflow-secret")
+  })
 })

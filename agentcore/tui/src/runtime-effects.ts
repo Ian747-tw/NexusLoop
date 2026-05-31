@@ -79,6 +79,11 @@ import type {
   WakeSchedulerRecoveryPreviewSummary,
   WakeSchedulerRecoveryRecordSummary,
   WakeSchedulerRecoverySummary,
+  WakeSchedulerRecoveryWorkflowPreviewSummary,
+  WakeSchedulerRecoveryWorkflowRecordSummary,
+  WakeSchedulerRecoveryWorkflowStepSummary,
+  WakeSchedulerRecoveryWorkflowSummary,
+  WakeSchedulerRecoveryWorkflowVerificationSummary,
   WakeSchedulerStateSummary,
   WakeSchedulerUiState,
   WakeScheduleSummary,
@@ -271,6 +276,13 @@ export type RuntimeUiEffect =
   | { type: "load-wake-scheduler-recoveries"; limit?: number }
   | { type: "load-wake-scheduler-recovery"; recoveryId: string }
   | { type: "acknowledge-wake-scheduler-recovery"; recoveryId?: string; resolution: "acknowledged" | "resolved" | "dismissed"; reason?: string }
+  | { type: "preview-wake-scheduler-recovery-workflow"; recoveryId?: string }
+  | { type: "create-wake-scheduler-recovery-workflow"; recoveryId?: string }
+  | { type: "load-wake-scheduler-recovery-workflows"; limit?: number }
+  | { type: "load-wake-scheduler-recovery-workflow"; workflowId: string }
+  | { type: "verify-wake-scheduler-recovery-workflow"; workflowId: string }
+  | { type: "record-wake-scheduler-recovery-workflow-step"; workflowId: string; index: number; status: "manually_done" | "skipped" | "blocked"; note?: string }
+  | { type: "cancel-wake-scheduler-recovery-workflow"; workflowId: string; reason?: string }
   | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
@@ -975,6 +987,20 @@ export async function applyRuntimeUiEffect(
         const withPreview = applyWakeSchedulerRecoveryPreview(next, await runtime.command("runtime.preview_wake_scheduler_recovery"))
         return applyWakeSchedulerRecoveries(withPreview, await runtime.command("runtime.list_wake_scheduler_recoveries", { limit: CHECKPOINT_LIMIT }), CHECKPOINT_LIMIT)
       }
+      case "preview-wake-scheduler-recovery-workflow":
+        return applyWakeSchedulerRecoveryWorkflowPreview(state, await runtime.command("runtime.preview_wake_scheduler_recovery_workflow", { recoveryId: effect.recoveryId }))
+      case "create-wake-scheduler-recovery-workflow":
+        return applyWakeSchedulerRecoveryWorkflow(state, await runtime.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: effect.recoveryId, requestedBy: "operator" }))
+      case "load-wake-scheduler-recovery-workflows":
+        return applyWakeSchedulerRecoveryWorkflows(state, await runtime.command("runtime.list_wake_scheduler_recovery_workflows", { limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.limit ?? CHECKPOINT_LIMIT)
+      case "load-wake-scheduler-recovery-workflow":
+        return applyWakeSchedulerRecoveryWorkflow(state, await runtime.command("runtime.get_wake_scheduler_recovery_workflow", { workflowId: effect.workflowId }), effect.workflowId)
+      case "verify-wake-scheduler-recovery-workflow":
+        return applyWakeSchedulerRecoveryWorkflowVerification(state, await runtime.command("runtime.verify_wake_scheduler_recovery_workflow", { workflowId: effect.workflowId }))
+      case "record-wake-scheduler-recovery-workflow-step":
+        return applyWakeSchedulerRecoveryWorkflow(state, await runtime.command("runtime.record_wake_scheduler_recovery_workflow_step", { workflowId: effect.workflowId, index: effect.index, status: effect.status, note: effect.note, requestedBy: "operator" }), effect.workflowId)
+      case "cancel-wake-scheduler-recovery-workflow":
+        return applyWakeSchedulerRecoveryWorkflow(state, await runtime.command("runtime.cancel_wake_scheduler_recovery_workflow", { workflowId: effect.workflowId, reason: effect.reason, requestedBy: "operator" }), effect.workflowId)
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
@@ -1952,6 +1978,58 @@ function applyWakeSchedulerRecovery(state: UiState, value: unknown, requestedId?
   }
 }
 
+function applyWakeSchedulerRecoveryWorkflowPreview(state: UiState, value: unknown): UiState {
+  const previewResult = readWakeSchedulerRecoveryWorkflowPreview(value, "runtime.preview_wake_scheduler_recovery_workflow")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      recoveryWorkflowPreview: previewResult,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler recovery workflow preview", detail: `can_create=${previewResult.can_create} steps=${previewResult.step_count}`, status: previewResult.can_create ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerRecoveryWorkflow(state: UiState, value: unknown, requestedId?: string): UiState {
+  const workflow = readWakeSchedulerRecoveryWorkflow(value, "runtime.get_wake_scheduler_recovery_workflow")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      selectedRecoveryWorkflow: workflow,
+      commandError: workflow ? undefined : `scheduler recovery workflow not found: ${redactText(requestedId ?? "")}`,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler recovery workflow", detail: workflow ? `id=${workflow.workflow_id} status=${workflow.status}` : `missing=${redactText(requestedId ?? "")}`, status: workflow?.status ?? "missing" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerRecoveryWorkflows(state: UiState, value: unknown, limit: number): UiState {
+  const workflows = readWakeSchedulerRecoveryWorkflowRecordList(value, "runtime.list_wake_scheduler_recovery_workflows", limit)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      recoveryWorkflows: workflows,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler recovery workflows loaded", detail: `records=${workflows.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerRecoveryWorkflowVerification(state: UiState, value: unknown): UiState {
+  const verification = readWakeSchedulerRecoveryWorkflowVerification(value, "runtime.verify_wake_scheduler_recovery_workflow")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      recoveryWorkflowVerification: verification,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler recovery workflow verification", detail: `updates=${verification.step_updates.length}`, status: "checked" }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -2384,6 +2462,25 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "acknowledge-wake-scheduler-recovery", recoveryId: requiredArg(args, 0, "recoveryId"), resolution: "resolved", reason: args.slice(1).join(" ") || undefined })
     case "scheduler-recovery-dismiss":
       return applyRuntimeUiEffect(commandState, runtime, { type: "acknowledge-wake-scheduler-recovery", recoveryId: requiredArg(args, 0, "recoveryId"), resolution: "dismissed", reason: args.slice(1).join(" ") || undefined })
+    case "scheduler-recovery-workflow-preview":
+    case "wake-scheduler-recovery-workflow":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-scheduler-recovery-workflow", recoveryId: requiredArg(args, 0, "recoveryId") })
+    case "scheduler-recovery-workflow":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "create-wake-scheduler-recovery-workflow", recoveryId: requiredArg(args, 0, "recoveryId") })
+    case "scheduler-recovery-workflows":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-recovery-workflows", limit: CHECKPOINT_LIMIT })
+    case "scheduler-recovery-workflow-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-recovery-workflow", workflowId: requiredArg(args, 0, "workflowId") })
+    case "scheduler-recovery-workflow-verify":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "verify-wake-scheduler-recovery-workflow", workflowId: requiredArg(args, 0, "workflowId") })
+    case "scheduler-recovery-step-done":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "record-wake-scheduler-recovery-workflow-step", workflowId: requiredArg(args, 0, "workflowId"), index: requiredIndex(args, 1), status: "manually_done", note: args.slice(2).join(" ") || undefined })
+    case "scheduler-recovery-step-skip":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "record-wake-scheduler-recovery-workflow-step", workflowId: requiredArg(args, 0, "workflowId"), index: requiredIndex(args, 1), status: "skipped", note: args.slice(2).join(" ") || undefined })
+    case "scheduler-recovery-step-block":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "record-wake-scheduler-recovery-workflow-step", workflowId: requiredArg(args, 0, "workflowId"), index: requiredIndex(args, 1), status: "blocked", note: args.slice(2).join(" ") || undefined })
+    case "scheduler-recovery-workflow-cancel":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "cancel-wake-scheduler-recovery-workflow", workflowId: requiredArg(args, 0, "workflowId"), reason: args.slice(1).join(" ") || undefined })
     case "scheduler-events":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
@@ -3049,11 +3146,21 @@ const wakeSchedulerCommands = new Set([
   "scheduler-recovery-ack",
   "scheduler-recovery-resolve",
   "scheduler-recovery-dismiss",
+  "scheduler-recovery-workflow-preview",
+  "scheduler-recovery-workflow",
+  "scheduler-recovery-workflows",
+  "scheduler-recovery-workflow-show",
+  "scheduler-recovery-workflow-verify",
+  "scheduler-recovery-step-done",
+  "scheduler-recovery-step-skip",
+  "scheduler-recovery-step-block",
+  "scheduler-recovery-workflow-cancel",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",
   "wake-scheduler-stop",
   "wake-scheduler-recovery",
+  "wake-scheduler-recovery-workflow",
 ])
 
 const reasoningProviderCommands = new Set([
@@ -3159,6 +3266,13 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-wake-scheduler-recoveries",
   "load-wake-scheduler-recovery",
   "acknowledge-wake-scheduler-recovery",
+  "preview-wake-scheduler-recovery-workflow",
+  "create-wake-scheduler-recovery-workflow",
+  "load-wake-scheduler-recovery-workflows",
+  "load-wake-scheduler-recovery-workflow",
+  "verify-wake-scheduler-recovery-workflow",
+  "record-wake-scheduler-recovery-workflow-step",
+  "cancel-wake-scheduler-recovery-workflow",
   "load-wake-scheduler-events",
 ])
 
@@ -5178,6 +5292,112 @@ function readWakeSchedulerRecoveryCommands(value: unknown): WakeSchedulerRecover
   return out
 }
 
+function readWakeSchedulerRecoveryWorkflowPreview(value: unknown, commandName: string): WakeSchedulerRecoveryWorkflowPreviewSummary {
+  if (!isRecord(value)) throw new Error(`${commandName} returned invalid workflow preview`)
+  return {
+    recovery_id: readString(value.recovery_id, ""),
+    can_create: readBoolean(value.can_create),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    recovery_status: readString(value.recovery_status, "none"),
+    stale_detected: readBoolean(value.stale_detected),
+    step_count: readNumber(value.step_count, 0),
+    read_step_count: readNumber(value.read_step_count, 0),
+    write_step_count: readNumber(value.write_step_count, 0),
+    dry_run_step_count: readNumber(value.dry_run_step_count, 0),
+    resolution_step_count: readNumber(value.resolution_step_count, 0),
+    steps: readWakeSchedulerRecoveryWorkflowSteps(value.steps),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeSchedulerRecoveryWorkflow(value: unknown, commandName: string): WakeSchedulerRecoveryWorkflowSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.workflow_id !== "string") throw new Error(`${commandName} returned invalid workflow`)
+  return {
+    workflow_id: redactText(value.workflow_id),
+    recovery_id: readString(value.recovery_id, ""),
+    recovery_hash: typeof value.recovery_hash === "string" ? redactText(value.recovery_hash) : undefined,
+    status: readString(value.status, "active"),
+    created_at: readString(value.created_at, ""),
+    created_by: typeof value.created_by === "string" ? preview(redactText(value.created_by)) : "",
+    updated_at: readString(value.updated_at, ""),
+    workflow_hash: typeof value.workflow_hash === "string" ? redactText(value.workflow_hash) : "",
+    steps: readWakeSchedulerRecoveryWorkflowSteps(value.steps),
+    completed_step_count: readNumber(value.completed_step_count, 0),
+    skipped_step_count: readNumber(value.skipped_step_count, 0),
+    blocked_step_count: readNumber(value.blocked_step_count, 0),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    blockers: readStringList(value.blockers, 10).map(preview),
+  }
+}
+
+function readWakeSchedulerRecoveryWorkflowRecordList(value: unknown, commandName: string, limit: number): WakeSchedulerRecoveryWorkflowRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeSchedulerRecoveryWorkflowRecord).filter((record): record is WakeSchedulerRecoveryWorkflowRecordSummary => record !== null).slice(0, limit)
+}
+
+function readWakeSchedulerRecoveryWorkflowRecord(value: unknown): WakeSchedulerRecoveryWorkflowRecordSummary | null {
+  if (!isRecord(value) || typeof value.workflow_id !== "string") return null
+  return {
+    workflow_id: redactText(value.workflow_id),
+    recovery_id: readString(value.recovery_id, ""),
+    status: readString(value.status, "active"),
+    created_at: readString(value.created_at, ""),
+    updated_at: readString(value.updated_at, ""),
+    step_count: readNumber(value.step_count, 0),
+    completed_step_count: readNumber(value.completed_step_count, 0),
+    skipped_step_count: readNumber(value.skipped_step_count, 0),
+    blocked_step_count: readNumber(value.blocked_step_count, 0),
+    summary_preview: typeof value.summary_preview === "string" ? preview(redactText(value.summary_preview)) : "",
+    workflow_hash: typeof value.workflow_hash === "string" ? redactText(value.workflow_hash) : "",
+  }
+}
+
+function readWakeSchedulerRecoveryWorkflowVerification(value: unknown, commandName: string): WakeSchedulerRecoveryWorkflowVerificationSummary {
+  if (!isRecord(value)) throw new Error(`${commandName} returned invalid workflow verification`)
+  return {
+    workflow_id: readString(value.workflow_id, ""),
+    recovery_id: readString(value.recovery_id, ""),
+    checked_at: readString(value.checked_at, ""),
+    observable_events: Array.isArray(value.observable_events) ? value.observable_events.filter(isRecord).slice(0, 20).map((event) => ({
+      kind: readString(event.kind, "event"),
+      event_id: typeof event.event_id === "string" ? redactText(event.event_id) : undefined,
+      created_at: typeof event.created_at === "string" ? redactText(event.created_at) : undefined,
+      command_match: typeof event.command_match === "string" ? preview(redactText(event.command_match)) : undefined,
+      summary_preview: typeof event.summary_preview === "string" ? preview(redactText(event.summary_preview)) : "",
+    })) : [],
+    step_updates: Array.isArray(value.step_updates) ? value.step_updates.filter(isRecord).slice(0, 20).map((update) => ({
+      step_id: readString(update.step_id, ""),
+      index: readNumber(update.index, 0),
+      suggested_status: readString(update.suggested_status, "verified"),
+      verification_summary: preview(readString(update.verification_summary, "")),
+    })) : [],
+    warnings: readStringList(value.warnings, 20).map(preview),
+  }
+}
+
+function readWakeSchedulerRecoveryWorkflowSteps(value: unknown): WakeSchedulerRecoveryWorkflowStepSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((step) => ({
+    step_id: typeof step.step_id === "string" ? redactText(step.step_id) : undefined,
+    index: readNumber(step.index, 0),
+    label: preview(readString(step.label, "")),
+    command: preview(redactText(readString(step.command, ""))),
+    command_type: readString(step.command_type, "read"),
+    step_kind: readString(step.step_kind, "read_command"),
+    allowed_to_execute_here: false,
+    requires_active_runtime: typeof step.requires_active_runtime === "boolean" ? step.requires_active_runtime : undefined,
+    verification_hint: typeof step.verification_hint === "string" ? preview(redactText(step.verification_hint)) : undefined,
+    status: typeof step.status === "string" ? readString(step.status, "pending") : undefined,
+    note: typeof step.note === "string" ? preview(redactText(step.note)) : undefined,
+    marked_at: typeof step.marked_at === "string" ? redactText(step.marked_at) : undefined,
+    marked_by: typeof step.marked_by === "string" ? preview(redactText(step.marked_by)) : undefined,
+    verification_summary: typeof step.verification_summary === "string" ? preview(redactText(step.verification_summary)) : undefined,
+    blockers: readStringList(step.blockers, 10).map(preview),
+  }))
+}
+
 function readWakeSchedulerState(value: unknown): WakeSchedulerStateSummary {
   if (!isRecord(value) || !isRecord(value.config)) throw new Error("runtime.wake_scheduler_status returned invalid status")
   return {
@@ -5976,6 +6196,10 @@ function wakeSchedulerState(state: UiState): WakeSchedulerUiState {
     recoveryPreview: scheduler.recoveryPreview ?? null,
     selectedRecovery: scheduler.selectedRecovery ?? null,
     recoveries: scheduler.recoveries ?? [],
+    recoveryWorkflowPreview: scheduler.recoveryWorkflowPreview ?? null,
+    selectedRecoveryWorkflow: scheduler.selectedRecoveryWorkflow ?? null,
+    recoveryWorkflowVerification: scheduler.recoveryWorkflowVerification ?? null,
+    recoveryWorkflows: scheduler.recoveryWorkflows ?? [],
     events: scheduler.events ?? [],
     commandError: scheduler.commandError,
   }
@@ -6374,6 +6598,12 @@ function optionalIndexArg(args: string[], index: number): number | undefined {
   if (value === undefined) return undefined
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed < 0) throw new Error("continuation step index must be a nonnegative integer")
+  return parsed
+}
+
+function requiredIndex(args: string[], index: number): number {
+  const parsed = optionalIndexArg(args, index)
+  if (parsed === undefined) throw new Error("workflow step index is required")
   return parsed
 }
 

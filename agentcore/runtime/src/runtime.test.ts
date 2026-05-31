@@ -6911,6 +6911,160 @@ describe("RuntimeServer core", () => {
     await statusServer.shutdown()
   })
 
+  test("wake scheduler recovery workflow previews and creates checklist without remediation side effects", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_started",
+      created_at: "2026-05-11T15:00:00.000Z",
+      scheduler_status: "running",
+      event_id: "workflow_stale_start",
+      tick_id: "workflow_stale_tick",
+      requested_by: "prior token=workflow-secret",
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:05:00.000Z"),
+    })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string; stale_detected: boolean }
+    expect(recovery.stale_detected).toBe(true)
+    const preview = await server.command("runtime.preview_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { can_create: boolean; step_count: number; read_step_count: number; write_step_count: number; steps: Array<{ command: string; allowed_to_execute_here: boolean }> }
+    expect(preview.can_create).toBe(true)
+    expect(preview.step_count).toBeGreaterThan(0)
+    expect(preview.read_step_count).toBeGreaterThan(0)
+    expect(preview.write_step_count).toBeGreaterThan(0)
+    expect(preview.steps.every((step) => step.allowed_to_execute_here === false)).toBe(true)
+
+    const workflow = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id, requestedBy: "operator token=workflow-secret" }) as { workflow_id: string; status: string; steps: Array<{ command: string; status: string }>; workflow_hash: string }
+    expect(workflow.workflow_id.startsWith("wake_scheduler_recovery_workflow_")).toBe(true)
+    expect(workflow.status).toBe("active")
+    expect(workflow.steps.some((step) => step.command === "/wake-tick-preview")).toBe(true)
+    expect(JSON.stringify(workflow)).not.toContain("workflow-secret")
+    expect(await server.command("runtime.wake_scheduler_status")).toMatchObject({ status: "stopped", tick_count: 0 })
+    expect(await server.command("runtime.list_wake_schedule_ticks", { limit: 10 })).toEqual([])
+    const kinds = await readEventKinds(dir)
+    expect(kinds).toContain("runtime_wake_scheduler_recovery_workflow_created")
+    expect(kinds).not.toContain("runtime_wake_schedule_tick_completed")
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery workflow records, cancels, lists, and blocks terminal step writes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running", event_id: "workflow_record_start" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string }
+    const workflow = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string }
+    const updated = await server.command("runtime.record_wake_scheduler_recovery_workflow_step", { workflowId: workflow.workflow_id, index: 0, status: "manually_done", note: "done token=workflow-secret", requestedBy: "operator" }) as { completed_step_count: number; steps: Array<{ status: string; note?: string }> }
+    expect(updated.completed_step_count).toBe(1)
+    expect(JSON.stringify(updated)).not.toContain("workflow-secret")
+    const cancelled = await server.command("runtime.cancel_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id, reason: "cancel token=workflow-secret", requestedBy: "operator" }) as { status: string }
+    expect(cancelled.status).toBe("cancelled")
+    await expect(server.command("runtime.record_wake_scheduler_recovery_workflow_step", { workflowId: workflow.workflow_id, index: 1, status: "skipped" })).rejects.toThrow("terminal recovery workflow")
+    const listed = await server.command("runtime.list_wake_scheduler_recovery_workflows", { limit: 10 }) as Array<{ workflow_id: string; status: string }>
+    expect(listed).toEqual(expect.arrayContaining([expect.objectContaining({ workflow_id: workflow.workflow_id, status: "cancelled" })]))
+    await expect(server.command("runtime.record_wake_scheduler_recovery_workflow_step", { workflowId: "missing", index: 0, status: "manually_done" })).rejects.toThrow("not found")
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery workflow create is idempotent and preserves manual progress", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running", event_id: "workflow_idempotent_start" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string }
+    const workflow = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string }
+    await server.command("runtime.record_wake_scheduler_recovery_workflow_step", { workflowId: workflow.workflow_id, index: 0, status: "manually_done", note: "preserved", requestedBy: "operator" })
+    const repeated = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string; completed_step_count: number; steps: Array<{ status: string; note?: string }> }
+    expect(repeated.workflow_id).toBe(workflow.workflow_id)
+    expect(repeated.completed_step_count).toBe(1)
+    expect(repeated.steps[0]).toMatchObject({ status: "manually_done", note: "preserved" })
+    const createEvents = (await readJsonlEvents(dir)).filter((event) => event.kind === "runtime_wake_scheduler_recovery_workflow_created")
+    expect(createEvents).toHaveLength(1)
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery workflow completed state is terminal against cancellation", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running", event_id: "workflow_completed_start" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string }
+    let workflow = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string; steps: Array<{ index: number }> }
+    for (const step of workflow.steps) {
+      workflow = await server.command("runtime.record_wake_scheduler_recovery_workflow_step", { workflowId: workflow.workflow_id, index: step.index, status: "manually_done", requestedBy: "operator" }) as typeof workflow & { status: string }
+    }
+    expect(workflow).toMatchObject({ status: "completed" })
+    await expect(server.command("runtime.cancel_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id, reason: "late cancel" })).rejects.toThrow("completed recovery workflow cannot be cancelled")
+    expect(await server.command("runtime.get_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id })).toMatchObject({ status: "completed" })
+    await server.eventStore.append({ kind: "runtime_wake_scheduler_recovery_workflow_cancelled", workflow_id: workflow.workflow_id, cancelled_at: "2026-05-11T15:30:00.000Z", requested_by: "legacy" })
+    expect(await server.command("runtime.get_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id })).toMatchObject({ status: "completed" })
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery workflow verification is read-only and observes later recovery records", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running", event_id: "workflow_verify_start" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string }
+    const workflow = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string }
+    await server.command("runtime.acknowledge_wake_scheduler_recovery", { recoveryId: recovery.recovery_id, resolution: "acknowledged", requestedBy: "operator" })
+    const verification = await server.command("runtime.verify_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id }) as { step_updates: Array<{ suggested_status: string; verification_summary: string }>; warnings: string[] }
+    expect(verification.step_updates.some((update) => update.suggested_status === "verified" && update.verification_summary.includes("recovery record"))).toBe(true)
+    expect(verification.warnings.some((warning) => warning.includes("dry-run"))).toBe(true)
+    const unchanged = await server.command("runtime.get_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id }) as { completed_step_count: number }
+    expect(unchanged.completed_step_count).toBe(0)
+    expect(await server.command("runtime.list_wake_schedule_ticks", { limit: 10 })).toEqual([])
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery workflow verification ignores same-timestamp pre-create events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running", event_id: "workflow_verify_pre_start" })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-11T15:00:00.000Z"),
+    })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string }
+    const workflow = await server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { workflow_id: string }
+    const verification = await server.command("runtime.verify_wake_scheduler_recovery_workflow", { workflowId: workflow.workflow_id }) as { step_updates: Array<{ verification_summary: string }> }
+    expect(verification.step_updates.some((update) => update.verification_summary.includes("scheduler start event"))).toBe(false)
+    await server.shutdown()
+  })
+
+  test("wake scheduler recovery workflow write commands require active mode while read commands work in status mode", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({ kind: "runtime_wake_scheduler_started", created_at: "2026-05-11T15:00:00.000Z", scheduler_status: "running" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const recovery = await server.command("runtime.preview_wake_scheduler_recovery") as { recovery_id: string }
+    const preview = await server.command("runtime.preview_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id }) as { can_create: boolean }
+    expect(preview.can_create).toBe(true)
+    await expect(server.command("runtime.create_wake_scheduler_recovery_workflow", { recoveryId: recovery.recovery_id })).rejects.toThrow("requires active mode")
+    expect(await server.command("runtime.list_wake_scheduler_recovery_workflows", { limit: 10 })).toEqual([])
+    await server.shutdown()
+  })
+
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

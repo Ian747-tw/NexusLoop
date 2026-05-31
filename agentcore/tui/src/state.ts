@@ -1495,6 +1495,84 @@ export type WakeSchedulerRecoveryRecordSummary = {
   recovery_hash: string
 }
 
+export type WakeSchedulerRecoveryWorkflowStatusSummary = "proposed" | "active" | "completed" | "cancelled" | "blocked" | string
+
+export type WakeSchedulerRecoveryWorkflowStepStatusSummary = "pending" | "manually_done" | "verified" | "skipped" | "blocked" | string
+
+export type WakeSchedulerRecoveryWorkflowStepSummary = {
+  step_id?: string
+  index: number
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  step_kind: string
+  allowed_to_execute_here: false
+  requires_active_runtime?: boolean
+  verification_hint?: string
+  status?: WakeSchedulerRecoveryWorkflowStepStatusSummary
+  note?: string
+  marked_at?: string
+  marked_by?: string
+  verification_summary?: string
+  blockers: string[]
+}
+
+export type WakeSchedulerRecoveryWorkflowPreviewSummary = {
+  recovery_id: string
+  can_create: boolean
+  blockers: string[]
+  warnings: string[]
+  recovery_status: WakeSchedulerRecoveryStatusSummary
+  stale_detected: boolean
+  step_count: number
+  read_step_count: number
+  write_step_count: number
+  dry_run_step_count: number
+  resolution_step_count: number
+  steps: WakeSchedulerRecoveryWorkflowStepSummary[]
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerRecoveryWorkflowSummary = {
+  workflow_id: string
+  recovery_id: string
+  recovery_hash?: string
+  status: WakeSchedulerRecoveryWorkflowStatusSummary
+  created_at: string
+  created_by: string
+  updated_at: string
+  workflow_hash: string
+  steps: WakeSchedulerRecoveryWorkflowStepSummary[]
+  completed_step_count: number
+  skipped_step_count: number
+  blocked_step_count: number
+  warnings: string[]
+  blockers: string[]
+}
+
+export type WakeSchedulerRecoveryWorkflowRecordSummary = {
+  workflow_id: string
+  recovery_id: string
+  status: WakeSchedulerRecoveryWorkflowStatusSummary
+  created_at: string
+  updated_at: string
+  step_count: number
+  completed_step_count: number
+  skipped_step_count: number
+  blocked_step_count: number
+  summary_preview: string
+  workflow_hash: string
+}
+
+export type WakeSchedulerRecoveryWorkflowVerificationSummary = {
+  workflow_id: string
+  recovery_id: string
+  checked_at: string
+  observable_events: Array<{ kind: string; event_id?: string; created_at?: string; command_match?: string; summary_preview: string }>
+  step_updates: Array<{ step_id: string; index: number; suggested_status: WakeSchedulerRecoveryWorkflowStepStatusSummary; verification_summary: string }>
+  warnings: string[]
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -1503,6 +1581,10 @@ export type WakeSchedulerUiState = {
   recoveryPreview?: WakeSchedulerRecoveryPreviewSummary | null
   selectedRecovery?: WakeSchedulerRecoverySummary | null
   recoveries: WakeSchedulerRecoveryRecordSummary[]
+  recoveryWorkflowPreview?: WakeSchedulerRecoveryWorkflowPreviewSummary | null
+  selectedRecoveryWorkflow?: WakeSchedulerRecoveryWorkflowSummary | null
+  recoveryWorkflowVerification?: WakeSchedulerRecoveryWorkflowVerificationSummary | null
+  recoveryWorkflows: WakeSchedulerRecoveryWorkflowRecordSummary[]
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

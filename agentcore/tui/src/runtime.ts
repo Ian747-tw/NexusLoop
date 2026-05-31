@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -58,6 +58,8 @@ export class FakeRuntimeClient implements RuntimeClient {
   private wakeSchedulerBootstrapStatusRecord: WakeSchedulerBootstrapStatusSummary = fakeWakeSchedulerBootstrapStatus()
   private wakeSchedulerRecoveryPreviewRecord: WakeSchedulerRecoveryPreviewSummary = fakeWakeSchedulerRecoveryPreview()
   private readonly wakeSchedulerRecoveries: WakeSchedulerRecoverySummary[] = []
+  private wakeSchedulerRecoveryWorkflowPreviewRecord: WakeSchedulerRecoveryWorkflowPreviewSummary | null = null
+  private readonly wakeSchedulerRecoveryWorkflows: WakeSchedulerRecoveryWorkflowSummary[] = []
   private readonly wakeSchedulerEvents: WakeSchedulerEventRecordSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
@@ -448,6 +450,20 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getWakeSchedulerRecovery(String(payload.recoveryId ?? payload.recovery_id ?? ""))
       case "runtime.acknowledge_wake_scheduler_recovery":
         return this.acknowledgeWakeSchedulerRecovery(payload)
+      case "runtime.preview_wake_scheduler_recovery_workflow":
+        return this.previewWakeSchedulerRecoveryWorkflow(String(payload.recoveryId ?? payload.recovery_id ?? ""))
+      case "runtime.create_wake_scheduler_recovery_workflow":
+        return this.createWakeSchedulerRecoveryWorkflow(String(payload.recoveryId ?? payload.recovery_id ?? ""))
+      case "runtime.list_wake_scheduler_recovery_workflows":
+        return this.listWakeSchedulerRecoveryWorkflows(readLimit(payload.limit, 20))
+      case "runtime.get_wake_scheduler_recovery_workflow":
+        return this.getWakeSchedulerRecoveryWorkflow(String(payload.workflowId ?? payload.workflow_id ?? ""))
+      case "runtime.record_wake_scheduler_recovery_workflow_step":
+        return this.recordWakeSchedulerRecoveryWorkflowStep(payload)
+      case "runtime.cancel_wake_scheduler_recovery_workflow":
+        return this.cancelWakeSchedulerRecoveryWorkflow(payload)
+      case "runtime.verify_wake_scheduler_recovery_workflow":
+        return this.verifyWakeSchedulerRecoveryWorkflow(String(payload.workflowId ?? payload.workflow_id ?? ""))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
@@ -1600,6 +1616,130 @@ export class FakeRuntimeClient implements RuntimeClient {
       recommended_commands: previewResult.recommended_commands.filter((command) => !command.command.startsWith("/scheduler-recovery-ack")),
     }
     return recovery
+  }
+
+  private previewWakeSchedulerRecoveryWorkflow(recoveryId: string): WakeSchedulerRecoveryWorkflowPreviewSummary {
+    const recovery = recoveryId ? this.getWakeSchedulerRecovery(recoveryId) : this.previewWakeSchedulerRecovery()
+    const steps = recovery && recovery.stale_detected
+      ? recovery.recommended_commands.map((command, index): WakeSchedulerRecoveryWorkflowStepSummary => ({
+        index,
+        label: command.label,
+        command: command.command,
+        command_type: command.command_type,
+        step_kind: command.command_type === "read" ? "read_command" : command.command.includes("dry-run") ? "dry_run_command" : command.command.startsWith("/scheduler-recovery-") ? "recovery_resolution" : "write_command",
+        allowed_to_execute_here: false,
+        requires_active_runtime: command.requires_active_runtime,
+        verification_hint: "fake workflow does not execute commands",
+        blockers: [],
+      }))
+      : []
+    const previewResult: WakeSchedulerRecoveryWorkflowPreviewSummary = {
+      recovery_id: recovery?.recovery_id ?? recoveryId,
+      can_create: Boolean(recovery?.stale_detected && recovery.recovery_id),
+      blockers: recovery?.stale_detected ? [] : ["no stale scheduler recovery is available for workflow creation"],
+      warnings: recovery?.warnings ?? [],
+      recovery_status: recovery?.status ?? "none",
+      stale_detected: Boolean(recovery?.stale_detected),
+      step_count: steps.length,
+      read_step_count: steps.filter((step) => step.command_type === "read").length,
+      write_step_count: steps.filter((step) => step.command_type === "write").length,
+      dry_run_step_count: steps.filter((step) => step.step_kind === "dry_run_command").length,
+      resolution_step_count: steps.filter((step) => step.step_kind === "recovery_resolution").length,
+      steps,
+      redacted_summary_preview: `fake workflow recovery=${recovery?.recovery_id ?? recoveryId} steps=${steps.length}`,
+    }
+    this.wakeSchedulerRecoveryWorkflowPreviewRecord = previewResult
+    return previewResult
+  }
+
+  private createWakeSchedulerRecoveryWorkflow(recoveryId: string): WakeSchedulerRecoveryWorkflowSummary {
+    const previewResult = this.previewWakeSchedulerRecoveryWorkflow(recoveryId)
+    if (!previewResult.can_create) throw new Error("wake scheduler recovery workflow cannot be created")
+    const workflowId = `fake-workflow-${previewResult.recovery_id}`
+    const now = new Date(0).toISOString()
+    const workflow: WakeSchedulerRecoveryWorkflowSummary = {
+      workflow_id: workflowId,
+      recovery_id: previewResult.recovery_id,
+      recovery_hash: `fake-${previewResult.recovery_id}`,
+      status: "active",
+      created_at: now,
+      created_by: "operator",
+      updated_at: now,
+      workflow_hash: `fake-${workflowId}`,
+      steps: previewResult.steps.map((step) => ({ ...step, step_id: `fake-step-${step.index}`, status: "pending" })),
+      completed_step_count: 0,
+      skipped_step_count: 0,
+      blocked_step_count: 0,
+      warnings: previewResult.warnings,
+      blockers: [],
+    }
+    this.wakeSchedulerRecoveryWorkflows.unshift(workflow)
+    return workflow
+  }
+
+  private listWakeSchedulerRecoveryWorkflows(limit: number): WakeSchedulerRecoveryWorkflowRecordSummary[] {
+    return this.wakeSchedulerRecoveryWorkflows.slice(0, limit).map((workflow) => ({
+      workflow_id: workflow.workflow_id,
+      recovery_id: workflow.recovery_id,
+      status: workflow.status,
+      created_at: workflow.created_at,
+      updated_at: workflow.updated_at,
+      step_count: workflow.steps.length,
+      completed_step_count: workflow.completed_step_count,
+      skipped_step_count: workflow.skipped_step_count,
+      blocked_step_count: workflow.blocked_step_count,
+      summary_preview: `fake workflow ${workflow.workflow_id}`,
+      workflow_hash: workflow.workflow_hash,
+    }))
+  }
+
+  private getWakeSchedulerRecoveryWorkflow(workflowId: string): WakeSchedulerRecoveryWorkflowSummary | null {
+    const id = requiredString(workflowId, "workflowId")
+    return this.wakeSchedulerRecoveryWorkflows.find((workflow) => workflow.workflow_id === id) ?? null
+  }
+
+  private recordWakeSchedulerRecoveryWorkflowStep(payload: Record<string, unknown>): WakeSchedulerRecoveryWorkflowSummary {
+    const workflow = this.getWakeSchedulerRecoveryWorkflow(String(payload.workflowId ?? payload.workflow_id ?? ""))
+    if (!workflow) throw new Error("wake scheduler recovery workflow not found")
+    if (workflow.status === "cancelled" || workflow.status === "completed") throw new Error("terminal recovery workflow cannot record more steps")
+    const index = Number(payload.index)
+    if (!Number.isInteger(index) || index < 0) throw new Error("workflow step index must be a non-negative integer")
+    const step = workflow.steps.find((item) => item.index === index)
+    if (!step) throw new Error("wake scheduler recovery workflow step not found")
+    const status = String(payload.status)
+    if (status !== "manually_done" && status !== "skipped" && status !== "blocked") throw new Error("workflow step status must be manually_done, skipped, or blocked")
+    step.status = status
+    step.note = typeof payload.note === "string" ? redactText(payload.note) : undefined
+    step.marked_at = new Date(0).toISOString()
+    step.marked_by = "operator"
+    workflow.completed_step_count = workflow.steps.filter((item) => item.status === "manually_done" || item.status === "verified").length
+    workflow.skipped_step_count = workflow.steps.filter((item) => item.status === "skipped").length
+    workflow.blocked_step_count = workflow.steps.filter((item) => item.status === "blocked").length
+    workflow.status = workflow.blocked_step_count > 0 ? "blocked" : workflow.steps.every((item) => item.status !== "pending") ? "completed" : "active"
+    workflow.updated_at = new Date(0).toISOString()
+    return workflow
+  }
+
+  private cancelWakeSchedulerRecoveryWorkflow(payload: Record<string, unknown>): WakeSchedulerRecoveryWorkflowSummary {
+    const workflow = this.getWakeSchedulerRecoveryWorkflow(String(payload.workflowId ?? payload.workflow_id ?? ""))
+    if (!workflow) throw new Error("wake scheduler recovery workflow not found")
+    workflow.status = "cancelled"
+    workflow.updated_at = new Date(0).toISOString()
+    if (typeof payload.reason === "string") workflow.blockers = [redactText(payload.reason)]
+    return workflow
+  }
+
+  private verifyWakeSchedulerRecoveryWorkflow(workflowId: string): WakeSchedulerRecoveryWorkflowVerificationSummary {
+    const workflow = this.getWakeSchedulerRecoveryWorkflow(workflowId)
+    if (!workflow) throw new Error("wake scheduler recovery workflow not found")
+    return {
+      workflow_id: workflow.workflow_id,
+      recovery_id: workflow.recovery_id,
+      checked_at: new Date(0).toISOString(),
+      observable_events: [],
+      step_updates: [],
+      warnings: ["fake workflow verification is read-only and does not execute commands"],
+    }
   }
 
   private listWakeSchedulerEvents(limit: number): WakeSchedulerEventRecordSummary[] {
