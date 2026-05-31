@@ -1662,6 +1662,79 @@ export type WakeSchedulerAuditIncidentSummary = {
   recommended_commands: WakeSchedulerAuditCommandSummary[]
 }
 
+export type WakeSchedulerNavigationRiskSummary = "safe_read" | "write_requires_operator" | "high_impact_write" | "unsupported" | string
+
+export type WakeSchedulerNavigationTargetKindSummary =
+  | "scheduler_status"
+  | "scheduler_bootstrap"
+  | "scheduler_recovery"
+  | "scheduler_recovery_workflow"
+  | "scheduler_audit"
+  | "wake_schedule"
+  | "wake_tick"
+  | "wake_assessment"
+  | "continuation_plan"
+  | "checkpoint"
+  | "resume_anchor"
+  | "handoff_followup"
+  | "mission"
+  | "unknown"
+  | string
+
+export type WakeSchedulerNavigationCardSummary = {
+  card_id: string
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  risk: WakeSchedulerNavigationRiskSummary
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id?: string
+  supported: boolean
+  blockers: string[]
+  notes: string[]
+  recommended_order: number
+}
+
+export type WakeSchedulerNavigationBoardSummary = {
+  board_id: string
+  source: {
+    kind: "summary" | "timeline" | "chain" | "incident" | "related_id" | "command" | string
+    related_id?: string
+    incident_id?: string
+    audit_id?: string
+  }
+  title: string
+  summary: string
+  cards: WakeSchedulerNavigationCardSummary[]
+  related_ids: Record<string, string[]>
+  warnings: string[]
+  blockers: string[]
+  generated_at: string
+}
+
+export type WakeSchedulerNavigationCommandPreviewSummary = {
+  command: string
+  command_type: "read" | "write" | string
+  risk: WakeSchedulerNavigationRiskSummary
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id?: string
+  supported: boolean
+  blockers: string[]
+  notes: string[]
+  equivalent_runtime_command?: string
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerNavigationTargetSummary = {
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id: string
+  title: string
+  related_commands: WakeSchedulerNavigationCardSummary[]
+  related_ids: Record<string, string[]>
+  audit_entries: WakeSchedulerAuditTimelineEntrySummary[]
+  warnings: string[]
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -1678,6 +1751,9 @@ export type WakeSchedulerUiState = {
   auditTimeline: WakeSchedulerAuditTimelineEntrySummary[]
   selectedAuditChain?: WakeSchedulerAuditChainSummary | null
   auditIncidents: WakeSchedulerAuditIncidentSummary[]
+  navigationBoard?: WakeSchedulerNavigationBoardSummary | null
+  navigationCommandPreview?: WakeSchedulerNavigationCommandPreviewSummary | null
+  navigationTarget?: WakeSchedulerNavigationTargetSummary | null
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

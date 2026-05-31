@@ -3541,4 +3541,51 @@ describe("runtime UI effects", () => {
     expect(state.wakeScheduler?.commandError).toContain("scheduler audit timeline arg is invalid")
     expect(JSON.stringify(state)).not.toContain("audit-secret")
   })
+
+  test("wake scheduler navigation slash commands render command cards without execution", async () => {
+    const previous = process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE
+    process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE = "1"
+    try {
+      const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+      let state = initialState("/tmp/demo")
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav" })
+      expect(state.wakeScheduler?.navigationBoard?.cards.some((card) => card.command === "/scheduler-audit")).toBe(true)
+      let snapshot = layoutSnapshot(state)
+      expect(snapshot).toContain("scheduler_navigation")
+      expect(snapshot).toContain("cards")
+
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav", args: ["related=fake-recovery-1"] })
+      expect(state.wakeScheduler?.navigationBoard?.source).toMatchObject({ kind: "related_id", related_id: "fake-recovery-1" })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav", args: ["incident=fake-incident-fake-audit-recovery"] })
+      expect(state.wakeScheduler?.navigationBoard?.source.kind).toBe("incident")
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-command", args: ["/wake-tick-dry-run", "token=nav-secret"] })
+      expect(state.wakeScheduler?.navigationCommandPreview).toMatchObject({ command_type: "write", risk: "write_requires_operator", target_kind: "wake_tick", supported: true })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-command", args: ["/scheduler-status"] })
+      expect(state.wakeScheduler?.navigationCommandPreview).toMatchObject({ command_type: "read", risk: "safe_read", target_kind: "scheduler_status", supported: true })
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-target", args: ["recovery", "fake-recovery-1"] })
+      expect(state.wakeScheduler?.navigationTarget).toMatchObject({ target_kind: "scheduler_recovery", target_id: "fake-recovery-1" })
+      expect(state.wakeScheduler?.status?.status).not.toBe("running")
+      expect(state.wakeSchedules?.lastTick).toBeUndefined()
+      expect(state.continuation?.lastStepResult).toBeUndefined()
+      snapshot = layoutSnapshot(state)
+      expect(snapshot).toContain("target=scheduler_recovery:fake-recovery-1")
+      expect(snapshot).not.toContain("nav-secret")
+      expect(JSON.stringify(state)).not.toContain("nav-secret")
+    } finally {
+      if (previous === undefined) delete process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE
+      else process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE = previous
+    }
+  })
+
+  test("wake scheduler navigation invalid args and unsupported commands are redacted", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav", args: ["bad=token=nav-secret"] })
+    expect(state.wakeScheduler?.commandError).toContain("scheduler navigation arg is invalid")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-command", args: ["/tmp/repro", "token=nav-secret"] })
+    expect(state.wakeScheduler?.navigationCommandPreview).toMatchObject({ risk: "unsupported", supported: false })
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).not.toContain("nav-secret")
+    expect(JSON.stringify(state)).not.toContain("nav-secret")
+  })
 })

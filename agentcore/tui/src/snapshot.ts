@@ -732,6 +732,31 @@ function wakeSchedulerLines(state: UiState): string[] {
   out.push("    incident_rows")
   if (scheduler.auditIncidents.length === 0) out.push("      - empty")
   else out.push(...scheduler.auditIncidents.slice(0, 10).map((incident) => `      - ${incident.severity}/${incident.status} ${incident.incident_id}: ${preview(redactText(incident.title))}`))
+  out.push("  scheduler_navigation")
+  if (scheduler.navigationBoard) {
+    const board = scheduler.navigationBoard
+    out.push(`    board=${board.board_id} source=${board.source.kind} cards=${board.cards.length}`)
+    out.push(`    title=${preview(redactText(board.title))}`)
+    out.push(`    summary=${preview(redactText(board.summary))}`)
+    if (board.blockers.length > 0) out.push(...board.blockers.slice(0, 10).map((blocker) => `    blocker=${preview(redactText(blocker))}`))
+    if (board.warnings.length > 0) out.push(...board.warnings.slice(0, 10).map((warning) => `    warning=${preview(redactText(warning))}`))
+    out.push("    cards")
+    if (board.cards.length === 0) out.push("      - empty")
+    else out.push(...board.cards.slice(0, 10).map((card) => `      - ${card.recommended_order} ${card.risk}/${card.command_type} ${card.target_kind}${card.target_id ? `:${card.target_id}` : ""} supported=${card.supported}: ${preview(redactText(card.command))}`))
+  } else {
+    out.push("    board=none")
+  }
+  if (scheduler.navigationCommandPreview) {
+    const commandPreview = scheduler.navigationCommandPreview
+    out.push(`    command_preview=${commandPreview.risk}/${commandPreview.command_type} target=${commandPreview.target_kind}${commandPreview.target_id ? `:${commandPreview.target_id}` : ""} supported=${commandPreview.supported}: ${preview(redactText(commandPreview.command))}`)
+    if (commandPreview.equivalent_runtime_command) out.push(`    runtime_command=${preview(redactText(commandPreview.equivalent_runtime_command))}`)
+    if (commandPreview.blockers.length > 0) out.push(...commandPreview.blockers.slice(0, 10).map((blocker) => `    command_blocker=${preview(redactText(blocker))}`))
+  }
+  if (scheduler.navigationTarget) {
+    const target = scheduler.navigationTarget
+    out.push(`    target=${target.target_kind}:${target.target_id} commands=${target.related_commands.length} audit_entries=${target.audit_entries.length}`)
+    if (target.warnings.length > 0) out.push(...target.warnings.slice(0, 10).map((warning) => `    target_warning=${preview(redactText(warning))}`))
+  }
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

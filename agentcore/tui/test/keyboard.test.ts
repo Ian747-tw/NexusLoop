@@ -665,6 +665,12 @@ describe("TUI keyboard command model", () => {
       ["/scheduler-audit-timeline limit=5 related=recovery-1", "scheduler-audit-timeline", ["limit=5", "related=recovery-1"]],
       ["/scheduler-audit-chain recovery-1", "scheduler-audit-chain", ["recovery-1"]],
       ["/scheduler-audit-incidents open", "scheduler-audit-incidents", ["open"]],
+      ["/scheduler-nav", "scheduler-nav", []],
+      ["/scheduler-navigation related=recovery-1", "scheduler-navigation", ["related=recovery-1"]],
+      ["/scheduler-nav incident=incident-1", "scheduler-nav", ["incident=incident-1"]],
+      ["/scheduler-nav audit=audit-1", "scheduler-nav", ["audit=audit-1"]],
+      ["/scheduler-nav-command /wake-tick-dry-run token=secret", "scheduler-nav-command", ["/wake-tick-dry-run", "token=secret"]],
+      ["/scheduler-nav-target recovery recovery-1", "scheduler-nav-target", ["recovery", "recovery-1"]],
       ["/scheduler-stop e2e stop", "scheduler-stop", ["e2e", "stop"]],
       ["/scheduler-events", "scheduler-events", []],
       ["/wake-scheduler-preview every=60s", "wake-scheduler-preview", ["every=60s"]],
@@ -673,6 +679,7 @@ describe("TUI keyboard command model", () => {
       ["/wake-scheduler-recovery", "wake-scheduler-recovery", []],
       ["/wake-scheduler-recovery-workflow recovery-1", "wake-scheduler-recovery-workflow", ["recovery-1"]],
       ["/wake-scheduler-audit", "wake-scheduler-audit", []],
+      ["/wake-scheduler-nav", "wake-scheduler-nav", []],
     ] as const) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
@@ -686,7 +693,7 @@ describe("TUI keyboard command model", () => {
       expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
     }
 
-    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap", "/tmp/repro/scheduler-recovery", "/path/scheduler-recovery-ack", ".scheduler-recovery", ":scheduler-recovery", "/tmp/repro/scheduler-recovery-workflow", "/path/scheduler-recovery-step-done", ".scheduler-recovery-workflow", ":scheduler-recovery-step-done", "/tmp/repro/scheduler-audit", "/path/scheduler-audit-chain", ".scheduler-audit", ":scheduler-audit"]) {
+    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap", "/tmp/repro/scheduler-recovery", "/path/scheduler-recovery-ack", ".scheduler-recovery", ":scheduler-recovery", "/tmp/repro/scheduler-recovery-workflow", "/path/scheduler-recovery-step-done", ".scheduler-recovery-workflow", ":scheduler-recovery-step-done", "/tmp/repro/scheduler-audit", "/path/scheduler-audit-chain", ".scheduler-audit", ":scheduler-audit", "/tmp/repro/scheduler-nav", "/path/scheduler-nav-target", ".scheduler-nav", ":scheduler-nav"]) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",
