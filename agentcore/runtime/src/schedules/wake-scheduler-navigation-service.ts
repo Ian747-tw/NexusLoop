@@ -15,6 +15,7 @@ import type {
 
 const DEFAULT_LIMIT = 20
 const HARD_LIMIT = 50
+const INCIDENT_SEARCH_LIMIT = 200
 const PREVIEW_CHARS = 220
 
 interface NormalizedInput {
@@ -125,7 +126,7 @@ export class WakeSchedulerNavigationService {
   }
 
   private async incidentBoard(incidentId: string, input: NormalizedInput): Promise<WakeSchedulerNavigationBoard> {
-    const incidents = await this.auditService.incidents({ limit: HARD_LIMIT })
+    const incidents = await this.auditService.incidents({ limit: INCIDENT_SEARCH_LIMIT })
     const incident = incidents.find((item) => item.incident_id === incidentId)
     const commands = incident ? [...incident.recommended_commands, ...incident.related_entries.flatMap((entry) => entry.recommended_commands)] : []
     return this.boardFromParts({
@@ -419,4 +420,3 @@ function preview(value: string): string {
 function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex")
 }
-

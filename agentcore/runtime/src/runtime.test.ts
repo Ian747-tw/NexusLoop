@@ -7256,6 +7256,30 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation incident lookup searches beyond display caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    for (let index = 0; index < 60; index += 1) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_tick_failed",
+        event_id: `nav_many_failed_tick_${index}`,
+        created_at: `2026-05-11T15:${String(index).padStart(2, "0")}:00.000Z`,
+        tick_id: `nav_many_tick_${index}`,
+        error: `failed ${index}`,
+      })
+    }
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const incidents = await server.command("runtime.wake_scheduler_audit_incidents", { limit: 100 }) as Array<{ incident_id: string }>
+    expect(incidents.length).toBeGreaterThan(55)
+    const olderIncident = incidents[55]!
+    const board = await server.command("runtime.wake_scheduler_navigation_board", { incidentId: olderIncident.incident_id }) as { blockers: string[]; cards: Array<{ command: string }> }
+    expect(board.blockers).toEqual([])
+    expect(board.cards.some((card) => card.command === "/wake-tick-preview")).toBe(true)
+    await server.shutdown()
+  })
+
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
