@@ -3762,6 +3762,8 @@ describe("runtime UI effects", () => {
     expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "unsupported", status: "unsupported", can_stage_now: false, can_execute_now: false })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-board", args: [] })
     expect(state.wakeScheduler?.writeBoard?.previews.length).toBeGreaterThan(0)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-board", args: ["staged=staged-7t"] })
+    expect(state.wakeScheduler?.writeBoard?.previews[0]).toMatchObject({ command: "/scheduler-nav-run staged-7t", risk: "low_risk_write", authority_gate: "wake_scheduler_runtime" })
 
     const snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("scheduler_write_eligibility")

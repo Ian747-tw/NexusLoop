@@ -218,6 +218,16 @@ const WRITE_SPECS: Record<string, WriteSpec> = {
     equivalent_runtime_command: "runtime.stop_wake_scheduler",
     safer_reads: () => [readCommand("Scheduler status", "/scheduler-status"), readCommand("Scheduler events", "/scheduler-events")],
   },
+  "/scheduler-nav-run": {
+    risk: "low_risk_write",
+    authority_gate: "wake_scheduler_runtime",
+    status: "blocked",
+    target_kind: "scheduler_navigation_staged_read",
+    equivalent_runtime_command: "runtime.execute_wake_scheduler_navigation_staged_read",
+    requires_target: "first",
+    safer_reads: (args) => [readCommand("Staged read preview", `/scheduler-nav-run-preview ${args.target_id ?? "<stagedId>"}`), readCommand("Staged navigation commands", "/scheduler-nav-staged"), readCommand("Staged read history", args.target_id ? `/scheduler-nav-read-history staged=${args.target_id}` : "/scheduler-nav-read-history")],
+    warnings: ["staged read execution records a bounded read result event only when run through the explicit 7R command"],
+  },
   "/checkpoint": {
     risk: "medium_risk_write",
     authority_gate: "checkpoint_runtime",

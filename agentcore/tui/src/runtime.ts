@@ -1916,9 +1916,11 @@ export class FakeRuntimeClient implements RuntimeClient {
     const stagedId = typeof payload.stagedId === "string" ? payload.stagedId : typeof payload.staged_id === "string" ? payload.staged_id : undefined
     const includeHighImpact = payload.includeHighImpact === false || payload.include_high_impact === false ? false : true
     const source = relatedId ? { kind: "related_id", related_id: redactText(relatedId) } : incidentId ? { kind: "incident", incident_id: redactText(incidentId) } : stagedId ? { kind: "staged_read_group", staged_id: redactText(stagedId) } : { kind: "navigation_board" }
-    const commands = relatedId || incidentId
-      ? ["/wake-tick-dry-run", "/scheduler-start dry-run every=60s", "/wake-tick"]
-      : ["/wake-tick-dry-run", "/checkpoint full manual-checkpoint", "/scheduler-start dry-run every=60s", "/wake-tick"]
+    const commands = stagedId
+      ? [`/scheduler-nav-run ${stagedId}`]
+      : relatedId || incidentId
+        ? ["/wake-tick-dry-run", "/scheduler-start dry-run every=60s", "/wake-tick"]
+        : ["/wake-tick-dry-run", "/checkpoint full manual-checkpoint", "/scheduler-start dry-run every=60s", "/wake-tick"]
     const previews = commands.map(fakeWakeSchedulerNavigationWritePreview).filter((previewRecord) => includeHighImpact || previewRecord.risk !== "high_impact_write").slice(0, limit)
     return {
       board_id: `fake-write-board-${source.kind}`,
@@ -4314,7 +4316,7 @@ function fakeWakeSchedulerNavigationWritePreview(commandValue: string): WakeSche
     return fakeUnsupportedWritePreview(command, "command must be a single whitelisted slash command")
   }
   const highImpact = new Set(["/wake-tick", "/handoff", "/apply", "/approve", "/reject", "/complete", "/fail", "/cancel", "/api-call", "/synthesize", "/cycle"])
-  const medium = new Set(["/scheduler-start", "/scheduler-stop", "/checkpoint", "/scheduler-recovery-ack", "/scheduler-recovery-resolve", "/scheduler-recovery-dismiss", "/scheduler-recovery-workflow", "/scheduler-recovery-step-done", "/scheduler-recovery-step-skip", "/scheduler-recovery-step-block", "/scheduler-recovery-workflow-cancel", "/continue-plan", "/continue-step", "/continue-pause", "/continue-cancel"])
+  const medium = new Set(["/scheduler-start", "/scheduler-stop", "/scheduler-nav-run", "/checkpoint", "/scheduler-recovery-ack", "/scheduler-recovery-resolve", "/scheduler-recovery-dismiss", "/scheduler-recovery-workflow", "/scheduler-recovery-step-done", "/scheduler-recovery-step-skip", "/scheduler-recovery-step-block", "/scheduler-recovery-workflow-cancel", "/continue-plan", "/continue-step", "/continue-pause", "/continue-cancel"])
   if (name !== "/wake-tick-dry-run" && !medium.has(name) && !highImpact.has(name)) return fakeUnsupportedWritePreview(command, "command is not in the scheduler write preview whitelist")
   const high = highImpact.has(name)
   const gate = fakeWriteGateFor(name)
@@ -4322,7 +4324,7 @@ function fakeWakeSchedulerNavigationWritePreview(commandValue: string): WakeSche
     command,
     command_name: name,
     command_type: "write",
-    risk: high ? "high_impact_write" : name === "/wake-tick-dry-run" ? "low_risk_write" : "medium_risk_write",
+    risk: high ? "high_impact_write" : name === "/wake-tick-dry-run" || name === "/scheduler-nav-run" ? "low_risk_write" : "medium_risk_write",
     authority_gate: gate,
     equivalent_runtime_command: fakeRuntimeCommandFor(name),
     status: high ? "high_impact_blocked" : "blocked",
@@ -4386,7 +4388,7 @@ function fakeUnsupportedWritePreview(command: string, reason: string): WakeSched
 }
 
 function fakeWriteGateFor(name: string): WakeSchedulerNavigationWritePreviewSummary["authority_gate"] {
-  if (name === "/scheduler-start" || name === "/scheduler-stop") return "wake_scheduler_runtime"
+  if (name === "/scheduler-start" || name === "/scheduler-stop" || name === "/scheduler-nav-run") return "wake_scheduler_runtime"
   if (name.startsWith("/wake-tick")) return "wake_schedule_tick"
   if (name === "/checkpoint") return "checkpoint_runtime"
   if (name.startsWith("/scheduler-recovery-step") || name.startsWith("/scheduler-recovery-workflow")) return "recovery_workflow_runtime"

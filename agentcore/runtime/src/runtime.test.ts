@@ -7699,6 +7699,10 @@ describe("RuntimeServer core", () => {
     const continuation = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/continue-step plan_7t_1" }) as { authority_gate: string; status: string }
     expect(continuation).toMatchObject({ authority_gate: "continuation_runtime", status: "blocked" })
 
+    const stagedRun = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-nav-run staged_7t_1" }) as { risk: string; authority_gate: string; status: string; target_kind: string; target_id: string; safer_read_commands: Array<{ command: string }> }
+    expect(stagedRun).toMatchObject({ risk: "low_risk_write", authority_gate: "wake_scheduler_runtime", status: "blocked", target_kind: "scheduler_navigation_staged_read", target_id: "staged_7t_1" })
+    expect(stagedRun.safer_read_commands.map((command) => command.command)).toContain("/scheduler-nav-run-preview staged_7t_1")
+
     for (const command of ["/wake-tick", "/handoff token=abc123", "/apply proposal_1", "/approve review_1", "/reject review_1", "/complete mission_1", "/fail mission_1", "/cancel mission_1", "/synthesize token=abc123", "/cycle", "/api-call token=abc123"]) {
       const highImpact = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command }) as { risk: string; status: string; command: string; blockers: string[] }
       expect(highImpact.risk).toBe("high_impact_write")
@@ -7717,6 +7721,10 @@ describe("RuntimeServer core", () => {
     expect(board.previews.some((preview) => preview.risk === "high_impact_write")).toBe(false)
     expect(board.high_impact_count).toBeGreaterThan(0)
     expect(board.warnings.join(" ")).toContain("omitted")
+
+    const stagedBoard = await server.command("runtime.wake_scheduler_navigation_write_board", { staged_id: "staged_7t_1" }) as { previews: Array<{ command: string; risk: string; authority_gate: string }> }
+    expect(stagedBoard.previews).toHaveLength(1)
+    expect(stagedBoard.previews[0]).toMatchObject({ command: "/scheduler-nav-run staged_7t_1", risk: "low_risk_write", authority_gate: "wake_scheduler_runtime" })
 
     const after = await readJsonlEvents(dir)
     expect(after).toEqual(before)
