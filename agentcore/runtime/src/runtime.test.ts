@@ -7486,6 +7486,19 @@ describe("RuntimeServer core", () => {
       staged_by: "fixture",
       stage_hash: "unsupported_safe_read_hash",
     })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_command_staged",
+      staged_id: "malformed_exact_read_staged",
+      command: "/scheduler-status /tmp/foo token=abc123",
+      command_type: "read",
+      risk: "safe_read",
+      target_kind: "scheduler_status",
+      label: "malformed exact read",
+      notes: ["trailing args should block"],
+      staged_at: "2026-05-12T12:32:00.000Z",
+      staged_by: "fixture",
+      stage_hash: "malformed_exact_read_hash",
+    })
     const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
     await server.start()
     const before = await readJsonlEvents(dir)
@@ -7501,6 +7514,10 @@ describe("RuntimeServer core", () => {
     const unsupportedPreview = await server.command("runtime.preview_wake_scheduler_navigation_staged_read", { staged_id: "unsupported_safe_read_staged" }) as { can_execute: boolean; blockers: string[] }
     expect(unsupportedPreview.can_execute).toBe(false)
     expect(unsupportedPreview.blockers.join(" ")).toContain("not executable")
+    const malformedExactPreview = await server.command("runtime.preview_wake_scheduler_navigation_staged_read", { staged_id: "malformed_exact_read_staged" }) as { can_execute: boolean; blockers: string[]; command: string }
+    expect(malformedExactPreview.can_execute).toBe(false)
+    expect(malformedExactPreview.blockers.join(" ")).toContain("not executable")
+    expect(JSON.stringify(malformedExactPreview)).not.toContain("abc123")
 
     const after = await readJsonlEvents(dir)
     expect(after.length).toBe(before.length + 1)

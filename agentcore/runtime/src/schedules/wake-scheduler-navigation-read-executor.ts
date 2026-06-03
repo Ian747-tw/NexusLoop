@@ -45,15 +45,19 @@ export class WakeSchedulerNavigationReadExecutor {
     const args = tokens.slice(1)
     switch (name) {
       case "/scheduler-status":
+        noArgs(args, name)
         return readPlan(command, "scheduler_status", undefined, "scheduler_status", () => this.runtime.wakeSchedulerStatus())
       case "/scheduler-events":
         return readPlan(command, "scheduler_status", undefined, "scheduler_events", () => this.runtime.listWakeSchedulerEvents(optionLimit(args) ?? DEFAULT_LIMIT))
       case "/scheduler-bootstrap":
+        noArgs(args, name)
         return readPlan(command, "scheduler_bootstrap", undefined, "scheduler_bootstrap_status", () => this.runtime.wakeSchedulerBootstrapStatus())
       case "/scheduler-bootstrap-preview":
+        noArgs(args, name)
         return readPlan(command, "scheduler_bootstrap", undefined, "scheduler_bootstrap_preview", () => this.runtime.previewWakeSchedulerBootstrap())
       case "/scheduler-recovery":
       case "/scheduler-recovery-preview":
+        noArgs(args, name)
         return readPlan(command, "scheduler_recovery", undefined, "scheduler_recovery_preview", () => this.runtime.previewWakeSchedulerRecovery())
       case "/scheduler-recoveries":
         return readPlan(command, "scheduler_recovery", undefined, "scheduler_recoveries", () => this.runtime.listWakeSchedulerRecoveries(optionLimit(args) ?? DEFAULT_LIMIT))
@@ -72,11 +76,13 @@ export class WakeSchedulerNavigationReadExecutor {
         return readPlan(command, "scheduler_recovery_workflow", id, "scheduler_recovery_workflow_verification", () => this.runtime.verifyWakeSchedulerRecoveryWorkflow(id))
       }
       case "/scheduler-audit":
+        noArgs(args, name)
         return readPlan(command, "scheduler_audit", undefined, "scheduler_audit", async () => ({
           summary: await this.runtime.wakeSchedulerAuditSummary(),
           timeline: await this.runtime.wakeSchedulerAuditTimeline({ limit: 10 }),
         }))
       case "/scheduler-audit-summary":
+        noArgs(args, name)
         return readPlan(command, "scheduler_audit", undefined, "scheduler_audit_summary", () => this.runtime.wakeSchedulerAuditSummary())
       case "/scheduler-audit-timeline": {
         const query = auditTimelineArgs(args)
@@ -145,6 +151,7 @@ export class WakeSchedulerNavigationReadExecutor {
         return readPlan(command, "mission", id, "mission", () => this.runtime.getMission(id))
       }
       case "/reasoning":
+        noArgs(args, name)
         return readPlan(command, "unknown", undefined, "reasoning", async () => ({ status: this.runtime.reasoningProviderStatus(), health: await this.runtime.reasoningProviderHealth() }))
       default:
         return blocked(command, classified.target_kind, classified.target_id, "safe-read command is not executable by staged read executor yet")
@@ -169,6 +176,10 @@ function readPlan(command: string, targetKind: WakeSchedulerNavigationStageTarge
 
 function blocked(command: string, targetKind: WakeSchedulerNavigationStageTargetKind, targetId: string | undefined, blocker: string): ReadPlan {
   return { command, target_kind: targetKind, target_id: targetId, result_kind: "blocked", supported: false, blocker: preview(blocker), warnings: [], run: async () => null }
+}
+
+function noArgs(args: string[], name: string): void {
+  if (args.length > 0) throw new Error(`${name} does not accept staged read arguments`)
 }
 
 function auditTimelineArgs(args: string[]): { limit?: number; kind?: string; kinds?: string[]; severity?: string; related_id?: string } {
