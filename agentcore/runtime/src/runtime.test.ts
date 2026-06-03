@@ -7430,6 +7430,21 @@ describe("RuntimeServer core", () => {
     await expect(server.command("runtime.preview_wake_scheduler_navigation_staged_read", { staged_id: stagedListRead.staged_id })).resolves.toMatchObject({ can_execute: true, command: "/scheduler-nav-staged", target_kind: "scheduler_audit" })
     await expect(server.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: stagedListRead.staged_id, requested_by: "operator-read-test" })).resolves.toMatchObject({ status: "succeeded", result_kind: "scheduler_navigation_staged_commands" })
 
+    const [repeatA, repeatB] = await Promise.all([
+      server.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: staged.staged_id, requested_by: "operator-read-test" }),
+      server.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: staged.staged_id, requested_by: "operator-read-test" }),
+    ]) as Array<{ run_id: string; staged_id: string; status: string }>
+    expect(repeatA.run_id).not.toBe(repeatB.run_id)
+    const statusRuns = await server.command("runtime.list_wake_scheduler_navigation_staged_read_runs", { staged_id: staged.staged_id }) as Array<{ run_id: string; staged_id: string; status: string }>
+    expect(statusRuns.map((run) => run.run_id).sort()).toEqual([result.run_id, repeatA.run_id, repeatB.run_id].sort())
+    const concurrentEvents = (await readJsonlEvents(dir)).filter((event) => event.run_id === repeatA.run_id || event.run_id === repeatB.run_id)
+    expect(concurrentEvents.map((event) => `${event.run_id}:${event.kind}`)).toEqual([
+      `${repeatA.run_id}:runtime_wake_scheduler_navigation_staged_read_started`,
+      `${repeatA.run_id}:runtime_wake_scheduler_navigation_staged_read_succeeded`,
+      `${repeatB.run_id}:runtime_wake_scheduler_navigation_staged_read_started`,
+      `${repeatB.run_id}:runtime_wake_scheduler_navigation_staged_read_succeeded`,
+    ])
+
     await server.shutdown()
 
     const replayServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })

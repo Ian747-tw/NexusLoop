@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
 import { redactText, redactValue } from "../security/redaction"
@@ -29,6 +29,8 @@ interface NormalizedListInput {
 }
 
 export class WakeSchedulerNavigationStagedRunService {
+  private executionQueue: Promise<unknown> = Promise.resolve()
+
   constructor(
     private readonly eventStore: EventStore,
     private readonly staging: WakeSchedulerNavigationStagingService,
@@ -42,6 +44,13 @@ export class WakeSchedulerNavigationStagedRunService {
   }
 
   async execute(input: WakeSchedulerNavigationStagedRunInput): Promise<WakeSchedulerNavigationStagedRunResult> {
+    const run = () => this.executeQueued(input)
+    const result = this.executionQueue.then(run, run)
+    this.executionQueue = result.catch(() => undefined)
+    return result
+  }
+
+  private async executeQueued(input: WakeSchedulerNavigationStagedRunInput): Promise<WakeSchedulerNavigationStagedRunResult> {
     const normalized = readRunInput(input)
     const preview = await this.previewFor(normalized.staged_id)
     const startedAt = this.now()
@@ -285,7 +294,7 @@ function summaryPreview(result: WakeSchedulerNavigationStagedRunResult): string 
 }
 
 function runIdFor(stagedId: string, startedAt: string): string {
-  return `wake_scheduler_navigation_staged_read_${hashText(`${stagedId}:${startedAt}`).slice(0, 16)}`
+  return `wake_scheduler_navigation_staged_read_${hashText(`${stagedId}:${startedAt}:${randomUUID()}`).slice(0, 16)}`
 }
 
 function hashText(value: string): string {
