@@ -1902,6 +1902,86 @@ export type WakeSchedulerNavigationStagedReadStaleItemSummary = {
   recommended_commands: WakeSchedulerNavigationStagedReadCompareCommandSummary[]
 }
 
+export type WakeSchedulerNavigationWriteRiskSummary = "low_risk_write" | "medium_risk_write" | "high_impact_write" | "unsupported" | string
+export type WakeSchedulerNavigationWriteAuthorityGateSummary =
+  | "wake_scheduler_runtime"
+  | "wake_schedule_tick"
+  | "checkpoint_runtime"
+  | "recovery_runtime"
+  | "recovery_workflow_runtime"
+  | "continuation_runtime"
+  | "handoff_runtime"
+  | "mission_runtime"
+  | "proposal_review_runtime"
+  | "reasoning_provider_runtime"
+  | "unknown"
+  | string
+export type WakeSchedulerNavigationWriteEligibilityStatusSummary = "eligible_for_future_staging" | "blocked" | "unsupported" | "requires_human_approval" | "high_impact_blocked" | string
+
+export type WakeSchedulerNavigationWritePrerequisiteSummary = {
+  name: string
+  satisfied: boolean
+  severity: "info" | "warning" | "error" | string
+  summary: string
+}
+
+export type WakeSchedulerNavigationWriteCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  risk?: string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type WakeSchedulerNavigationFutureStagePolicySummary = {
+  would_require_active_runtime: boolean
+  would_require_run_lock: boolean
+  would_require_confirmation: boolean
+  would_require_approval_record: boolean
+  would_require_dry_run_first: boolean
+  would_require_recent_read_evidence: boolean
+  allowed_in_7t: false
+}
+
+export type WakeSchedulerNavigationWritePreviewSummary = {
+  command: string
+  command_name: string
+  command_type: "write" | string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  equivalent_runtime_command?: string
+  status: WakeSchedulerNavigationWriteEligibilityStatusSummary
+  can_stage_now: false
+  can_execute_now: false
+  target_kind: string
+  target_id?: string
+  parsed_args: Record<string, string>
+  prerequisites: WakeSchedulerNavigationWritePrerequisiteSummary[]
+  blockers: string[]
+  warnings: string[]
+  safer_read_commands: WakeSchedulerNavigationWriteCommandSummary[]
+  future_stage_policy?: WakeSchedulerNavigationFutureStagePolicySummary
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerNavigationWriteBoardSummary = {
+  board_id: string
+  source: {
+    kind: "command" | "navigation_board" | "related_id" | "incident" | "staged_read_group" | string
+    related_id?: string
+    incident_id?: string
+    staged_id?: string
+  }
+  previews: WakeSchedulerNavigationWritePreviewSummary[]
+  omitted_read_count: number
+  unsupported_count: number
+  high_impact_count: number
+  blockers: string[]
+  warnings: string[]
+  generated_at: string
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -1931,6 +2011,8 @@ export type WakeSchedulerUiState = {
   stagedReadComparison?: WakeSchedulerNavigationStagedReadPairComparisonSummary | null
   stagedReadStaleItems: WakeSchedulerNavigationStagedReadStaleItemSummary[]
   selectedStagedReadGroup?: WakeSchedulerNavigationStagedReadGroupSummary | null
+  writePreview?: WakeSchedulerNavigationWritePreviewSummary | null
+  writeBoard?: WakeSchedulerNavigationWriteBoardSummary | null
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

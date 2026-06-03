@@ -3747,4 +3747,41 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
     expect(runtime.sentCommands).toEqual([])
   })
+
+  test("wake scheduler navigation write preview renders authority gates without staging or execution", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/wake-tick-dry-run"] })
+    expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "low_risk_write", authority_gate: "wake_schedule_tick", can_stage_now: false, can_execute_now: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/scheduler-start", "dry-run", "every=60s"] })
+    expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "medium_risk_write", authority_gate: "wake_scheduler_runtime", can_stage_now: false, can_execute_now: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/handoff", "token=abc123"] })
+    expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "high_impact_write", status: "high_impact_blocked", can_stage_now: false, can_execute_now: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/tmp/repro"] })
+    expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "unsupported", status: "unsupported", can_stage_now: false, can_execute_now: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-board", args: [] })
+    expect(state.wakeScheduler?.writeBoard?.previews.length).toBeGreaterThan(0)
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_write_eligibility")
+    expect(snapshot).toContain("can_stage_now=false")
+    expect(snapshot).toContain("can_execute_now=false")
+    expect(snapshot).toContain("preview only; no write staging or execution")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
+
+  test("wake scheduler navigation write board args reject malformed input and redact command errors", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-board", args: ["bad-token=abc123"] })
+    expect(state.wakeScheduler?.commandError).toContain("scheduler navigation write board arg is invalid")
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
 })
