@@ -3699,4 +3699,52 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("secret")
     expect(runtime.sentCommands).toEqual([])
   })
+
+  test("wake scheduler navigation staged read comparison commands render history compare stale and group without rerun", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/scheduler-status"] })
+    const stagedId = state.wakeScheduler?.selectedStagedNavigationCommand?.staged_id
+    expect(stagedId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-run", args: [stagedId!] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-run", args: [stagedId!] })
+    const runCount = state.wakeScheduler?.stagedReadRuns.length
+    expect(runCount).toBe(2)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-read-history", args: [] })
+    expect(state.wakeScheduler?.stagedReadHistory).toMatchObject({ total_groups: 1, total_runs: 2 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-read-history", args: [`staged=${stagedId}`] })
+    expect(state.wakeScheduler?.stagedReadHistory?.groups[0]?.staged_id).toBe(stagedId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-read-compare", args: [stagedId!] })
+    expect(state.wakeScheduler?.stagedReadComparison?.comparison_status).toBe("unchanged")
+    const [left, right] = state.wakeScheduler?.stagedReadRuns ?? []
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-read-compare-runs", args: [right!.run_id, left!.run_id] })
+    expect(state.wakeScheduler?.stagedReadComparison?.comparison_status).toBe("unchanged")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-read-stale", args: ["after=1h"] })
+    expect(state.wakeScheduler?.stagedReadStaleItems[0]).toMatchObject({ staged_id: stagedId, stale: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-read-group", args: [stagedId!] })
+    expect(state.wakeScheduler?.selectedStagedReadGroup).toMatchObject({ staged_id: stagedId, run_count: 2, comparison_status: "unchanged" })
+
+    expect(state.wakeScheduler?.stagedReadRuns).toHaveLength(runCount!)
+    expect(runtime.sentCommands).toEqual([])
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_navigation_read_comparison")
+    expect(snapshot).toContain("comparison=unchanged")
+    expect(snapshot).toContain("comparison uses bounded summaries and does not execute staged reads")
+  })
+
+  test("wake scheduler navigation staged read comparison invalid args and secrets are redacted", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-read-stale", args: ["after=forever-token=abc123"] })
+    expect(state.wakeScheduler?.commandError).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-read-group", args: ["token=abc123"] })
+    expect(state.wakeScheduler?.selectedStagedReadGroup).toBeNull()
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
 })

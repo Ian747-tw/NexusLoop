@@ -7529,6 +7529,120 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation staged read comparison groups history and computes stable content hashes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_command_staged",
+      staged_id: "staged_status_compare",
+      command: "/scheduler-status",
+      command_type: "read",
+      risk: "safe_read",
+      target_kind: "scheduler_status",
+      label: "status",
+      notes: [],
+      staged_at: "2026-05-12T12:00:00.000Z",
+      staged_by: "fixture",
+      stage_hash: createHash("sha256").update("/scheduler-status").digest("hex"),
+    })
+    for (const [index, summary] of ["status=stopped", "status=stopped", "status=running"].entries()) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_staged_read_succeeded",
+        run_id: `compare_run_${index + 1}`,
+        staged_id: "staged_status_compare",
+        command: "/scheduler-status",
+        target_kind: "scheduler_status",
+        status: "succeeded",
+        result_kind: "scheduler_status",
+        result_summary: summary,
+        started_at: `2026-05-12T12:0${index}:00.000Z`,
+        completed_at: `2026-05-12T12:0${index}:01.000Z`,
+        requested_by: `operator-${index}`,
+        result_hash: `entropy_hash_${index}`,
+      })
+    }
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_staged_read_failed",
+      run_id: "compare_failed_secret",
+      staged_id: "staged_status_compare",
+      command: "/scheduler-status",
+      target_kind: "scheduler_status",
+      status: "failed",
+      error: "token=abc123 status failed",
+      started_at: "2026-05-12T12:03:00.000Z",
+      completed_at: "2026-05-12T12:03:01.000Z",
+      requested_by: "operator-secret",
+      result_hash: "entropy_failed",
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-12T14:00:00.000Z"),
+    })
+    await server.start()
+
+    const history = await server.command("runtime.wake_scheduler_navigation_staged_read_history", { staged_id: "staged_status_compare" }) as { total_groups: number; total_runs: number; groups: Array<{ comparison_status: string; latest_comparison_hash: string; previous_comparison_hash?: string; failed_count: number; summary_preview: string }> }
+    expect(history.total_groups).toBe(1)
+    expect(history.total_runs).toBe(4)
+    expect(history.groups[0].comparison_status).toBe("changed")
+    expect(history.groups[0].failed_count).toBe(1)
+    expect(JSON.stringify(history)).not.toContain("abc123")
+
+    const unchanged = await server.command("runtime.wake_scheduler_navigation_staged_read_compare", { left_run_id: "compare_run_1", right_run_id: "compare_run_2" }) as { comparison_status: string; left_comparison_hash: string; right_comparison_hash: string }
+    expect(unchanged.comparison_status).toBe("unchanged")
+    expect(unchanged.left_comparison_hash).toBe(unchanged.right_comparison_hash)
+    const changed = await server.command("runtime.wake_scheduler_navigation_staged_read_compare", { left_run_id: "compare_run_2", right_run_id: "compare_run_3" }) as { comparison_status: string; left_comparison_hash: string; right_comparison_hash: string }
+    expect(changed.comparison_status).toBe("changed")
+    expect(changed.left_comparison_hash).not.toBe(changed.right_comparison_hash)
+    const failedChanged = await server.command("runtime.wake_scheduler_navigation_staged_read_compare", { left_run_id: "compare_run_3", right_run_id: "compare_failed_secret" }) as { comparison_status: string; summary_delta: string }
+    expect(failedChanged.comparison_status).toBe("changed")
+    expect(JSON.stringify(failedChanged)).not.toContain("abc123")
+
+    const eventsBefore = await readJsonlEvents(dir)
+    await server.command("runtime.wake_scheduler_navigation_staged_read_stale", { stale_after_ms: 3_600_000 })
+    await server.command("runtime.wake_scheduler_navigation_staged_read_group", { staged_id: "staged_status_compare" })
+    const eventsAfter = await readJsonlEvents(dir)
+    expect(eventsAfter.length).toBe(eventsBefore.length)
+    expect(eventsAfter.map((event) => event.kind)).not.toContain("runtime_wake_scheduler_navigation_staged_read_started")
+    expect(eventsAfter.map((event) => event.kind)).not.toContain("runtime_wake_scheduler_started")
+    expect(eventsAfter.map((event) => event.kind)).not.toContain("runtime_wake_schedule_tick_completed")
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation staged read comparison handles first run stale no-run commands and read-mode access", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-12T15:00:00.000Z"),
+    })
+    await server.start()
+    const staged = await server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-status", requested_by: "operator-compare" }) as { staged_id: string }
+    const noRunStale = await server.command("runtime.wake_scheduler_navigation_staged_read_stale", { stale_after_ms: 3_600_000 }) as Array<{ staged_id: string; stale: boolean; latest_run_id?: string; recommended_commands: Array<{ command: string; command_type: string; requires_active_runtime?: boolean }> }>
+    expect(noRunStale).toHaveLength(1)
+    expect(noRunStale[0]).toMatchObject({ staged_id: staged.staged_id, stale: true })
+    expect(noRunStale[0].latest_run_id).toBeUndefined()
+    expect(noRunStale[0].recommended_commands.some((command) => command.command === `/scheduler-nav-run ${staged.staged_id}` && command.command_type === "write" && command.requires_active_runtime)).toBe(true)
+
+    const run = await server.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: staged.staged_id, requested_by: "operator-compare" }) as { run_id: string }
+    const first = await server.command("runtime.wake_scheduler_navigation_staged_read_compare", { staged_id: staged.staged_id }) as { comparison_status: string; left_run_id: string; right_run_id: string }
+    expect(first).toMatchObject({ comparison_status: "first_run", left_run_id: run.run_id, right_run_id: run.run_id })
+    const group = await server.command("runtime.wake_scheduler_navigation_staged_read_group", { staged_id: staged.staged_id }) as { staged_id: string; run_count: number; comparison_status: string }
+    expect(group).toMatchObject({ staged_id: staged.staged_id, run_count: 1, comparison_status: "first_run" })
+    await expect(server.command("runtime.wake_scheduler_navigation_staged_read_compare", { staged_id: "missing" })).rejects.toThrow("no terminal runs")
+    await server.shutdown()
+
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await statusServer.start()
+    await expect(statusServer.command("runtime.wake_scheduler_navigation_staged_read_history", {})).resolves.toMatchObject({ total_groups: 1 })
+    await expect(statusServer.command("runtime.wake_scheduler_navigation_staged_read_group", { staged_id: staged.staged_id })).resolves.toMatchObject({ staged_id: staged.staged_id })
+    await statusServer.shutdown()
+  })
+
   test("wake scheduler navigation incident lookup searches beyond display caps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

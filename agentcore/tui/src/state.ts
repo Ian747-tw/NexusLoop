@@ -1828,6 +1828,80 @@ export type WakeSchedulerNavigationStagedRunRecordSummary = {
   summary_preview: string
 }
 
+export type WakeSchedulerNavigationStagedReadCompareCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type WakeSchedulerNavigationStagedReadComparisonStatusSummary = "unchanged" | "changed" | "first_run" | "failed" | "blocked" | "unknown" | string
+
+export type WakeSchedulerNavigationStagedReadGroupSummary = {
+  group_id: string
+  staged_id: string
+  command: string
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id?: string
+  run_count: number
+  succeeded_count: number
+  failed_count: number
+  blocked_count: number
+  latest_run_id?: string
+  latest_completed_at?: string
+  latest_status?: "succeeded" | "failed" | "blocked" | string
+  latest_comparison_hash?: string
+  previous_run_id?: string
+  previous_comparison_hash?: string
+  comparison_status: WakeSchedulerNavigationStagedReadComparisonStatusSummary
+  summary_preview: string
+  recommended_commands: WakeSchedulerNavigationStagedReadCompareCommandSummary[]
+}
+
+export type WakeSchedulerNavigationStagedReadPairComparisonSummary = {
+  comparison_id: string
+  staged_id: string
+  command: string
+  left_run_id: string
+  right_run_id: string
+  left_completed_at?: string
+  right_completed_at?: string
+  left_status: "succeeded" | "failed" | "blocked" | string
+  right_status: "succeeded" | "failed" | "blocked" | string
+  left_comparison_hash: string
+  right_comparison_hash: string
+  comparison_status: WakeSchedulerNavigationStagedReadComparisonStatusSummary
+  summary_delta: string
+  warnings: string[]
+  recommended_commands: WakeSchedulerNavigationStagedReadCompareCommandSummary[]
+}
+
+export type WakeSchedulerNavigationStagedReadHistorySummary = {
+  staged_id?: string
+  command?: string
+  groups: WakeSchedulerNavigationStagedReadGroupSummary[]
+  total_runs: number
+  total_groups: number
+  changed_groups: number
+  failed_groups: number
+  stale_groups: number
+  generated_at: string
+}
+
+export type WakeSchedulerNavigationStagedReadStaleItemSummary = {
+  staged_id: string
+  command: string
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id?: string
+  latest_run_id?: string
+  latest_completed_at?: string
+  age_ms?: number
+  stale_after_ms: number
+  stale: boolean
+  recommended_commands: WakeSchedulerNavigationStagedReadCompareCommandSummary[]
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -1853,6 +1927,10 @@ export type WakeSchedulerUiState = {
   stagedReadPreview?: WakeSchedulerNavigationStagedRunPreviewSummary | null
   latestStagedReadResult?: WakeSchedulerNavigationStagedRunResultSummary | null
   stagedReadRuns: WakeSchedulerNavigationStagedRunRecordSummary[]
+  stagedReadHistory?: WakeSchedulerNavigationStagedReadHistorySummary | null
+  stagedReadComparison?: WakeSchedulerNavigationStagedReadPairComparisonSummary | null
+  stagedReadStaleItems: WakeSchedulerNavigationStagedReadStaleItemSummary[]
+  selectedStagedReadGroup?: WakeSchedulerNavigationStagedReadGroupSummary | null
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

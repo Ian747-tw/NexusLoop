@@ -683,6 +683,13 @@ describe("TUI keyboard command model", () => {
       ["/scheduler-nav-run-show run-1", "scheduler-nav-run-show", ["run-1"]],
       ["/scheduler-nav-read-preview staged-1", "scheduler-nav-read-preview", ["staged-1"]],
       ["/scheduler-nav-read staged-1", "scheduler-nav-read", ["staged-1"]],
+      ["/scheduler-nav-read-history staged=staged-1 limit=5", "scheduler-nav-read-history", ["staged=staged-1", "limit=5"]],
+      ["/scheduler-nav-run-history staged=staged-1", "scheduler-nav-run-history", ["staged=staged-1"]],
+      ["/scheduler-nav-read-compare staged-1", "scheduler-nav-read-compare", ["staged-1"]],
+      ["/scheduler-nav-run-compare staged-1", "scheduler-nav-run-compare", ["staged-1"]],
+      ["/scheduler-nav-read-compare-runs run-1 run-2", "scheduler-nav-read-compare-runs", ["run-1", "run-2"]],
+      ["/scheduler-nav-read-stale after=1h", "scheduler-nav-read-stale", ["after=1h"]],
+      ["/scheduler-nav-read-group staged-1", "scheduler-nav-read-group", ["staged-1"]],
       ["/scheduler-stop e2e stop", "scheduler-stop", ["e2e", "stop"]],
       ["/scheduler-events", "scheduler-events", []],
       ["/wake-scheduler-preview every=60s", "wake-scheduler-preview", ["every=60s"]],
@@ -705,7 +712,7 @@ describe("TUI keyboard command model", () => {
       expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
     }
 
-    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap", "/tmp/repro/scheduler-recovery", "/path/scheduler-recovery-ack", ".scheduler-recovery", ":scheduler-recovery", "/tmp/repro/scheduler-recovery-workflow", "/path/scheduler-recovery-step-done", ".scheduler-recovery-workflow", ":scheduler-recovery-step-done", "/tmp/repro/scheduler-audit", "/path/scheduler-audit-chain", ".scheduler-audit", ":scheduler-audit", "/tmp/repro/scheduler-nav", "/path/scheduler-nav-target", ".scheduler-nav", ":scheduler-nav", "/tmp/repro/scheduler-nav-stage", "/path/scheduler-nav-stage-preview", ".scheduler-nav-stage", ":scheduler-nav-stage", "/tmp/repro/scheduler-nav-run", "/path/scheduler-nav-run-preview", ".scheduler-nav-run", ":scheduler-nav-run"]) {
+    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap", "/tmp/repro/scheduler-recovery", "/path/scheduler-recovery-ack", ".scheduler-recovery", ":scheduler-recovery", "/tmp/repro/scheduler-recovery-workflow", "/path/scheduler-recovery-step-done", ".scheduler-recovery-workflow", ":scheduler-recovery-step-done", "/tmp/repro/scheduler-audit", "/path/scheduler-audit-chain", ".scheduler-audit", ":scheduler-audit", "/tmp/repro/scheduler-nav", "/path/scheduler-nav-target", ".scheduler-nav", ":scheduler-nav", "/tmp/repro/scheduler-nav-stage", "/path/scheduler-nav-stage-preview", ".scheduler-nav-stage", ":scheduler-nav-stage", "/tmp/repro/scheduler-nav-run", "/path/scheduler-nav-run-preview", ".scheduler-nav-run", ":scheduler-nav-run", "/tmp/repro/scheduler-nav-read-history", "/path/scheduler-nav-read-compare", ".scheduler-nav-read-history", ":scheduler-nav-read-compare"]) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",

@@ -798,6 +798,34 @@ function wakeSchedulerLines(state: UiState): string[] {
   out.push("    run_rows")
   if (scheduler.stagedReadRuns.length === 0) out.push("      - empty")
   else out.push(...scheduler.stagedReadRuns.slice(0, 10).map((record) => `      - ${record.run_id} ${record.status} ${record.target_kind}: ${preview(redactText(record.summary_preview))}`))
+  out.push("  scheduler_navigation_read_comparison")
+  if (scheduler.stagedReadHistory) {
+    const history = scheduler.stagedReadHistory
+    out.push(`    history=groups=${history.total_groups} runs=${history.total_runs} changed=${history.changed_groups} failed=${history.failed_groups} stale=${history.stale_groups}`)
+    out.push("    history_rows")
+    if (history.groups.length === 0) out.push("      - empty")
+    else out.push(...history.groups.slice(0, 10).map((group) => `      - ${group.staged_id} ${group.comparison_status} runs=${group.run_count} latest=${group.latest_status ?? "unknown"}: ${preview(redactText(group.summary_preview))}`))
+  } else {
+    out.push("    history=none")
+  }
+  if (scheduler.stagedReadComparison) {
+    const comparison = scheduler.stagedReadComparison
+    out.push(`    comparison=${comparison.comparison_status} left=${comparison.left_run_id} right=${comparison.right_run_id}: ${preview(redactText(comparison.summary_delta))}`)
+    if (comparison.warnings.length > 0) out.push(...comparison.warnings.slice(0, 10).map((warning) => `    comparison_warning=${preview(redactText(warning))}`))
+  } else {
+    out.push("    comparison=none")
+  }
+  if (scheduler.selectedStagedReadGroup) {
+    const group = scheduler.selectedStagedReadGroup
+    out.push(`    selected_group=${group.staged_id} ${group.comparison_status} runs=${group.run_count}: ${preview(redactText(group.summary_preview))}`)
+  } else {
+    out.push("    selected_group=none")
+  }
+  out.push(`    stale_items=${scheduler.stagedReadStaleItems.length}`)
+  out.push("    stale_rows")
+  if (scheduler.stagedReadStaleItems.length === 0) out.push("      - empty")
+  else out.push(...scheduler.stagedReadStaleItems.slice(0, 10).map((item) => `      - ${item.staged_id} stale=${item.stale} age_ms=${item.age_ms ?? "unknown"} after_ms=${item.stale_after_ms}: ${preview(redactText(item.command))}`))
+  out.push("    note=comparison uses bounded summaries and does not execute staged reads")
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

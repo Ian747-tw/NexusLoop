@@ -75,6 +75,8 @@ import type { WakeSchedulerNavigationStagePreview, WakeSchedulerNavigationStaged
 import { WakeSchedulerNavigationReadExecutor } from "./schedules/wake-scheduler-navigation-read-executor"
 import { WakeSchedulerNavigationStagedRunService, readWakeSchedulerNavigationStagedRunInput, readWakeSchedulerNavigationStagedRunListInput } from "./schedules/wake-scheduler-navigation-staged-run-service"
 import type { WakeSchedulerNavigationStagedRunPreview, WakeSchedulerNavigationStagedRunRecord, WakeSchedulerNavigationStagedRunResult } from "./schedules/wake-scheduler-navigation-staged-run-types"
+import { WakeSchedulerNavigationStagedReadCompareService, readWakeSchedulerNavigationStagedReadCompareInput, readWakeSchedulerNavigationStagedReadGroupInput, readWakeSchedulerNavigationStagedReadHistoryInput, readWakeSchedulerNavigationStagedReadStaleInput } from "./schedules/wake-scheduler-navigation-staged-read-compare-service"
+import type { WakeSchedulerNavigationStagedReadGroup, WakeSchedulerNavigationStagedReadHistory, WakeSchedulerNavigationStagedReadPairComparison, WakeSchedulerNavigationStagedReadStaleItem } from "./schedules/wake-scheduler-navigation-staged-read-compare-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -231,6 +233,7 @@ export class RuntimeServer {
   private wakeSchedulerNavigationStagingServiceInstance: WakeSchedulerNavigationStagingService | null = null
   private wakeSchedulerNavigationReadExecutorInstance: WakeSchedulerNavigationReadExecutor | null = null
   private wakeSchedulerNavigationStagedRunServiceInstance: WakeSchedulerNavigationStagedRunService | null = null
+  private wakeSchedulerNavigationStagedReadCompareServiceInstance: WakeSchedulerNavigationStagedReadCompareService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -812,6 +815,14 @@ export class RuntimeServer {
         return this.listWakeSchedulerNavigationStagedReadRuns(readWakeSchedulerNavigationStagedRunListInput(payload))
       case "runtime.get_wake_scheduler_navigation_staged_read_run":
         return this.getWakeSchedulerNavigationStagedReadRun(requiredString(payload.runId ?? payload.run_id, "runId"))
+      case "runtime.wake_scheduler_navigation_staged_read_history":
+        return this.wakeSchedulerNavigationStagedReadHistory(readWakeSchedulerNavigationStagedReadHistoryInput(payload))
+      case "runtime.wake_scheduler_navigation_staged_read_compare":
+        return this.wakeSchedulerNavigationStagedReadCompare(readWakeSchedulerNavigationStagedReadCompareInput(payload))
+      case "runtime.wake_scheduler_navigation_staged_read_stale":
+        return this.wakeSchedulerNavigationStagedReadStale(readWakeSchedulerNavigationStagedReadStaleInput(payload))
+      case "runtime.wake_scheduler_navigation_staged_read_group":
+        return this.wakeSchedulerNavigationStagedReadGroup(readWakeSchedulerNavigationStagedReadGroupInput(payload))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -1557,6 +1568,22 @@ export class RuntimeServer {
     return this.wakeSchedulerNavigationStagedRunService().get(runId)
   }
 
+  async wakeSchedulerNavigationStagedReadHistory(input: Parameters<WakeSchedulerNavigationStagedReadCompareService["history"]>[0] = {}): Promise<WakeSchedulerNavigationStagedReadHistory> {
+    return this.wakeSchedulerNavigationStagedReadCompareService().history(input)
+  }
+
+  async wakeSchedulerNavigationStagedReadCompare(input: Parameters<WakeSchedulerNavigationStagedReadCompareService["compare"]>[0]): Promise<WakeSchedulerNavigationStagedReadPairComparison> {
+    return this.wakeSchedulerNavigationStagedReadCompareService().compare(input)
+  }
+
+  async wakeSchedulerNavigationStagedReadStale(input: Parameters<WakeSchedulerNavigationStagedReadCompareService["stale"]>[0] = {}): Promise<WakeSchedulerNavigationStagedReadStaleItem[]> {
+    return this.wakeSchedulerNavigationStagedReadCompareService().stale(input)
+  }
+
+  async wakeSchedulerNavigationStagedReadGroup(input: Parameters<WakeSchedulerNavigationStagedReadCompareService["group"]>[0]): Promise<WakeSchedulerNavigationStagedReadGroup | null> {
+    return this.wakeSchedulerNavigationStagedReadCompareService().group(input)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -2093,6 +2120,16 @@ export class RuntimeServer {
       () => now().toISOString(),
     )
     return this.wakeSchedulerNavigationStagedRunServiceInstance
+  }
+
+  private wakeSchedulerNavigationStagedReadCompareService(): WakeSchedulerNavigationStagedReadCompareService {
+    const now = this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow ?? (() => new Date())
+    this.wakeSchedulerNavigationStagedReadCompareServiceInstance ??= new WakeSchedulerNavigationStagedReadCompareService(
+      this.eventStore,
+      this.wakeSchedulerNavigationStagingService(),
+      () => now().toISOString(),
+    )
+    return this.wakeSchedulerNavigationStagedReadCompareServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {
