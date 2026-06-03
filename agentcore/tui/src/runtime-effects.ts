@@ -96,6 +96,11 @@ import type {
   WakeSchedulerNavigationStagedRunPreviewSummary,
   WakeSchedulerNavigationStagedRunRecordSummary,
   WakeSchedulerNavigationStagedRunResultSummary,
+  WakeSchedulerNavigationStagedReadCompareCommandSummary,
+  WakeSchedulerNavigationStagedReadGroupSummary,
+  WakeSchedulerNavigationStagedReadHistorySummary,
+  WakeSchedulerNavigationStagedReadPairComparisonSummary,
+  WakeSchedulerNavigationStagedReadStaleItemSummary,
   WakeSchedulerNavigationStagedCommandRecordSummary,
   WakeSchedulerNavigationStagedCommandSummary,
   WakeSchedulerNavigationTargetSummary,
@@ -315,6 +320,11 @@ export type RuntimeUiEffect =
   | { type: "dry-run-wake-scheduler-navigation-staged-read"; stagedId: string }
   | { type: "load-wake-scheduler-navigation-staged-read-runs"; limit?: number; stagedId?: string }
   | { type: "load-wake-scheduler-navigation-staged-read-run"; runId: string }
+  | { type: "load-wake-scheduler-navigation-staged-read-history"; stagedId?: string; command?: string; limit?: number; staleAfterMs?: number }
+  | { type: "compare-wake-scheduler-navigation-staged-read"; stagedId: string }
+  | { type: "compare-wake-scheduler-navigation-staged-read-runs"; leftRunId: string; rightRunId: string }
+  | { type: "load-wake-scheduler-navigation-staged-read-stale"; staleAfterMs?: number; limit?: number }
+  | { type: "load-wake-scheduler-navigation-staged-read-group"; stagedId: string; limit?: number }
   | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
@@ -1080,6 +1090,16 @@ export async function applyRuntimeUiEffect(
         return applyWakeSchedulerNavigationStagedReadRuns(state, await runtime.command("runtime.list_wake_scheduler_navigation_staged_read_runs", { limit: effect.limit ?? CHECKPOINT_LIMIT, stagedId: effect.stagedId }), effect.limit ?? CHECKPOINT_LIMIT)
       case "load-wake-scheduler-navigation-staged-read-run":
         return applyWakeSchedulerNavigationStagedReadResult(state, await runtime.command("runtime.get_wake_scheduler_navigation_staged_read_run", { runId: effect.runId }), effect.runId)
+      case "load-wake-scheduler-navigation-staged-read-history":
+        return applyWakeSchedulerNavigationStagedReadHistory(state, await runtime.command("runtime.wake_scheduler_navigation_staged_read_history", { stagedId: effect.stagedId, command: effect.command, limit: effect.limit ?? CHECKPOINT_LIMIT, staleAfterMs: effect.staleAfterMs }))
+      case "compare-wake-scheduler-navigation-staged-read":
+        return applyWakeSchedulerNavigationStagedReadComparison(state, await runtime.command("runtime.wake_scheduler_navigation_staged_read_compare", { stagedId: effect.stagedId, latest: true }))
+      case "compare-wake-scheduler-navigation-staged-read-runs":
+        return applyWakeSchedulerNavigationStagedReadComparison(state, await runtime.command("runtime.wake_scheduler_navigation_staged_read_compare", { leftRunId: effect.leftRunId, rightRunId: effect.rightRunId }))
+      case "load-wake-scheduler-navigation-staged-read-stale":
+        return applyWakeSchedulerNavigationStagedReadStale(state, await runtime.command("runtime.wake_scheduler_navigation_staged_read_stale", { staleAfterMs: effect.staleAfterMs, limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.limit ?? CHECKPOINT_LIMIT)
+      case "load-wake-scheduler-navigation-staged-read-group":
+        return applyWakeSchedulerNavigationStagedReadGroup(state, await runtime.command("runtime.wake_scheduler_navigation_staged_read_group", { stagedId: effect.stagedId, limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.stagedId)
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
@@ -2289,6 +2309,58 @@ function applyWakeSchedulerNavigationStagedReadRuns(state: UiState, value: unkno
   }
 }
 
+function applyWakeSchedulerNavigationStagedReadHistory(state: UiState, value: unknown): UiState {
+  const history = readWakeSchedulerNavigationStagedReadHistory(value, "runtime.wake_scheduler_navigation_staged_read_history")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      stagedReadHistory: history,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler navigation read history", detail: `groups=${history.total_groups} runs=${history.total_runs}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationStagedReadComparison(state: UiState, value: unknown): UiState {
+  const comparison = readWakeSchedulerNavigationStagedReadComparison(value, "runtime.wake_scheduler_navigation_staged_read_compare")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      stagedReadComparison: comparison,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler navigation read comparison", detail: `status=${comparison.comparison_status}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationStagedReadStale(state: UiState, value: unknown, limit: number): UiState {
+  const stale = readWakeSchedulerNavigationStagedReadStaleItems(value, "runtime.wake_scheduler_navigation_staged_read_stale", limit)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      stagedReadStaleItems: stale,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler navigation stale reads", detail: `items=${stale.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationStagedReadGroup(state: UiState, value: unknown, stagedId: string): UiState {
+  const group = readWakeSchedulerNavigationStagedReadGroup(value, "runtime.wake_scheduler_navigation_staged_read_group")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      selectedStagedReadGroup: group,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler navigation read group", detail: `staged_id=${redactText(stagedId)}`, status: group ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -2786,6 +2858,22 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-staged-read-runs", limit: CHECKPOINT_LIMIT })
     case "scheduler-nav-run-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-staged-read-run", runId: requiredArg(args, 0, "runId") })
+    case "scheduler-nav-read-history":
+    case "scheduler-nav-run-history": {
+      const query = schedulerNavReadHistoryArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-staged-read-history", ...query })
+    }
+    case "scheduler-nav-read-compare":
+    case "scheduler-nav-run-compare":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "compare-wake-scheduler-navigation-staged-read", stagedId: requiredArg(args, 0, "stagedId") })
+    case "scheduler-nav-read-compare-runs":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "compare-wake-scheduler-navigation-staged-read-runs", leftRunId: requiredArg(args, 0, "leftRunId"), rightRunId: requiredArg(args, 1, "rightRunId") })
+    case "scheduler-nav-read-stale": {
+      const query = schedulerNavReadStaleArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-staged-read-stale", ...query })
+    }
+    case "scheduler-nav-read-group":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-staged-read-group", stagedId: requiredArg(args, 0, "stagedId") })
     case "scheduler-events":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
@@ -3481,6 +3569,13 @@ const wakeSchedulerCommands = new Set([
   "scheduler-nav-run-show",
   "scheduler-nav-read-preview",
   "scheduler-nav-read",
+  "scheduler-nav-read-history",
+  "scheduler-nav-run-history",
+  "scheduler-nav-read-compare",
+  "scheduler-nav-run-compare",
+  "scheduler-nav-read-compare-runs",
+  "scheduler-nav-read-stale",
+  "scheduler-nav-read-group",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",
@@ -3618,6 +3713,11 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "dry-run-wake-scheduler-navigation-staged-read",
   "load-wake-scheduler-navigation-staged-read-runs",
   "load-wake-scheduler-navigation-staged-read-run",
+  "load-wake-scheduler-navigation-staged-read-history",
+  "compare-wake-scheduler-navigation-staged-read",
+  "compare-wake-scheduler-navigation-staged-read-runs",
+  "load-wake-scheduler-navigation-staged-read-stale",
+  "load-wake-scheduler-navigation-staged-read-group",
   "load-wake-scheduler-events",
 ])
 
@@ -6023,6 +6123,105 @@ function readWakeSchedulerNavigationStagedRunResult(value: unknown, commandName:
   }
 }
 
+function readWakeSchedulerNavigationStagedReadHistory(value: unknown, commandName: string): WakeSchedulerNavigationStagedReadHistorySummary {
+  if (!isRecord(value) || !Array.isArray(value.groups)) throw new Error(`${commandName} returned invalid staged read history`)
+  return {
+    staged_id: typeof value.staged_id === "string" ? redactText(value.staged_id) : undefined,
+    command: typeof value.command === "string" ? preview(readString(value.command, "")) : undefined,
+    groups: value.groups.map(readWakeSchedulerNavigationStagedReadGroupRecord).filter((group): group is WakeSchedulerNavigationStagedReadGroupSummary => group !== null).slice(0, CHECKPOINT_LIMIT),
+    total_runs: readNumber(value.total_runs, 0),
+    total_groups: readNumber(value.total_groups, 0),
+    changed_groups: readNumber(value.changed_groups, 0),
+    failed_groups: readNumber(value.failed_groups, 0),
+    stale_groups: readNumber(value.stale_groups, 0),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readWakeSchedulerNavigationStagedReadGroup(value: unknown, commandName: string): WakeSchedulerNavigationStagedReadGroupSummary | null {
+  if (value === null) return null
+  const group = readWakeSchedulerNavigationStagedReadGroupRecord(value)
+  if (!group) throw new Error(`${commandName} returned invalid staged read group`)
+  return group
+}
+
+function readWakeSchedulerNavigationStagedReadGroupRecord(value: unknown): WakeSchedulerNavigationStagedReadGroupSummary | null {
+  if (!isRecord(value) || typeof value.group_id !== "string" || typeof value.staged_id !== "string" || typeof value.command !== "string") return null
+  return {
+    group_id: redactText(value.group_id),
+    staged_id: redactText(value.staged_id),
+    command: preview(readString(value.command, "")),
+    target_kind: readString(value.target_kind, "unknown"),
+    target_id: typeof value.target_id === "string" ? preview(redactText(value.target_id)) : undefined,
+    run_count: readNumber(value.run_count, 0),
+    succeeded_count: readNumber(value.succeeded_count, 0),
+    failed_count: readNumber(value.failed_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    latest_run_id: typeof value.latest_run_id === "string" ? redactText(value.latest_run_id) : undefined,
+    latest_completed_at: readString(value.latest_completed_at, ""),
+    latest_status: readString(value.latest_status, "unknown"),
+    latest_comparison_hash: typeof value.latest_comparison_hash === "string" ? preview(redactText(value.latest_comparison_hash)) : undefined,
+    previous_run_id: typeof value.previous_run_id === "string" ? redactText(value.previous_run_id) : undefined,
+    previous_comparison_hash: typeof value.previous_comparison_hash === "string" ? preview(redactText(value.previous_comparison_hash)) : undefined,
+    comparison_status: readString(value.comparison_status, "unknown"),
+    summary_preview: preview(readString(value.summary_preview, "")),
+    recommended_commands: readWakeSchedulerNavigationStagedReadCompareCommands(value.recommended_commands),
+  }
+}
+
+function readWakeSchedulerNavigationStagedReadComparison(value: unknown, commandName: string): WakeSchedulerNavigationStagedReadPairComparisonSummary {
+  if (!isRecord(value) || typeof value.comparison_id !== "string" || typeof value.left_run_id !== "string" || typeof value.right_run_id !== "string") throw new Error(`${commandName} returned invalid staged read comparison`)
+  return {
+    comparison_id: redactText(value.comparison_id),
+    staged_id: readString(value.staged_id, ""),
+    command: preview(readString(value.command, "")),
+    left_run_id: redactText(value.left_run_id),
+    right_run_id: redactText(value.right_run_id),
+    left_completed_at: readString(value.left_completed_at, ""),
+    right_completed_at: readString(value.right_completed_at, ""),
+    left_status: readString(value.left_status, "unknown"),
+    right_status: readString(value.right_status, "unknown"),
+    left_comparison_hash: preview(redactText(readString(value.left_comparison_hash, ""))),
+    right_comparison_hash: preview(redactText(readString(value.right_comparison_hash, ""))),
+    comparison_status: readString(value.comparison_status, "unknown"),
+    summary_delta: preview(readString(value.summary_delta, "")),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    recommended_commands: readWakeSchedulerNavigationStagedReadCompareCommands(value.recommended_commands),
+  }
+}
+
+function readWakeSchedulerNavigationStagedReadStaleItems(value: unknown, commandName: string, limit: number): WakeSchedulerNavigationStagedReadStaleItemSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeSchedulerNavigationStagedReadStaleItem).filter((item): item is WakeSchedulerNavigationStagedReadStaleItemSummary => item !== null).slice(0, limit)
+}
+
+function readWakeSchedulerNavigationStagedReadStaleItem(value: unknown): WakeSchedulerNavigationStagedReadStaleItemSummary | null {
+  if (!isRecord(value) || typeof value.staged_id !== "string" || typeof value.command !== "string") return null
+  return {
+    staged_id: redactText(value.staged_id),
+    command: preview(readString(value.command, "")),
+    target_kind: readString(value.target_kind, "unknown"),
+    target_id: typeof value.target_id === "string" ? preview(redactText(value.target_id)) : undefined,
+    latest_run_id: typeof value.latest_run_id === "string" ? redactText(value.latest_run_id) : undefined,
+    latest_completed_at: readString(value.latest_completed_at, ""),
+    age_ms: typeof value.age_ms === "number" ? value.age_ms : undefined,
+    stale_after_ms: readNumber(value.stale_after_ms, 0),
+    stale: readBoolean(value.stale),
+    recommended_commands: readWakeSchedulerNavigationStagedReadCompareCommands(value.recommended_commands),
+  }
+}
+
+function readWakeSchedulerNavigationStagedReadCompareCommands(value: unknown): WakeSchedulerNavigationStagedReadCompareCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 10).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: readString(command.command_type, "read"),
+    requires_active_runtime: typeof command.requires_active_runtime === "boolean" ? command.requires_active_runtime : undefined,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
 function readWakeSchedulerState(value: unknown): WakeSchedulerStateSummary {
   if (!isRecord(value) || !isRecord(value.config)) throw new Error("runtime.wake_scheduler_status returned invalid status")
   return {
@@ -6838,6 +7037,10 @@ function wakeSchedulerState(state: UiState): WakeSchedulerUiState {
     stagedReadPreview: scheduler.stagedReadPreview ?? null,
     latestStagedReadResult: scheduler.latestStagedReadResult ?? null,
     stagedReadRuns: scheduler.stagedReadRuns ?? [],
+    stagedReadHistory: scheduler.stagedReadHistory ?? null,
+    stagedReadComparison: scheduler.stagedReadComparison ?? null,
+    stagedReadStaleItems: scheduler.stagedReadStaleItems ?? [],
+    selectedStagedReadGroup: scheduler.selectedStagedReadGroup ?? null,
     events: scheduler.events ?? [],
     commandError: scheduler.commandError,
   }
@@ -7105,6 +7308,44 @@ function schedulerNavigationArgs(args: string[]): { relatedId?: string; incident
     else throw new Error("scheduler navigation arg is invalid")
   }
   return out
+}
+
+function schedulerNavReadHistoryArgs(args: string[]): { stagedId?: string; command?: string; limit?: number; staleAfterMs?: number } {
+  const out: { stagedId?: string; command?: string; limit?: number; staleAfterMs?: number } = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("scheduler navigation read history args must use key=value")
+    if (key === "staged") out.stagedId = value
+    else if (key === "command") out.command = value
+    else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
+    else if (key === "after") out.staleAfterMs = readDurationArg(value)
+    else throw new Error("scheduler navigation read history arg is invalid")
+  }
+  return out
+}
+
+function schedulerNavReadStaleArgs(args: string[]): { staleAfterMs?: number; limit?: number } {
+  const out: { staleAfterMs?: number; limit?: number } = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("scheduler navigation read stale args must use key=value")
+    if (key === "after") out.staleAfterMs = readDurationArg(value)
+    else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
+    else throw new Error("scheduler navigation read stale arg is invalid")
+  }
+  return out
+}
+
+function readDurationArg(value: string): number {
+  if (/^\d+$/.test(value)) return readPositiveInteger(value, "duration", 24 * 60 * 60 * 1000)
+  const match = value.match(/^(\d+)(s|m|h|d)$/)
+  if (!match) throw new Error("duration must be milliseconds or one of 60s, 5m, 1h, 1d")
+  const amount = Number(match[1])
+  const unit = match[2]
+  const scale = unit === "s" ? 1000 : unit === "m" ? 60_000 : unit === "h" ? 3_600_000 : 86_400_000
+  return amount * scale
 }
 
 function requiredQueueKindArg(args: string[], index: number): CommanderQueueKind {
