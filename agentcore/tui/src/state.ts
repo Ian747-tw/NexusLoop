@@ -1789,6 +1789,45 @@ export type WakeSchedulerNavigationStagedCommandRecordSummary = {
   stage_hash: string
 }
 
+export type WakeSchedulerNavigationStagedRunPreviewSummary = {
+  staged_id: string
+  command: string
+  can_execute: boolean
+  command_type: "read" | "write" | string
+  risk: WakeSchedulerNavigationRiskSummary
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id?: string
+  blockers: string[]
+  warnings: string[]
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerNavigationStagedRunResultSummary = {
+  run_id: string
+  staged_id: string
+  command: string
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  target_id?: string
+  status: "succeeded" | "failed" | "blocked" | string
+  result_summary?: string
+  result_kind?: string
+  error?: string
+  started_at: string
+  completed_at: string
+  requested_by: string
+  result_hash?: string
+}
+
+export type WakeSchedulerNavigationStagedRunRecordSummary = {
+  run_id: string
+  staged_id: string
+  command: string
+  target_kind: WakeSchedulerNavigationTargetKindSummary
+  status: "succeeded" | "failed" | "blocked" | string
+  completed_at: string
+  summary_preview: string
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -1811,6 +1850,9 @@ export type WakeSchedulerUiState = {
   navigationStagePreview?: WakeSchedulerNavigationStagePreviewSummary | null
   stagedNavigationCommands: WakeSchedulerNavigationStagedCommandRecordSummary[]
   selectedStagedNavigationCommand?: WakeSchedulerNavigationStagedCommandSummary | null
+  stagedReadPreview?: WakeSchedulerNavigationStagedRunPreviewSummary | null
+  latestStagedReadResult?: WakeSchedulerNavigationStagedRunResultSummary | null
+  stagedReadRuns: WakeSchedulerNavigationStagedRunRecordSummary[]
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

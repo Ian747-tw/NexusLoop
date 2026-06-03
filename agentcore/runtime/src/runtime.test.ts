@@ -7377,6 +7377,158 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation staged reads execute one safe-read command and keep staged command active", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await expect(notStarted.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: "missing" })).rejects.toThrow("runtime must be started before wake scheduler writes")
+
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await statusServer.start()
+    await expect(statusServer.command("runtime.preview_wake_scheduler_navigation_staged_read", { staged_id: "missing" })).resolves.toMatchObject({ can_execute: false, blockers: ["staged navigation command is not active"] })
+    await expect(statusServer.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: "missing" })).rejects.toThrow("requires active mode")
+    await statusServer.shutdown()
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-12T12:00:00.000Z"),
+    })
+    await server.start()
+    const staged = await server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-status", requested_by: "operator-read-test" }) as { staged_id: string }
+
+    const preview = await server.command("runtime.preview_wake_scheduler_navigation_staged_read", { staged_id: staged.staged_id }) as { can_execute: boolean; command: string; risk: string; target_kind: string; blockers: string[] }
+    expect(preview).toMatchObject({ can_execute: true, command: "/scheduler-status", risk: "safe_read", target_kind: "scheduler_status", blockers: [] })
+    const beforeRunEvents = await readJsonlEvents(dir)
+
+    const result = await server.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: staged.staged_id, requested_by: "operator-read-test" }) as { run_id: string; staged_id: string; command: string; status: string; result_summary: string; result_kind: string }
+    expect(result).toMatchObject({
+      staged_id: staged.staged_id,
+      command: "/scheduler-status",
+      status: "succeeded",
+      result_kind: "scheduler_status",
+    })
+    expect(result.result_summary).toContain("scheduler_status")
+    const afterRunEvents = await readJsonlEvents(dir)
+    expect(afterRunEvents.length).toBe(beforeRunEvents.length + 2)
+    expect(afterRunEvents.map((event) => event.kind)).toContain("runtime_wake_scheduler_navigation_staged_read_started")
+    expect(afterRunEvents.map((event) => event.kind)).toContain("runtime_wake_scheduler_navigation_staged_read_succeeded")
+    expect(afterRunEvents.map((event) => event.kind)).not.toContain("runtime_wake_schedule_tick_completed")
+    expect(afterRunEvents.map((event) => event.kind)).not.toContain("runtime_wake_scheduler_started")
+    expect(afterRunEvents.map((event) => event.kind)).not.toContain("runtime_continuation_step_started")
+
+    const stagedAfterRun = await server.command("runtime.list_wake_scheduler_navigation_staged_commands") as Array<{ staged_id: string; command: string; risk: string; target_kind: string; staged_at: string; staged_by: string; summary_preview: string; stage_hash: string }>
+    expect(stagedAfterRun).toEqual([{ staged_id: staged.staged_id, command: "/scheduler-status", risk: "safe_read", target_kind: "scheduler_status", staged_at: "2026-05-12T12:00:00.000Z", staged_by: "operator-read-test", summary_preview: "safe_read scheduler_status: /scheduler-status", stage_hash: createHash("sha256").update("/scheduler-status").digest("hex") }])
+    const runs = await server.command("runtime.list_wake_scheduler_navigation_staged_read_runs") as Array<{ run_id: string; staged_id: string; status: string; summary_preview: string }>
+    expect(runs).toHaveLength(1)
+    expect(runs[0]).toMatchObject({ run_id: result.run_id, staged_id: staged.staged_id, status: "succeeded" })
+    const fetched = await server.command("runtime.get_wake_scheduler_navigation_staged_read_run", { run_id: result.run_id }) as { run_id: string; result_summary: string }
+    expect(fetched).toMatchObject({ run_id: result.run_id })
+
+    const stagedListRead = await server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-nav-staged", requested_by: "operator-read-test" }) as { staged_id: string }
+    await expect(server.command("runtime.preview_wake_scheduler_navigation_staged_read", { staged_id: stagedListRead.staged_id })).resolves.toMatchObject({ can_execute: true, command: "/scheduler-nav-staged", target_kind: "scheduler_audit" })
+    await expect(server.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: stagedListRead.staged_id, requested_by: "operator-read-test" })).resolves.toMatchObject({ status: "succeeded", result_kind: "scheduler_navigation_staged_commands" })
+
+    const [repeatA, repeatB] = await Promise.all([
+      server.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: staged.staged_id, requested_by: "operator-read-test" }),
+      server.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: staged.staged_id, requested_by: "operator-read-test" }),
+    ]) as Array<{ run_id: string; staged_id: string; status: string }>
+    expect(repeatA.run_id).not.toBe(repeatB.run_id)
+    const statusRuns = await server.command("runtime.list_wake_scheduler_navigation_staged_read_runs", { staged_id: staged.staged_id }) as Array<{ run_id: string; staged_id: string; status: string }>
+    expect(statusRuns.map((run) => run.run_id).sort()).toEqual([result.run_id, repeatA.run_id, repeatB.run_id].sort())
+    const concurrentEvents = (await readJsonlEvents(dir)).filter((event) => event.run_id === repeatA.run_id || event.run_id === repeatB.run_id)
+    expect(concurrentEvents.map((event) => `${event.run_id}:${event.kind}`)).toEqual([
+      `${repeatA.run_id}:runtime_wake_scheduler_navigation_staged_read_started`,
+      `${repeatA.run_id}:runtime_wake_scheduler_navigation_staged_read_succeeded`,
+      `${repeatB.run_id}:runtime_wake_scheduler_navigation_staged_read_started`,
+      `${repeatB.run_id}:runtime_wake_scheduler_navigation_staged_read_succeeded`,
+    ])
+
+    await server.shutdown()
+
+    const replayServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await replayServer.start()
+    const replayRuns = await replayServer.command("runtime.list_wake_scheduler_navigation_staged_read_runs") as Array<{ run_id: string }>
+    expect(replayRuns.map((run) => run.run_id)).toContain(result.run_id)
+    const replayStaged = await replayServer.command("runtime.list_wake_scheduler_navigation_staged_commands") as Array<{ staged_id: string }>
+    expect(replayStaged.map((item) => item.staged_id)).toContain(staged.staged_id)
+    await replayServer.shutdown()
+  })
+
+  test("wake scheduler navigation staged reads block malformed write or unsupported staged commands without side effects", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_command_staged",
+      staged_id: "malformed_write_staged",
+      command: "/wake-tick token=abc123",
+      command_type: "read",
+      risk: "safe_read",
+      target_kind: "wake_tick",
+      label: "malformed",
+      notes: ["malformed direct event"],
+      staged_at: "2026-05-12T12:30:00.000Z",
+      staged_by: "fixture",
+      stage_hash: "malformed_write_hash",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_command_staged",
+      staged_id: "unsupported_safe_read_staged",
+      command: "/scheduler-audit-chain",
+      command_type: "read",
+      risk: "safe_read",
+      target_kind: "scheduler_audit",
+      label: "unsupported",
+      notes: ["missing required id"],
+      staged_at: "2026-05-12T12:31:00.000Z",
+      staged_by: "fixture",
+      stage_hash: "unsupported_safe_read_hash",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_command_staged",
+      staged_id: "malformed_exact_read_staged",
+      command: "/scheduler-status /tmp/foo token=abc123",
+      command_type: "read",
+      risk: "safe_read",
+      target_kind: "scheduler_status",
+      label: "malformed exact read",
+      notes: ["trailing args should block"],
+      staged_at: "2026-05-12T12:32:00.000Z",
+      staged_by: "fixture",
+      stage_hash: "malformed_exact_read_hash",
+    })
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+    const before = await readJsonlEvents(dir)
+
+    const malformedPreview = await server.command("runtime.preview_wake_scheduler_navigation_staged_read", { staged_id: "malformed_write_staged" }) as { can_execute: boolean; blockers: string[]; command: string }
+    expect(malformedPreview.can_execute).toBe(false)
+    expect(malformedPreview.blockers.join(" ")).toContain("not a read command")
+    expect(JSON.stringify(malformedPreview)).not.toContain("abc123")
+    const blocked = await server.command("runtime.execute_wake_scheduler_navigation_staged_read", { staged_id: "malformed_write_staged", requested_by: "operator-read-test" }) as { status: string; error: string }
+    expect(blocked.status).toBe("blocked")
+    expect(blocked.error).toContain("not a read command")
+
+    const unsupportedPreview = await server.command("runtime.preview_wake_scheduler_navigation_staged_read", { staged_id: "unsupported_safe_read_staged" }) as { can_execute: boolean; blockers: string[] }
+    expect(unsupportedPreview.can_execute).toBe(false)
+    expect(unsupportedPreview.blockers.join(" ")).toContain("not executable")
+    const malformedExactPreview = await server.command("runtime.preview_wake_scheduler_navigation_staged_read", { staged_id: "malformed_exact_read_staged" }) as { can_execute: boolean; blockers: string[]; command: string }
+    expect(malformedExactPreview.can_execute).toBe(false)
+    expect(malformedExactPreview.blockers.join(" ")).toContain("not executable")
+    expect(JSON.stringify(malformedExactPreview)).not.toContain("abc123")
+
+    const after = await readJsonlEvents(dir)
+    expect(after.length).toBe(before.length + 1)
+    expect(after.map((event) => event.kind)).toContain("runtime_wake_scheduler_navigation_staged_read_blocked")
+    expect(after.map((event) => event.kind)).not.toContain("runtime_wake_schedule_tick_completed")
+    expect(after.map((event) => event.kind)).not.toContain("runtime_wake_scheduler_started")
+    expect(after.map((event) => event.kind)).not.toContain("runtime_continuation_step_started")
+    expect(JSON.stringify(after)).not.toContain("abc123")
+    await server.shutdown()
+  })
+
   test("wake scheduler navigation incident lookup searches beyond display caps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

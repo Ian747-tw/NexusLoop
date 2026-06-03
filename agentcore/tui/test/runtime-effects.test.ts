@@ -3647,4 +3647,56 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("nav-stage-secret")
     expect(runtime.sentCommands).toEqual([])
   })
+
+  test("wake scheduler navigation staged read slash commands run one safe-read command", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/scheduler-status"] })
+    const stagedId = state.wakeScheduler?.selectedStagedNavigationCommand?.staged_id
+    expect(stagedId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-run-preview", args: [stagedId!] })
+    expect(state.wakeScheduler?.stagedReadPreview).toMatchObject({ staged_id: stagedId, can_execute: true, command: "/scheduler-status", risk: "safe_read", target_kind: "scheduler_status" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_navigation_staged_reads")
+    expect(snapshot).toContain("can_execute=true")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-run-dry-run", args: [stagedId!] })
+    expect(state.wakeScheduler?.latestStagedReadResult).toBeNull()
+    expect(state.wakeScheduler?.stagedReadRuns).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-run", args: [stagedId!] })
+    expect(state.wakeScheduler?.latestStagedReadResult).toMatchObject({ staged_id: stagedId, command: "/scheduler-status", status: "succeeded", result_kind: "fake_read_result" })
+    expect(state.wakeScheduler?.stagedReadRuns).toHaveLength(1)
+    expect(state.wakeScheduler?.stagedNavigationCommands).toHaveLength(1)
+    expect(state.operatorActions?.staged).toBeUndefined()
+    expect(runtime.sentCommands).toEqual([])
+
+    const runId = state.wakeScheduler?.latestStagedReadResult?.run_id
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-runs", args: [] })
+    expect(state.wakeScheduler?.stagedReadRuns.map((run) => run.run_id)).toContain(runId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-run-show", args: [runId!] })
+    expect(state.wakeScheduler?.latestStagedReadResult?.run_id).toBe(runId)
+
+    expect(state.wakeScheduler?.status?.status).not.toBe("running")
+    expect(state.wakeSchedules?.lastTick).toBeUndefined()
+    expect(state.continuation?.lastStepResult).toBeUndefined()
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("only one safe-read staged navigation command runs per explicit request")
+  })
+
+  test("wake scheduler navigation staged read blocks missing ids and redacts errors", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-run-preview", args: ["missing-token=secret"] })
+    expect(state.wakeScheduler?.stagedReadPreview).toMatchObject({ can_execute: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-run", args: ["missing-token=secret"] })
+    expect(state.wakeScheduler?.latestStagedReadResult).toMatchObject({ status: "blocked" })
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).not.toContain("secret")
+    expect(JSON.stringify(state)).not.toContain("secret")
+    expect(runtime.sentCommands).toEqual([])
+  })
 })
