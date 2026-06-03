@@ -7583,9 +7583,10 @@ describe("RuntimeServer core", () => {
     })
     await server.start()
 
-    const history = await server.command("runtime.wake_scheduler_navigation_staged_read_history", { staged_id: "staged_status_compare" }) as { total_groups: number; total_runs: number; groups: Array<{ comparison_status: string; latest_comparison_hash: string; previous_comparison_hash?: string; failed_count: number; summary_preview: string }> }
+    const history = await server.command("runtime.wake_scheduler_navigation_staged_read_history", { staged_id: "staged_status_compare" }) as { total_groups: number; total_runs: number; failed_groups: number; groups: Array<{ comparison_status: string; latest_comparison_hash: string; previous_comparison_hash?: string; failed_count: number; summary_preview: string }> }
     expect(history.total_groups).toBe(1)
     expect(history.total_runs).toBe(4)
+    expect(history.failed_groups).toBe(1)
     expect(history.groups[0].comparison_status).toBe("changed")
     expect(history.groups[0].failed_count).toBe(1)
     expect(JSON.stringify(history)).not.toContain("abc123")

@@ -86,7 +86,7 @@ export class WakeSchedulerNavigationStagedReadCompareService {
       total_runs: groups.reduce((sum, group) => sum + group.run_count, 0),
       total_groups: groups.length,
       changed_groups: groups.filter((group) => group.comparison_status === "changed").length,
-      failed_groups: groups.filter((group) => group.comparison_status === "failed" || group.comparison_status === "blocked").length,
+      failed_groups: groups.filter((group) => group.failed_count > 0 || group.blocked_count > 0 || group.latest_status === "failed" || group.latest_status === "blocked").length,
       stale_groups: staleGroups,
       generated_at: now,
     })
