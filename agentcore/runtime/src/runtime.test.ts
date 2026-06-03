@@ -7692,6 +7692,10 @@ describe("RuntimeServer core", () => {
     expect(recovery).toMatchObject({ authority_gate: "recovery_runtime", target_kind: "scheduler_recovery", target_id: "recovery_7t_1" })
     expect(recovery.safer_read_commands.map((command) => command.command)).toContain("/scheduler-recovery-show recovery_7t_1")
 
+    const workflowCreate = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-recovery-workflow recovery_7t_1" }) as { authority_gate: string; target_kind: string; target_id: string; safer_read_commands: Array<{ command: string }> }
+    expect(workflowCreate).toMatchObject({ authority_gate: "recovery_workflow_runtime", target_kind: "scheduler_recovery", target_id: "recovery_7t_1" })
+    expect(workflowCreate.safer_read_commands.map((command) => command.command)).toContain("/scheduler-recovery-workflow-preview recovery_7t_1")
+
     const workflowStep = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-recovery-step-done workflow_7t_1 0" }) as { authority_gate: string; target_id: string; blockers: string[] }
     expect(workflowStep).toMatchObject({ authority_gate: "recovery_workflow_runtime", target_id: "workflow_7t_1" })
     expect(workflowStep.blockers.join(" ")).not.toContain("numeric workflow step index is required")
@@ -7709,6 +7713,12 @@ describe("RuntimeServer core", () => {
       expect(highImpact.status).toBe("high_impact_blocked")
       expect(highImpact.command).not.toContain("abc123")
       expect(highImpact.blockers.join(" ")).toContain("high-impact")
+    }
+
+    for (const command of ["/proposal-review proposal_1", "/apply-proposal proposal_1", "/bundle-review bundle_1", "/apply-bundle bundle_1", "/draft-review draft_1", "/apply-target proposal proposal_1", "/request-review target_1", "/cancel-review review_1"]) {
+      const proposalWrite = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command }) as { risk: string; status: string; authority_gate: string; command: string }
+      expect(proposalWrite).toMatchObject({ risk: "high_impact_write", status: "high_impact_blocked", authority_gate: "proposal_review_runtime" })
+      expect(proposalWrite.command).not.toContain("abc123")
     }
 
     for (const command of ["/tmp/repro", "/path/foo", "scheduler-start", "/unknown-write"]) {

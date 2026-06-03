@@ -166,7 +166,7 @@ export class WakeSchedulerNavigationWritePreviewService {
       return board.cards.filter((card) => card.command_type === "write" || card.risk === "high_impact_write").map((card) => card.command)
     }
     if (input.staged_id) return [`/scheduler-nav-run ${input.staged_id}`]
-    return ["/wake-tick-dry-run", "/checkpoint full manual-checkpoint", "/scheduler-start dry-run every=60s", "/wake-tick"]
+    return ["/wake-tick-dry-run", "/checkpoint full manual-checkpoint", "/scheduler-start dry-run every=60s", "/wake-tick", "/proposal-review <proposalId>"]
   }
 }
 
@@ -239,7 +239,7 @@ const WRITE_SPECS: Record<string, WriteSpec> = {
   "/scheduler-recovery-ack": recoverySpec("runtime.acknowledge_wake_scheduler_recovery", "acknowledge recovery"),
   "/scheduler-recovery-resolve": recoverySpec("runtime.acknowledge_wake_scheduler_recovery", "resolve recovery"),
   "/scheduler-recovery-dismiss": recoverySpec("runtime.acknowledge_wake_scheduler_recovery", "dismiss recovery"),
-  "/scheduler-recovery-workflow": workflowSpec("runtime.create_wake_scheduler_recovery_workflow", "create recovery workflow"),
+  "/scheduler-recovery-workflow": recoveryWorkflowCreateSpec(),
   "/scheduler-recovery-step-done": workflowStepSpec("runtime.record_wake_scheduler_recovery_workflow_step", "mark recovery workflow step done"),
   "/scheduler-recovery-step-skip": workflowStepSpec("runtime.record_wake_scheduler_recovery_workflow_step", "mark recovery workflow step skipped"),
   "/scheduler-recovery-step-block": workflowStepSpec("runtime.record_wake_scheduler_recovery_workflow_step", "mark recovery workflow step blocked"),
@@ -259,8 +259,20 @@ const WRITE_SPECS: Record<string, WriteSpec> = {
   "/wake-tick": highImpactSpec("wake_schedule_tick", "wake_tick", "runtime.execute_wake_schedule_tick", [readCommand("Wake tick preview", "/wake-tick-preview"), readCommand("Wake tick dry run", "/wake-tick-dry-run")]),
   "/handoff": highImpactSpec("handoff_runtime", "handoff_followup", "runtime.execute_opencode_handoff", [readCommand("Handoff follow-ups", "/handoff-followups")]),
   "/apply": highImpactSpec("proposal_review_runtime", "unknown", undefined, [readCommand("Missions", "/missions")]),
+  "/request-review": highImpactSpec("proposal_review_runtime", "unknown", "runtime.create_review_request", [readCommand("Reviews", "/reviews"), readCommand("Proposals", "/proposals")]),
   "/approve": highImpactSpec("proposal_review_runtime", "unknown", undefined, [readCommand("Missions", "/missions")]),
   "/reject": highImpactSpec("proposal_review_runtime", "unknown", undefined, [readCommand("Missions", "/missions")]),
+  "/cancel-review": highImpactSpec("proposal_review_runtime", "unknown", "runtime.cancel_review_request", [readCommand("Reviews", "/reviews")]),
+  "/proposal-review": highImpactSpec("proposal_review_runtime", "unknown", "runtime.request_proposal_review", [readCommand("Proposals", "/proposals"), readCommand("Reviews", "/reviews")]),
+  "/apply-proposal": highImpactSpec("proposal_review_runtime", "unknown", "runtime.apply_proposal", [readCommand("Proposals", "/proposals"), readCommand("Reviews", "/reviews")]),
+  "/cancel-proposal": highImpactSpec("proposal_review_runtime", "unknown", "runtime.cancel_proposal", [readCommand("Proposals", "/proposals")]),
+  "/bundle-review": highImpactSpec("proposal_review_runtime", "unknown", "runtime.request_proposal_bundle_reviews", [readCommand("Bundles", "/bundles"), readCommand("Reviews", "/reviews")]),
+  "/apply-bundle": highImpactSpec("proposal_review_runtime", "unknown", "runtime.apply_proposal_bundle", [readCommand("Bundles", "/bundles"), readCommand("Reviews", "/reviews")]),
+  "/cancel-bundle": highImpactSpec("proposal_review_runtime", "unknown", "runtime.cancel_proposal_bundle", [readCommand("Bundles", "/bundles")]),
+  "/draft-review": highImpactSpec("proposal_review_runtime", "unknown", "runtime.request_playbook_draft_reviews", [readCommand("Drafts", "/drafts"), readCommand("Reviews", "/reviews")]),
+  "/cancel-draft": highImpactSpec("proposal_review_runtime", "unknown", "runtime.cancel_playbook_draft", [readCommand("Drafts", "/drafts")]),
+  "/apply-target": highImpactSpec("proposal_review_runtime", "unknown", "runtime.commander_apply_target", [readCommand("Commander apply preview", "/apply-preview"), readCommand("Proposals", "/proposals")]),
+  "/apply-partial": highImpactSpec("proposal_review_runtime", "unknown", "runtime.commander_apply_target", [readCommand("Commander apply preview", "/apply-preview"), readCommand("Proposals", "/proposals")]),
   "/complete": highImpactSpec("mission_runtime", "mission", undefined, [readCommand("Missions", "/missions")]),
   "/fail": highImpactSpec("mission_runtime", "mission", undefined, [readCommand("Missions", "/missions")]),
   "/cancel": highImpactSpec("mission_runtime", "mission", undefined, [readCommand("Missions", "/missions")]),
@@ -292,6 +304,19 @@ function workflowSpec(runtimeCommand: string, label: string): WriteSpec {
     requires_target: "first",
     safer_reads: (args) => [readCommand("Recovery workflow", `/scheduler-recovery-workflow-show ${args.target_id ?? "<workflowId>"}`), readCommand("Recovery workflows", "/scheduler-recovery-workflows")],
     warnings: [`${label} remains an explicit recovery workflow command outside 7T`],
+  }
+}
+
+function recoveryWorkflowCreateSpec(): WriteSpec {
+  return {
+    risk: "medium_risk_write",
+    authority_gate: "recovery_workflow_runtime",
+    status: "blocked",
+    target_kind: "scheduler_recovery",
+    equivalent_runtime_command: "runtime.create_wake_scheduler_recovery_workflow",
+    requires_target: "first",
+    safer_reads: (args) => [readCommand("Recovery", `/scheduler-recovery-show ${args.target_id ?? "<recoveryId>"}`), readCommand("Recovery workflow preview", `/scheduler-recovery-workflow-preview ${args.target_id ?? "<recoveryId>"}`), readCommand("Recovery workflows", "/scheduler-recovery-workflows")],
+    warnings: ["creating a recovery workflow targets a recovery id and remains an explicit recovery workflow command outside 7T"],
   }
 }
 

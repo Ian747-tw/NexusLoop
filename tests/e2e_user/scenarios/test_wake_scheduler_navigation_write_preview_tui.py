@@ -47,6 +47,8 @@ def test_user_previews_scheduler_navigation_write_eligibility_without_writes(san
         {"type": "submit"},
         {"type": "insert", "text": "/scheduler-nav-write-preview /handoff token=abc123"},
         {"type": "submit"},
+        {"type": "insert", "text": "/scheduler-nav-write-preview /proposal-review proposal_1 token=abc123"},
+        {"type": "submit"},
         {"type": "insert", "text": "/scheduler-nav-write-preview /tmp/repro"},
         {"type": "submit"},
         {"type": "insert", "text": "/scheduler-nav-write-board"},
@@ -67,6 +69,7 @@ def test_user_previews_scheduler_navigation_write_eligibility_without_writes(san
     assert "can_stage_now=false" in result.stdout
     assert "can_execute_now=false" in result.stdout
     assert "gate=wake_scheduler_runtime" in result.stdout
+    assert "gate=proposal_review_runtime" in result.stdout
     assert "high_impact_blocked" in result.stdout
     assert "unsupported" in result.stdout
     assert "preview only; no write staging or execution" in result.stdout

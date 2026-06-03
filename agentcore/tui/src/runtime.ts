@@ -1919,8 +1919,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     const commands = stagedId
       ? [`/scheduler-nav-run ${stagedId}`]
       : relatedId || incidentId
-        ? ["/wake-tick-dry-run", "/scheduler-start dry-run every=60s", "/wake-tick"]
-        : ["/wake-tick-dry-run", "/checkpoint full manual-checkpoint", "/scheduler-start dry-run every=60s", "/wake-tick"]
+        ? ["/wake-tick-dry-run", "/scheduler-start dry-run every=60s", "/wake-tick", "/proposal-review <proposalId>"]
+        : ["/wake-tick-dry-run", "/checkpoint full manual-checkpoint", "/scheduler-start dry-run every=60s", "/wake-tick", "/proposal-review <proposalId>"]
     const previews = commands.map(fakeWakeSchedulerNavigationWritePreview).filter((previewRecord) => includeHighImpact || previewRecord.risk !== "high_impact_write").slice(0, limit)
     return {
       board_id: `fake-write-board-${source.kind}`,
@@ -4255,7 +4255,7 @@ function fakeWakeSchedulerNavigationCommandPreview(commandValue: string): WakeSc
       command,
       command_type: "read",
       risk: "safe_read",
-      target_kind: fakeTargetKindForCommand(name),
+      target_kind: name === "/scheduler-recovery-workflow" ? "scheduler_recovery" : fakeTargetKindForCommand(name),
       target_id,
       supported: true,
       blockers: [],
@@ -4315,7 +4315,7 @@ function fakeWakeSchedulerNavigationWritePreview(commandValue: string): WakeSche
   if (!command.startsWith("/") || command.startsWith("/tmp/") || command.startsWith("/path")) {
     return fakeUnsupportedWritePreview(command, "command must be a single whitelisted slash command")
   }
-  const highImpact = new Set(["/wake-tick", "/handoff", "/apply", "/approve", "/reject", "/complete", "/fail", "/cancel", "/api-call", "/synthesize", "/cycle"])
+  const highImpact = new Set(["/wake-tick", "/handoff", "/apply", "/request-review", "/approve", "/reject", "/cancel-review", "/proposal-review", "/apply-proposal", "/cancel-proposal", "/bundle-review", "/apply-bundle", "/cancel-bundle", "/draft-review", "/cancel-draft", "/apply-target", "/apply-partial", "/complete", "/fail", "/cancel", "/api-call", "/synthesize", "/cycle"])
   const medium = new Set(["/scheduler-start", "/scheduler-stop", "/scheduler-nav-run", "/checkpoint", "/scheduler-recovery-ack", "/scheduler-recovery-resolve", "/scheduler-recovery-dismiss", "/scheduler-recovery-workflow", "/scheduler-recovery-step-done", "/scheduler-recovery-step-skip", "/scheduler-recovery-step-block", "/scheduler-recovery-workflow-cancel", "/continue-plan", "/continue-step", "/continue-pause", "/continue-cancel"])
   if (name !== "/wake-tick-dry-run" && !medium.has(name) && !highImpact.has(name)) return fakeUnsupportedWritePreview(command, "command is not in the scheduler write preview whitelist")
   const high = highImpact.has(name)
@@ -4330,7 +4330,7 @@ function fakeWakeSchedulerNavigationWritePreview(commandValue: string): WakeSche
     status: high ? "high_impact_blocked" : "blocked",
     can_stage_now: false,
     can_execute_now: false,
-    target_kind: fakeTargetKindForCommand(name),
+    target_kind: name === "/scheduler-recovery-workflow" ? "scheduler_recovery" : fakeTargetKindForCommand(name),
     target_id: targetId,
     parsed_args: Object.fromEntries(parts.slice(1).filter((part) => part.includes("=")).map((part) => {
       const [key, ...rest] = part.split("=")
@@ -4396,7 +4396,7 @@ function fakeWriteGateFor(name: string): WakeSchedulerNavigationWritePreviewSumm
   if (name.startsWith("/continue")) return "continuation_runtime"
   if (name === "/handoff") return "handoff_runtime"
   if (name === "/complete" || name === "/fail" || name === "/cancel") return "mission_runtime"
-  if (name === "/apply" || name === "/approve" || name === "/reject") return "proposal_review_runtime"
+  if (name === "/apply" || name === "/request-review" || name === "/approve" || name === "/reject" || name === "/cancel-review" || name === "/proposal-review" || name === "/apply-proposal" || name === "/cancel-proposal" || name === "/bundle-review" || name === "/apply-bundle" || name === "/cancel-bundle" || name === "/draft-review" || name === "/cancel-draft" || name === "/apply-target" || name === "/apply-partial") return "proposal_review_runtime"
   if (name === "/api-call" || name === "/synthesize" || name === "/cycle") return "reasoning_provider_runtime"
   return "unknown"
 }
