@@ -7736,6 +7736,10 @@ describe("RuntimeServer core", () => {
     expect(stagedBoard.previews).toHaveLength(1)
     expect(stagedBoard.previews[0]).toMatchObject({ command: "/scheduler-nav-run staged_7t_1", risk: "low_risk_write", authority_gate: "wake_scheduler_runtime" })
 
+    const missingRelatedBoard = await server.command("runtime.wake_scheduler_navigation_write_board", { related_id: "missing_related_7t" }) as { previews: unknown[]; blockers: string[] }
+    expect(missingRelatedBoard.previews).toHaveLength(0)
+    expect(missingRelatedBoard.blockers.join(" ")).toContain("no audit chain entries found")
+
     const after = await readJsonlEvents(dir)
     expect(after).toEqual(before)
     await server.shutdown()

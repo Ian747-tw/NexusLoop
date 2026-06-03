@@ -48,6 +48,12 @@ interface ParsedCommand {
   step_index?: string
 }
 
+interface BoardCommandSource {
+  commands: string[]
+  blockers: string[]
+  warnings: string[]
+}
+
 export class WakeSchedulerNavigationWritePreviewService {
   constructor(
     private readonly navigationService: WakeSchedulerNavigationService,
@@ -60,12 +66,12 @@ export class WakeSchedulerNavigationWritePreviewService {
 
   async board(input: WakeSchedulerNavigationWriteBoardInput = {}): Promise<WakeSchedulerNavigationWriteBoard> {
     const normalized = normalizeBoardInput(input)
-    const commands = await this.commandsForBoard(normalized)
+    const commandSource = await this.commandsForBoard(normalized)
     let omittedReadCount = 0
     let highImpactCount = 0
     const previews: WakeSchedulerNavigationWritePreview[] = []
     const seen = new Set<string>()
-    for (const command of commands) {
+    for (const command of commandSource.commands) {
       if (seen.has(command)) continue
       seen.add(command)
       const previewRecord = this.previewCommand(command)
@@ -90,17 +96,18 @@ export class WakeSchedulerNavigationWritePreviewService {
             ? { kind: "staged_read_group" as const, staged_id: normalized.staged_id }
             : { kind: "navigation_board" as const }
     const warnings = [
+      ...commandSource.warnings,
       normalized.include_high_impact ? undefined : `${highImpactCount} high-impact write previews omitted by include_high_impact=false`,
       "write eligibility preview is read-only; no write command is staged or executed",
     ].filter((item): item is string => Boolean(item))
     return redactValue({
-      board_id: `wake_scheduler_write_board_${hashText(JSON.stringify(source) + commands.join("\n")).slice(0, 16)}`,
+      board_id: `wake_scheduler_write_board_${hashText(JSON.stringify(source) + commandSource.commands.join("\n")).slice(0, 16)}`,
       source,
       previews,
       omitted_read_count: omittedReadCount,
       unsupported_count: previews.filter((item) => item.risk === "unsupported").length,
       high_impact_count: highImpactCount,
-      blockers: [],
+      blockers: commandSource.blockers.map(preview),
       warnings: warnings.map(preview),
       generated_at: this.now(),
     })
@@ -154,8 +161,8 @@ export class WakeSchedulerNavigationWritePreviewService {
     })
   }
 
-  private async commandsForBoard(input: NormalizedBoardInput): Promise<string[]> {
-    if (input.command) return [input.command]
+  private async commandsForBoard(input: NormalizedBoardInput): Promise<BoardCommandSource> {
+    if (input.command) return { commands: [input.command], blockers: [], warnings: [] }
     if (input.related_id || input.incident_id) {
       const board = await this.navigationService.board({
         related_id: input.related_id,
@@ -163,10 +170,14 @@ export class WakeSchedulerNavigationWritePreviewService {
         include_write: true,
         limit: input.limit,
       })
-      return board.cards.filter((card) => card.command_type === "write" || card.risk === "high_impact_write").map((card) => card.command)
+      return {
+        commands: board.cards.filter((card) => card.command_type === "write" || card.risk === "high_impact_write").map((card) => card.command),
+        blockers: board.blockers,
+        warnings: board.warnings,
+      }
     }
-    if (input.staged_id) return [`/scheduler-nav-run ${input.staged_id}`]
-    return ["/wake-tick-dry-run", "/checkpoint full manual-checkpoint", "/scheduler-start dry-run every=60s", "/wake-tick", "/proposal-review <proposalId>"]
+    if (input.staged_id) return { commands: [`/scheduler-nav-run ${input.staged_id}`], blockers: [], warnings: [] }
+    return { commands: ["/wake-tick-dry-run", "/checkpoint full manual-checkpoint", "/scheduler-start dry-run every=60s", "/wake-tick", "/proposal-review <proposalId>"], blockers: [], warnings: [] }
   }
 }
 
