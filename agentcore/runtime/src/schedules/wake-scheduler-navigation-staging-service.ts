@@ -93,6 +93,11 @@ export class WakeSchedulerNavigationStagingService {
     return this.recordsFromActive(await this.active(), readLimit(limit))
   }
 
+  async get(stagedId: string): Promise<WakeSchedulerNavigationStagedCommand | null> {
+    const staged = (await this.active()).find((item) => item.staged_id === cleanString(stagedId, "staged_id")) ?? null
+    return staged ? redactValue(staged) : null
+  }
+
   async remove(input: WakeSchedulerNavigationStageRemoveInput): Promise<WakeSchedulerNavigationStagedCommand | null> {
     const normalized = readRemoveInput(input)
     const active = await this.active()

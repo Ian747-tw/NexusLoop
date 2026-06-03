@@ -778,6 +778,26 @@ function wakeSchedulerLines(state: UiState): string[] {
   out.push("    staged_rows")
   if (scheduler.stagedNavigationCommands.length === 0) out.push("      - empty")
   else out.push(...scheduler.stagedNavigationCommands.slice(0, 10).map((record) => `      - ${record.staged_id} ${record.risk} ${record.target_kind}${record.target_id ? `:${record.target_id}` : ""}: ${preview(redactText(record.command))}`))
+  out.push("  scheduler_navigation_staged_reads")
+  if (scheduler.stagedReadPreview) {
+    const readPreview = scheduler.stagedReadPreview
+    out.push(`    preview=${readPreview.staged_id} ${readPreview.risk}/${readPreview.command_type} target=${readPreview.target_kind}${readPreview.target_id ? `:${readPreview.target_id}` : ""} can_execute=${readPreview.can_execute}: ${preview(redactText(readPreview.command))}`)
+    if (readPreview.blockers.length > 0) out.push(...readPreview.blockers.slice(0, 10).map((blocker) => `    read_blocker=${preview(redactText(blocker))}`))
+    if (readPreview.warnings.length > 0) out.push(...readPreview.warnings.slice(0, 10).map((warning) => `    read_warning=${preview(redactText(warning))}`))
+  } else {
+    out.push("    preview=none")
+  }
+  if (scheduler.latestStagedReadResult) {
+    const result = scheduler.latestStagedReadResult
+    out.push(`    latest=${result.run_id} ${result.status} ${result.target_kind}${result.target_id ? `:${result.target_id}` : ""}: ${preview(redactText(result.result_summary ?? result.error ?? result.command))}`)
+  } else {
+    out.push("    latest=none")
+  }
+  out.push("    note=only one safe-read staged navigation command runs per explicit request")
+  out.push(`    runs=${scheduler.stagedReadRuns.length}`)
+  out.push("    run_rows")
+  if (scheduler.stagedReadRuns.length === 0) out.push("      - empty")
+  else out.push(...scheduler.stagedReadRuns.slice(0, 10).map((record) => `      - ${record.run_id} ${record.status} ${record.target_kind}: ${preview(redactText(record.summary_preview))}`))
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

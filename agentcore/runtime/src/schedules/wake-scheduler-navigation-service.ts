@@ -248,6 +248,7 @@ const SAFE_READ = new Set([
   "/scheduler-status", "/scheduler-events", "/scheduler-bootstrap", "/scheduler-bootstrap-preview", "/scheduler-recovery", "/scheduler-recovery-preview",
   "/scheduler-recoveries", "/scheduler-recovery-show", "/scheduler-recovery-workflows", "/scheduler-recovery-workflow-show", "/scheduler-recovery-workflow-verify",
   "/scheduler-audit", "/scheduler-audit-summary", "/scheduler-audit-timeline", "/scheduler-audit-chain", "/scheduler-audit-incidents",
+  "/scheduler-nav-staged",
   "/wake-tick-preview", "/wake-schedules", "/wake-schedule", "/wake-ticks", "/wake-tick-show", "/wake-preview", "/wake-show",
   "/continuations", "/continue-show", "/checkpoints", "/checkpoint-show", "/resume-anchors", "/resume-anchor", "/handoff-followups", "/handoff-followup",
   "/missions", "/mission", "/reasoning",
@@ -279,6 +280,7 @@ function unsupported(command: string, reason: string): ClassifiedWakeSchedulerNa
 
 function targetForRead(name: string, arg?: string): WakeSchedulerNavigationTargetKind {
   if (name.startsWith("/scheduler-audit")) return "scheduler_audit"
+  if (name === "/scheduler-nav-staged") return "scheduler_audit"
   if (name.startsWith("/scheduler-bootstrap")) return "scheduler_bootstrap"
   if (name.startsWith("/scheduler-recovery-workflow")) return "scheduler_recovery_workflow"
   if (name.startsWith("/scheduler-recovery")) return "scheduler_recovery"
@@ -329,6 +331,7 @@ function runtimeFor(command: string): string | undefined {
     "/scheduler-audit-timeline": "runtime.wake_scheduler_audit_timeline",
     "/scheduler-audit-chain": "runtime.wake_scheduler_audit_chain",
     "/scheduler-audit-incidents": "runtime.wake_scheduler_audit_incidents",
+    "/scheduler-nav-staged": "runtime.list_wake_scheduler_navigation_staged_commands",
   }
   return name ? map[name] : undefined
 }
