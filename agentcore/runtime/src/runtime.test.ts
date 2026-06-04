@@ -7745,6 +7745,73 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation write staging persists allowed intent only and blocks execution surfaces", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await statusServer.start()
+    const statusPreview = await statusServer.command("runtime.preview_wake_scheduler_navigation_write_stage", { command: "/wake-tick-dry-run" }) as { eligibility: { can_stage: boolean; risk: string } }
+    expect(statusPreview.eligibility).toMatchObject({ can_stage: true, risk: "low_risk_write" })
+    const statusList = await statusServer.command("runtime.list_wake_scheduler_navigation_staged_write_commands", { limit: 10 }) as unknown[]
+    expect(statusList).toEqual([])
+    await expect(statusServer.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run" })).rejects.toThrow(/requires active mode/)
+    await statusServer.shutdown()
+
+    const server = new RuntimeServer({ projectDir: dir, mode: "active", researchProjectionMode: "disabled" })
+    await server.start()
+
+    const lowPreview = await server.command("runtime.preview_wake_scheduler_navigation_write_stage", { command: "/wake-tick-dry-run" }) as { eligibility: { can_stage: boolean; authority_gate: string; blockers: string[] } }
+    expect(lowPreview.eligibility).toMatchObject({ can_stage: true, authority_gate: "wake_schedule_tick" })
+    const dryRun = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run", requestedBy: "operator" }) as { staged_write_id: string; command: string; risk: string; authority_gate: string; summary_preview: string }
+    expect(dryRun).toMatchObject({ command: "/wake-tick-dry-run", risk: "low_risk_write", authority_gate: "wake_schedule_tick" })
+    const dryRunAgain = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run", requestedBy: "operator" }) as { staged_write_id: string }
+    expect(dryRunAgain.staged_write_id).toBe(dryRun.staged_write_id)
+
+    const stagedReadRun = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/scheduler-nav-run staged_read_7u_1", requestedBy: "operator" }) as { command: string; risk: string }
+    expect(stagedReadRun).toMatchObject({ command: "/scheduler-nav-run staged_read_7u_1", risk: "low_risk_write" })
+
+    await expect(server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full token=abc123", requestedBy: "operator" })).rejects.toThrow(/medium-risk/)
+    const checkpoint = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full token=abc123", allowMediumRisk: true, requestedBy: "operator" }) as { command: string; risk: string; authority_gate: string }
+    expect(checkpoint).toMatchObject({ risk: "medium_risk_write", authority_gate: "checkpoint_runtime" })
+    expect(checkpoint.command).not.toContain("abc123")
+
+    for (const command of ["/scheduler-recovery-ack recovery_7u_1", "/scheduler-recovery-step-done workflow_7u_1 0", "/continue-plan wake=wake_7u_1"]) {
+      const staged = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command, allowMediumRisk: true, requestedBy: "operator" }) as { command: string; risk: string }
+      expect(staged.risk).toBe("medium_risk_write")
+    }
+
+    for (const command of ["/scheduler-start every=60s", "/scheduler-stop", "/wake-tick", "/continue-step plan_7u_1", "/handoff token=abc123", "/proposal-review proposal_1 token=abc123", "/apply-proposal proposal_1", "/apply-target proposal proposal_1", "/complete mission_1", "/fail mission_1", "/cancel mission_1", "/synthesize token=abc123", "/cycle", "/api-call token=abc123", "/tmp/repro", "/path/foo", "scheduler-start"]) {
+      await expect(server.command("runtime.stage_wake_scheduler_navigation_write_command", { command, allowMediumRisk: true, requestedBy: "operator" })).rejects.toThrow(/cannot be staged/)
+    }
+
+    const list = await server.command("runtime.list_wake_scheduler_navigation_staged_write_commands", { limit: 20 }) as Array<{ staged_write_id: string; command: string }>
+    expect(list.length).toBe(6)
+    expect(list.some((item) => item.command === "/wake-tick-dry-run")).toBe(true)
+    const selected = await server.command("runtime.get_wake_scheduler_navigation_staged_write_command", { stagedWriteId: dryRun.staged_write_id }) as { staged_write_id: string; command: string }
+    expect(selected).toMatchObject({ staged_write_id: dryRun.staged_write_id, command: "/wake-tick-dry-run" })
+
+    const removed = await server.command("runtime.remove_wake_scheduler_navigation_staged_write_command", { stagedWriteId: dryRun.staged_write_id, reason: "token=abc123", requestedBy: "operator" }) as { staged_write_id: string } | null
+    expect(removed?.staged_write_id).toBe(dryRun.staged_write_id)
+    const afterRemove = await server.command("runtime.list_wake_scheduler_navigation_staged_write_commands", { limit: 20 }) as Array<{ staged_write_id: string }>
+    expect(afterRemove.some((item) => item.staged_write_id === dryRun.staged_write_id)).toBe(false)
+    const afterClear = await server.command("runtime.clear_wake_scheduler_navigation_staged_write_commands", { reason: "token=abc123", requestedBy: "operator" }) as unknown[]
+    expect(afterClear).toEqual([])
+    const finalList = await server.command("runtime.list_wake_scheduler_navigation_staged_write_commands", { limit: 20 }) as unknown[]
+    expect(finalList).toEqual([])
+
+    const events = await readJsonlEvents(dir)
+    const eventKinds = events.map((event) => event.kind)
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_write_command_staged")
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_write_command_removed")
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_write_commands_cleared")
+    for (const forbidden of ["runtime_wake_scheduler_started", "runtime_wake_schedule_tick_completed", "runtime_checkpoint_created", "runtime_wake_scheduler_recovery_recorded", "runtime_wake_scheduler_recovery_workflow_created", "runtime_wake_scheduler_recovery_workflow_step_recorded", "runtime_continuation_plan_created", "runtime_continuation_step_started", "runtime_opencode_handoff_sent", "runtime_mission_completed", "runtime_mission_failed"]) {
+      expect(eventKinds).not.toContain(forbidden)
+    }
+    expect(JSON.stringify(events)).not.toContain("abc123")
+    await server.shutdown()
+  })
+
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

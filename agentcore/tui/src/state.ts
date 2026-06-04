@@ -1982,6 +1982,68 @@ export type WakeSchedulerNavigationWriteBoardSummary = {
   generated_at: string
 }
 
+export type WakeSchedulerNavigationWriteStageEligibilitySummary = {
+  can_stage: boolean
+  command: string
+  command_name: string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  status: WakeSchedulerNavigationWriteEligibilityStatusSummary
+  target_kind: string
+  target_id?: string
+  blockers: string[]
+  warnings: string[]
+  prerequisites: WakeSchedulerNavigationWritePrerequisiteSummary[]
+  safer_read_commands: WakeSchedulerNavigationWriteCommandSummary[]
+  future_stage_policy?: WakeSchedulerNavigationFutureStagePolicySummary
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerNavigationWriteStagePreviewSummary = {
+  command: string
+  eligibility: WakeSchedulerNavigationWriteStageEligibilitySummary
+  existing_staged_id?: string
+  blockers: string[]
+  warnings: string[]
+}
+
+export type WakeSchedulerNavigationStagedWriteCommandSummary = {
+  staged_write_id: string
+  command: string
+  command_name: string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  target_kind: string
+  target_id?: string
+  equivalent_runtime_command?: string
+  prerequisites: WakeSchedulerNavigationWritePrerequisiteSummary[]
+  safer_read_commands: WakeSchedulerNavigationWriteCommandSummary[]
+  future_stage_policy?: WakeSchedulerNavigationFutureStagePolicySummary
+  source_preview_hash: string
+  source_related_id?: string
+  source_incident_id?: string
+  source_staged_id?: string
+  source_board_id?: string
+  staged_at: string
+  staged_by: string
+  status: "staged" | string
+  stage_hash: string
+  summary_preview: string
+}
+
+export type WakeSchedulerNavigationStagedWriteCommandRecordSummary = {
+  staged_write_id: string
+  command: string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  target_kind: string
+  target_id?: string
+  staged_at: string
+  staged_by: string
+  summary_preview: string
+  stage_hash: string
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -2013,6 +2075,9 @@ export type WakeSchedulerUiState = {
   selectedStagedReadGroup?: WakeSchedulerNavigationStagedReadGroupSummary | null
   writePreview?: WakeSchedulerNavigationWritePreviewSummary | null
   writeBoard?: WakeSchedulerNavigationWriteBoardSummary | null
+  writeStagePreview?: WakeSchedulerNavigationWriteStagePreviewSummary | null
+  selectedStagedWriteCommand?: WakeSchedulerNavigationStagedWriteCommandSummary | null
+  stagedWriteCommands: WakeSchedulerNavigationStagedWriteCommandRecordSummary[]
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }
