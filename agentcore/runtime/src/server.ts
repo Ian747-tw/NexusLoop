@@ -81,6 +81,9 @@ import { WakeSchedulerNavigationWritePreviewService, readWakeSchedulerNavigation
 import type { WakeSchedulerNavigationWriteBoard, WakeSchedulerNavigationWritePreview } from "./schedules/wake-scheduler-navigation-write-preview-types"
 import { WakeSchedulerNavigationWriteStagingService, readWakeSchedulerNavigationWriteStageClearInput, readWakeSchedulerNavigationWriteStageInput, readWakeSchedulerNavigationWriteStageRemoveInput } from "./schedules/wake-scheduler-navigation-write-staging-service"
 import type { WakeSchedulerNavigationStagedWriteCommand, WakeSchedulerNavigationStagedWriteCommandRecord, WakeSchedulerNavigationWriteStagePreview } from "./schedules/wake-scheduler-navigation-write-staging-types"
+import { WakeSchedulerNavigationLowRiskWriteExecutor } from "./schedules/wake-scheduler-navigation-low-risk-write-executor"
+import { WakeSchedulerNavigationWriteRunService, readWakeSchedulerNavigationWriteRunInput, readWakeSchedulerNavigationWriteRunListInput } from "./schedules/wake-scheduler-navigation-write-run-service"
+import type { WakeSchedulerNavigationWriteRunPreview, WakeSchedulerNavigationWriteRunRecord, WakeSchedulerNavigationWriteRunResult } from "./schedules/wake-scheduler-navigation-write-run-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -240,6 +243,8 @@ export class RuntimeServer {
   private wakeSchedulerNavigationStagedReadCompareServiceInstance: WakeSchedulerNavigationStagedReadCompareService | null = null
   private wakeSchedulerNavigationWritePreviewServiceInstance: WakeSchedulerNavigationWritePreviewService | null = null
   private wakeSchedulerNavigationWriteStagingServiceInstance: WakeSchedulerNavigationWriteStagingService | null = null
+  private wakeSchedulerNavigationLowRiskWriteExecutorInstance: WakeSchedulerNavigationLowRiskWriteExecutor | null = null
+  private wakeSchedulerNavigationWriteRunServiceInstance: WakeSchedulerNavigationWriteRunService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -845,6 +850,14 @@ export class RuntimeServer {
         return this.removeWakeSchedulerNavigationStagedWriteCommand(readWakeSchedulerNavigationWriteStageRemoveInput(payload))
       case "runtime.clear_wake_scheduler_navigation_staged_write_commands":
         return this.clearWakeSchedulerNavigationStagedWriteCommands(readWakeSchedulerNavigationWriteStageClearInput(payload))
+      case "runtime.preview_wake_scheduler_navigation_write_run":
+        return this.previewWakeSchedulerNavigationWriteRun(readWakeSchedulerNavigationWriteRunInput(payload))
+      case "runtime.execute_wake_scheduler_navigation_write_run":
+        return this.executeWakeSchedulerNavigationWriteRun(readWakeSchedulerNavigationWriteRunInput(payload))
+      case "runtime.list_wake_scheduler_navigation_write_runs":
+        return this.listWakeSchedulerNavigationWriteRuns(readWakeSchedulerNavigationWriteRunListInput(payload))
+      case "runtime.get_wake_scheduler_navigation_write_run":
+        return this.getWakeSchedulerNavigationWriteRun(requiredString(payload.runId ?? payload.run_id, "runId"))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -1641,6 +1654,23 @@ export class RuntimeServer {
     return this.wakeSchedulerNavigationWriteStagingService().clear(input)
   }
 
+  async previewWakeSchedulerNavigationWriteRun(input: Parameters<WakeSchedulerNavigationWriteRunService["preview"]>[0]): Promise<WakeSchedulerNavigationWriteRunPreview> {
+    return this.wakeSchedulerNavigationWriteRunService().preview(input)
+  }
+
+  async executeWakeSchedulerNavigationWriteRun(input: Parameters<WakeSchedulerNavigationWriteRunService["execute"]>[0]): Promise<WakeSchedulerNavigationWriteRunResult> {
+    this.requireWakeSchedulerRuntime("runtime.execute_wake_scheduler_navigation_write_run")
+    return this.wakeSchedulerNavigationWriteRunService().execute(input)
+  }
+
+  async listWakeSchedulerNavigationWriteRuns(input: Parameters<WakeSchedulerNavigationWriteRunService["list"]>[0] = {}): Promise<WakeSchedulerNavigationWriteRunRecord[]> {
+    return this.wakeSchedulerNavigationWriteRunService().list(input)
+  }
+
+  async getWakeSchedulerNavigationWriteRun(runId: string): Promise<WakeSchedulerNavigationWriteRunResult | null> {
+    return this.wakeSchedulerNavigationWriteRunService().get(runId)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -2203,6 +2233,25 @@ export class RuntimeServer {
       () => now().toISOString(),
     )
     return this.wakeSchedulerNavigationWriteStagingServiceInstance
+  }
+
+  private wakeSchedulerNavigationLowRiskWriteExecutor(): WakeSchedulerNavigationLowRiskWriteExecutor {
+    this.wakeSchedulerNavigationLowRiskWriteExecutorInstance ??= new WakeSchedulerNavigationLowRiskWriteExecutor(
+      this.wakeScheduleService(),
+      this.wakeSchedulerNavigationStagedRunService(),
+    )
+    return this.wakeSchedulerNavigationLowRiskWriteExecutorInstance
+  }
+
+  private wakeSchedulerNavigationWriteRunService(): WakeSchedulerNavigationWriteRunService {
+    const now = this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow ?? (() => new Date())
+    this.wakeSchedulerNavigationWriteRunServiceInstance ??= new WakeSchedulerNavigationWriteRunService(
+      this.eventStore,
+      this.wakeSchedulerNavigationWriteStagingService(),
+      this.wakeSchedulerNavigationLowRiskWriteExecutor(),
+      () => now().toISOString(),
+    )
+    return this.wakeSchedulerNavigationWriteRunServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

@@ -2044,6 +2044,52 @@ export type WakeSchedulerNavigationStagedWriteCommandRecordSummary = {
   stage_hash: string
 }
 
+export type WakeSchedulerNavigationWriteRunPreviewSummary = {
+  staged_write_id: string
+  command: string
+  command_name: string
+  can_execute: boolean
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  target_kind: string
+  target_id?: string
+  execution_kind: "wake_tick_dry_run" | "staged_safe_read" | "blocked" | string
+  blockers: string[]
+  warnings: string[]
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerNavigationWriteRunResultSummary = {
+  run_id: string
+  staged_write_id: string
+  command: string
+  command_name: string
+  execution_kind: "wake_tick_dry_run" | "staged_safe_read" | "blocked" | string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  target_kind: string
+  target_id?: string
+  status: "succeeded" | "failed" | "blocked" | string
+  result_kind?: string
+  result_summary?: string
+  downstream_run_id?: string
+  error?: string
+  started_at: string
+  completed_at: string
+  requested_by: string
+  result_hash: string
+}
+
+export type WakeSchedulerNavigationWriteRunRecordSummary = {
+  run_id: string
+  staged_write_id: string
+  command: string
+  execution_kind: "wake_tick_dry_run" | "staged_safe_read" | "blocked" | string
+  status: "succeeded" | "failed" | "blocked" | string
+  completed_at: string
+  summary_preview: string
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -2078,6 +2124,9 @@ export type WakeSchedulerUiState = {
   writeStagePreview?: WakeSchedulerNavigationWriteStagePreviewSummary | null
   selectedStagedWriteCommand?: WakeSchedulerNavigationStagedWriteCommandSummary | null
   stagedWriteCommands: WakeSchedulerNavigationStagedWriteCommandRecordSummary[]
+  writeRunPreview?: WakeSchedulerNavigationWriteRunPreviewSummary | null
+  latestWriteRunResult?: WakeSchedulerNavigationWriteRunResultSummary | null
+  writeRunRecords: WakeSchedulerNavigationWriteRunRecordSummary[]
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }
