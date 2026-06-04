@@ -143,6 +143,7 @@ export class WakeSchedulerNavigationWriteRunService {
     if (eligibility.risk !== "low_risk_write") blockers.push("7V executes low-risk staged writes only")
     if (!LOW_RISK_EXECUTABLE.has(eligibility.command_name)) blockers.push(`${eligibility.command_name} is not in the 7V low-risk executor whitelist`)
     if (eligibility.command_name === "/scheduler-nav-run" && !eligibility.target_id) blockers.push("/scheduler-nav-run requires a staged read id")
+    blockers.push(...lowRiskCommandShapeBlockers(staged.command, eligibility.command_name))
     if (!this.executor.supports(staged.command)) blockers.push("staged write command is not supported by the 7V low-risk executor")
     const executionKind = eligibility.command_name === "/wake-tick-dry-run"
       ? "wake_tick_dry_run"
@@ -311,6 +312,17 @@ function readAuthorityGate(value: unknown): WakeSchedulerNavigationWriteRunResul
 
 function summaryPreview(result: WakeSchedulerNavigationWriteRunResult): string {
   return preview(`${result.status} ${result.execution_kind}: ${result.result_summary ?? result.error ?? result.command}`)
+}
+
+function lowRiskCommandShapeBlockers(command: string, commandName: string): string[] {
+  const [name, ...args] = command.trim().split(/\s+/)
+  if (commandName === "/wake-tick-dry-run" || name === "/wake-tick-dry-run") {
+    return args.length === 0 ? [] : ["/wake-tick-dry-run does not accept staged execution arguments"]
+  }
+  if (commandName === "/scheduler-nav-run" || name === "/scheduler-nav-run") {
+    return args.length === 1 && Boolean(args[0]?.trim()) ? [] : ["/scheduler-nav-run requires exactly one staged read id"]
+  }
+  return []
 }
 
 function runIdFor(stagedWriteId: string, startedAt: string): string {

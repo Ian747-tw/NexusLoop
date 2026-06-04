@@ -2063,6 +2063,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (staged.risk !== "low_risk_write") blockers.push("7V executes low-risk staged writes only")
     if (staged.command_name !== "/wake-tick-dry-run" && staged.command_name !== "/scheduler-nav-run") blockers.push("staged write command is not in the 7V executor whitelist")
     if (staged.command_name === "/scheduler-nav-run" && !staged.target_id) blockers.push("scheduler-nav-run staged read id is required")
+    blockers.push(...fakeLowRiskWriteRunShapeBlockers(staged.command, staged.command_name))
     const executionKind = blockers.length > 0 ? "blocked" : staged.command_name === "/wake-tick-dry-run" ? "wake_tick_dry_run" : "staged_safe_read"
 
     return {
@@ -4734,6 +4735,17 @@ function fakeNavigationWriteRunRecord(run: WakeSchedulerNavigationWriteRunResult
     completed_at: run.completed_at,
     summary_preview: run.result_summary ?? run.error ?? run.command,
   }
+}
+
+function fakeLowRiskWriteRunShapeBlockers(command: string, commandName: string): string[] {
+  const [name, ...args] = command.trim().split(/\s+/)
+  if (commandName === "/wake-tick-dry-run" || name === "/wake-tick-dry-run") {
+    return args.length === 0 ? [] : ["/wake-tick-dry-run does not accept staged execution arguments"]
+  }
+  if (commandName === "/scheduler-nav-run" || name === "/scheduler-nav-run") {
+    return args.length === 1 && Boolean(args[0]?.trim()) ? [] : ["/scheduler-nav-run requires exactly one staged read id"]
+  }
+  return []
 }
 
 function fakeStagedReadSummary(command: string): string {

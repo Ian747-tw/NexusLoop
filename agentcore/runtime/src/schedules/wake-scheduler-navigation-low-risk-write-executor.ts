@@ -12,8 +12,10 @@ export class WakeSchedulerNavigationLowRiskWriteExecutor {
   ) {}
 
   supports(command: string): boolean {
-    const name = command.trim().split(/\s+/)[0] ?? ""
-    return name === "/wake-tick-dry-run" || name === "/scheduler-nav-run"
+    const [name, ...args] = command.trim().split(/\s+/)
+    if (name === "/wake-tick-dry-run") return args.length === 0
+    if (name === "/scheduler-nav-run") return args.length === 1 && Boolean(args[0]?.trim())
+    return false
   }
 
   async execute(command: string, requestedBy: string): Promise<WakeSchedulerNavigationLowRiskWriteExecution> {

@@ -3865,6 +3865,13 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run", args: [checkpointWriteId!] })
     expect(state.wakeScheduler?.latestWriteRunResult).toMatchObject({ status: "blocked", execution_kind: "blocked" })
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick-dry-run", "extra"] })
+    const malformedDryRunId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(malformedDryRunId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-preview", args: [malformedDryRunId!] })
+    expect(state.wakeScheduler?.writeRunPreview).toMatchObject({ can_execute: false, execution_kind: "blocked" })
+    expect(state.wakeScheduler?.writeRunPreview?.blockers.join(" ")).toContain("does not accept")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-runs", args: [] })
     expect(state.wakeScheduler?.writeRunRecords.length).toBeGreaterThanOrEqual(3)
     const runId = state.wakeScheduler?.writeRunRecords[0]?.run_id
