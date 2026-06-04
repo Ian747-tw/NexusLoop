@@ -3790,4 +3790,41 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
     expect(runtime.sentCommands).toEqual([])
   })
+
+  test("wake scheduler navigation write staging stages allowed writes without execution", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-preview", args: ["/wake-tick-dry-run"] })
+    expect(state.wakeScheduler?.writeStagePreview?.eligibility).toMatchObject({ can_stage: true, risk: "low_risk_write", authority_gate: "wake_schedule_tick" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick-dry-run"] })
+    const lowId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(lowId).toBeTruthy()
+    expect(state.wakeScheduler?.stagedWriteCommands.some((item) => item.command === "/wake-tick-dry-run")).toBe(true)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/checkpoint", "full", "token=abc123"] })
+    expect(state.wakeScheduler?.commandError).toContain("medium-risk")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-medium", args: ["/checkpoint", "full", "token=abc123"] })
+    expect(state.wakeScheduler?.selectedStagedWriteCommand).toMatchObject({ risk: "medium_risk_write", authority_gate: "checkpoint_runtime" })
+    expect(state.wakeScheduler?.selectedStagedWriteCommand?.command).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick"] })
+    expect(state.wakeScheduler?.commandError).toContain("high-impact")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/proposal-review", "proposal_1", "token=abc123"] })
+    expect(state.wakeScheduler?.commandError).toContain("high-impact")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-staged", args: [] })
+    expect(state.wakeScheduler?.stagedWriteCommands.length).toBe(2)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-unstage", args: [lowId!] })
+    expect(state.wakeScheduler?.stagedWriteCommands.some((item) => item.staged_write_id === lowId)).toBe(false)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-clear", args: ["token=abc123"] })
+    expect(state.wakeScheduler?.stagedWriteCommands).toEqual([])
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_write_staging")
+    expect(snapshot).toContain("staged write commands are operator intent only")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
 })

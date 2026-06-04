@@ -32,6 +32,7 @@ import type { WakeSchedulerNavigationStageClearInput, WakeSchedulerNavigationSta
 import type { WakeSchedulerNavigationStagedRunInput, WakeSchedulerNavigationStagedRunListInput, WakeSchedulerNavigationStagedRunPreview, WakeSchedulerNavigationStagedRunRecord, WakeSchedulerNavigationStagedRunResult } from "../schedules/wake-scheduler-navigation-staged-run-types"
 import type { WakeSchedulerNavigationStagedReadCompareInput, WakeSchedulerNavigationStagedReadGroup, WakeSchedulerNavigationStagedReadGroupInput, WakeSchedulerNavigationStagedReadHistory, WakeSchedulerNavigationStagedReadHistoryInput, WakeSchedulerNavigationStagedReadPairComparison, WakeSchedulerNavigationStagedReadStaleInput, WakeSchedulerNavigationStagedReadStaleItem } from "../schedules/wake-scheduler-navigation-staged-read-compare-types"
 import type { WakeSchedulerNavigationWriteBoard, WakeSchedulerNavigationWriteBoardInput, WakeSchedulerNavigationWritePreview, WakeSchedulerNavigationWritePreviewInput } from "../schedules/wake-scheduler-navigation-write-preview-types"
+import type { WakeSchedulerNavigationStagedWriteCommand, WakeSchedulerNavigationStagedWriteCommandRecord, WakeSchedulerNavigationWriteStageClearInput, WakeSchedulerNavigationWriteStageInput, WakeSchedulerNavigationWriteStagePreview, WakeSchedulerNavigationWriteStageRemoveInput } from "../schedules/wake-scheduler-navigation-write-staging-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -282,6 +283,12 @@ export interface RuntimeClient {
   command(name: "runtime.wake_scheduler_navigation_staged_read_group", payload: WakeSchedulerNavigationStagedReadGroupInput): Promise<WakeSchedulerNavigationStagedReadGroup | null>
   command(name: "runtime.preview_wake_scheduler_navigation_write_command", payload: WakeSchedulerNavigationWritePreviewInput): Promise<WakeSchedulerNavigationWritePreview>
   command(name: "runtime.wake_scheduler_navigation_write_board", payload?: WakeSchedulerNavigationWriteBoardInput): Promise<WakeSchedulerNavigationWriteBoard>
+  command(name: "runtime.preview_wake_scheduler_navigation_write_stage", payload: WakeSchedulerNavigationWriteStageInput): Promise<WakeSchedulerNavigationWriteStagePreview>
+  command(name: "runtime.stage_wake_scheduler_navigation_write_command", payload: WakeSchedulerNavigationWriteStageInput): Promise<WakeSchedulerNavigationStagedWriteCommand>
+  command(name: "runtime.get_wake_scheduler_navigation_staged_write_command", payload: { stagedWriteId: string } | { staged_write_id: string }): Promise<WakeSchedulerNavigationStagedWriteCommand | null>
+  command(name: "runtime.list_wake_scheduler_navigation_staged_write_commands", payload?: { limit?: number }): Promise<WakeSchedulerNavigationStagedWriteCommandRecord[]>
+  command(name: "runtime.remove_wake_scheduler_navigation_staged_write_command", payload: WakeSchedulerNavigationWriteStageRemoveInput): Promise<WakeSchedulerNavigationStagedWriteCommand | null>
+  command(name: "runtime.clear_wake_scheduler_navigation_staged_write_commands", payload?: WakeSchedulerNavigationWriteStageClearInput): Promise<WakeSchedulerNavigationStagedWriteCommandRecord[]>
   command(name: "runtime.list_wake_scheduler_events", payload?: { limit?: number }): Promise<WakeSchedulerEventRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
@@ -448,6 +455,12 @@ export interface RuntimeCommandEnvelope {
     | "runtime.wake_scheduler_navigation_staged_read_group"
     | "runtime.preview_wake_scheduler_navigation_write_command"
     | "runtime.wake_scheduler_navigation_write_board"
+    | "runtime.preview_wake_scheduler_navigation_write_stage"
+    | "runtime.stage_wake_scheduler_navigation_write_command"
+    | "runtime.get_wake_scheduler_navigation_staged_write_command"
+    | "runtime.list_wake_scheduler_navigation_staged_write_commands"
+    | "runtime.remove_wake_scheduler_navigation_staged_write_command"
+    | "runtime.clear_wake_scheduler_navigation_staged_write_commands"
     | "runtime.list_wake_scheduler_events"
     | "research.list_topics"
     | "research.get_topic_snapshot"

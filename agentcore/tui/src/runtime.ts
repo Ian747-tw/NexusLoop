@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -64,6 +64,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly wakeSchedulerEvents: WakeSchedulerEventRecordSummary[] = []
   private wakeSchedulerAuditTimelineRecords: WakeSchedulerAuditTimelineEntrySummary[] = []
   private readonly wakeSchedulerNavigationStagedCommands: WakeSchedulerNavigationStagedCommandSummary[] = []
+  private readonly wakeSchedulerNavigationStagedWriteCommands: WakeSchedulerNavigationStagedWriteCommandSummary[] = []
   private readonly wakeSchedulerNavigationStagedReadRuns: WakeSchedulerNavigationStagedRunResultSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
@@ -512,6 +513,18 @@ export class FakeRuntimeClient implements RuntimeClient {
         return fakeWakeSchedulerNavigationWritePreview(String(payload.command ?? ""))
       case "runtime.wake_scheduler_navigation_write_board":
         return this.wakeSchedulerNavigationWriteBoard(payload)
+      case "runtime.preview_wake_scheduler_navigation_write_stage":
+        return this.previewWakeSchedulerNavigationWriteStage(String(payload.command ?? ""), payload.allowMediumRisk === true || payload.allow_medium_risk === true)
+      case "runtime.stage_wake_scheduler_navigation_write_command":
+        return this.stageWakeSchedulerNavigationWriteCommand(String(payload.command ?? ""), payload.allowMediumRisk === true || payload.allow_medium_risk === true, String(payload.requestedBy ?? payload.requested_by ?? "operator"))
+      case "runtime.get_wake_scheduler_navigation_staged_write_command":
+        return this.getWakeSchedulerNavigationStagedWriteCommand(String(payload.stagedWriteId ?? payload.staged_write_id ?? ""))
+      case "runtime.list_wake_scheduler_navigation_staged_write_commands":
+        return this.listWakeSchedulerNavigationStagedWriteCommands(readLimit(payload.limit, 20))
+      case "runtime.remove_wake_scheduler_navigation_staged_write_command":
+        return this.removeWakeSchedulerNavigationStagedWriteCommand(String(payload.stagedWriteId ?? payload.staged_write_id ?? ""))
+      case "runtime.clear_wake_scheduler_navigation_staged_write_commands":
+        return this.clearWakeSchedulerNavigationStagedWriteCommands()
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
@@ -1933,6 +1946,85 @@ export class FakeRuntimeClient implements RuntimeClient {
       warnings: ["write eligibility preview is read-only; no write command is staged or executed"],
       generated_at: new Date(0).toISOString(),
     }
+  }
+
+  private previewWakeSchedulerNavigationWriteStage(commandValue: string, allowMediumRisk: boolean): WakeSchedulerNavigationWriteStagePreviewSummary {
+    const writePreview = fakeWakeSchedulerNavigationWritePreview(commandValue)
+    const blockers = fakeWriteStageBlockers(writePreview, allowMediumRisk)
+    const hash = fakeWriteStageHash(writePreview.command, writePreview.authority_gate, writePreview.risk)
+    const existing = this.wakeSchedulerNavigationStagedWriteCommands.find((item) => item.stage_hash === hash)
+    return {
+      command: writePreview.command,
+      eligibility: {
+        can_stage: blockers.length === 0,
+        command: writePreview.command,
+        command_name: writePreview.command_name,
+        risk: writePreview.risk,
+        authority_gate: writePreview.authority_gate,
+        status: writePreview.status,
+        target_kind: writePreview.target_kind,
+        target_id: writePreview.target_id,
+        blockers,
+        warnings: [...writePreview.warnings, "7U stages write intent only; it does not execute staged write commands"],
+        prerequisites: writePreview.prerequisites,
+        safer_read_commands: writePreview.safer_read_commands,
+        future_stage_policy: writePreview.future_stage_policy,
+        redacted_summary_preview: `${writePreview.risk} ${writePreview.authority_gate}: ${writePreview.command}`,
+      },
+      existing_staged_id: existing?.staged_write_id,
+      blockers,
+      warnings: existing ? ["matching write command is already staged"] : ["staged write commands are not executed by 7U"],
+    }
+  }
+
+  private stageWakeSchedulerNavigationWriteCommand(commandValue: string, allowMediumRisk: boolean, stagedBy: string): WakeSchedulerNavigationStagedWriteCommandSummary {
+    const stagePreview = this.previewWakeSchedulerNavigationWriteStage(commandValue, allowMediumRisk)
+    if (!stagePreview.eligibility.can_stage) throw new Error(`scheduler navigation write command cannot be staged: ${stagePreview.blockers.join("; ")}`)
+    const existing = stagePreview.existing_staged_id ? this.wakeSchedulerNavigationStagedWriteCommands.find((item) => item.staged_write_id === stagePreview.existing_staged_id) : undefined
+    if (existing) return existing
+    const hash = fakeWriteStageHash(stagePreview.command, stagePreview.eligibility.authority_gate, stagePreview.eligibility.risk)
+    const staged: WakeSchedulerNavigationStagedWriteCommandSummary = {
+      staged_write_id: `fake-navigation-write-staged-${hash.slice(0, 16)}`,
+      command: stagePreview.command,
+      command_name: stagePreview.eligibility.command_name,
+      risk: stagePreview.eligibility.risk,
+      authority_gate: stagePreview.eligibility.authority_gate,
+      target_kind: stagePreview.eligibility.target_kind,
+      target_id: stagePreview.eligibility.target_id,
+      equivalent_runtime_command: fakeRuntimeCommandFor(stagePreview.eligibility.command_name),
+      prerequisites: stagePreview.eligibility.prerequisites,
+      safer_read_commands: stagePreview.eligibility.safer_read_commands,
+      future_stage_policy: stagePreview.eligibility.future_stage_policy,
+      source_preview_hash: hash,
+      staged_at: new Date(0).toISOString(),
+      staged_by: preview(redactText(stagedBy)),
+      status: "staged",
+      stage_hash: hash,
+      summary_preview: `${stagePreview.eligibility.risk} ${stagePreview.eligibility.authority_gate}: ${stagePreview.command}`,
+    }
+    this.wakeSchedulerNavigationStagedWriteCommands.unshift(staged)
+    return staged
+  }
+
+  private getWakeSchedulerNavigationStagedWriteCommand(stagedWriteId: string): WakeSchedulerNavigationStagedWriteCommandSummary | null {
+    const normalizedId = redactText(requiredString(stagedWriteId, "stagedWriteId"))
+    return this.wakeSchedulerNavigationStagedWriteCommands.find((item) => item.staged_write_id === normalizedId) ?? null
+  }
+
+  private listWakeSchedulerNavigationStagedWriteCommands(limit: number): WakeSchedulerNavigationStagedWriteCommandRecordSummary[] {
+    return this.wakeSchedulerNavigationStagedWriteCommands.slice(0, limit).map(fakeNavigationStagedWriteRecord)
+  }
+
+  private removeWakeSchedulerNavigationStagedWriteCommand(stagedWriteId: string): WakeSchedulerNavigationStagedWriteCommandSummary | null {
+    const normalizedId = redactText(requiredString(stagedWriteId, "stagedWriteId"))
+    const index = this.wakeSchedulerNavigationStagedWriteCommands.findIndex((item) => item.staged_write_id === normalizedId)
+    if (index < 0) return null
+    return this.wakeSchedulerNavigationStagedWriteCommands.splice(index, 1)[0] ?? null
+  }
+
+  private clearWakeSchedulerNavigationStagedWriteCommands(): WakeSchedulerNavigationStagedWriteCommandRecordSummary[] {
+    this.wakeSchedulerNavigationStagedWriteCommands.splice(0, this.wakeSchedulerNavigationStagedWriteCommands.length)
+    return []
   }
 
   private wakeSchedulerNavigationTarget(targetKind: string, targetId: string): WakeSchedulerNavigationTargetSummary {
@@ -4358,6 +4450,23 @@ function fakeWakeSchedulerNavigationWritePreview(commandValue: string): WakeSche
   }
 }
 
+function fakeWriteStageBlockers(writePreview: WakeSchedulerNavigationWritePreviewSummary, allowMediumRisk: boolean): string[] {
+  const lowAllowed = new Set(["/wake-tick-dry-run", "/scheduler-nav-run"])
+  const mediumAllowed = new Set(["/checkpoint", "/scheduler-recovery-ack", "/scheduler-recovery-resolve", "/scheduler-recovery-dismiss", "/scheduler-recovery-workflow", "/scheduler-recovery-step-done", "/scheduler-recovery-step-skip", "/scheduler-recovery-step-block", "/scheduler-recovery-workflow-cancel", "/continue-plan", "/continue-pause", "/continue-cancel"])
+  const blocked = new Set(["/scheduler-start", "/scheduler-stop", "/wake-tick", "/continue-step", "/handoff", "/apply", "/request-review", "/approve", "/reject", "/cancel-review", "/proposal-review", "/apply-proposal", "/cancel-proposal", "/bundle-review", "/apply-bundle", "/cancel-bundle", "/draft-review", "/cancel-draft", "/apply-target", "/apply-partial", "/complete", "/fail", "/cancel", "/api-call", "/synthesize", "/cycle"])
+  const blockers: string[] = []
+  if (writePreview.risk === "unsupported" || writePreview.status === "unsupported") blockers.push("unsupported write commands cannot be staged")
+  if (writePreview.risk === "high_impact_write") blockers.push("high-impact write commands cannot be staged in 7U")
+  if (blocked.has(writePreview.command_name)) blockers.push(`${writePreview.command_name} is not allowed in the 7U write staging whitelist`)
+  if (writePreview.risk === "low_risk_write" && !lowAllowed.has(writePreview.command_name)) blockers.push(`${writePreview.command_name} is not an allowed low-risk staged write`)
+  if (writePreview.risk === "medium_risk_write") {
+    if (!mediumAllowed.has(writePreview.command_name)) blockers.push(`${writePreview.command_name} is not an allowed medium-risk staged write`)
+    if (!allowMediumRisk) blockers.push("medium-risk write staging requires allow_medium_risk=true")
+  }
+  blockers.push(...writePreview.blockers.filter((blocker) => blocker !== "Branch 7T previews write eligibility only; can_stage_now=false and can_execute_now=false"))
+  return [...new Set(blockers)].slice(0, 10).map(preview)
+}
+
 function fakeUnsupportedWritePreview(command: string, reason: string): WakeSchedulerNavigationWritePreviewSummary {
   return {
     command,
@@ -4431,6 +4540,10 @@ function fakeNavigationStageHash(command: string): string {
   return createHash("sha256").update(command).digest("hex")
 }
 
+function fakeWriteStageHash(command: string, authorityGate: string, risk: string): string {
+  return createHash("sha256").update(`${command}\n${authorityGate}\n${risk}`).digest("hex")
+}
+
 function fakeNavigationStagedRecord(staged: WakeSchedulerNavigationStagedCommandSummary): WakeSchedulerNavigationStagedCommandRecordSummary {
   return {
     staged_id: staged.staged_id,
@@ -4441,6 +4554,21 @@ function fakeNavigationStagedRecord(staged: WakeSchedulerNavigationStagedCommand
     staged_at: staged.staged_at,
     staged_by: staged.staged_by,
     summary_preview: `${staged.risk} ${staged.target_kind}: ${staged.command}`,
+    stage_hash: staged.stage_hash,
+  }
+}
+
+function fakeNavigationStagedWriteRecord(staged: WakeSchedulerNavigationStagedWriteCommandSummary): WakeSchedulerNavigationStagedWriteCommandRecordSummary {
+  return {
+    staged_write_id: staged.staged_write_id,
+    command: staged.command,
+    risk: staged.risk,
+    authority_gate: staged.authority_gate,
+    target_kind: staged.target_kind,
+    target_id: staged.target_id,
+    staged_at: staged.staged_at,
+    staged_by: staged.staged_by,
+    summary_preview: staged.summary_preview,
     stage_hash: staged.stage_hash,
   }
 }

@@ -856,6 +856,30 @@ function wakeSchedulerLines(state: UiState): string[] {
     out.push("    board=none")
   }
   out.push("    note=preview only; no write staging or execution")
+  out.push("  scheduler_write_staging")
+  if (scheduler.writeStagePreview) {
+    const stagePreview = scheduler.writeStagePreview
+    out.push(`    preview=${stagePreview.eligibility.risk} gate=${stagePreview.eligibility.authority_gate} can_stage=${stagePreview.eligibility.can_stage}: ${preview(redactText(stagePreview.command))}`)
+    if (stagePreview.existing_staged_id) out.push(`    existing=${stagePreview.existing_staged_id}`)
+    if (stagePreview.blockers.length > 0) out.push(...stagePreview.blockers.slice(0, 10).map((blocker) => `    stage_blocker=${preview(redactText(blocker))}`))
+    if (stagePreview.warnings.length > 0) out.push(...stagePreview.warnings.slice(0, 10).map((warning) => `    stage_warning=${preview(redactText(warning))}`))
+    out.push("    stage_safer_reads")
+    if (stagePreview.eligibility.safer_read_commands.length === 0) out.push("      - empty")
+    else out.push(...stagePreview.eligibility.safer_read_commands.slice(0, 10).map((command) => `      - ${command.command_type}: ${preview(redactText(command.command))}`))
+  } else {
+    out.push("    preview=none")
+  }
+  if (scheduler.selectedStagedWriteCommand) {
+    const selected = scheduler.selectedStagedWriteCommand
+    out.push(`    selected=${selected.staged_write_id} ${selected.risk} gate=${selected.authority_gate} target=${selected.target_kind}${selected.target_id ? `:${selected.target_id}` : ""}`)
+  } else {
+    out.push("    selected=none")
+  }
+  out.push(`    staged_writes=${scheduler.stagedWriteCommands.length}`)
+  out.push("    staged_write_rows")
+  if (scheduler.stagedWriteCommands.length === 0) out.push("      - empty")
+  else out.push(...scheduler.stagedWriteCommands.slice(0, 10).map((item) => `      - ${item.staged_write_id} ${item.risk} gate=${item.authority_gate} target=${item.target_kind}${item.target_id ? `:${item.target_id}` : ""}: ${preview(redactText(item.command))}`))
+  out.push("    note=staged write commands are operator intent only and are not executed by 7U")
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")
