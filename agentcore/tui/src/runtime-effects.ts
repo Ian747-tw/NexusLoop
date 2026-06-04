@@ -104,6 +104,10 @@ import type {
   WakeSchedulerNavigationStagedCommandRecordSummary,
   WakeSchedulerNavigationStagedCommandSummary,
   WakeSchedulerNavigationTargetSummary,
+  WakeSchedulerNavigationWriteBoardSummary,
+  WakeSchedulerNavigationWriteCommandSummary,
+  WakeSchedulerNavigationWritePrerequisiteSummary,
+  WakeSchedulerNavigationWritePreviewSummary,
   WakeSchedulerStateSummary,
   WakeSchedulerUiState,
   WakeScheduleSummary,
@@ -325,6 +329,8 @@ export type RuntimeUiEffect =
   | { type: "compare-wake-scheduler-navigation-staged-read-runs"; leftRunId: string; rightRunId: string }
   | { type: "load-wake-scheduler-navigation-staged-read-stale"; staleAfterMs?: number; limit?: number }
   | { type: "load-wake-scheduler-navigation-staged-read-group"; stagedId: string; limit?: number }
+  | { type: "preview-wake-scheduler-navigation-write-command"; command: string }
+  | { type: "load-wake-scheduler-navigation-write-board"; relatedId?: string; incidentId?: string; stagedId?: string; includeHighImpact?: boolean; limit?: number }
   | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
@@ -1100,6 +1106,16 @@ export async function applyRuntimeUiEffect(
         return applyWakeSchedulerNavigationStagedReadStale(state, await runtime.command("runtime.wake_scheduler_navigation_staged_read_stale", { staleAfterMs: effect.staleAfterMs, limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.limit ?? CHECKPOINT_LIMIT)
       case "load-wake-scheduler-navigation-staged-read-group":
         return applyWakeSchedulerNavigationStagedReadGroup(state, await runtime.command("runtime.wake_scheduler_navigation_staged_read_group", { stagedId: effect.stagedId, limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.stagedId)
+      case "preview-wake-scheduler-navigation-write-command":
+        return applyWakeSchedulerNavigationWritePreview(state, await runtime.command("runtime.preview_wake_scheduler_navigation_write_command", { command: effect.command }))
+      case "load-wake-scheduler-navigation-write-board":
+        return applyWakeSchedulerNavigationWriteBoard(state, await runtime.command("runtime.wake_scheduler_navigation_write_board", {
+          relatedId: effect.relatedId,
+          incidentId: effect.incidentId,
+          stagedId: effect.stagedId,
+          includeHighImpact: effect.includeHighImpact,
+          limit: effect.limit ?? CHECKPOINT_LIMIT,
+        }))
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
@@ -2361,6 +2377,32 @@ function applyWakeSchedulerNavigationStagedReadGroup(state: UiState, value: unkn
   }
 }
 
+function applyWakeSchedulerNavigationWritePreview(state: UiState, value: unknown): UiState {
+  const writePreview = readWakeSchedulerNavigationWritePreview(value, "runtime.preview_wake_scheduler_navigation_write_command")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      writePreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler write eligibility", detail: `${writePreview.risk}/${writePreview.authority_gate}`, status: writePreview.status }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationWriteBoard(state: UiState, value: unknown): UiState {
+  const writeBoard = readWakeSchedulerNavigationWriteBoard(value, "runtime.wake_scheduler_navigation_write_board")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      writeBoard,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler write eligibility board", detail: `previews=${writeBoard.previews.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -2874,6 +2916,14 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     }
     case "scheduler-nav-read-group":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-staged-read-group", stagedId: requiredArg(args, 0, "stagedId") })
+    case "scheduler-nav-write-preview":
+    case "scheduler-write-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-wake-scheduler-navigation-write-command", command: requiredRest(args, 0, "command") })
+    case "scheduler-nav-write-board":
+    case "scheduler-write-board": {
+      const query = schedulerNavWriteBoardArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-write-board", ...query })
+    }
     case "scheduler-events":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
@@ -3576,6 +3626,10 @@ const wakeSchedulerCommands = new Set([
   "scheduler-nav-read-compare-runs",
   "scheduler-nav-read-stale",
   "scheduler-nav-read-group",
+  "scheduler-nav-write-preview",
+  "scheduler-nav-write-board",
+  "scheduler-write-preview",
+  "scheduler-write-board",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",
@@ -3718,6 +3772,8 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "compare-wake-scheduler-navigation-staged-read-runs",
   "load-wake-scheduler-navigation-staged-read-stale",
   "load-wake-scheduler-navigation-staged-read-group",
+  "preview-wake-scheduler-navigation-write-command",
+  "load-wake-scheduler-navigation-write-board",
   "load-wake-scheduler-events",
 ])
 
@@ -6222,6 +6278,94 @@ function readWakeSchedulerNavigationStagedReadCompareCommands(value: unknown): W
   }))
 }
 
+function readWakeSchedulerNavigationWritePreview(value: unknown, commandName: string): WakeSchedulerNavigationWritePreviewSummary {
+  if (!isRecord(value) || typeof value.command !== "string" || typeof value.command_name !== "string") throw new Error(`${commandName} returned invalid write preview`)
+  return {
+    command: preview(readString(value.command, "")),
+    command_name: preview(readString(value.command_name, "")),
+    command_type: readString(value.command_type, "write"),
+    risk: readString(value.risk, "unsupported"),
+    authority_gate: readString(value.authority_gate, "unknown"),
+    equivalent_runtime_command: typeof value.equivalent_runtime_command === "string" ? preview(redactText(value.equivalent_runtime_command)) : undefined,
+    status: readString(value.status, "unsupported"),
+    can_stage_now: false,
+    can_execute_now: false,
+    target_kind: readString(value.target_kind, "unknown"),
+    target_id: typeof value.target_id === "string" ? preview(redactText(value.target_id)) : undefined,
+    parsed_args: readParsedArgs(value.parsed_args),
+    prerequisites: readWakeSchedulerNavigationWritePrerequisites(value.prerequisites),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    safer_read_commands: readWakeSchedulerNavigationWriteCommands(value.safer_read_commands),
+    future_stage_policy: readWakeSchedulerNavigationFutureStagePolicy(value.future_stage_policy),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readWakeSchedulerNavigationWriteBoard(value: unknown, commandName: string): WakeSchedulerNavigationWriteBoardSummary {
+  if (!isRecord(value) || typeof value.board_id !== "string" || !isRecord(value.source) || !Array.isArray(value.previews)) throw new Error(`${commandName} returned invalid write board`)
+  return {
+    board_id: redactText(value.board_id),
+    source: {
+      kind: readString(value.source.kind, "navigation_board"),
+      related_id: typeof value.source.related_id === "string" ? preview(redactText(value.source.related_id)) : undefined,
+      incident_id: typeof value.source.incident_id === "string" ? preview(redactText(value.source.incident_id)) : undefined,
+      staged_id: typeof value.source.staged_id === "string" ? preview(redactText(value.source.staged_id)) : undefined,
+    },
+    previews: value.previews.map((item) => readWakeSchedulerNavigationWritePreview(item, commandName)).slice(0, 20),
+    omitted_read_count: readNumber(value.omitted_read_count, 0),
+    unsupported_count: readNumber(value.unsupported_count, 0),
+    high_impact_count: readNumber(value.high_impact_count, 0),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readWakeSchedulerNavigationWritePrerequisites(value: unknown): WakeSchedulerNavigationWritePrerequisiteSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((item) => ({
+    name: preview(readString(item.name, "")),
+    satisfied: readBoolean(item.satisfied),
+    severity: readString(item.severity, "info"),
+    summary: preview(readString(item.summary, "")),
+  }))
+}
+
+function readWakeSchedulerNavigationWriteCommands(value: unknown): WakeSchedulerNavigationWriteCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 10).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: readString(command.command_type, "read"),
+    risk: typeof command.risk === "string" ? preview(redactText(command.risk)) : undefined,
+    requires_active_runtime: typeof command.requires_active_runtime === "boolean" ? command.requires_active_runtime : undefined,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readWakeSchedulerNavigationFutureStagePolicy(value: unknown) {
+  if (!isRecord(value)) return undefined
+  return {
+    would_require_active_runtime: readBoolean(value.would_require_active_runtime),
+    would_require_run_lock: readBoolean(value.would_require_run_lock),
+    would_require_confirmation: readBoolean(value.would_require_confirmation),
+    would_require_approval_record: readBoolean(value.would_require_approval_record),
+    would_require_dry_run_first: readBoolean(value.would_require_dry_run_first),
+    would_require_recent_read_evidence: readBoolean(value.would_require_recent_read_evidence),
+    allowed_in_7t: false as const,
+  }
+}
+
+function readParsedArgs(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {}
+  const out: Record<string, string> = {}
+  for (const [key, item] of Object.entries(value).slice(0, 20)) {
+    if (typeof item === "string") out[preview(redactText(key))] = preview(redactText(item))
+  }
+  return out
+}
+
 function readWakeSchedulerState(value: unknown): WakeSchedulerStateSummary {
   if (!isRecord(value) || !isRecord(value.config)) throw new Error("runtime.wake_scheduler_status returned invalid status")
   return {
@@ -7334,6 +7478,22 @@ function schedulerNavReadStaleArgs(args: string[]): { staleAfterMs?: number; lim
     if (key === "after") out.staleAfterMs = readDurationArg(value)
     else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
     else throw new Error("scheduler navigation read stale arg is invalid")
+  }
+  return out
+}
+
+function schedulerNavWriteBoardArgs(args: string[]): { relatedId?: string; incidentId?: string; stagedId?: string; includeHighImpact?: boolean; limit?: number } {
+  const out: { relatedId?: string; incidentId?: string; stagedId?: string; includeHighImpact?: boolean; limit?: number } = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("scheduler navigation write board args must use key=value")
+    if (key === "related") out.relatedId = value
+    else if (key === "incident") out.incidentId = value
+    else if (key === "staged") out.stagedId = value
+    else if (key === "include_high_impact") out.includeHighImpact = value !== "0" && value !== "false"
+    else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
+    else throw new Error("scheduler navigation write board arg is invalid")
   }
   return out
 }

@@ -826,6 +826,36 @@ function wakeSchedulerLines(state: UiState): string[] {
   if (scheduler.stagedReadStaleItems.length === 0) out.push("      - empty")
   else out.push(...scheduler.stagedReadStaleItems.slice(0, 10).map((item) => `      - ${item.staged_id} stale=${item.stale} age_ms=${item.age_ms ?? "unknown"} after_ms=${item.stale_after_ms}: ${preview(redactText(item.command))}`))
   out.push("    note=comparison uses bounded summaries and does not execute staged reads")
+  out.push("  scheduler_write_eligibility")
+  if (scheduler.writePreview) {
+    const writePreview = scheduler.writePreview
+    out.push(`    preview=${writePreview.risk} gate=${writePreview.authority_gate} status=${writePreview.status} can_stage_now=${writePreview.can_stage_now} can_execute_now=${writePreview.can_execute_now}: ${preview(redactText(writePreview.command))}`)
+    out.push(`    target=${writePreview.target_kind}${writePreview.target_id ? `:${writePreview.target_id}` : ""}`)
+    if (writePreview.equivalent_runtime_command) out.push(`    runtime_command=${preview(redactText(writePreview.equivalent_runtime_command))}`)
+    if (writePreview.blockers.length > 0) out.push(...writePreview.blockers.slice(0, 10).map((blocker) => `    write_blocker=${preview(redactText(blocker))}`))
+    if (writePreview.warnings.length > 0) out.push(...writePreview.warnings.slice(0, 10).map((warning) => `    write_warning=${preview(redactText(warning))}`))
+    out.push("    prerequisites")
+    if (writePreview.prerequisites.length === 0) out.push("      - empty")
+    else out.push(...writePreview.prerequisites.slice(0, 10).map((item) => `      - ${item.name} satisfied=${item.satisfied} severity=${item.severity}: ${preview(redactText(item.summary))}`))
+    out.push("    safer_reads")
+    if (writePreview.safer_read_commands.length === 0) out.push("      - empty")
+    else out.push(...writePreview.safer_read_commands.slice(0, 10).map((command) => `      - ${command.command_type}: ${preview(redactText(command.command))}`))
+    if (writePreview.future_stage_policy) out.push(`    future_policy=active_runtime=${writePreview.future_stage_policy.would_require_active_runtime} run_lock=${writePreview.future_stage_policy.would_require_run_lock} approval=${writePreview.future_stage_policy.would_require_approval_record} dry_run_first=${writePreview.future_stage_policy.would_require_dry_run_first} allowed_in_7t=${writePreview.future_stage_policy.allowed_in_7t}`)
+  } else {
+    out.push("    preview=none")
+  }
+  if (scheduler.writeBoard) {
+    const board = scheduler.writeBoard
+    out.push(`    board=${board.board_id} source=${board.source.kind} previews=${board.previews.length} unsupported=${board.unsupported_count} high_impact=${board.high_impact_count}`)
+    if (board.blockers.length > 0) out.push(...board.blockers.slice(0, 10).map((blocker) => `    board_blocker=${preview(redactText(blocker))}`))
+    if (board.warnings.length > 0) out.push(...board.warnings.slice(0, 10).map((warning) => `    board_warning=${preview(redactText(warning))}`))
+    out.push("    board_rows")
+    if (board.previews.length === 0) out.push("      - empty")
+    else out.push(...board.previews.slice(0, 10).map((item) => `      - ${item.risk} gate=${item.authority_gate} status=${item.status} can_stage_now=${item.can_stage_now} can_execute_now=${item.can_execute_now}: ${preview(redactText(item.command))}`))
+  } else {
+    out.push("    board=none")
+  }
+  out.push("    note=preview only; no write staging or execution")
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

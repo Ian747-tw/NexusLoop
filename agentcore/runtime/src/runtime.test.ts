@@ -7668,6 +7668,83 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation write preview classifies authority gates without events or writes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await server.start()
+    const before = await readJsonlEvents(dir)
+
+    const dryRun = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run" }) as { risk: string; authority_gate: string; status: string; can_stage_now: boolean; can_execute_now: boolean; safer_read_commands: Array<{ command: string }> }
+    expect(dryRun).toMatchObject({ risk: "low_risk_write", authority_gate: "wake_schedule_tick", can_stage_now: false, can_execute_now: false })
+    expect(dryRun.safer_read_commands.map((command) => command.command)).toContain("/wake-tick-preview")
+
+    const schedulerStart = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-start dry-run every=60s" }) as { risk: string; authority_gate: string; blockers: string[]; future_stage_policy: { allowed_in_7t: boolean; would_require_run_lock: boolean } }
+    expect(schedulerStart.risk).toBe("medium_risk_write")
+    expect(schedulerStart.authority_gate).toBe("wake_scheduler_runtime")
+    expect(schedulerStart.blockers.join(" ")).toContain("can_stage_now=false")
+    expect(schedulerStart.future_stage_policy).toMatchObject({ allowed_in_7t: false, would_require_run_lock: true })
+
+    const checkpoint = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/checkpoint full reason=manual" }) as { authority_gate: string; equivalent_runtime_command: string; can_execute_now: boolean }
+    expect(checkpoint).toMatchObject({ authority_gate: "checkpoint_runtime", equivalent_runtime_command: "runtime.create_runtime_checkpoint", can_execute_now: false })
+
+    const recovery = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-recovery-ack recovery_7t_1" }) as { authority_gate: string; target_kind: string; target_id: string; safer_read_commands: Array<{ command: string }> }
+    expect(recovery).toMatchObject({ authority_gate: "recovery_runtime", target_kind: "scheduler_recovery", target_id: "recovery_7t_1" })
+    expect(recovery.safer_read_commands.map((command) => command.command)).toContain("/scheduler-recovery-show recovery_7t_1")
+
+    const workflowCreate = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-recovery-workflow recovery_7t_1" }) as { authority_gate: string; target_kind: string; target_id: string; safer_read_commands: Array<{ command: string }> }
+    expect(workflowCreate).toMatchObject({ authority_gate: "recovery_workflow_runtime", target_kind: "scheduler_recovery", target_id: "recovery_7t_1" })
+    expect(workflowCreate.safer_read_commands.map((command) => command.command)).toContain("/scheduler-recovery-workflow-preview recovery_7t_1")
+
+    const workflowStep = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-recovery-step-done workflow_7t_1 0" }) as { authority_gate: string; target_id: string; blockers: string[] }
+    expect(workflowStep).toMatchObject({ authority_gate: "recovery_workflow_runtime", target_id: "workflow_7t_1" })
+    expect(workflowStep.blockers.join(" ")).not.toContain("numeric workflow step index is required")
+
+    const continuation = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/continue-step plan_7t_1" }) as { authority_gate: string; status: string }
+    expect(continuation).toMatchObject({ authority_gate: "continuation_runtime", status: "blocked" })
+
+    const stagedRun = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-nav-run staged_7t_1" }) as { risk: string; authority_gate: string; status: string; target_kind: string; target_id: string; safer_read_commands: Array<{ command: string }> }
+    expect(stagedRun).toMatchObject({ risk: "low_risk_write", authority_gate: "wake_scheduler_runtime", status: "blocked", target_kind: "scheduler_navigation_staged_read", target_id: "staged_7t_1" })
+    expect(stagedRun.safer_read_commands.map((command) => command.command)).toContain("/scheduler-nav-run-preview staged_7t_1")
+
+    for (const command of ["/wake-tick", "/handoff token=abc123", "/apply proposal_1", "/approve review_1", "/reject review_1", "/complete mission_1", "/fail mission_1", "/cancel mission_1", "/synthesize token=abc123", "/cycle", "/api-call token=abc123"]) {
+      const highImpact = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command }) as { risk: string; status: string; command: string; blockers: string[] }
+      expect(highImpact.risk).toBe("high_impact_write")
+      expect(highImpact.status).toBe("high_impact_blocked")
+      expect(highImpact.command).not.toContain("abc123")
+      expect(highImpact.blockers.join(" ")).toContain("high-impact")
+    }
+
+    for (const command of ["/proposal-review proposal_1", "/apply-proposal proposal_1", "/bundle-review bundle_1", "/apply-bundle bundle_1", "/draft-review draft_1", "/apply-target proposal proposal_1", "/request-review target_1", "/cancel-review review_1"]) {
+      const proposalWrite = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command }) as { risk: string; status: string; authority_gate: string; command: string }
+      expect(proposalWrite).toMatchObject({ risk: "high_impact_write", status: "high_impact_blocked", authority_gate: "proposal_review_runtime" })
+      expect(proposalWrite.command).not.toContain("abc123")
+    }
+
+    for (const command of ["/tmp/repro", "/path/foo", "scheduler-start", "/unknown-write"]) {
+      const unsupported = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command }) as { risk: string; status: string; can_stage_now: boolean; can_execute_now: boolean }
+      expect(unsupported).toMatchObject({ risk: "unsupported", status: "unsupported", can_stage_now: false, can_execute_now: false })
+    }
+
+    const board = await server.command("runtime.wake_scheduler_navigation_write_board", { include_high_impact: false }) as { previews: Array<{ command: string; risk: string }>; high_impact_count: number; warnings: string[] }
+    expect(board.previews.some((preview) => preview.command === "/wake-tick-dry-run")).toBe(true)
+    expect(board.previews.some((preview) => preview.risk === "high_impact_write")).toBe(false)
+    expect(board.high_impact_count).toBeGreaterThan(0)
+    expect(board.warnings.join(" ")).toContain("omitted")
+
+    const stagedBoard = await server.command("runtime.wake_scheduler_navigation_write_board", { staged_id: "staged_7t_1" }) as { previews: Array<{ command: string; risk: string; authority_gate: string }> }
+    expect(stagedBoard.previews).toHaveLength(1)
+    expect(stagedBoard.previews[0]).toMatchObject({ command: "/scheduler-nav-run staged_7t_1", risk: "low_risk_write", authority_gate: "wake_scheduler_runtime" })
+
+    const missingRelatedBoard = await server.command("runtime.wake_scheduler_navigation_write_board", { related_id: "missing_related_7t" }) as { previews: unknown[]; blockers: string[] }
+    expect(missingRelatedBoard.previews).toHaveLength(0)
+    expect(missingRelatedBoard.blockers.join(" ")).toContain("no audit chain entries found")
+
+    const after = await readJsonlEvents(dir)
+    expect(after).toEqual(before)
+    await server.shutdown()
+  })
+
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
