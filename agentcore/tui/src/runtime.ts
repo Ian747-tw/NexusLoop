@@ -2064,6 +2064,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (staged.command_name !== "/wake-tick-dry-run" && staged.command_name !== "/scheduler-nav-run") blockers.push("staged write command is not in the 7V executor whitelist")
     if (staged.command_name === "/scheduler-nav-run" && !staged.target_id) blockers.push("scheduler-nav-run staged read id is required")
     blockers.push(...fakeLowRiskWriteRunShapeBlockers(staged.command, staged.command_name))
+    if (blockers.length === 0 && staged.command_name === "/scheduler-nav-run" && !this.wakeSchedulerNavigationStagedCommands.some((item) => item.staged_id === staged.target_id)) blockers.push("staged navigation command is not active")
     const executionKind = blockers.length > 0 ? "blocked" : staged.command_name === "/wake-tick-dry-run" ? "wake_tick_dry_run" : "staged_safe_read"
 
     return {

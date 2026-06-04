@@ -18,6 +18,13 @@ export class WakeSchedulerNavigationLowRiskWriteExecutor {
     return false
   }
 
+  async preflightBlockers(command: string): Promise<string[]> {
+    const [name, ...args] = command.trim().split(/\s+/)
+    if (name !== "/scheduler-nav-run" || args.length !== 1 || !args[0]?.trim()) return []
+    const preview = await this.stagedReadRunService.preview({ staged_id: args[0] })
+    return preview.can_execute ? [] : preview.blockers.length > 0 ? preview.blockers : ["downstream staged read cannot execute"]
+  }
+
   async execute(command: string, requestedBy: string): Promise<WakeSchedulerNavigationLowRiskWriteExecution> {
     const [name, ...args] = command.trim().split(/\s+/)
     if (name === "/wake-tick-dry-run") {

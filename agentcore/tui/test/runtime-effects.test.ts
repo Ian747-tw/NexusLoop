@@ -3857,6 +3857,17 @@ describe("runtime UI effects", () => {
     expect(state.wakeScheduler?.latestWriteRunResult).toMatchObject({ status: "succeeded", execution_kind: "staged_safe_read" })
     expect(state.wakeScheduler?.latestWriteRunResult?.downstream_run_id).toBeTruthy()
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/scheduler-audit-summary"] })
+    const removedReadId = state.wakeScheduler?.selectedStagedNavigationCommand?.staged_id
+    expect(removedReadId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/scheduler-nav-run", removedReadId!] })
+    const removedReadWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(removedReadWriteId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-unstage", args: [removedReadId!] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-preview", args: [removedReadWriteId!] })
+    expect(state.wakeScheduler?.writeRunPreview).toMatchObject({ can_execute: false, execution_kind: "blocked" })
+    expect(state.wakeScheduler?.writeRunPreview?.blockers.join(" ")).toContain("staged navigation command is not active")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-medium", args: ["/checkpoint", "full", "token=abc123"] })
     const checkpointWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
     expect(checkpointWriteId).toBeTruthy()

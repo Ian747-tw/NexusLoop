@@ -7877,6 +7877,22 @@ describe("RuntimeServer core", () => {
     const malformedStagedReadRunEvents = (await readJsonlEvents(dir)).slice(beforeMalformedStagedReadRun.length).filter((event) => event.run_id === malformedStagedReadRunResult.run_id)
     expect(malformedStagedReadRunEvents.map((event) => event.kind)).toEqual(["runtime_wake_scheduler_navigation_write_run_blocked"])
 
+    const removedStagedRead = await server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-audit-summary", requestedBy: "operator-write-run" }) as { staged_id: string }
+    const removedStagedReadWrite = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: `/scheduler-nav-run ${removedStagedRead.staged_id}`, requestedBy: "operator-write-run" }) as { staged_write_id: string }
+    await server.command("runtime.remove_wake_scheduler_navigation_staged_command", { stagedId: removedStagedRead.staged_id, requestedBy: "operator-write-run" })
+    const removedStagedReadPreview = await server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: removedStagedReadWrite.staged_write_id }) as { can_execute: boolean; blockers: string[] }
+    expect(removedStagedReadPreview.can_execute).toBe(false)
+    expect(removedStagedReadPreview.blockers.join(" ")).toContain("staged navigation command is not active")
+    const beforeRemovedStagedReadDryRun = await readJsonlEvents(dir)
+    const removedStagedReadDryRun = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: removedStagedReadWrite.staged_write_id, dryRun: true, requestedBy: "operator-write-run" }) as { status: string; error: string }
+    expect(removedStagedReadDryRun.status).toBe("blocked")
+    expect(await readJsonlEvents(dir)).toEqual(beforeRemovedStagedReadDryRun)
+    const removedStagedReadBlocked = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: removedStagedReadWrite.staged_write_id, requestedBy: "operator-write-run" }) as { run_id: string; status: string; error: string }
+    expect(removedStagedReadBlocked.status).toBe("blocked")
+    const removedStagedReadEvents = (await readJsonlEvents(dir)).slice(beforeRemovedStagedReadDryRun.length).filter((event) => event.run_id === removedStagedReadBlocked.run_id)
+    expect(removedStagedReadEvents.map((event) => event.kind)).toEqual(["runtime_wake_scheduler_navigation_write_run_blocked"])
+    expect((await readJsonlEvents(dir)).slice(beforeRemovedStagedReadDryRun.length).map((event) => event.kind)).not.toContain("runtime_wake_scheduler_navigation_staged_read_blocked")
+
     const stagedWritesAfterRun = await server.command("runtime.list_wake_scheduler_navigation_staged_write_commands", { limit: 20 }) as Array<{ staged_write_id: string }>
     expect(stagedWritesAfterRun.map((item) => item.staged_write_id)).toContain(dryRunStaged.staged_write_id)
     expect(stagedWritesAfterRun.map((item) => item.staged_write_id)).toContain(stagedReadWrite.staged_write_id)

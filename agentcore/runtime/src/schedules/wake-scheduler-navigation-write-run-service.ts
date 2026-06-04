@@ -145,6 +145,7 @@ export class WakeSchedulerNavigationWriteRunService {
     if (eligibility.command_name === "/scheduler-nav-run" && !eligibility.target_id) blockers.push("/scheduler-nav-run requires a staged read id")
     blockers.push(...lowRiskCommandShapeBlockers(staged.command, eligibility.command_name))
     if (!this.executor.supports(staged.command)) blockers.push("staged write command is not supported by the 7V low-risk executor")
+    if (blockers.length === 0) blockers.push(...await this.executor.preflightBlockers(staged.command))
     const executionKind = eligibility.command_name === "/wake-tick-dry-run"
       ? "wake_tick_dry_run"
       : eligibility.command_name === "/scheduler-nav-run"
