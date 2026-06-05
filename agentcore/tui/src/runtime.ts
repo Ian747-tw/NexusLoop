@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -538,6 +538,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.listWakeSchedulerNavigationWriteRuns(readLimit(payload.limit, 20), typeof (payload.stagedWriteId ?? payload.staged_write_id) === "string" ? String(payload.stagedWriteId ?? payload.staged_write_id) : undefined)
       case "runtime.get_wake_scheduler_navigation_write_run":
         return this.getWakeSchedulerNavigationWriteRun(String(payload.runId ?? payload.run_id ?? ""))
+      case "runtime.wake_scheduler_navigation_write_run_history":
+        return this.wakeSchedulerNavigationWriteRunHistory(payload)
+      case "runtime.wake_scheduler_navigation_write_run_compare":
+        return this.wakeSchedulerNavigationWriteRunCompare(payload)
+      case "runtime.wake_scheduler_navigation_write_run_stale":
+        return this.wakeSchedulerNavigationWriteRunStale(payload)
+      case "runtime.wake_scheduler_navigation_write_run_group":
+        return this.wakeSchedulerNavigationWriteRunGroup(payload)
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
@@ -2143,6 +2151,109 @@ export class FakeRuntimeClient implements RuntimeClient {
   private getWakeSchedulerNavigationWriteRun(runId: string): WakeSchedulerNavigationWriteRunResultSummary | null {
     const normalizedId = redactText(requiredString(runId, "runId"))
     return this.wakeSchedulerNavigationWriteRuns.find((run) => run.run_id === normalizedId) ?? null
+  }
+
+  private wakeSchedulerNavigationWriteRunHistory(payload: Record<string, unknown>): WakeSchedulerNavigationWriteRunHistorySummary {
+    const stagedWriteId = typeof (payload.stagedWriteId ?? payload.staged_write_id) === "string" ? redactText(String(payload.stagedWriteId ?? payload.staged_write_id)) : undefined
+    const command = typeof payload.command === "string" ? preview(redactText(payload.command)) : undefined
+    const limit = readLimit(payload.limit, 20)
+    const groups = this.fakeWriteRunGroups()
+      .filter((group) => !stagedWriteId || group.staged_write_id === stagedWriteId)
+      .filter((group) => !command || group.command === command)
+      .slice(0, limit)
+    return {
+      staged_write_id: stagedWriteId,
+      command,
+      groups,
+      total_runs: groups.reduce((sum, group) => sum + group.run_count, 0),
+      total_groups: groups.length,
+      changed_groups: groups.filter((group) => group.comparison_status === "changed").length,
+      failed_groups: groups.filter((group) => group.failed_count > 0 || group.blocked_count > 0).length,
+      stale_groups: 0,
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private wakeSchedulerNavigationWriteRunCompare(payload: Record<string, unknown>): WakeSchedulerNavigationWriteRunPairComparisonSummary {
+    const leftRunId = typeof (payload.leftRunId ?? payload.left_run_id) === "string" ? redactText(String(payload.leftRunId ?? payload.left_run_id)) : undefined
+    const rightRunId = typeof (payload.rightRunId ?? payload.right_run_id) === "string" ? redactText(String(payload.rightRunId ?? payload.right_run_id)) : undefined
+    let left: WakeSchedulerNavigationWriteRunResultSummary | undefined
+    let right: WakeSchedulerNavigationWriteRunResultSummary | undefined
+    if (leftRunId || rightRunId) {
+      left = this.wakeSchedulerNavigationWriteRuns.find((run) => run.run_id === leftRunId)
+      right = this.wakeSchedulerNavigationWriteRuns.find((run) => run.run_id === rightRunId)
+    } else {
+      const stagedWriteId = redactText(requiredString(String(payload.stagedWriteId ?? payload.staged_write_id ?? ""), "stagedWriteId"))
+      const runs = this.wakeSchedulerNavigationWriteRuns.filter((run) => run.staged_write_id === stagedWriteId)
+      if (runs.length === 1) return fakeWriteRunPairComparison(runs[0], runs[0], "first_run")
+      left = runs[1]
+      right = runs[0]
+    }
+    if (!left || !right) throw new Error("fake write-run comparison run id not found")
+    return fakeWriteRunPairComparison(left, right, fakeWriteRunComparisonStatus(left, right))
+  }
+
+  private wakeSchedulerNavigationWriteRunStale(payload: Record<string, unknown>): WakeSchedulerNavigationWriteRunStaleItemSummary[] {
+    const staleAfterMs = typeof (payload.staleAfterMs ?? payload.stale_after_ms) === "number" ? Number(payload.staleAfterMs ?? payload.stale_after_ms) : 3_600_000
+    const limit = readLimit(payload.limit, 20)
+    return this.wakeSchedulerNavigationStagedWriteCommands.slice(0, limit).map((staged) => {
+      const latest = this.wakeSchedulerNavigationWriteRuns.find((run) => run.staged_write_id === staged.staged_write_id)
+      return {
+        staged_write_id: staged.staged_write_id,
+        command: staged.command,
+        command_name: staged.command_name,
+        risk: staged.risk,
+        authority_gate: staged.authority_gate,
+        target_kind: staged.target_kind,
+        target_id: staged.target_id,
+        latest_run_id: latest?.run_id,
+        latest_completed_at: latest?.completed_at,
+        age_ms: latest ? 0 : undefined,
+        stale_after_ms: staleAfterMs,
+        stale: !latest,
+        recommended_commands: fakeWriteRunCompareCommands(staged.staged_write_id, latest?.run_id),
+      }
+    })
+  }
+
+  private wakeSchedulerNavigationWriteRunGroup(payload: Record<string, unknown>): WakeSchedulerNavigationWriteRunGroupSummary | null {
+    const stagedWriteId = redactText(requiredString(String(payload.stagedWriteId ?? payload.staged_write_id ?? ""), "stagedWriteId"))
+    return this.fakeWriteRunGroups().find((group) => group.staged_write_id === stagedWriteId) ?? null
+  }
+
+  private fakeWriteRunGroups(): WakeSchedulerNavigationWriteRunGroupSummary[] {
+    const stagedWriteIds = [...new Set(this.wakeSchedulerNavigationWriteRuns.map((run) => run.staged_write_id))]
+    return stagedWriteIds.map((stagedWriteId) => {
+      const runs = this.wakeSchedulerNavigationWriteRuns.filter((run) => run.staged_write_id === stagedWriteId)
+      const latest = runs[0]
+      const previous = runs[1]
+      const comparisonStatus = previous ? fakeWriteRunComparisonStatus(previous, latest) : "first_run"
+      return {
+        group_id: `fake-write-run-group-${stagedWriteId}`,
+        staged_write_id: stagedWriteId,
+        command: latest.command,
+        command_name: latest.command_name,
+        execution_kind: latest.execution_kind,
+        risk: latest.risk,
+        authority_gate: latest.authority_gate,
+        target_kind: latest.target_kind,
+        target_id: latest.target_id,
+        run_count: runs.length,
+        succeeded_count: runs.filter((run) => run.status === "succeeded").length,
+        failed_count: runs.filter((run) => run.status === "failed").length,
+        blocked_count: runs.filter((run) => run.status === "blocked").length,
+        latest_run_id: latest.run_id,
+        latest_completed_at: latest.completed_at,
+        latest_status: latest.status,
+        latest_outcome_hash: fakeWriteRunOutcomeHash(latest),
+        previous_run_id: previous?.run_id,
+        previous_outcome_hash: previous ? fakeWriteRunOutcomeHash(previous) : undefined,
+        downstream_run_ids: [...new Set(runs.map((run) => run.downstream_run_id).filter((id): id is string => Boolean(id)))],
+        comparison_status: comparisonStatus,
+        summary_preview: `${comparisonStatus} ${latest.execution_kind}: ${latest.result_summary ?? latest.error ?? latest.command}`,
+        recommended_commands: fakeWriteRunCompareCommands(stagedWriteId, latest.run_id),
+      }
+    })
   }
 
   private wakeSchedulerNavigationTarget(targetKind: string, targetId: string): WakeSchedulerNavigationTargetSummary {
@@ -4736,6 +4847,61 @@ function fakeNavigationWriteRunRecord(run: WakeSchedulerNavigationWriteRunResult
     completed_at: run.completed_at,
     summary_preview: run.result_summary ?? run.error ?? run.command,
   }
+}
+
+function fakeWriteRunPairComparison(left: WakeSchedulerNavigationWriteRunResultSummary, right: WakeSchedulerNavigationWriteRunResultSummary, status: WakeSchedulerNavigationWriteRunPairComparisonSummary["comparison_status"]): WakeSchedulerNavigationWriteRunPairComparisonSummary {
+  return {
+    comparison_id: `fake-write-run-compare-${left.run_id}-${right.run_id}`,
+    staged_write_id: left.staged_write_id === right.staged_write_id ? left.staged_write_id : "mixed",
+    command: left.command === right.command ? left.command : `${left.command} <> ${right.command}`,
+    left_run_id: left.run_id,
+    right_run_id: right.run_id,
+    left_completed_at: left.completed_at,
+    right_completed_at: right.completed_at,
+    left_status: left.status,
+    right_status: right.status,
+    left_outcome_hash: fakeWriteRunOutcomeHash(left),
+    right_outcome_hash: fakeWriteRunOutcomeHash(right),
+    comparison_status: status,
+    summary_delta: status === "unchanged" ? `unchanged bounded outcome for ${right.command}` : status === "first_run" ? `first recorded terminal write-run outcome for ${right.command}` : `changed bounded outcome for ${right.command}`,
+    downstream_delta: left.downstream_run_id || right.downstream_run_id ? `downstream staged-read link changed from ${left.downstream_run_id ?? "none"} to ${right.downstream_run_id ?? "none"}` : undefined,
+    warnings: ["comparison uses bounded write-run result summaries, not raw results"],
+    recommended_commands: fakeWriteRunCompareCommands(right.staged_write_id, right.run_id),
+  }
+}
+
+function fakeWriteRunComparisonStatus(left: WakeSchedulerNavigationWriteRunResultSummary, right: WakeSchedulerNavigationWriteRunResultSummary): WakeSchedulerNavigationWriteRunPairComparisonSummary["comparison_status"] {
+  if (left.status === "failed" || right.status === "failed") return fakeWriteRunOutcomeHash(left) === fakeWriteRunOutcomeHash(right) ? "failed" : "changed"
+  if (left.status === "blocked" || right.status === "blocked") return fakeWriteRunOutcomeHash(left) === fakeWriteRunOutcomeHash(right) ? "blocked" : "changed"
+  return fakeWriteRunOutcomeHash(left) === fakeWriteRunOutcomeHash(right) ? "unchanged" : "changed"
+}
+
+function fakeWriteRunOutcomeHash(run: WakeSchedulerNavigationWriteRunResultSummary): string {
+  return fakeNavigationStageHash(JSON.stringify({
+    command: run.command,
+    command_name: run.command_name,
+    execution_kind: run.execution_kind,
+    risk: run.risk,
+    authority_gate: run.authority_gate,
+    target_kind: run.target_kind,
+    target_id: run.target_id,
+    status: run.status,
+    result_kind: run.result_kind,
+    result_summary: run.result_summary,
+    error: run.error,
+  }))
+}
+
+function fakeWriteRunCompareCommands(stagedWriteId: string, runId?: string) {
+  const commands = [
+    { label: "Preview staged write", command: `/scheduler-nav-write-run-preview ${stagedWriteId}`, command_type: "read" },
+    { label: "Run staged write", command: `/scheduler-nav-write-run ${stagedWriteId}`, command_type: "write", requires_active_runtime: true },
+    { label: "List write runs", command: "/scheduler-nav-write-runs", command_type: "read" },
+    { label: "List staged writes", command: "/scheduler-nav-write-staged", command_type: "read" },
+    { label: "Compare write runs", command: `/scheduler-nav-write-run-compare ${stagedWriteId}`, command_type: "read" },
+  ]
+  if (runId) commands.push({ label: "Show latest write run", command: `/scheduler-nav-write-run-show ${runId}`, command_type: "read" })
+  return commands
 }
 
 function fakeLowRiskWriteRunShapeBlockers(command: string, commandName: string): string[] {

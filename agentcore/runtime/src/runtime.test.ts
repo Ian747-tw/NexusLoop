@@ -51,6 +51,7 @@ import {
   type Topic,
   type TopicSnapshot,
 } from "./research-db/research-db"
+import { stableWakeSchedulerNavigationWriteRunOutcomeHash } from "./schedules/wake-scheduler-navigation-write-run-compare-service"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -7986,6 +7987,187 @@ describe("RuntimeServer core", () => {
     await replayServer.start()
     await expect(replayServer.command("runtime.list_wake_scheduler_navigation_write_runs", { limit: 50 })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ run_id: readRunResult.run_id })]))
     await replayServer.shutdown()
+  })
+
+  test("wake scheduler navigation write-run comparison groups outcomes and computes stable hashes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_write_compare",
+      command: "/wake-tick-dry-run",
+      command_name: "/wake-tick-dry-run",
+      risk: "low_risk_write",
+      authority_gate: "wake_schedule_tick",
+      target_kind: "wake_tick",
+      staged_at: "2026-05-14T12:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: createHash("sha256").update("/wake-tick-dry-run").digest("hex"),
+      summary_preview: "/wake-tick-dry-run",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_run_started",
+      run_id: "ignored_started_only",
+      staged_write_id: "staged_write_compare",
+      command: "/wake-tick-dry-run",
+      command_name: "/wake-tick-dry-run",
+      execution_kind: "wake_tick_dry_run",
+      risk: "low_risk_write",
+      authority_gate: "wake_schedule_tick",
+      target_kind: "wake_tick",
+      status: "started",
+      started_at: "2026-05-14T12:00:00.000Z",
+      requested_by: "fixture",
+    })
+    for (const [index, summary] of ["due=0 eligible=0", "due=0 eligible=0", "due=1 eligible=1"].entries()) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_write_run_succeeded",
+        run_id: `write_compare_run_${index + 1}`,
+        staged_write_id: "staged_write_compare",
+        command: "/wake-tick-dry-run",
+        command_name: "/wake-tick-dry-run",
+        execution_kind: "wake_tick_dry_run",
+        risk: "low_risk_write",
+        authority_gate: "wake_schedule_tick",
+        target_kind: "wake_tick",
+        status: "succeeded",
+        result_kind: "wake_tick_dry_run",
+        result_summary: summary,
+        downstream_run_id: `downstream_entropy_${index}`,
+        started_at: `2026-05-14T12:0${index}:00.000Z`,
+        completed_at: `2026-05-14T12:0${index}:01.000Z`,
+        requested_by: `operator-${index}`,
+        result_hash: `entropy_hash_${index}`,
+      })
+    }
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_run_failed",
+      run_id: "write_compare_failed_secret",
+      staged_write_id: "staged_write_compare",
+      command: "/wake-tick-dry-run",
+      command_name: "/wake-tick-dry-run",
+      execution_kind: "wake_tick_dry_run",
+      risk: "low_risk_write",
+      authority_gate: "wake_schedule_tick",
+      target_kind: "wake_tick",
+      status: "failed",
+      error: "token=abc123 dry-run failed",
+      started_at: "2026-05-14T12:03:00.000Z",
+      completed_at: "2026-05-14T12:03:01.000Z",
+      requested_by: "operator-secret",
+      result_hash: "entropy_failed",
+    })
+
+    const sameOutcomeA = stableWakeSchedulerNavigationWriteRunOutcomeHash({
+      command: "/scheduler-nav-run staged_read_1",
+      command_name: "/scheduler-nav-run",
+      execution_kind: "staged_safe_read",
+      risk: "low_risk_write",
+      authority_gate: "reasoning_provider_runtime",
+      target_kind: "scheduler_navigation_staged_read",
+      target_id: "staged_read_1",
+      status: "succeeded",
+      result_kind: "staged_safe_read",
+      result_summary: "summary token=abc123",
+    })
+    const sameOutcomeB = stableWakeSchedulerNavigationWriteRunOutcomeHash({
+      command: "/scheduler-nav-run staged_read_1",
+      command_name: "/scheduler-nav-run",
+      execution_kind: "staged_safe_read",
+      risk: "low_risk_write",
+      authority_gate: "reasoning_provider_runtime",
+      target_kind: "scheduler_navigation_staged_read",
+      target_id: "staged_read_1",
+      status: "succeeded",
+      result_kind: "staged_safe_read",
+      result_summary: "summary token=def456",
+    })
+    const changedOutcome = stableWakeSchedulerNavigationWriteRunOutcomeHash({
+      command: "/scheduler-nav-run staged_read_1",
+      command_name: "/scheduler-nav-run",
+      execution_kind: "staged_safe_read",
+      risk: "low_risk_write",
+      authority_gate: "reasoning_provider_runtime",
+      target_kind: "scheduler_navigation_staged_read",
+      target_id: "staged_read_1",
+      status: "failed",
+      error: "failed",
+    })
+    expect(sameOutcomeA.outcome_hash).toBe(sameOutcomeB.outcome_hash)
+    expect(sameOutcomeA.outcome_hash).not.toBe(changedOutcome.outcome_hash)
+    expect(JSON.stringify(sameOutcomeA)).not.toContain("abc123")
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-14T14:00:00.000Z"),
+    })
+    await server.start()
+
+    const history = await server.command("runtime.wake_scheduler_navigation_write_run_history", { stagedWriteId: "staged_write_compare" }) as { total_groups: number; total_runs: number; failed_groups: number; groups: Array<{ comparison_status: string; failed_count: number; latest_outcome_hash: string; previous_outcome_hash?: string; downstream_run_ids: string[]; summary_preview: string }> }
+    expect(history.total_groups).toBe(1)
+    expect(history.total_runs).toBe(4)
+    expect(history.failed_groups).toBe(1)
+    expect(history.groups[0].comparison_status).toBe("changed")
+    expect(history.groups[0].failed_count).toBe(1)
+    expect(history.groups[0].downstream_run_ids).toHaveLength(3)
+    expect(JSON.stringify(history)).not.toContain("abc123")
+
+    const unchanged = await server.command("runtime.wake_scheduler_navigation_write_run_compare", { leftRunId: "write_compare_run_1", rightRunId: "write_compare_run_2" }) as { comparison_status: string; left_outcome_hash: string; right_outcome_hash: string; downstream_delta?: string }
+    expect(unchanged.comparison_status).toBe("unchanged")
+    expect(unchanged.left_outcome_hash).toBe(unchanged.right_outcome_hash)
+    expect(unchanged.downstream_delta).toContain("changed")
+    const changed = await server.command("runtime.wake_scheduler_navigation_write_run_compare", { leftRunId: "write_compare_run_2", rightRunId: "write_compare_run_3" }) as { comparison_status: string; left_outcome_hash: string; right_outcome_hash: string }
+    expect(changed.comparison_status).toBe("changed")
+    expect(changed.left_outcome_hash).not.toBe(changed.right_outcome_hash)
+    const failedChanged = await server.command("runtime.wake_scheduler_navigation_write_run_compare", { leftRunId: "write_compare_run_3", rightRunId: "write_compare_failed_secret" }) as { comparison_status: string; summary_delta: string }
+    expect(failedChanged.comparison_status).toBe("changed")
+    expect(JSON.stringify(failedChanged)).not.toContain("abc123")
+
+    const eventsBefore = await readJsonlEvents(dir)
+    await server.command("runtime.wake_scheduler_navigation_write_run_stale", { staleAfterMs: 3_600_000 })
+    await server.command("runtime.wake_scheduler_navigation_write_run_group", { stagedWriteId: "staged_write_compare" })
+    const eventsAfter = await readJsonlEvents(dir)
+    expect(eventsAfter.length).toBe(eventsBefore.length)
+    expect(eventsAfter.map((event) => event.kind)).not.toContain("runtime_wake_scheduler_navigation_write_run_succeeded_extra")
+    expect(eventsAfter.map((event) => event.kind)).not.toContain("runtime_wake_scheduler_started")
+    expect(eventsAfter.map((event) => event.kind)).not.toContain("runtime_wake_schedule_tick_completed")
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation write-run comparison handles first run stale no-run staged writes and read-mode access", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-14T15:00:00.000Z"),
+    })
+    await server.start()
+    const staged = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run", requestedBy: "operator-write-compare" }) as { staged_write_id: string }
+    const noRunStale = await server.command("runtime.wake_scheduler_navigation_write_run_stale", { staleAfterMs: 3_600_000 }) as Array<{ staged_write_id: string; stale: boolean; latest_run_id?: string; recommended_commands: Array<{ command: string; command_type: string; requires_active_runtime?: boolean }> }>
+    expect(noRunStale).toHaveLength(1)
+    expect(noRunStale[0]).toMatchObject({ staged_write_id: staged.staged_write_id, stale: true })
+    expect(noRunStale[0].latest_run_id).toBeUndefined()
+    expect(noRunStale[0].recommended_commands.some((command) => command.command === `/scheduler-nav-write-run ${staged.staged_write_id}` && command.command_type === "write" && command.requires_active_runtime)).toBe(true)
+
+    const run = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: staged.staged_write_id, requestedBy: "operator-write-compare" }) as { run_id: string }
+    const first = await server.command("runtime.wake_scheduler_navigation_write_run_compare", { stagedWriteId: staged.staged_write_id }) as { comparison_status: string; left_run_id: string; right_run_id: string }
+    expect(first).toMatchObject({ comparison_status: "first_run", left_run_id: run.run_id, right_run_id: run.run_id })
+    const group = await server.command("runtime.wake_scheduler_navigation_write_run_group", { stagedWriteId: staged.staged_write_id }) as { staged_write_id: string; run_count: number; comparison_status: string }
+    expect(group).toMatchObject({ staged_write_id: staged.staged_write_id, run_count: 1, comparison_status: "first_run" })
+    await expect(server.command("runtime.wake_scheduler_navigation_write_run_compare", { stagedWriteId: "missing" })).rejects.toThrow("no terminal runs")
+    await server.shutdown()
+
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await statusServer.start()
+    await expect(statusServer.command("runtime.wake_scheduler_navigation_write_run_history", {})).resolves.toMatchObject({ total_groups: 1 })
+    await expect(statusServer.command("runtime.wake_scheduler_navigation_write_run_group", { stagedWriteId: staged.staged_write_id })).resolves.toMatchObject({ staged_write_id: staged.staged_write_id })
+    await statusServer.shutdown()
   })
 
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {

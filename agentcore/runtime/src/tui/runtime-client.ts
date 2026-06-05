@@ -34,6 +34,7 @@ import type { WakeSchedulerNavigationStagedReadCompareInput, WakeSchedulerNaviga
 import type { WakeSchedulerNavigationWriteBoard, WakeSchedulerNavigationWriteBoardInput, WakeSchedulerNavigationWritePreview, WakeSchedulerNavigationWritePreviewInput } from "../schedules/wake-scheduler-navigation-write-preview-types"
 import type { WakeSchedulerNavigationStagedWriteCommand, WakeSchedulerNavigationStagedWriteCommandRecord, WakeSchedulerNavigationWriteStageClearInput, WakeSchedulerNavigationWriteStageInput, WakeSchedulerNavigationWriteStagePreview, WakeSchedulerNavigationWriteStageRemoveInput } from "../schedules/wake-scheduler-navigation-write-staging-types"
 import type { WakeSchedulerNavigationWriteRunInput, WakeSchedulerNavigationWriteRunListInput, WakeSchedulerNavigationWriteRunPreview, WakeSchedulerNavigationWriteRunRecord, WakeSchedulerNavigationWriteRunResult } from "../schedules/wake-scheduler-navigation-write-run-types"
+import type { WakeSchedulerNavigationWriteRunCompareInput, WakeSchedulerNavigationWriteRunGroup, WakeSchedulerNavigationWriteRunGroupInput, WakeSchedulerNavigationWriteRunHistory, WakeSchedulerNavigationWriteRunHistoryInput, WakeSchedulerNavigationWriteRunPairComparison, WakeSchedulerNavigationWriteRunStaleInput, WakeSchedulerNavigationWriteRunStaleItem } from "../schedules/wake-scheduler-navigation-write-run-compare-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -294,6 +295,10 @@ export interface RuntimeClient {
   command(name: "runtime.execute_wake_scheduler_navigation_write_run", payload: WakeSchedulerNavigationWriteRunInput): Promise<WakeSchedulerNavigationWriteRunResult>
   command(name: "runtime.list_wake_scheduler_navigation_write_runs", payload?: WakeSchedulerNavigationWriteRunListInput): Promise<WakeSchedulerNavigationWriteRunRecord[]>
   command(name: "runtime.get_wake_scheduler_navigation_write_run", payload: { runId: string } | { run_id: string }): Promise<WakeSchedulerNavigationWriteRunResult | null>
+  command(name: "runtime.wake_scheduler_navigation_write_run_history", payload?: WakeSchedulerNavigationWriteRunHistoryInput): Promise<WakeSchedulerNavigationWriteRunHistory>
+  command(name: "runtime.wake_scheduler_navigation_write_run_compare", payload: WakeSchedulerNavigationWriteRunCompareInput): Promise<WakeSchedulerNavigationWriteRunPairComparison>
+  command(name: "runtime.wake_scheduler_navigation_write_run_stale", payload?: WakeSchedulerNavigationWriteRunStaleInput): Promise<WakeSchedulerNavigationWriteRunStaleItem[]>
+  command(name: "runtime.wake_scheduler_navigation_write_run_group", payload: WakeSchedulerNavigationWriteRunGroupInput): Promise<WakeSchedulerNavigationWriteRunGroup | null>
   command(name: "runtime.list_wake_scheduler_events", payload?: { limit?: number }): Promise<WakeSchedulerEventRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
@@ -470,6 +475,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.execute_wake_scheduler_navigation_write_run"
     | "runtime.list_wake_scheduler_navigation_write_runs"
     | "runtime.get_wake_scheduler_navigation_write_run"
+    | "runtime.wake_scheduler_navigation_write_run_history"
+    | "runtime.wake_scheduler_navigation_write_run_compare"
+    | "runtime.wake_scheduler_navigation_write_run_stale"
+    | "runtime.wake_scheduler_navigation_write_run_group"
     | "runtime.list_wake_scheduler_events"
     | "research.list_topics"
     | "research.get_topic_snapshot"
