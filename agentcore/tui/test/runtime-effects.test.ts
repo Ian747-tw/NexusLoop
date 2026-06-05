@@ -3827,4 +3827,77 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
     expect(runtime.sentCommands).toEqual([])
   })
+
+  test("wake scheduler navigation write run executes only low-risk staged writes", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick-dry-run"] })
+    const dryRunWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(dryRunWriteId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-preview", args: [dryRunWriteId!] })
+    expect(state.wakeScheduler?.writeRunPreview).toMatchObject({ can_execute: true, execution_kind: "wake_tick_dry_run", risk: "low_risk_write" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-dry-run", args: [dryRunWriteId!] })
+    expect(state.wakeScheduler?.latestWriteRunResult).toMatchObject({ status: "succeeded", execution_kind: "wake_tick_dry_run" })
+    expect(state.wakeScheduler?.writeRunRecords).toHaveLength(0)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run", args: [dryRunWriteId!] })
+    expect(state.wakeScheduler?.latestWriteRunResult).toMatchObject({ status: "succeeded", execution_kind: "wake_tick_dry_run", result_kind: "wake_tick_dry_run" })
+    expect(state.wakeScheduler?.stagedWriteCommands.some((item) => item.staged_write_id === dryRunWriteId)).toBe(true)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/scheduler-status"] })
+    const stagedReadId = state.wakeScheduler?.selectedStagedNavigationCommand?.staged_id
+    expect(stagedReadId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/scheduler-nav-run", stagedReadId!] })
+    const stagedReadWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(stagedReadWriteId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run", args: [stagedReadWriteId!] })
+    expect(state.wakeScheduler?.latestWriteRunResult).toMatchObject({ status: "succeeded", execution_kind: "staged_safe_read" })
+    expect(state.wakeScheduler?.latestWriteRunResult?.downstream_run_id).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-stage", args: ["/scheduler-audit-summary"] })
+    const removedReadId = state.wakeScheduler?.selectedStagedNavigationCommand?.staged_id
+    expect(removedReadId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/scheduler-nav-run", removedReadId!] })
+    const removedReadWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(removedReadWriteId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-unstage", args: [removedReadId!] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-preview", args: [removedReadWriteId!] })
+    expect(state.wakeScheduler?.writeRunPreview).toMatchObject({ can_execute: false, execution_kind: "blocked" })
+    expect(state.wakeScheduler?.writeRunPreview?.blockers.join(" ")).toContain("staged navigation command is not active")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-medium", args: ["/checkpoint", "full", "token=abc123"] })
+    const checkpointWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(checkpointWriteId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-preview", args: [checkpointWriteId!] })
+    expect(state.wakeScheduler?.writeRunPreview).toMatchObject({ can_execute: false, execution_kind: "blocked" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run", args: [checkpointWriteId!] })
+    expect(state.wakeScheduler?.latestWriteRunResult).toMatchObject({ status: "blocked", execution_kind: "blocked" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick-dry-run", "extra"] })
+    const malformedDryRunId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(malformedDryRunId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-preview", args: [malformedDryRunId!] })
+    expect(state.wakeScheduler?.writeRunPreview).toMatchObject({ can_execute: false, execution_kind: "blocked" })
+    expect(state.wakeScheduler?.writeRunPreview?.blockers.join(" ")).toContain("does not accept")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-runs", args: [] })
+    expect(state.wakeScheduler?.writeRunRecords.length).toBeGreaterThanOrEqual(3)
+    const runId = state.wakeScheduler?.writeRunRecords[0]?.run_id
+    expect(runId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-show", args: [runId!] })
+    expect(state.wakeScheduler?.latestWriteRunResult?.run_id).toBe(runId)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run", args: [] })
+    expect(state.wakeScheduler?.commandError).toContain("stagedWriteId is required")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_write_runs")
+    expect(snapshot).toContain("only low-risk staged writes execute in 7V")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
 })

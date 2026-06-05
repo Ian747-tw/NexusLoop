@@ -7812,6 +7812,182 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation write runs execute only one low-risk staged write", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await statusServer.start()
+    await expect(statusServer.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: "missing" })).resolves.toMatchObject({ can_execute: false, blockers: ["staged write command is not active"] })
+    await expect(statusServer.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: "missing" })).rejects.toThrow(/requires active mode/)
+    await statusServer.shutdown()
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-13T12:00:00.000Z"),
+    })
+    await server.start()
+
+    const dryRunStaged = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run", requestedBy: "operator-write-run" }) as { staged_write_id: string; command: string }
+    const dryRunPreview = await server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: dryRunStaged.staged_write_id }) as { can_execute: boolean; execution_kind: string; blockers: string[] }
+    expect(dryRunPreview).toMatchObject({ can_execute: true, execution_kind: "wake_tick_dry_run", blockers: [] })
+
+    const beforeDryRun = await readJsonlEvents(dir)
+    const dryRunOnly = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: dryRunStaged.staged_write_id, dryRun: true, requestedBy: "operator-write-run" }) as { status: string; result_summary: string }
+    expect(dryRunOnly).toMatchObject({ status: "succeeded" })
+    expect(dryRunOnly.result_summary).toContain("dry-run only")
+    expect(await readJsonlEvents(dir)).toEqual(beforeDryRun)
+
+    const dryRunResult = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: dryRunStaged.staged_write_id, requestedBy: "operator-write-run" }) as { run_id: string; status: string; execution_kind: string; result_summary: string; result_kind: string }
+    expect(dryRunResult).toMatchObject({ status: "succeeded", execution_kind: "wake_tick_dry_run", result_kind: "wake_tick_dry_run" })
+    expect(dryRunResult.result_summary).toContain("dry_run=true")
+    const afterDryRun = await readJsonlEvents(dir)
+    expect(afterDryRun.map((event) => event.kind)).toContain("runtime_wake_scheduler_navigation_write_run_started")
+    expect(afterDryRun.map((event) => event.kind)).toContain("runtime_wake_scheduler_navigation_write_run_succeeded")
+    expect(afterDryRun.map((event) => event.kind)).not.toContain("runtime_wake_schedule_tick_completed")
+
+    const stagedRead = await server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-status", requestedBy: "operator-write-run" }) as { staged_id: string }
+    const stagedReadWrite = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: `/scheduler-nav-run ${stagedRead.staged_id}`, requestedBy: "operator-write-run" }) as { staged_write_id: string }
+    await expect(server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: stagedReadWrite.staged_write_id })).resolves.toMatchObject({ can_execute: true, execution_kind: "staged_safe_read" })
+    const readRunResult = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: stagedReadWrite.staged_write_id, requestedBy: "operator-write-run" }) as { run_id: string; status: string; execution_kind: string; downstream_run_id?: string; result_summary: string }
+    expect(readRunResult).toMatchObject({ status: "succeeded", execution_kind: "staged_safe_read" })
+    expect(readRunResult.downstream_run_id).toMatch(/^wake_scheduler_navigation_staged_read_/)
+    const downstream = await server.command("runtime.get_wake_scheduler_navigation_staged_read_run", { runId: readRunResult.downstream_run_id! }) as { run_id: string; command: string; status: string }
+    expect(downstream).toMatchObject({ run_id: readRunResult.downstream_run_id, command: "/scheduler-status", status: "succeeded" })
+
+    const malformedDryRun = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run extra", requestedBy: "operator-write-run" }) as { staged_write_id: string }
+    const malformedDryRunPreview = await server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: malformedDryRun.staged_write_id }) as { can_execute: boolean; blockers: string[] }
+    expect(malformedDryRunPreview.can_execute).toBe(false)
+    expect(malformedDryRunPreview.blockers.join(" ")).toContain("does not accept")
+    const beforeMalformedDryRun = await readJsonlEvents(dir)
+    const malformedDryRunResult = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: malformedDryRun.staged_write_id, requestedBy: "operator-write-run" }) as { run_id: string; status: string; error: string }
+    expect(malformedDryRunResult).toMatchObject({ status: "blocked" })
+    const malformedDryRunEvents = (await readJsonlEvents(dir)).slice(beforeMalformedDryRun.length).filter((event) => event.run_id === malformedDryRunResult.run_id)
+    expect(malformedDryRunEvents.map((event) => event.kind)).toEqual(["runtime_wake_scheduler_navigation_write_run_blocked"])
+
+    const malformedStagedReadRun = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: `/scheduler-nav-run ${stagedRead.staged_id} extra`, requestedBy: "operator-write-run" }) as { staged_write_id: string }
+    const malformedStagedReadRunPreview = await server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: malformedStagedReadRun.staged_write_id }) as { can_execute: boolean; blockers: string[] }
+    expect(malformedStagedReadRunPreview.can_execute).toBe(false)
+    expect(malformedStagedReadRunPreview.blockers.join(" ")).toContain("exactly one staged read id")
+    const beforeMalformedStagedReadRun = await readJsonlEvents(dir)
+    const malformedStagedReadRunResult = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: malformedStagedReadRun.staged_write_id, requestedBy: "operator-write-run" }) as { run_id: string; status: string; error: string }
+    expect(malformedStagedReadRunResult).toMatchObject({ status: "blocked" })
+    const malformedStagedReadRunEvents = (await readJsonlEvents(dir)).slice(beforeMalformedStagedReadRun.length).filter((event) => event.run_id === malformedStagedReadRunResult.run_id)
+    expect(malformedStagedReadRunEvents.map((event) => event.kind)).toEqual(["runtime_wake_scheduler_navigation_write_run_blocked"])
+
+    const removedStagedRead = await server.command("runtime.stage_wake_scheduler_navigation_command", { command: "/scheduler-audit-summary", requestedBy: "operator-write-run" }) as { staged_id: string }
+    const removedStagedReadWrite = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: `/scheduler-nav-run ${removedStagedRead.staged_id}`, requestedBy: "operator-write-run" }) as { staged_write_id: string }
+    await server.command("runtime.remove_wake_scheduler_navigation_staged_command", { stagedId: removedStagedRead.staged_id, requestedBy: "operator-write-run" })
+    const removedStagedReadPreview = await server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: removedStagedReadWrite.staged_write_id }) as { can_execute: boolean; blockers: string[] }
+    expect(removedStagedReadPreview.can_execute).toBe(false)
+    expect(removedStagedReadPreview.blockers.join(" ")).toContain("staged navigation command is not active")
+    const beforeRemovedStagedReadDryRun = await readJsonlEvents(dir)
+    const removedStagedReadDryRun = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: removedStagedReadWrite.staged_write_id, dryRun: true, requestedBy: "operator-write-run" }) as { status: string; error: string }
+    expect(removedStagedReadDryRun.status).toBe("blocked")
+    expect(await readJsonlEvents(dir)).toEqual(beforeRemovedStagedReadDryRun)
+    const removedStagedReadBlocked = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: removedStagedReadWrite.staged_write_id, requestedBy: "operator-write-run" }) as { run_id: string; status: string; error: string }
+    expect(removedStagedReadBlocked.status).toBe("blocked")
+    const removedStagedReadEvents = (await readJsonlEvents(dir)).slice(beforeRemovedStagedReadDryRun.length).filter((event) => event.run_id === removedStagedReadBlocked.run_id)
+    expect(removedStagedReadEvents.map((event) => event.kind)).toEqual(["runtime_wake_scheduler_navigation_write_run_blocked"])
+    expect((await readJsonlEvents(dir)).slice(beforeRemovedStagedReadDryRun.length).map((event) => event.kind)).not.toContain("runtime_wake_scheduler_navigation_staged_read_blocked")
+
+    const stagedWritesAfterRun = await server.command("runtime.list_wake_scheduler_navigation_staged_write_commands", { limit: 20 }) as Array<{ staged_write_id: string }>
+    expect(stagedWritesAfterRun.map((item) => item.staged_write_id)).toContain(dryRunStaged.staged_write_id)
+    expect(stagedWritesAfterRun.map((item) => item.staged_write_id)).toContain(stagedReadWrite.staged_write_id)
+
+    const checkpoint = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full token=abc123", allowMediumRisk: true, requestedBy: "operator-write-run" }) as { staged_write_id: string }
+    const checkpointPreview = await server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: checkpoint.staged_write_id }) as { can_execute: boolean; blockers: string[] }
+    expect(checkpointPreview.can_execute).toBe(false)
+    expect(checkpointPreview.blockers.join(" ")).toContain("low-risk")
+    const blockedCheckpoint = await server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: checkpoint.staged_write_id, requestedBy: "operator-write-run" }) as { status: string; error: string }
+    expect(blockedCheckpoint.status).toBe("blocked")
+    expect(blockedCheckpoint.error).toContain("low-risk")
+
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    for (const [id, command, risk] of [
+      ["injected_wake_tick", "/wake-tick", "high_impact_write"],
+      ["injected_scheduler_start", "/scheduler-start every=60s", "medium_risk_write"],
+      ["injected_continue_step", "/continue-step plan_7v_1", "medium_risk_write"],
+      ["injected_handoff", "/handoff token=abc123", "high_impact_write"],
+      ["injected_proposal_review", "/proposal-review proposal_1 token=abc123", "high_impact_write"],
+      ["injected_apply_proposal", "/apply-proposal proposal_1", "high_impact_write"],
+      ["injected_apply_target", "/apply-target proposal proposal_1", "high_impact_write"],
+      ["injected_complete", "/complete mission_1", "high_impact_write"],
+      ["injected_fail", "/fail mission_1", "high_impact_write"],
+      ["injected_cancel", "/cancel mission_1", "high_impact_write"],
+      ["injected_synthesize", "/synthesize", "high_impact_write"],
+      ["injected_cycle", "/cycle", "high_impact_write"],
+      ["injected_api_call", "/api-call token=abc123", "high_impact_write"],
+    ] as const) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_write_command_staged",
+        staged_write_id: id,
+        command,
+        command_name: command.split(/\s+/)[0],
+        risk,
+        authority_gate: "unknown",
+        target_kind: "unknown",
+        staged_at: "2026-05-13T12:01:00.000Z",
+        staged_by: "fixture",
+        status: "staged",
+        stage_hash: `${id}_hash`,
+        summary_preview: command,
+      })
+      const injectedPreview = await server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: id }) as { can_execute: boolean; blockers: string[] }
+      expect(injectedPreview.can_execute).toBe(false)
+      expect(injectedPreview.blockers.length).toBeGreaterThan(0)
+    }
+
+    await server.command("runtime.remove_wake_scheduler_navigation_staged_write_command", { stagedWriteId: dryRunStaged.staged_write_id, requestedBy: "operator-write-run" })
+    await expect(server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: dryRunStaged.staged_write_id })).resolves.toMatchObject({ can_execute: false, blockers: ["staged write command is not active"] })
+    await server.command("runtime.clear_wake_scheduler_navigation_staged_write_commands", { requestedBy: "operator-write-run" })
+    await expect(server.command("runtime.preview_wake_scheduler_navigation_write_run", { stagedWriteId: stagedReadWrite.staged_write_id })).resolves.toMatchObject({ can_execute: false, blockers: ["staged write command is not active"] })
+
+    const restaged = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run", requestedBy: "operator-write-run" }) as { staged_write_id: string }
+    const [repeatA, repeatB] = await Promise.all([
+      server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: restaged.staged_write_id, requestedBy: "operator-write-run" }),
+      server.command("runtime.execute_wake_scheduler_navigation_write_run", { stagedWriteId: restaged.staged_write_id, requestedBy: "operator-write-run" }),
+    ]) as Array<{ run_id: string; status: string }>
+    expect(repeatA.status).toBe("succeeded")
+    expect(repeatB.status).toBe("succeeded")
+    expect(repeatA.run_id).not.toBe(repeatB.run_id)
+    const restagedRuns = await server.command("runtime.list_wake_scheduler_navigation_write_runs", { stagedWriteId: restaged.staged_write_id }) as Array<{ run_id: string; status: string }>
+    expect(restagedRuns.map((run) => run.run_id)).toEqual(expect.arrayContaining([repeatA.run_id, repeatB.run_id]))
+    const concurrentEvents = (await readJsonlEvents(dir)).filter((event) => event.run_id === repeatA.run_id || event.run_id === repeatB.run_id)
+    expect(concurrentEvents.map((event) => `${event.run_id}:${event.kind}`)).toEqual([
+      `${repeatA.run_id}:runtime_wake_scheduler_navigation_write_run_started`,
+      `${repeatA.run_id}:runtime_wake_scheduler_navigation_write_run_succeeded`,
+      `${repeatB.run_id}:runtime_wake_scheduler_navigation_write_run_started`,
+      `${repeatB.run_id}:runtime_wake_scheduler_navigation_write_run_succeeded`,
+    ])
+
+    const runs = await server.command("runtime.list_wake_scheduler_navigation_write_runs", { limit: 50 }) as Array<{ run_id: string; status: string; summary_preview: string }>
+    expect(runs.map((run) => run.run_id)).toContain(dryRunResult.run_id)
+    expect(runs.map((run) => run.run_id)).toContain(readRunResult.run_id)
+    const fetched = await server.command("runtime.get_wake_scheduler_navigation_write_run", { runId: readRunResult.run_id }) as { run_id: string; downstream_run_id: string }
+    expect(fetched).toMatchObject({ run_id: readRunResult.run_id, downstream_run_id: readRunResult.downstream_run_id })
+
+    const events = await readJsonlEvents(dir)
+    const eventKinds = events.map((event) => event.kind)
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_write_run_started")
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_write_run_succeeded")
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_write_run_blocked")
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_staged_read_started")
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_staged_read_succeeded")
+    for (const forbidden of ["runtime_wake_schedule_tick_completed", "runtime_wake_scheduler_started", "runtime_wake_scheduler_stopped", "runtime_checkpoint_created", "runtime_wake_scheduler_recovery_recorded", "runtime_wake_scheduler_recovery_workflow_created", "runtime_wake_scheduler_recovery_workflow_step_recorded", "runtime_continuation_plan_created", "runtime_continuation_step_started", "runtime_opencode_handoff_sent", "runtime_mission_completed", "runtime_mission_failed", "runtime_proposal_applied"]) {
+      expect(eventKinds).not.toContain(forbidden)
+    }
+    expect(JSON.stringify(events)).not.toContain("abc123")
+    await server.shutdown()
+
+    const replayServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await replayServer.start()
+    await expect(replayServer.command("runtime.list_wake_scheduler_navigation_write_runs", { limit: 50 })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ run_id: readRunResult.run_id })]))
+    await replayServer.shutdown()
+  })
+
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

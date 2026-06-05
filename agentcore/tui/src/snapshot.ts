@@ -880,6 +880,26 @@ function wakeSchedulerLines(state: UiState): string[] {
   if (scheduler.stagedWriteCommands.length === 0) out.push("      - empty")
   else out.push(...scheduler.stagedWriteCommands.slice(0, 10).map((item) => `      - ${item.staged_write_id} ${item.risk} gate=${item.authority_gate} target=${item.target_kind}${item.target_id ? `:${item.target_id}` : ""}: ${preview(redactText(item.command))}`))
   out.push("    note=staged write commands are operator intent only and are not executed by 7U")
+  out.push("  scheduler_write_runs")
+  if (scheduler.writeRunPreview) {
+    const runPreview = scheduler.writeRunPreview
+    out.push(`    preview=${runPreview.staged_write_id} ${runPreview.risk} kind=${runPreview.execution_kind} can_execute=${runPreview.can_execute}: ${preview(redactText(runPreview.command))}`)
+    if (runPreview.blockers.length > 0) out.push(...runPreview.blockers.slice(0, 10).map((blocker) => `    run_blocker=${preview(redactText(blocker))}`))
+    if (runPreview.warnings.length > 0) out.push(...runPreview.warnings.slice(0, 10).map((warning) => `    run_warning=${preview(redactText(warning))}`))
+  } else {
+    out.push("    preview=none")
+  }
+  if (scheduler.latestWriteRunResult) {
+    const result = scheduler.latestWriteRunResult
+    out.push(`    latest=${result.run_id} ${result.status} kind=${result.execution_kind}${result.downstream_run_id ? ` downstream=${result.downstream_run_id}` : ""}: ${preview(redactText(result.result_summary ?? result.error ?? result.command))}`)
+  } else {
+    out.push("    latest=none")
+  }
+  out.push(`    write_runs=${scheduler.writeRunRecords.length}`)
+  out.push("    write_run_rows")
+  if (scheduler.writeRunRecords.length === 0) out.push("      - empty")
+  else out.push(...scheduler.writeRunRecords.slice(0, 10).map((item) => `      - ${item.run_id} ${item.status} kind=${item.execution_kind}: ${preview(redactText(item.summary_preview))}`))
+  out.push("    note=only low-risk staged writes execute in 7V, one explicit command at a time")
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")
