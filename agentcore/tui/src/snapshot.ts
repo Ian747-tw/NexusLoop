@@ -900,6 +900,35 @@ function wakeSchedulerLines(state: UiState): string[] {
   if (scheduler.writeRunRecords.length === 0) out.push("      - empty")
   else out.push(...scheduler.writeRunRecords.slice(0, 10).map((item) => `      - ${item.run_id} ${item.status} kind=${item.execution_kind}: ${preview(redactText(item.summary_preview))}`))
   out.push("    note=only low-risk staged writes execute in 7V, one explicit command at a time")
+  out.push("  scheduler_write_run_comparison")
+  if (scheduler.writeRunHistory) {
+    const history = scheduler.writeRunHistory
+    out.push(`    history=groups=${history.total_groups} runs=${history.total_runs} changed=${history.changed_groups} failed=${history.failed_groups} stale=${history.stale_groups}`)
+    out.push("    history_rows")
+    if (history.groups.length === 0) out.push("      - empty")
+    else out.push(...history.groups.slice(0, 10).map((group) => `      - ${group.staged_write_id} ${group.comparison_status} runs=${group.run_count} latest=${group.latest_status ?? "unknown"} downstream=${group.downstream_run_ids.length}: ${preview(redactText(group.summary_preview))}`))
+  } else {
+    out.push("    history=none")
+  }
+  if (scheduler.writeRunComparison) {
+    const comparison = scheduler.writeRunComparison
+    out.push(`    comparison=${comparison.comparison_status} left=${comparison.left_run_id} right=${comparison.right_run_id}: ${preview(redactText(comparison.summary_delta))}`)
+    if (comparison.downstream_delta) out.push(`    downstream_delta=${preview(redactText(comparison.downstream_delta))}`)
+    if (comparison.warnings.length > 0) out.push(...comparison.warnings.slice(0, 10).map((warning) => `    comparison_warning=${preview(redactText(warning))}`))
+  } else {
+    out.push("    comparison=none")
+  }
+  if (scheduler.selectedWriteRunGroup) {
+    const group = scheduler.selectedWriteRunGroup
+    out.push(`    selected_group=${group.staged_write_id} ${group.comparison_status} runs=${group.run_count} downstream=${group.downstream_run_ids.length}: ${preview(redactText(group.summary_preview))}`)
+  } else {
+    out.push("    selected_group=none")
+  }
+  out.push(`    stale_items=${scheduler.writeRunStaleItems.length}`)
+  out.push("    stale_rows")
+  if (scheduler.writeRunStaleItems.length === 0) out.push("      - empty")
+  else out.push(...scheduler.writeRunStaleItems.slice(0, 10).map((item) => `      - ${item.staged_write_id} stale=${item.stale} age_ms=${item.age_ms ?? "unknown"} after_ms=${item.stale_after_ms}: ${preview(redactText(item.command))}`))
+  out.push("    note=comparison uses bounded summaries and never executes staged writes")
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

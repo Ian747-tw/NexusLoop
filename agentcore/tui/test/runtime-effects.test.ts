@@ -3900,4 +3900,56 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
     expect(runtime.sentCommands).toEqual([])
   })
+
+  test("wake scheduler navigation write-run comparison is read-only and bounded", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick-dry-run"] })
+    const stagedWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(stagedWriteId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run", args: [stagedWriteId!] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run", args: [stagedWriteId!] })
+    const runCountAfterExplicitRuns = state.wakeScheduler?.writeRunRecords.length ?? 0
+    expect(runCountAfterExplicitRuns).toBe(2)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-history", args: [] })
+    expect(state.wakeScheduler?.writeRunHistory).toMatchObject({ total_groups: 1, total_runs: 2 })
+    expect(state.wakeScheduler?.writeRunHistory?.groups[0]).toMatchObject({ staged_write_id: stagedWriteId, comparison_status: "unchanged" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-history", args: [`staged=${stagedWriteId}`, "limit=5"] })
+    expect(state.wakeScheduler?.writeRunHistory?.groups).toHaveLength(1)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-compare", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.writeRunComparison).toMatchObject({ comparison_status: "unchanged", staged_write_id: stagedWriteId })
+    const latestRunId = state.wakeScheduler?.writeRunComparison?.right_run_id
+    const previousRunId = state.wakeScheduler?.writeRunComparison?.left_run_id
+    expect(latestRunId).toBeTruthy()
+    expect(previousRunId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-compare-runs", args: [previousRunId!, latestRunId!] })
+    expect(state.wakeScheduler?.writeRunComparison?.comparison_status).toBe("unchanged")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-stale", args: ["after=1h"] })
+    expect(state.wakeScheduler?.writeRunStaleItems.some((item) => item.staged_write_id === stagedWriteId && item.stale === false)).toBe(true)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-group", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.selectedWriteRunGroup).toMatchObject({ staged_write_id: stagedWriteId, run_count: 2, comparison_status: "unchanged" })
+    expect(state.wakeScheduler?.writeRunRecords.length).toBe(runCountAfterExplicitRuns)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-medium", args: ["/checkpoint", "full", "token=abc123"] })
+    const checkpointWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(checkpointWriteId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run", args: [checkpointWriteId!] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-history", args: [] })
+    expect(state.wakeScheduler?.writeRunHistory?.failed_groups).toBeGreaterThanOrEqual(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-run-history", args: ["after=soon"] })
+    expect(state.wakeScheduler?.commandError).toContain("duration")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_write_run_comparison")
+    expect(snapshot).toContain("comparison uses bounded summaries")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
 })

@@ -2090,6 +2090,89 @@ export type WakeSchedulerNavigationWriteRunRecordSummary = {
   summary_preview: string
 }
 
+export type WakeSchedulerNavigationWriteRunCompareCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type WakeSchedulerNavigationWriteRunComparisonStatusSummary = "unchanged" | "changed" | "first_run" | "failed" | "blocked" | "unknown" | string
+
+export type WakeSchedulerNavigationWriteRunGroupSummary = {
+  group_id: string
+  staged_write_id: string
+  command: string
+  command_name: string
+  execution_kind: "wake_tick_dry_run" | "staged_safe_read" | "blocked" | string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  target_kind: string
+  target_id?: string
+  run_count: number
+  succeeded_count: number
+  failed_count: number
+  blocked_count: number
+  latest_run_id?: string
+  latest_completed_at?: string
+  latest_status?: "succeeded" | "failed" | "blocked" | string
+  latest_outcome_hash?: string
+  previous_run_id?: string
+  previous_outcome_hash?: string
+  downstream_run_ids: string[]
+  comparison_status: WakeSchedulerNavigationWriteRunComparisonStatusSummary
+  summary_preview: string
+  recommended_commands: WakeSchedulerNavigationWriteRunCompareCommandSummary[]
+}
+
+export type WakeSchedulerNavigationWriteRunPairComparisonSummary = {
+  comparison_id: string
+  staged_write_id: string
+  command: string
+  left_run_id: string
+  right_run_id: string
+  left_completed_at?: string
+  right_completed_at?: string
+  left_status: "succeeded" | "failed" | "blocked" | string
+  right_status: "succeeded" | "failed" | "blocked" | string
+  left_outcome_hash: string
+  right_outcome_hash: string
+  comparison_status: WakeSchedulerNavigationWriteRunComparisonStatusSummary
+  summary_delta: string
+  downstream_delta?: string
+  warnings: string[]
+  recommended_commands: WakeSchedulerNavigationWriteRunCompareCommandSummary[]
+}
+
+export type WakeSchedulerNavigationWriteRunHistorySummary = {
+  staged_write_id?: string
+  command?: string
+  groups: WakeSchedulerNavigationWriteRunGroupSummary[]
+  total_runs: number
+  total_groups: number
+  changed_groups: number
+  failed_groups: number
+  stale_groups: number
+  generated_at: string
+}
+
+export type WakeSchedulerNavigationWriteRunStaleItemSummary = {
+  staged_write_id: string
+  command: string
+  command_name: string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  target_kind: string
+  target_id?: string
+  latest_run_id?: string
+  latest_completed_at?: string
+  age_ms?: number
+  stale_after_ms: number
+  stale: boolean
+  recommended_commands: WakeSchedulerNavigationWriteRunCompareCommandSummary[]
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -2127,6 +2210,10 @@ export type WakeSchedulerUiState = {
   writeRunPreview?: WakeSchedulerNavigationWriteRunPreviewSummary | null
   latestWriteRunResult?: WakeSchedulerNavigationWriteRunResultSummary | null
   writeRunRecords: WakeSchedulerNavigationWriteRunRecordSummary[]
+  writeRunHistory?: WakeSchedulerNavigationWriteRunHistorySummary | null
+  writeRunComparison?: WakeSchedulerNavigationWriteRunPairComparisonSummary | null
+  writeRunStaleItems: WakeSchedulerNavigationWriteRunStaleItemSummary[]
+  selectedWriteRunGroup?: WakeSchedulerNavigationWriteRunGroupSummary | null
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

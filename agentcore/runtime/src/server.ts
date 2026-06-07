@@ -84,6 +84,8 @@ import type { WakeSchedulerNavigationStagedWriteCommand, WakeSchedulerNavigation
 import { WakeSchedulerNavigationLowRiskWriteExecutor } from "./schedules/wake-scheduler-navigation-low-risk-write-executor"
 import { WakeSchedulerNavigationWriteRunService, readWakeSchedulerNavigationWriteRunInput, readWakeSchedulerNavigationWriteRunListInput } from "./schedules/wake-scheduler-navigation-write-run-service"
 import type { WakeSchedulerNavigationWriteRunPreview, WakeSchedulerNavigationWriteRunRecord, WakeSchedulerNavigationWriteRunResult } from "./schedules/wake-scheduler-navigation-write-run-types"
+import { WakeSchedulerNavigationWriteRunCompareService, readWakeSchedulerNavigationWriteRunCompareInput, readWakeSchedulerNavigationWriteRunGroupInput, readWakeSchedulerNavigationWriteRunHistoryInput, readWakeSchedulerNavigationWriteRunStaleInput } from "./schedules/wake-scheduler-navigation-write-run-compare-service"
+import type { WakeSchedulerNavigationWriteRunGroup, WakeSchedulerNavigationWriteRunHistory, WakeSchedulerNavigationWriteRunPairComparison, WakeSchedulerNavigationWriteRunStaleItem } from "./schedules/wake-scheduler-navigation-write-run-compare-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -245,6 +247,7 @@ export class RuntimeServer {
   private wakeSchedulerNavigationWriteStagingServiceInstance: WakeSchedulerNavigationWriteStagingService | null = null
   private wakeSchedulerNavigationLowRiskWriteExecutorInstance: WakeSchedulerNavigationLowRiskWriteExecutor | null = null
   private wakeSchedulerNavigationWriteRunServiceInstance: WakeSchedulerNavigationWriteRunService | null = null
+  private wakeSchedulerNavigationWriteRunCompareServiceInstance: WakeSchedulerNavigationWriteRunCompareService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -858,6 +861,14 @@ export class RuntimeServer {
         return this.listWakeSchedulerNavigationWriteRuns(readWakeSchedulerNavigationWriteRunListInput(payload))
       case "runtime.get_wake_scheduler_navigation_write_run":
         return this.getWakeSchedulerNavigationWriteRun(requiredString(payload.runId ?? payload.run_id, "runId"))
+      case "runtime.wake_scheduler_navigation_write_run_history":
+        return this.wakeSchedulerNavigationWriteRunHistory(readWakeSchedulerNavigationWriteRunHistoryInput(payload))
+      case "runtime.wake_scheduler_navigation_write_run_compare":
+        return this.wakeSchedulerNavigationWriteRunCompare(readWakeSchedulerNavigationWriteRunCompareInput(payload))
+      case "runtime.wake_scheduler_navigation_write_run_stale":
+        return this.wakeSchedulerNavigationWriteRunStale(readWakeSchedulerNavigationWriteRunStaleInput(payload))
+      case "runtime.wake_scheduler_navigation_write_run_group":
+        return this.wakeSchedulerNavigationWriteRunGroup(readWakeSchedulerNavigationWriteRunGroupInput(payload))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -1671,6 +1682,22 @@ export class RuntimeServer {
     return this.wakeSchedulerNavigationWriteRunService().get(runId)
   }
 
+  async wakeSchedulerNavigationWriteRunHistory(input: Parameters<WakeSchedulerNavigationWriteRunCompareService["history"]>[0] = {}): Promise<WakeSchedulerNavigationWriteRunHistory> {
+    return this.wakeSchedulerNavigationWriteRunCompareService().history(input)
+  }
+
+  async wakeSchedulerNavigationWriteRunCompare(input: Parameters<WakeSchedulerNavigationWriteRunCompareService["compare"]>[0]): Promise<WakeSchedulerNavigationWriteRunPairComparison> {
+    return this.wakeSchedulerNavigationWriteRunCompareService().compare(input)
+  }
+
+  async wakeSchedulerNavigationWriteRunStale(input: Parameters<WakeSchedulerNavigationWriteRunCompareService["stale"]>[0] = {}): Promise<WakeSchedulerNavigationWriteRunStaleItem[]> {
+    return this.wakeSchedulerNavigationWriteRunCompareService().stale(input)
+  }
+
+  async wakeSchedulerNavigationWriteRunGroup(input: Parameters<WakeSchedulerNavigationWriteRunCompareService["group"]>[0]): Promise<WakeSchedulerNavigationWriteRunGroup | null> {
+    return this.wakeSchedulerNavigationWriteRunCompareService().group(input)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -2252,6 +2279,16 @@ export class RuntimeServer {
       () => now().toISOString(),
     )
     return this.wakeSchedulerNavigationWriteRunServiceInstance
+  }
+
+  private wakeSchedulerNavigationWriteRunCompareService(): WakeSchedulerNavigationWriteRunCompareService {
+    const now = this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow ?? (() => new Date())
+    this.wakeSchedulerNavigationWriteRunCompareServiceInstance ??= new WakeSchedulerNavigationWriteRunCompareService(
+      this.eventStore,
+      this.wakeSchedulerNavigationWriteStagingService(),
+      () => now().toISOString(),
+    )
+    return this.wakeSchedulerNavigationWriteRunCompareServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {
