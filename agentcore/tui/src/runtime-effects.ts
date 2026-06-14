@@ -4167,6 +4167,12 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "compare-wake-scheduler-navigation-write-run-runs",
   "load-wake-scheduler-navigation-write-run-stale",
   "load-wake-scheduler-navigation-write-run-group",
+  "preview-wake-scheduler-navigation-write-readiness",
+  "approve-wake-scheduler-navigation-staged-write",
+  "reject-wake-scheduler-navigation-staged-write",
+  "revoke-wake-scheduler-navigation-write-approval",
+  "load-wake-scheduler-navigation-write-approvals",
+  "load-wake-scheduler-navigation-write-approval",
   "load-wake-scheduler-events",
 ])
 

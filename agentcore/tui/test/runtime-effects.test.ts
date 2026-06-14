@@ -3987,6 +3987,9 @@ describe("runtime UI effects", () => {
     expect(lowRiskId).toBeTruthy()
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-readiness", args: [lowRiskId!] })
     expect(state.wakeScheduler?.writeReadinessPreview).toMatchObject({ can_approve: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "approve-wake-scheduler-navigation-staged-write", stagedWriteId: lowRiskId! })
+    expect(state.wakeScheduler?.commandError).toContain("not ready")
+    expect(state.runtimeCommandError).toBeUndefined()
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-approve", args: [] })
     expect(state.wakeScheduler?.commandError).toContain("stagedWriteId is required")
