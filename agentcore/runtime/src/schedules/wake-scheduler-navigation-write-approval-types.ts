@@ -62,6 +62,7 @@ export interface WakeSchedulerNavigationWriteReadinessPreview {
 export interface WakeSchedulerNavigationWriteApproval {
   approval_id: string
   staged_write_id: string
+  staged_event_id?: string
   command: string
   command_name: string
   risk: WakeSchedulerNavigationWriteRisk

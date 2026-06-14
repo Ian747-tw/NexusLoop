@@ -113,7 +113,7 @@ export class WakeSchedulerNavigationWriteStagingService {
     const existing = await this.findActiveByHash(stageHash(eligibility))
     if (existing) return existing
     const staged = stagedWriteCommand(normalized, writePreview, eligibility, this.now())
-    await this.eventStore.append({
+    const stagedEventId = await this.eventStore.append({
       kind: "runtime_wake_scheduler_navigation_write_command_staged",
       created_at: staged.staged_at,
       staged_write_id: staged.staged_write_id,
@@ -138,7 +138,7 @@ export class WakeSchedulerNavigationWriteStagingService {
       stage_hash: staged.stage_hash,
       summary_preview: staged.summary_preview,
     })
-    return redactValue(staged)
+    return redactValue({ ...staged, staged_event_id: stagedEventId })
   }
 
   async list(limit = DEFAULT_LIMIT): Promise<WakeSchedulerNavigationStagedWriteCommandRecord[]> {
@@ -205,6 +205,7 @@ export class WakeSchedulerNavigationWriteStagingService {
   private recordsFromActive(active: WakeSchedulerNavigationStagedWriteCommand[], limit: number): WakeSchedulerNavigationStagedWriteCommandRecord[] {
     return redactValue(active.slice(0, limit).map((staged) => ({
       staged_write_id: staged.staged_write_id,
+      staged_event_id: staged.staged_event_id,
       command: staged.command,
       risk: staged.risk,
       authority_gate: staged.authority_gate,
@@ -303,6 +304,7 @@ function stagedFromEvent(event: JsonlEvent): WakeSchedulerNavigationStagedWriteC
   if (typeof event.staged_write_id !== "string" || typeof event.command !== "string" || typeof event.stage_hash !== "string") return null
   return redactValue({
     staged_write_id: preview(event.staged_write_id),
+    staged_event_id: typeof event.event_id === "string" ? preview(event.event_id) : undefined,
     command: readString(event.command, ""),
     command_name: readString(event.command_name, event.command.split(/\s+/)[0] ?? ""),
     risk: readRisk(event.risk),

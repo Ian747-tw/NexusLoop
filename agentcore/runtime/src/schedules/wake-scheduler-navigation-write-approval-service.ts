@@ -122,6 +122,7 @@ export class WakeSchedulerNavigationWriteApprovalService {
       created_at: approval.updated_at,
       approval_id: approval.approval_id,
       staged_write_id: approval.staged_write_id,
+      staged_event_id: approval.staged_event_id,
       command: approval.command,
       command_name: approval.command_name,
       risk: approval.risk,
@@ -153,6 +154,7 @@ export class WakeSchedulerNavigationWriteApprovalService {
       created_at: approval.updated_at,
       approval_id: approval.approval_id,
       staged_write_id: approval.staged_write_id,
+      staged_event_id: approval.staged_event_id,
       command: approval.command,
       command_name: approval.command_name,
       risk: approval.risk,
@@ -318,8 +320,8 @@ function evidenceFor(events: JsonlEvent[], kind: WakeSchedulerNavigationWriteEvi
   const completedAt = terminalEvidence.completed_at
   const completedMs = Date.parse(completedAt)
   const nowMs = Date.parse(now)
-  const age = Number.isFinite(completedMs) && Number.isFinite(nowMs) ? Math.max(0, nowMs - completedMs) : undefined
-  const fresh = terminalEvidence.status === "succeeded" && age !== undefined && age <= maxEvidenceAgeMs
+  const age = Number.isFinite(completedMs) && Number.isFinite(nowMs) ? nowMs - completedMs : undefined
+  const fresh = terminalEvidence.status === "succeeded" && age !== undefined && age >= 0 && age <= maxEvidenceAgeMs
   const evidenceKind = terminalEvidence.command.startsWith("/scheduler-audit-chain") ? "audit_chain" : kind
   return redactValue({
     evidence_id: `wake_scheduler_write_evidence_${hashText(`${terminalEvidence.run_id}:${relatedId ?? command}`).slice(0, 16)}`,
@@ -329,7 +331,7 @@ function evidenceFor(events: JsonlEvent[], kind: WakeSchedulerNavigationWriteEvi
     status: terminalEvidence.status,
     completed_at: completedAt,
     fresh,
-    age_ms: age,
+    age_ms: age === undefined ? undefined : Math.max(0, age),
     summary_preview: preview(`${fresh ? "fresh" : "insufficient"} evidence from ${terminalEvidence.command}: ${terminalEvidence.summary}`),
     blockers: fresh ? [] : [`${summary}; latest evidence is ${terminalEvidence.status}, stale, or undated; max evidence age is ${maxEvidenceAgeMs}ms`].map(preview),
     warnings: fresh ? [] : ["run the recommended read commands manually, then preview readiness again"].map(preview),
@@ -449,6 +451,7 @@ function targetIdForEvidence(staged: WakeSchedulerNavigationStagedWriteCommand):
 function approvalFromPreview(previewRecord: WakeSchedulerNavigationWriteReadinessPreview, staged: WakeSchedulerNavigationStagedWriteCommand, status: "approved" | "rejected", requestedBy: string, reason: string | undefined, expiresAt: string | undefined, now: string): WakeSchedulerNavigationWriteApproval {
   const hashBasis = {
     staged_write_id: previewRecord.staged_write_id,
+    staged_event_id: staged.staged_event_id,
     command: previewRecord.command,
     command_name: previewRecord.command_name,
     risk: previewRecord.risk,
@@ -463,10 +466,11 @@ function approvalFromPreview(previewRecord: WakeSchedulerNavigationWriteReadines
     expires_at: expiresAt,
   }
   const approvalHash = hashText(stableJson(hashBasis))
-  const approvalId = `wake_scheduler_navigation_write_approval_${hashText(`${previewRecord.staged_write_id}:${staged.staged_at ?? ""}:${staged.stage_hash ?? ""}:${status}:${now}:${randomUUID()}`).slice(0, 16)}`
+  const approvalId = `wake_scheduler_navigation_write_approval_${hashText(`${previewRecord.staged_write_id}:${staged.staged_event_id ?? ""}:${staged.staged_at ?? ""}:${staged.stage_hash ?? ""}:${status}:${now}:${randomUUID()}`).slice(0, 16)}`
   return redactValue({
     approval_id: approvalId,
     staged_write_id: previewRecord.staged_write_id,
+    staged_event_id: staged.staged_event_id,
     command: previewRecord.command,
     command_name: previewRecord.command_name,
     risk: previewRecord.risk,
@@ -494,6 +498,7 @@ function approvalFromEvent(event: JsonlEvent): WakeSchedulerNavigationWriteAppro
   return redactValue({
     approval_id: preview(event.approval_id),
     staged_write_id: preview(event.staged_write_id),
+    staged_event_id: typeof event.staged_event_id === "string" ? preview(event.staged_event_id) : undefined,
     command: preview(event.command),
     command_name: readString(event.command_name, readCommandName(event.command)),
     risk: readRisk(event.risk),
@@ -542,7 +547,7 @@ function activeApprovalRecord(approvals: WakeSchedulerNavigationWriteApproval[],
   return latest?.status === "approved" ? recordFromApproval(latest) : undefined
 }
 
-function deriveApprovalStatus(approval: WakeSchedulerNavigationWriteApproval, now: string, activeStaged: Map<string, Array<{ staged_at?: string; stage_hash?: string }>>): WakeSchedulerNavigationWriteApproval {
+function deriveApprovalStatus(approval: WakeSchedulerNavigationWriteApproval, now: string, activeStaged: Map<string, Array<{ staged_event_id?: string; staged_at?: string; stage_hash?: string }>>): WakeSchedulerNavigationWriteApproval {
   if (approval.status === "approved") {
     if (!stagedInstanceIsActive(approval, activeStaged)) return redactValue({ ...approval, status: "expired" as const, summary_preview: preview(`expired inactive staged write ${approval.command}`) })
     if (approval.expires_at && Date.parse(approval.expires_at) <= Date.parse(now)) return redactValue({ ...approval, status: "expired" as const, summary_preview: preview(`expired ${approval.command}`) })
@@ -550,19 +555,20 @@ function deriveApprovalStatus(approval: WakeSchedulerNavigationWriteApproval, no
   return approval
 }
 
-function activeStagedProjection(stagedCommands: WakeSchedulerNavigationStagedWriteCommand[]): Map<string, Array<{ staged_at?: string; stage_hash?: string }>> {
-  const out = new Map<string, Array<{ staged_at?: string; stage_hash?: string }>>()
+function activeStagedProjection(stagedCommands: WakeSchedulerNavigationStagedWriteCommand[]): Map<string, Array<{ staged_event_id?: string; staged_at?: string; stage_hash?: string }>> {
+  const out = new Map<string, Array<{ staged_event_id?: string; staged_at?: string; stage_hash?: string }>>()
   for (const staged of stagedCommands) {
     const existing = out.get(staged.staged_write_id) ?? []
-    existing.push({ staged_at: staged.staged_at, stage_hash: staged.stage_hash })
+    existing.push({ staged_event_id: staged.staged_event_id, staged_at: staged.staged_at, stage_hash: staged.stage_hash })
     out.set(staged.staged_write_id, existing)
   }
   return out
 }
 
-function stagedInstanceIsActive(approval: WakeSchedulerNavigationWriteApproval, activeStaged: Map<string, Array<{ staged_at?: string; stage_hash?: string }>>): boolean {
+function stagedInstanceIsActive(approval: WakeSchedulerNavigationWriteApproval, activeStaged: Map<string, Array<{ staged_event_id?: string; staged_at?: string; stage_hash?: string }>>): boolean {
   const active = activeStaged.get(approval.staged_write_id) ?? []
   if (active.length === 0) return false
+  if (approval.staged_event_id) return active.some((staged) => staged.staged_event_id === approval.staged_event_id)
   if (!approval.staged_at && !approval.stage_hash) return true
   return active.some((staged) => staged.staged_at === approval.staged_at && staged.stage_hash === approval.stage_hash)
 }
