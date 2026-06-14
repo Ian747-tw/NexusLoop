@@ -8213,6 +8213,27 @@ describe("RuntimeServer core", () => {
     const evidenceStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
     await evidenceStore.append({
       kind: "runtime_wake_scheduler_navigation_staged_read_succeeded",
+      run_id: "approval_wrong_surface_evidence_run",
+      staged_id: "approval_wrong_surface_evidence_staged",
+      command: "/wake-show recovery_7x_wrong_surface",
+      target_kind: "wake_assessment",
+      target_id: "recovery_7x_wrong_surface",
+      status: "succeeded",
+      result_kind: "wake_assessment",
+      result_summary: "wrong evidence surface",
+      started_at: "2026-05-15T11:58:00.000Z",
+      completed_at: "2026-05-15T11:59:00.000Z",
+      requested_by: "operator-approval",
+    })
+    const wrongSurface = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/scheduler-recovery-ack recovery_7x_wrong_surface", allowMediumRisk: true, requestedBy: "operator-approval" }) as { staged_write_id: string }
+    const wrongSurfacePreview = await server.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: wrongSurface.staged_write_id }) as { can_approve: boolean; readiness_status: string; required_evidence: Array<{ fresh: boolean; blockers: string[] }> }
+    expect(wrongSurfacePreview.can_approve).toBe(false)
+    expect(wrongSurfacePreview.readiness_status).toBe("needs_evidence")
+    expect(wrongSurfacePreview.required_evidence[0].fresh).toBe(false)
+    expect(wrongSurfacePreview.required_evidence[0].blockers.join(" ")).toContain("recovery evidence")
+
+    await evidenceStore.append({
+      kind: "runtime_wake_scheduler_navigation_staged_read_succeeded",
       run_id: "approval_recovery_evidence_run",
       staged_id: "approval_recovery_evidence_staged",
       command: "/scheduler-recovery-show recovery_7x_fresh",
@@ -8258,6 +8279,9 @@ describe("RuntimeServer core", () => {
     const rejection = await server.command("runtime.reject_wake_scheduler_navigation_staged_write", { stagedWriteId: checkpoint.staged_write_id, reason: "token=def456", requestedBy: "operator-approval" }) as { approval_id: string; status: string; reason: string }
     expect(rejection.status).toBe("rejected")
     expect(rejection.reason).not.toContain("def456")
+    const afterRejection = await server.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: checkpoint.staged_write_id }) as { existing_approval?: unknown; can_approve: boolean }
+    expect(afterRejection.can_approve).toBe(true)
+    expect(afterRejection.existing_approval).toBeUndefined()
 
     const records = await server.command("runtime.list_wake_scheduler_navigation_write_approvals", { limit: 10 }) as Array<{ approval_id: string; status: string; staged_write_id: string }>
     expect(records.map((record) => record.status)).toEqual(expect.arrayContaining(["approved", "rejected"]))

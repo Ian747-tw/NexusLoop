@@ -336,16 +336,27 @@ function evidenceFor(events: JsonlEvent[], kind: WakeSchedulerNavigationWriteEvi
   })
 }
 
-function latestEvidenceEvent(events: JsonlEvent[], relatedId: string | undefined, stagedCommand: string): { run_id: string; command: string; status: string; completed_at: string; summary: string } | undefined {
+function latestEvidenceEvent(events: JsonlEvent[], relatedId: string | undefined, stagedCommand: string): EvidenceRun | undefined {
   const target = relatedId ? preview(relatedId) : undefined
   return events
     .map(evidenceEvent)
-    .filter((event): event is { run_id: string; command: string; status: string; completed_at: string; summary: string } => Boolean(event))
-    .filter((event) => evidenceMatches(event.command, target, stagedCommand))
+    .filter((event): event is EvidenceRun => Boolean(event))
+    .filter((event) => evidenceMatches(event, target, stagedCommand))
     .sort((left, right) => right.completed_at.localeCompare(left.completed_at) || right.run_id.localeCompare(left.run_id))[0]
 }
 
-function evidenceEvent(event: JsonlEvent): { run_id: string; command: string; status: string; completed_at: string; summary: string } | null {
+interface EvidenceRun {
+  run_id: string
+  command: string
+  target_kind?: string
+  target_id?: string
+  result_kind?: string
+  status: string
+  completed_at: string
+  summary: string
+}
+
+function evidenceEvent(event: JsonlEvent): EvidenceRun | null {
   const kind = String(event.kind ?? "")
   if (
     kind !== "runtime_wake_scheduler_navigation_staged_read_succeeded" &&
@@ -359,19 +370,34 @@ function evidenceEvent(event: JsonlEvent): { run_id: string; command: string; st
   return redactValue({
     run_id: preview(event.run_id),
     command: preview(event.command),
+    target_kind: typeof event.target_kind === "string" ? preview(event.target_kind) : undefined,
+    target_id: typeof event.target_id === "string" ? preview(event.target_id) : undefined,
+    result_kind: typeof event.result_kind === "string" ? preview(event.result_kind) : undefined,
     status: readString(event.status, kind.endsWith("_succeeded") ? "succeeded" : kind.endsWith("_failed") ? "failed" : "blocked"),
     completed_at: readString(event.completed_at ?? event.created_at ?? event.timestamp, ""),
     summary: readString(event.result_summary ?? event.error ?? event.summary_preview, ""),
   })
 }
 
-function evidenceMatches(evidenceCommand: string, relatedId: string | undefined, stagedCommand: string): boolean {
+function evidenceMatches(evidence: EvidenceRun, relatedId: string | undefined, stagedCommand: string): boolean {
   if (!relatedId) return false
-  if (evidenceCommand.includes(relatedId)) return true
-  if (stagedCommand.startsWith("/scheduler-recovery-") && (evidenceCommand === "/scheduler-recovery" || evidenceCommand === "/scheduler-recovery-preview")) return true
-  if (stagedCommand.startsWith("/scheduler-recovery-workflow") && evidenceCommand === "/scheduler-recovery-workflows") return true
-  if (stagedCommand.startsWith("/continue-") && evidenceCommand === "/continuations") return true
-  return false
+  const command = evidence.command
+  const targetMatches = evidence.target_id === relatedId || command.split(/\s+/).slice(1).some((part) => part === relatedId || part === `related=${relatedId}` || part === `wake=${relatedId}` || part === `staged=${relatedId}`)
+  if (!targetMatches) return false
+  if (command.startsWith("/scheduler-audit-chain ")) return true
+  if (stagedCommand.startsWith("/scheduler-recovery-step-") || stagedCommand.startsWith("/scheduler-recovery-workflow-cancel")) {
+    return command.startsWith("/scheduler-recovery-workflow-show ") || command.startsWith("/scheduler-recovery-workflow-verify ") || evidence.target_kind === "scheduler_recovery_workflow" || evidence.result_kind === "scheduler_recovery_workflow"
+  }
+  if (stagedCommand.startsWith("/scheduler-recovery-") || stagedCommand.startsWith("/scheduler-recovery-workflow ")) {
+    return command.startsWith("/scheduler-recovery-show ") || evidence.target_kind === "scheduler_recovery" || evidence.result_kind === "scheduler_recovery"
+  }
+  if (stagedCommand.startsWith("/continue-plan ")) {
+    return command.startsWith("/wake-show ") || evidence.target_kind === "wake_assessment" || evidence.result_kind === "wake_assessment"
+  }
+  if (stagedCommand.startsWith("/continue-pause ") || stagedCommand.startsWith("/continue-cancel ")) {
+    return command.startsWith("/continue-show ") || evidence.target_kind === "continuation_plan" || evidence.result_kind === "continuation_plan"
+  }
+  return targetMatches
 }
 
 function missingEvidence(kind: WakeSchedulerNavigationWriteEvidence["kind"], relatedId: string | undefined, command: string, maxEvidenceAgeMs: number, summary: string): WakeSchedulerNavigationWriteEvidence {
@@ -508,12 +534,11 @@ function readEvidence(value: Record<string, unknown>): WakeSchedulerNavigationWr
 
 function activeApprovalRecord(approvals: WakeSchedulerNavigationWriteApproval[], staged: WakeSchedulerNavigationStagedWriteCommand, now: string): WakeSchedulerNavigationWriteApprovalRecord | undefined {
   const activeStaged = activeStagedProjection([staged])
-  return approvals
+  const latest = approvals
     .map((approval) => deriveApprovalStatus(approval, now, activeStaged))
-    .filter((approval) => approval.status === "approved")
-    .sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0]
-    ? recordFromApproval(approvals.map((approval) => deriveApprovalStatus(approval, now, activeStaged)).filter((approval) => approval.status === "approved").sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0])
-    : undefined
+    .filter((approval) => approval.status !== "expired")
+    .at(-1)
+  return latest?.status === "approved" ? recordFromApproval(latest) : undefined
 }
 
 function deriveApprovalStatus(approval: WakeSchedulerNavigationWriteApproval, now: string, activeStaged: Map<string, Array<{ staged_at?: string; stage_hash?: string }>>): WakeSchedulerNavigationWriteApproval {
