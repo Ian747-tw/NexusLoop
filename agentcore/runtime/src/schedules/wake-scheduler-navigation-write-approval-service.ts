@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
 import { redactText, redactValue } from "../security/redaction"
@@ -463,7 +463,7 @@ function approvalFromPreview(previewRecord: WakeSchedulerNavigationWriteReadines
     expires_at: expiresAt,
   }
   const approvalHash = hashText(stableJson(hashBasis))
-  const approvalId = `wake_scheduler_navigation_write_approval_${hashText(`${previewRecord.staged_write_id}:${staged.staged_at ?? ""}:${staged.stage_hash ?? ""}:${status}`).slice(0, 16)}`
+  const approvalId = `wake_scheduler_navigation_write_approval_${hashText(`${previewRecord.staged_write_id}:${staged.staged_at ?? ""}:${staged.stage_hash ?? ""}:${status}:${now}:${randomUUID()}`).slice(0, 16)}`
   return redactValue({
     approval_id: approvalId,
     staged_write_id: previewRecord.staged_write_id,
@@ -535,9 +535,10 @@ function readEvidence(value: Record<string, unknown>): WakeSchedulerNavigationWr
 function activeApprovalRecord(approvals: WakeSchedulerNavigationWriteApproval[], staged: WakeSchedulerNavigationStagedWriteCommand, now: string): WakeSchedulerNavigationWriteApprovalRecord | undefined {
   const activeStaged = activeStagedProjection([staged])
   const latest = approvals
-    .map((approval) => deriveApprovalStatus(approval, now, activeStaged))
-    .filter((approval) => approval.status !== "expired")
-    .at(-1)
+    .map((approval, index) => ({ approval: deriveApprovalStatus(approval, now, activeStaged), index }))
+    .filter((item) => item.approval.status !== "expired")
+    .sort((left, right) => left.approval.updated_at.localeCompare(right.approval.updated_at) || left.index - right.index)
+    .at(-1)?.approval
   return latest?.status === "approved" ? recordFromApproval(latest) : undefined
 }
 

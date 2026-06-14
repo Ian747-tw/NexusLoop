@@ -8282,17 +8282,22 @@ describe("RuntimeServer core", () => {
     const afterRejection = await server.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: checkpoint.staged_write_id }) as { existing_approval?: unknown; can_approve: boolean }
     expect(afterRejection.can_approve).toBe(true)
     expect(afterRejection.existing_approval).toBeUndefined()
+    const reapproved = await server.command("runtime.approve_wake_scheduler_navigation_staged_write", { stagedWriteId: checkpoint.staged_write_id, reason: "second approval", requestedBy: "operator-approval" }) as { approval_id: string; status: string }
+    expect(reapproved.status).toBe("approved")
+    expect(reapproved.approval_id).not.toBe(approved.approval_id)
+    const afterReapproval = await server.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: checkpoint.staged_write_id }) as { existing_approval?: { approval_id: string; status: string }; can_approve: boolean }
+    expect(afterReapproval.existing_approval).toMatchObject({ approval_id: reapproved.approval_id, status: "approved" })
 
     const records = await server.command("runtime.list_wake_scheduler_navigation_write_approvals", { limit: 10 }) as Array<{ approval_id: string; status: string; staged_write_id: string }>
     expect(records.map((record) => record.status)).toEqual(expect.arrayContaining(["approved", "rejected"]))
     expect(records.some((record) => record.staged_write_id === checkpoint.staged_write_id)).toBe(true)
 
-    const fetched = await server.command("runtime.get_wake_scheduler_navigation_write_approval", { approvalId: approved.approval_id }) as { approval_id: string; status: string }
-    expect(fetched).toMatchObject({ approval_id: approved.approval_id, status: "approved" })
-    const revoked = await server.command("runtime.revoke_wake_scheduler_navigation_write_approval", { approvalId: approved.approval_id, reason: "token=ghi789", requestedBy: "operator-approval" }) as { approval_id: string; status: string; reason: string }
-    expect(revoked).toMatchObject({ approval_id: approved.approval_id, status: "revoked" })
+    const fetched = await server.command("runtime.get_wake_scheduler_navigation_write_approval", { approvalId: reapproved.approval_id }) as { approval_id: string; status: string }
+    expect(fetched).toMatchObject({ approval_id: reapproved.approval_id, status: "approved" })
+    const revoked = await server.command("runtime.revoke_wake_scheduler_navigation_write_approval", { approvalId: reapproved.approval_id, reason: "token=ghi789", requestedBy: "operator-approval" }) as { approval_id: string; status: string; reason: string }
+    expect(revoked).toMatchObject({ approval_id: reapproved.approval_id, status: "revoked" })
     expect(revoked.reason).not.toContain("ghi789")
-    await expect(server.command("runtime.get_wake_scheduler_navigation_write_approval", { approvalId: approved.approval_id })).resolves.toMatchObject({ status: "revoked" })
+    await expect(server.command("runtime.get_wake_scheduler_navigation_write_approval", { approvalId: reapproved.approval_id })).resolves.toMatchObject({ status: "revoked" })
 
     const eventKinds = (await readJsonlEvents(dir)).map((event) => event.kind)
     expect(eventKinds).toContain("runtime_wake_scheduler_navigation_write_approval_recorded")
