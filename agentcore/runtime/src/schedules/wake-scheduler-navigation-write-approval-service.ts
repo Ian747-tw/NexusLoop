@@ -114,7 +114,9 @@ export class WakeSchedulerNavigationWriteApprovalService {
     const previewRecord = await this.preview({ staged_write_id: normalized.staged_write_id, max_evidence_age_ms: normalized.max_evidence_age_ms })
     if (!previewRecord.can_approve) throw new Error(`scheduler navigation write approval is not ready: ${previewRecord.blockers.join("; ")}`)
     const expiresAt = boundedExpiresAt(normalized.expires_at, this.now())
-    const approval = approvalFromPreview(previewRecord, "approved", normalized.requested_by, normalized.reason, expiresAt, this.now())
+    const staged = await this.staging.get(normalized.staged_write_id)
+    if (!staged) throw new Error("staged write command is not active")
+    const approval = approvalFromPreview(previewRecord, staged, "approved", normalized.requested_by, normalized.reason, expiresAt, this.now())
     await this.eventStore.append({
       kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
       created_at: approval.updated_at,
@@ -126,6 +128,8 @@ export class WakeSchedulerNavigationWriteApprovalService {
       authority_gate: approval.authority_gate,
       target_kind: approval.target_kind,
       target_id: approval.target_id,
+      staged_at: approval.staged_at,
+      stage_hash: approval.stage_hash,
       status: approval.status,
       approved_at: approval.approved_at,
       requested_by: approval.requested_by,
@@ -143,7 +147,7 @@ export class WakeSchedulerNavigationWriteApprovalService {
     const staged = await this.staging.get(normalized.staged_write_id)
     if (!staged) throw new Error("staged write command is not active")
     const previewRecord = readinessFromStaged(staged, DEFAULT_MAX_EVIDENCE_AGE_MS, this.now(), undefined)
-    const approval = approvalFromPreview(previewRecord, "rejected", normalized.requested_by, normalized.reason, undefined, this.now())
+    const approval = approvalFromPreview(previewRecord, staged, "rejected", normalized.requested_by, normalized.reason, undefined, this.now())
     await this.eventStore.append({
       kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
       created_at: approval.updated_at,
@@ -155,6 +159,8 @@ export class WakeSchedulerNavigationWriteApprovalService {
       authority_gate: approval.authority_gate,
       target_kind: approval.target_kind,
       target_id: approval.target_id,
+      staged_at: approval.staged_at,
+      stage_hash: approval.stage_hash,
       status: approval.status,
       rejected_at: approval.rejected_at,
       requested_by: approval.requested_by,
@@ -185,16 +191,16 @@ export class WakeSchedulerNavigationWriteApprovalService {
   }
 
   async get(approvalId: string): Promise<WakeSchedulerNavigationWriteApproval | null> {
-    const activeStagedIds = new Set((await this.staging.list(HARD_LIMIT)).map((item) => item.staged_write_id))
+    const activeStaged = activeStagedProjection(await this.staging.activeCommands())
     const approval = (await this.approvals()).find((item) => item.approval_id === cleanString(approvalId, "approval_id")) ?? null
-    return approval ? redactValue(deriveApprovalStatus(approval, this.now(), activeStagedIds)) : null
+    return approval ? redactValue(deriveApprovalStatus(approval, this.now(), activeStaged)) : null
   }
 
   async list(input: WakeSchedulerNavigationWriteApprovalListInput = {}): Promise<WakeSchedulerNavigationWriteApprovalRecord[]> {
     const query = readListInput(input)
-    const activeStagedIds = new Set((await this.staging.list(HARD_LIMIT)).map((item) => item.staged_write_id))
+    const activeStaged = activeStagedProjection(await this.staging.activeCommands())
     return redactValue((await this.approvals())
-      .map((approval) => deriveApprovalStatus(approval, this.now(), activeStagedIds))
+      .map((approval) => deriveApprovalStatus(approval, this.now(), activeStaged))
       .filter((approval) => !query.staged_write_id || approval.staged_write_id === query.staged_write_id)
       .filter((approval) => !query.status || approval.status === query.status)
       .sort((left, right) => right.updated_at.localeCompare(left.updated_at) || left.approval_id.localeCompare(right.approval_id))
@@ -345,7 +351,7 @@ function targetShapeBlocker(staged: WakeSchedulerNavigationStagedWriteCommand): 
   return undefined
 }
 
-function approvalFromPreview(previewRecord: WakeSchedulerNavigationWriteReadinessPreview, status: "approved" | "rejected", requestedBy: string, reason: string | undefined, expiresAt: string | undefined, now: string): WakeSchedulerNavigationWriteApproval {
+function approvalFromPreview(previewRecord: WakeSchedulerNavigationWriteReadinessPreview, staged: WakeSchedulerNavigationStagedWriteCommand, status: "approved" | "rejected", requestedBy: string, reason: string | undefined, expiresAt: string | undefined, now: string): WakeSchedulerNavigationWriteApproval {
   const hashBasis = {
     staged_write_id: previewRecord.staged_write_id,
     command: previewRecord.command,
@@ -354,6 +360,8 @@ function approvalFromPreview(previewRecord: WakeSchedulerNavigationWriteReadines
     authority_gate: previewRecord.authority_gate,
     target_kind: previewRecord.target_kind,
     target_id: previewRecord.target_id,
+    staged_at: staged.staged_at,
+    stage_hash: staged.stage_hash,
     status,
     reason,
     evidence: previewRecord.required_evidence.map((item) => ({ evidence_id: item.evidence_id, fresh: item.fresh, summary_preview: item.summary_preview })),
@@ -370,6 +378,8 @@ function approvalFromPreview(previewRecord: WakeSchedulerNavigationWriteReadines
     authority_gate: previewRecord.authority_gate,
     target_kind: previewRecord.target_kind,
     target_id: previewRecord.target_id,
+    staged_at: staged.staged_at,
+    stage_hash: staged.stage_hash,
     status,
     approved_at: status === "approved" ? now : undefined,
     rejected_at: status === "rejected" ? now : undefined,
@@ -395,6 +405,8 @@ function approvalFromEvent(event: JsonlEvent): WakeSchedulerNavigationWriteAppro
     authority_gate: readAuthorityGate(event.authority_gate),
     target_kind: readString(event.target_kind, "unknown"),
     target_id: typeof event.target_id === "string" ? preview(event.target_id) : undefined,
+    staged_at: typeof event.staged_at === "string" ? preview(event.staged_at) : undefined,
+    stage_hash: typeof event.stage_hash === "string" ? preview(event.stage_hash) : undefined,
     status,
     approved_at: typeof event.approved_at === "string" ? preview(event.approved_at) : undefined,
     rejected_at: typeof event.rejected_at === "string" ? preview(event.rejected_at) : undefined,
@@ -426,7 +438,7 @@ function readEvidence(value: Record<string, unknown>): WakeSchedulerNavigationWr
 }
 
 function activeApprovalRecord(approvals: WakeSchedulerNavigationWriteApproval[], staged: WakeSchedulerNavigationStagedWriteCommand, now: string): WakeSchedulerNavigationWriteApprovalRecord | undefined {
-  const activeStaged = new Set([staged.staged_write_id])
+  const activeStaged = activeStagedProjection([staged])
   return approvals
     .map((approval) => deriveApprovalStatus(approval, now, activeStaged))
     .filter((approval) => approval.status === "approved")
@@ -435,12 +447,29 @@ function activeApprovalRecord(approvals: WakeSchedulerNavigationWriteApproval[],
     : undefined
 }
 
-function deriveApprovalStatus(approval: WakeSchedulerNavigationWriteApproval, now: string, activeStagedIds: Set<string>): WakeSchedulerNavigationWriteApproval {
+function deriveApprovalStatus(approval: WakeSchedulerNavigationWriteApproval, now: string, activeStaged: Map<string, Array<{ staged_at?: string; stage_hash?: string }>>): WakeSchedulerNavigationWriteApproval {
   if (approval.status === "approved") {
-    if (!activeStagedIds.has(approval.staged_write_id)) return redactValue({ ...approval, status: "expired" as const, summary_preview: preview(`expired inactive staged write ${approval.command}`) })
+    if (!stagedInstanceIsActive(approval, activeStaged)) return redactValue({ ...approval, status: "expired" as const, summary_preview: preview(`expired inactive staged write ${approval.command}`) })
     if (approval.expires_at && Date.parse(approval.expires_at) <= Date.parse(now)) return redactValue({ ...approval, status: "expired" as const, summary_preview: preview(`expired ${approval.command}`) })
   }
   return approval
+}
+
+function activeStagedProjection(stagedCommands: WakeSchedulerNavigationStagedWriteCommand[]): Map<string, Array<{ staged_at?: string; stage_hash?: string }>> {
+  const out = new Map<string, Array<{ staged_at?: string; stage_hash?: string }>>()
+  for (const staged of stagedCommands) {
+    const existing = out.get(staged.staged_write_id) ?? []
+    existing.push({ staged_at: staged.staged_at, stage_hash: staged.stage_hash })
+    out.set(staged.staged_write_id, existing)
+  }
+  return out
+}
+
+function stagedInstanceIsActive(approval: WakeSchedulerNavigationWriteApproval, activeStaged: Map<string, Array<{ staged_at?: string; stage_hash?: string }>>): boolean {
+  const active = activeStaged.get(approval.staged_write_id) ?? []
+  if (active.length === 0) return false
+  if (!approval.staged_at && !approval.stage_hash) return true
+  return active.some((staged) => staged.staged_at === approval.staged_at && staged.stage_hash === approval.stage_hash)
 }
 
 function recordFromApproval(approval: WakeSchedulerNavigationWriteApproval): WakeSchedulerNavigationWriteApprovalRecord {

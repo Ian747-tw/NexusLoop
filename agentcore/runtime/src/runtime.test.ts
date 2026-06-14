@@ -8243,15 +8243,25 @@ describe("RuntimeServer core", () => {
   test("wake scheduler navigation write approvals expire and invalidate when staged write is removed", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    let now = "2026-05-15T12:00:00.000Z"
     const server = new RuntimeServer({
       projectDir: dir,
       mode: "active",
       researchProjectionMode: "disabled",
-      runtimeWakeSchedulerNow: () => new Date("2026-05-15T12:00:00.000Z"),
+      runtimeWakeSchedulerNow: () => new Date(now),
     })
     await server.start()
     const checkpoint = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full reason=manual", allowMediumRisk: true, requestedBy: "operator-approval" }) as { staged_write_id: string }
     const approved = await server.command("runtime.approve_wake_scheduler_navigation_staged_write", { stagedWriteId: checkpoint.staged_write_id, expiresAt: "2026-05-15T13:00:00.000Z", requestedBy: "operator-approval" }) as { approval_id: string }
+    now = "2026-05-15T12:10:00.000Z"
+    await server.command("runtime.remove_wake_scheduler_navigation_staged_write_command", { stagedWriteId: checkpoint.staged_write_id, requestedBy: "operator-approval" })
+    now = "2026-05-15T12:20:00.000Z"
+    const restaged = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full reason=manual", allowMediumRisk: true, requestedBy: "operator-approval" }) as { staged_write_id: string }
+    expect(restaged.staged_write_id).toBe(checkpoint.staged_write_id)
+    await expect(server.command("runtime.get_wake_scheduler_navigation_write_approval", { approvalId: approved.approval_id })).resolves.toMatchObject({ status: "expired" })
+    const restagedReadiness = await server.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: restaged.staged_write_id }) as { existing_approval?: unknown; can_approve: boolean }
+    expect(restagedReadiness.can_approve).toBe(true)
+    expect(restagedReadiness.existing_approval).toBeUndefined()
     await server.shutdown()
 
     const expiredServer = new RuntimeServer({
@@ -8275,6 +8285,31 @@ describe("RuntimeServer core", () => {
     await expect(removeServer.command("runtime.get_wake_scheduler_navigation_write_approval", { approvalId: approved.approval_id })).resolves.toMatchObject({ status: "expired" })
     await expect(removeServer.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: checkpoint.staged_write_id })).resolves.toMatchObject({ can_approve: false, readiness_status: "blocked" })
     await removeServer.shutdown()
+  })
+
+  test("wake scheduler navigation write approval validation scans uncapped active staged writes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let offsetMinutes = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date(Date.parse("2026-05-15T15:00:00.000Z") + offsetMinutes * 60_000),
+    })
+    await server.start()
+    const first = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full reason=oldest", allowMediumRisk: true, requestedBy: "operator-approval" }) as { staged_write_id: string }
+    const approved = await server.command("runtime.approve_wake_scheduler_navigation_staged_write", { stagedWriteId: first.staged_write_id, requestedBy: "operator-approval" }) as { approval_id: string }
+    for (let index = 0; index < 105; index += 1) {
+      offsetMinutes = index + 1
+      await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: `/checkpoint full reason=bulk-${index}`, allowMediumRisk: true, requestedBy: "operator-approval" })
+    }
+    const records = await server.command("runtime.list_wake_scheduler_navigation_staged_write_commands", { limit: 100 }) as Array<{ staged_write_id: string }>
+    expect(records).toHaveLength(100)
+    expect(records.some((record) => record.staged_write_id === first.staged_write_id)).toBe(false)
+    await expect(server.command("runtime.get_wake_scheduler_navigation_write_approval", { approvalId: approved.approval_id })).resolves.toMatchObject({ status: "approved" })
+    await expect(server.command("runtime.list_wake_scheduler_navigation_write_approvals", { stagedWriteId: first.staged_write_id })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ approval_id: approved.approval_id, status: "approved" })]))
+    await server.shutdown()
   })
 
   test("wake scheduler real tick creates wake assessment through wake schedule service only and never executes continuation steps", async () => {

@@ -150,6 +150,10 @@ export class WakeSchedulerNavigationWriteStagingService {
     return staged ? redactValue(staged) : null
   }
 
+  async activeCommands(): Promise<WakeSchedulerNavigationStagedWriteCommand[]> {
+    return redactValue(await this.active())
+  }
+
   async remove(input: WakeSchedulerNavigationWriteStageRemoveInput): Promise<WakeSchedulerNavigationStagedWriteCommand | null> {
     const normalized = readRemoveInput(input)
     const active = await this.active()

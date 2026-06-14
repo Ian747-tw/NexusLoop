@@ -68,6 +68,8 @@ export interface WakeSchedulerNavigationWriteApproval {
   authority_gate: WakeSchedulerNavigationWriteAuthorityGate
   target_kind: string
   target_id?: string
+  staged_at?: string
+  stage_hash?: string
   status: WakeSchedulerNavigationWriteApprovalStatus
   approved_at?: string
   rejected_at?: string
