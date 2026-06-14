@@ -8274,6 +8274,27 @@ describe("RuntimeServer core", () => {
 
     await evidenceStore.append({
       kind: "runtime_wake_scheduler_navigation_staged_read_succeeded",
+      run_id: "approval_continue_audit_only_evidence_run",
+      staged_id: "approval_continue_audit_only_evidence_staged",
+      command: "/scheduler-audit-chain wake_7x_audit_only",
+      target_kind: "scheduler_audit",
+      target_id: "wake_7x_audit_only",
+      status: "succeeded",
+      result_kind: "scheduler_audit_chain",
+      result_summary: "fresh audit chain evidence",
+      started_at: "2026-05-15T11:58:00.000Z",
+      completed_at: "2026-05-15T11:59:00.000Z",
+      requested_by: "operator-approval",
+    })
+    const continueAuditOnly = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/continue-plan wake=wake_7x_audit_only", allowMediumRisk: true, requestedBy: "operator-approval" }) as { staged_write_id: string }
+    const continueAuditOnlyPreview = await server.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: continueAuditOnly.staged_write_id }) as { can_approve: boolean; readiness_status: string; required_evidence: Array<{ fresh: boolean; blockers: string[] }> }
+    expect(continueAuditOnlyPreview.can_approve).toBe(false)
+    expect(continueAuditOnlyPreview.readiness_status).toBe("needs_evidence")
+    expect(continueAuditOnlyPreview.required_evidence[0].fresh).toBe(false)
+    expect(continueAuditOnlyPreview.required_evidence[0].blockers.join(" ")).toContain("wake evidence")
+
+    await evidenceStore.append({
+      kind: "runtime_wake_scheduler_navigation_staged_read_succeeded",
       run_id: "approval_wake_evidence_run",
       staged_id: "approval_wake_evidence_staged",
       command: "/wake-show wake_7x_fresh",

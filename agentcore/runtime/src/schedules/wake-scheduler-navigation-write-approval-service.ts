@@ -386,7 +386,7 @@ function evidenceMatches(evidence: EvidenceRun, relatedId: string | undefined, s
   const command = evidence.command
   const targetMatches = evidence.target_id === relatedId || command.split(/\s+/).slice(1).some((part) => part === relatedId || part === `related=${relatedId}` || part === `wake=${relatedId}` || part === `staged=${relatedId}`)
   if (!targetMatches) return false
-  if (command.startsWith("/scheduler-audit-chain ")) return true
+  if (command.startsWith("/scheduler-audit-chain ")) return stagedCommand.startsWith("/scheduler-recovery-")
   if (stagedCommand.startsWith("/scheduler-recovery-step-") || stagedCommand.startsWith("/scheduler-recovery-workflow-cancel")) {
     return command.startsWith("/scheduler-recovery-workflow-show ") || command.startsWith("/scheduler-recovery-workflow-verify ") || evidence.target_kind === "scheduler_recovery_workflow" || evidence.result_kind === "scheduler_recovery_workflow"
   }
