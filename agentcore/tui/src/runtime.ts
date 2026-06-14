@@ -4751,8 +4751,10 @@ function fakeWakeSchedulerNavigationWritePreview(commandValue: string): WakeSche
   }
   const highImpact = new Set(["/wake-tick", "/handoff", "/apply", "/request-review", "/approve", "/reject", "/cancel-review", "/proposal-review", "/apply-proposal", "/cancel-proposal", "/bundle-review", "/apply-bundle", "/cancel-bundle", "/draft-review", "/cancel-draft", "/apply-target", "/apply-partial", "/complete", "/fail", "/cancel", "/api-call", "/synthesize", "/cycle"])
   const medium = new Set(["/scheduler-start", "/scheduler-stop", "/scheduler-nav-run", "/checkpoint", "/scheduler-recovery-ack", "/scheduler-recovery-resolve", "/scheduler-recovery-dismiss", "/scheduler-recovery-workflow", "/scheduler-recovery-step-done", "/scheduler-recovery-step-skip", "/scheduler-recovery-step-block", "/scheduler-recovery-workflow-cancel", "/continue-plan", "/continue-step", "/continue-pause", "/continue-cancel"])
+  const approvalRequired = new Set(["/checkpoint", "/scheduler-recovery-ack", "/scheduler-recovery-resolve", "/scheduler-recovery-dismiss", "/scheduler-recovery-workflow", "/scheduler-recovery-step-done", "/scheduler-recovery-step-skip", "/scheduler-recovery-step-block", "/scheduler-recovery-workflow-cancel", "/continue-plan", "/continue-pause", "/continue-cancel"])
   if (name !== "/wake-tick-dry-run" && !medium.has(name) && !highImpact.has(name)) return fakeUnsupportedWritePreview(command, "command is not in the scheduler write preview whitelist")
   const high = highImpact.has(name)
+  const requiresApproval = high || approvalRequired.has(name)
   const gate = fakeWriteGateFor(name)
   return {
     command,
@@ -4783,7 +4785,7 @@ function fakeWakeSchedulerNavigationWritePreview(commandValue: string): WakeSche
       would_require_active_runtime: true,
       would_require_run_lock: true,
       would_require_confirmation: true,
-      would_require_approval_record: high,
+      would_require_approval_record: requiresApproval,
       would_require_dry_run_first: high || name === "/scheduler-start" || name === "/wake-tick",
       would_require_recent_read_evidence: true,
       allowed_in_7t: false,

@@ -7676,9 +7676,10 @@ describe("RuntimeServer core", () => {
     await server.start()
     const before = await readJsonlEvents(dir)
 
-    const dryRun = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run" }) as { risk: string; authority_gate: string; status: string; can_stage_now: boolean; can_execute_now: boolean; safer_read_commands: Array<{ command: string }> }
+    const dryRun = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run" }) as { risk: string; authority_gate: string; status: string; can_stage_now: boolean; can_execute_now: boolean; safer_read_commands: Array<{ command: string }>; future_stage_policy: { would_require_approval_record: boolean } }
     expect(dryRun).toMatchObject({ risk: "low_risk_write", authority_gate: "wake_schedule_tick", can_stage_now: false, can_execute_now: false })
     expect(dryRun.safer_read_commands.map((command) => command.command)).toContain("/wake-tick-preview")
+    expect(dryRun.future_stage_policy.would_require_approval_record).toBe(false)
 
     const schedulerStart = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-start dry-run every=60s" }) as { risk: string; authority_gate: string; blockers: string[]; future_stage_policy: { allowed_in_7t: boolean; would_require_run_lock: boolean } }
     expect(schedulerStart.risk).toBe("medium_risk_write")
@@ -7686,8 +7687,9 @@ describe("RuntimeServer core", () => {
     expect(schedulerStart.blockers.join(" ")).toContain("can_stage_now=false")
     expect(schedulerStart.future_stage_policy).toMatchObject({ allowed_in_7t: false, would_require_run_lock: true })
 
-    const checkpoint = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/checkpoint full reason=manual" }) as { authority_gate: string; equivalent_runtime_command: string; can_execute_now: boolean }
+    const checkpoint = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/checkpoint full reason=manual" }) as { authority_gate: string; equivalent_runtime_command: string; can_execute_now: boolean; future_stage_policy: { would_require_approval_record: boolean } }
     expect(checkpoint).toMatchObject({ authority_gate: "checkpoint_runtime", equivalent_runtime_command: "runtime.create_runtime_checkpoint", can_execute_now: false })
+    expect(checkpoint.future_stage_policy.would_require_approval_record).toBe(true)
 
     const recovery = await server.command("runtime.preview_wake_scheduler_navigation_write_command", { command: "/scheduler-recovery-ack recovery_7t_1" }) as { authority_gate: string; target_kind: string; target_id: string; safer_read_commands: Array<{ command: string }> }
     expect(recovery).toMatchObject({ authority_gate: "recovery_runtime", target_kind: "scheduler_recovery", target_id: "recovery_7t_1" })
@@ -7773,9 +7775,10 @@ describe("RuntimeServer core", () => {
     expect(stagedReadRun).toMatchObject({ command: "/scheduler-nav-run staged_read_7u_1", risk: "low_risk_write" })
 
     await expect(server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full token=abc123", requestedBy: "operator" })).rejects.toThrow(/medium-risk/)
-    const checkpoint = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full token=abc123", allowMediumRisk: true, requestedBy: "operator" }) as { command: string; risk: string; authority_gate: string }
+    const checkpoint = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full token=abc123", allowMediumRisk: true, requestedBy: "operator" }) as { command: string; risk: string; authority_gate: string; future_stage_policy: { would_require_approval_record: boolean } }
     expect(checkpoint).toMatchObject({ risk: "medium_risk_write", authority_gate: "checkpoint_runtime" })
     expect(checkpoint.command).not.toContain("abc123")
+    expect(checkpoint.future_stage_policy.would_require_approval_record).toBe(true)
 
     for (const command of ["/scheduler-recovery-ack recovery_7u_1", "/scheduler-recovery-step-done workflow_7u_1 0", "/continue-plan wake=wake_7u_1"]) {
       const staged = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command, allowMediumRisk: true, requestedBy: "operator" }) as { command: string; risk: string }

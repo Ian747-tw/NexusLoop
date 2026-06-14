@@ -3754,6 +3754,10 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/wake-tick-dry-run"] })
     expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "low_risk_write", authority_gate: "wake_schedule_tick", can_stage_now: false, can_execute_now: false })
+    expect(state.wakeScheduler?.writePreview?.future_stage_policy?.would_require_approval_record).toBe(false)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/checkpoint", "full"] })
+    expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "medium_risk_write", authority_gate: "checkpoint_runtime", can_stage_now: false, can_execute_now: false })
+    expect(state.wakeScheduler?.writePreview?.future_stage_policy?.would_require_approval_record).toBe(true)
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/scheduler-start", "dry-run", "every=60s"] })
     expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "medium_risk_write", authority_gate: "wake_scheduler_runtime", can_stage_now: false, can_execute_now: false })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/handoff", "token=abc123"] })
@@ -3807,6 +3811,7 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-medium", args: ["/checkpoint", "full", "token=abc123"] })
     expect(state.wakeScheduler?.selectedStagedWriteCommand).toMatchObject({ risk: "medium_risk_write", authority_gate: "checkpoint_runtime" })
     expect(state.wakeScheduler?.selectedStagedWriteCommand?.command).not.toContain("abc123")
+    expect(state.wakeScheduler?.selectedStagedWriteCommand?.future_stage_policy?.would_require_approval_record).toBe(true)
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick"] })
     expect(state.wakeScheduler?.commandError).toContain("high-impact")
