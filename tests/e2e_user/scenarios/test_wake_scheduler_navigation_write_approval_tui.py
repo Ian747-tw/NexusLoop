@@ -16,11 +16,6 @@ def staged_write_id(command: str, authority_gate: str, risk: str) -> str:
     return f"wake_scheduler_navigation_write_staged_{digest[:16]}"
 
 
-def approval_id(staged_write_id_value: str, status: str) -> str:
-    digest = hashlib.sha256(f"{staged_write_id_value}:{status}".encode("utf-8")).hexdigest()
-    return f"wake_scheduler_navigation_write_approval_{digest[:16]}"
-
-
 @pytest.mark.phase_m4
 def test_user_approves_scheduler_navigation_write_without_execution(sandbox) -> None:
     install = sandbox.install_from_current_repo()
@@ -56,8 +51,7 @@ def test_user_approves_scheduler_navigation_write_without_execution(sandbox) -> 
     )
 
     staged_id = staged_write_id("/checkpoint full [REDACTED]", "checkpoint_runtime", "medium_risk_write")
-    approved_id = approval_id(staged_id, "approved")
-    keys = [
+    first_keys = [
         {"type": "submit"},
         {"type": "insert", "text": "/scheduler-nav-write-stage-medium /checkpoint full token=abc123"},
         {"type": "submit"},
@@ -67,14 +61,8 @@ def test_user_approves_scheduler_navigation_write_without_execution(sandbox) -> 
         {"type": "submit"},
         {"type": "insert", "text": "/scheduler-nav-write-approvals"},
         {"type": "submit"},
-        {"type": "insert", "text": f"/scheduler-nav-write-approval-show {approved_id}"},
-        {"type": "submit"},
-        {"type": "insert", "text": f"/scheduler-nav-write-approval-revoke {approved_id} token=abc123"},
-        {"type": "submit"},
-        {"type": "insert", "text": "/scheduler-nav-write-approvals"},
-        {"type": "submit"},
     ]
-    encoded_keys = json.dumps(keys)
+    encoded_keys = json.dumps(first_keys)
     sandbox.env["NXL_TUI_KEYS"] = encoded_keys
     sandbox.runner.env["NXL_TUI_KEYS"] = encoded_keys
     sandbox.env["NXL_SECRET_WRITE_APPROVAL_TOKEN"] = "navigation-write-approval-secret-abc123"
@@ -88,7 +76,6 @@ def test_user_approves_scheduler_navigation_write_without_execution(sandbox) -> 
     assert "scheduler_write_approval" in result.stdout
     assert "readiness=none" not in result.stdout
     assert "approvals=" in result.stdout
-    assert "revoked" in result.stdout
     assert "approval records future operator intent only and does not execute staged writes" in result.stdout
     assert "runtime_checkpoint_created" not in result.stdout
     assert "runtime_wake_scheduler_started" not in result.stdout
@@ -103,6 +90,39 @@ def test_user_approves_scheduler_navigation_write_without_execution(sandbox) -> 
     assert "token=abc123" not in result.stdout
 
     events_path = project / ".nxl" / "events.jsonl"
+    events = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    approved_id = next(
+        event["approval_id"]
+        for event in events
+        if event.get("kind") == "runtime_wake_scheduler_navigation_write_approval_recorded"
+        and event.get("status") == "approved"
+    )
+
+    second_keys = [
+        {"type": "submit"},
+        {"type": "insert", "text": f"/scheduler-nav-write-approval-show {approved_id}"},
+        {"type": "submit"},
+        {"type": "insert", "text": f"/scheduler-nav-write-approval-revoke {approved_id} token=abc123"},
+        {"type": "submit"},
+        {"type": "insert", "text": "/scheduler-nav-write-approvals"},
+        {"type": "submit"},
+    ]
+    encoded_second_keys = json.dumps(second_keys)
+    sandbox.env["NXL_TUI_KEYS"] = encoded_second_keys
+    sandbox.runner.env["NXL_TUI_KEYS"] = encoded_second_keys
+    second_result = sandbox.run_cli([], cwd=project)
+
+    assert second_result.exit_code == 0, second_result.stdout + second_result.stderr
+    assert "scheduler_write_approval" in second_result.stdout
+    assert "revoked" in second_result.stdout
+    assert "navigation-write-approval-secret" not in second_result.stdout
+    assert "navigation-write-approval-secret-abc123" not in second_result.stdout
+    assert "token=abc123" not in second_result.stdout
+
     events = [
         json.loads(line)
         for line in events_path.read_text(encoding="utf-8").splitlines()

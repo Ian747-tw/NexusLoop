@@ -106,7 +106,7 @@ export class WakeSchedulerNavigationWriteApprovalService {
     if (!staged) return missingPreview(query.staged_write_id)
     const approvals = await this.approvals()
     const existing = activeApprovalRecord(approvals.filter((approval) => approval.staged_write_id === staged.staged_write_id), staged, this.now())
-    return redactValue(readinessFromStaged(staged, query.max_evidence_age_ms, this.now(), existing))
+    return redactValue(readinessFromStaged(staged, query.max_evidence_age_ms, this.now(), existing, await this.eventStore.readAll()))
   }
 
   async approve(input: WakeSchedulerNavigationWriteApprovalInput): Promise<WakeSchedulerNavigationWriteApproval> {
@@ -146,7 +146,7 @@ export class WakeSchedulerNavigationWriteApprovalService {
     const normalized = readRejectInput(input)
     const staged = await this.staging.get(normalized.staged_write_id)
     if (!staged) throw new Error("staged write command is not active")
-    const previewRecord = readinessFromStaged(staged, DEFAULT_MAX_EVIDENCE_AGE_MS, this.now(), undefined)
+    const previewRecord = readinessFromStaged(staged, DEFAULT_MAX_EVIDENCE_AGE_MS, this.now(), undefined, await this.eventStore.readAll())
     const approval = approvalFromPreview(previewRecord, staged, "rejected", normalized.requested_by, normalized.reason, undefined, this.now())
     await this.eventStore.append({
       kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
@@ -251,7 +251,7 @@ export function readWakeSchedulerNavigationWriteApprovalListInput(value: unknown
   return readListInput(value)
 }
 
-function readinessFromStaged(staged: WakeSchedulerNavigationStagedWriteCommand, maxEvidenceAgeMs: number, now: string, existing?: WakeSchedulerNavigationWriteApprovalRecord): WakeSchedulerNavigationWriteReadinessPreview {
+function readinessFromStaged(staged: WakeSchedulerNavigationStagedWriteCommand, maxEvidenceAgeMs: number, now: string, existing?: WakeSchedulerNavigationWriteApprovalRecord, events: JsonlEvent[] = []): WakeSchedulerNavigationWriteReadinessPreview {
   const blockers: string[] = []
   const warnings = ["7X approval records future operator intent only; it does not execute staged writes"]
   const requiredEvidence: WakeSchedulerNavigationWriteEvidence[] = []
@@ -263,7 +263,7 @@ function readinessFromStaged(staged: WakeSchedulerNavigationStagedWriteCommand, 
   if (HIGH_IMPACT_BLOCKED.has(staged.command_name)) blockers.push(`${staged.command_name} remains blocked from 7X approval`)
   const shapeBlocker = targetShapeBlocker(staged)
   if (shapeBlocker) blockers.push(shapeBlocker)
-  const required = requiredEvidenceFor(staged, now, maxEvidenceAgeMs)
+  const required = requiredEvidenceFor(staged, now, maxEvidenceAgeMs, events)
   requiredEvidence.push(...required)
   blockers.push(...required.flatMap((evidence) => evidence.blockers))
   const readinessStatus: WakeSchedulerNavigationWriteReadinessStatus = staged.risk === "high_impact_write"
@@ -298,21 +298,83 @@ function readinessFromStaged(staged: WakeSchedulerNavigationStagedWriteCommand, 
   })
 }
 
-function requiredEvidenceFor(staged: WakeSchedulerNavigationStagedWriteCommand, now: string, maxEvidenceAgeMs: number): WakeSchedulerNavigationWriteEvidence[] {
+function requiredEvidenceFor(staged: WakeSchedulerNavigationStagedWriteCommand, now: string, maxEvidenceAgeMs: number, events: JsonlEvent[]): WakeSchedulerNavigationWriteEvidence[] {
   if (staged.command_name === "/checkpoint") return []
   const command = staged.command_name
   if (command === "/scheduler-recovery-ack" || command === "/scheduler-recovery-resolve" || command === "/scheduler-recovery-dismiss" || command === "/scheduler-recovery-workflow") {
-    return [missingEvidence("audit_chain", staged.target_id, staged.command, now, maxEvidenceAgeMs, "recent scheduler recovery evidence is required before approval")]
+    return [evidenceFor(events, "audit_chain", staged.target_id, staged.command, now, maxEvidenceAgeMs, "recent scheduler recovery evidence is required before approval")]
   }
   if (command === "/scheduler-recovery-step-done" || command === "/scheduler-recovery-step-skip" || command === "/scheduler-recovery-step-block" || command === "/scheduler-recovery-workflow-cancel") {
-    return [missingEvidence("audit_chain", staged.target_id, staged.command, now, maxEvidenceAgeMs, "recent recovery workflow evidence is required before approval")]
+    return [evidenceFor(events, "audit_chain", staged.target_id, staged.command, now, maxEvidenceAgeMs, "recent recovery workflow evidence is required before approval")]
   }
-  if (command === "/continue-plan") return [missingEvidence("safe_read_run", staged.target_id, staged.command, now, maxEvidenceAgeMs, "recent wake evidence is required before approval")]
-  if (command === "/continue-pause" || command === "/continue-cancel") return [missingEvidence("safe_read_run", staged.target_id, staged.command, now, maxEvidenceAgeMs, "recent continuation plan evidence is required before approval")]
+  if (command === "/continue-plan") return [evidenceFor(events, "safe_read_run", targetIdForEvidence(staged), staged.command, now, maxEvidenceAgeMs, "recent wake evidence is required before approval")]
+  if (command === "/continue-pause" || command === "/continue-cancel") return [evidenceFor(events, "safe_read_run", staged.target_id, staged.command, now, maxEvidenceAgeMs, "recent continuation plan evidence is required before approval")]
   return []
 }
 
-function missingEvidence(kind: WakeSchedulerNavigationWriteEvidence["kind"], relatedId: string | undefined, command: string, now: string, maxEvidenceAgeMs: number, summary: string): WakeSchedulerNavigationWriteEvidence {
+function evidenceFor(events: JsonlEvent[], kind: WakeSchedulerNavigationWriteEvidence["kind"], relatedId: string | undefined, command: string, now: string, maxEvidenceAgeMs: number, summary: string): WakeSchedulerNavigationWriteEvidence {
+  const terminalEvidence = latestEvidenceEvent(events, relatedId, command)
+  if (!terminalEvidence) return missingEvidence(kind, relatedId, command, maxEvidenceAgeMs, summary)
+  const completedAt = terminalEvidence.completed_at
+  const completedMs = Date.parse(completedAt)
+  const nowMs = Date.parse(now)
+  const age = Number.isFinite(completedMs) && Number.isFinite(nowMs) ? Math.max(0, nowMs - completedMs) : undefined
+  const fresh = terminalEvidence.status === "succeeded" && age !== undefined && age <= maxEvidenceAgeMs
+  const evidenceKind = terminalEvidence.command.startsWith("/scheduler-audit-chain") ? "audit_chain" : kind
+  return redactValue({
+    evidence_id: `wake_scheduler_write_evidence_${hashText(`${terminalEvidence.run_id}:${relatedId ?? command}`).slice(0, 16)}`,
+    kind: evidenceKind,
+    related_id: relatedId,
+    command: terminalEvidence.command,
+    status: terminalEvidence.status,
+    completed_at: completedAt,
+    fresh,
+    age_ms: age,
+    summary_preview: preview(`${fresh ? "fresh" : "insufficient"} evidence from ${terminalEvidence.command}: ${terminalEvidence.summary}`),
+    blockers: fresh ? [] : [`${summary}; latest evidence is ${terminalEvidence.status}, stale, or undated; max evidence age is ${maxEvidenceAgeMs}ms`].map(preview),
+    warnings: fresh ? [] : ["run the recommended read commands manually, then preview readiness again"].map(preview),
+  })
+}
+
+function latestEvidenceEvent(events: JsonlEvent[], relatedId: string | undefined, stagedCommand: string): { run_id: string; command: string; status: string; completed_at: string; summary: string } | undefined {
+  const target = relatedId ? preview(relatedId) : undefined
+  return events
+    .map(evidenceEvent)
+    .filter((event): event is { run_id: string; command: string; status: string; completed_at: string; summary: string } => Boolean(event))
+    .filter((event) => evidenceMatches(event.command, target, stagedCommand))
+    .sort((left, right) => right.completed_at.localeCompare(left.completed_at) || right.run_id.localeCompare(left.run_id))[0]
+}
+
+function evidenceEvent(event: JsonlEvent): { run_id: string; command: string; status: string; completed_at: string; summary: string } | null {
+  const kind = String(event.kind ?? "")
+  if (
+    kind !== "runtime_wake_scheduler_navigation_staged_read_succeeded" &&
+    kind !== "runtime_wake_scheduler_navigation_staged_read_failed" &&
+    kind !== "runtime_wake_scheduler_navigation_staged_read_blocked" &&
+    kind !== "runtime_wake_scheduler_navigation_write_run_succeeded" &&
+    kind !== "runtime_wake_scheduler_navigation_write_run_failed" &&
+    kind !== "runtime_wake_scheduler_navigation_write_run_blocked"
+  ) return null
+  if (typeof event.run_id !== "string" || typeof event.command !== "string") return null
+  return redactValue({
+    run_id: preview(event.run_id),
+    command: preview(event.command),
+    status: readString(event.status, kind.endsWith("_succeeded") ? "succeeded" : kind.endsWith("_failed") ? "failed" : "blocked"),
+    completed_at: readString(event.completed_at ?? event.created_at ?? event.timestamp, ""),
+    summary: readString(event.result_summary ?? event.error ?? event.summary_preview, ""),
+  })
+}
+
+function evidenceMatches(evidenceCommand: string, relatedId: string | undefined, stagedCommand: string): boolean {
+  if (!relatedId) return false
+  if (evidenceCommand.includes(relatedId)) return true
+  if (stagedCommand.startsWith("/scheduler-recovery-") && (evidenceCommand === "/scheduler-recovery" || evidenceCommand === "/scheduler-recovery-preview")) return true
+  if (stagedCommand.startsWith("/scheduler-recovery-workflow") && evidenceCommand === "/scheduler-recovery-workflows") return true
+  if (stagedCommand.startsWith("/continue-") && evidenceCommand === "/continuations") return true
+  return false
+}
+
+function missingEvidence(kind: WakeSchedulerNavigationWriteEvidence["kind"], relatedId: string | undefined, command: string, maxEvidenceAgeMs: number, summary: string): WakeSchedulerNavigationWriteEvidence {
   return redactValue({
     evidence_id: `wake_scheduler_write_evidence_missing_${hashText(`${kind}:${relatedId ?? command}`).slice(0, 16)}`,
     kind,
@@ -347,8 +409,15 @@ function manualEvidence(staged: WakeSchedulerNavigationStagedWriteCommand, now: 
 function targetShapeBlocker(staged: WakeSchedulerNavigationStagedWriteCommand): string | undefined {
   if (staged.command_name === "/continue-plan" && !/\bwake=/.test(staged.command)) return "continue-plan approval requires wake=<wakeId>"
   if ((staged.command_name === "/scheduler-recovery-step-done" || staged.command_name === "/scheduler-recovery-step-skip" || staged.command_name === "/scheduler-recovery-step-block") && !/\s\d+\b/.test(staged.command)) return "recovery workflow step approval requires a numeric step index"
+  if (staged.command_name === "/continue-plan") return undefined
   if (staged.command_name !== "/checkpoint" && !staged.target_id) return "target id is required for medium-risk approval"
   return undefined
+}
+
+function targetIdForEvidence(staged: WakeSchedulerNavigationStagedWriteCommand): string | undefined {
+  if (staged.target_id) return staged.target_id
+  const match = /\bwake=([^\s]+)/.exec(staged.command)
+  return match?.[1] ? preview(match[1]) : undefined
 }
 
 function approvalFromPreview(previewRecord: WakeSchedulerNavigationWriteReadinessPreview, staged: WakeSchedulerNavigationStagedWriteCommand, status: "approved" | "rejected", requestedBy: string, reason: string | undefined, expiresAt: string | undefined, now: string): WakeSchedulerNavigationWriteApproval {
@@ -368,7 +437,7 @@ function approvalFromPreview(previewRecord: WakeSchedulerNavigationWriteReadines
     expires_at: expiresAt,
   }
   const approvalHash = hashText(stableJson(hashBasis))
-  const approvalId = `wake_scheduler_navigation_write_approval_${hashText(`${previewRecord.staged_write_id}:${status}`).slice(0, 16)}`
+  const approvalId = `wake_scheduler_navigation_write_approval_${hashText(`${previewRecord.staged_write_id}:${staged.staged_at ?? ""}:${staged.stage_hash ?? ""}:${status}`).slice(0, 16)}`
   return redactValue({
     approval_id: approvalId,
     staged_write_id: previewRecord.staged_write_id,

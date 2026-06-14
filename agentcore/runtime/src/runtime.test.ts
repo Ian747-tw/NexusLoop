@@ -8210,6 +8210,46 @@ describe("RuntimeServer core", () => {
       expect(preview.required_evidence.flatMap((item) => item.blockers).join(" ")).toContain("evidence")
     }
 
+    const evidenceStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await evidenceStore.append({
+      kind: "runtime_wake_scheduler_navigation_staged_read_succeeded",
+      run_id: "approval_recovery_evidence_run",
+      staged_id: "approval_recovery_evidence_staged",
+      command: "/scheduler-recovery-show recovery_7x_fresh",
+      target_kind: "scheduler_recovery",
+      target_id: "recovery_7x_fresh",
+      status: "succeeded",
+      result_kind: "scheduler_recovery",
+      result_summary: "fresh recovery evidence",
+      started_at: "2026-05-15T11:58:00.000Z",
+      completed_at: "2026-05-15T11:59:00.000Z",
+      requested_by: "operator-approval",
+    })
+    const recoveryWithEvidence = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/scheduler-recovery-ack recovery_7x_fresh", allowMediumRisk: true, requestedBy: "operator-approval" }) as { staged_write_id: string }
+    const recoveryReady = await server.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: recoveryWithEvidence.staged_write_id }) as { can_approve: boolean; readiness_status: string; required_evidence: Array<{ fresh: boolean; blockers: string[] }> }
+    expect(recoveryReady).toMatchObject({ can_approve: true, readiness_status: "ready_for_approval" })
+    expect(recoveryReady.required_evidence[0]).toMatchObject({ fresh: true, blockers: [] })
+
+    await evidenceStore.append({
+      kind: "runtime_wake_scheduler_navigation_staged_read_succeeded",
+      run_id: "approval_wake_evidence_run",
+      staged_id: "approval_wake_evidence_staged",
+      command: "/wake-show wake_7x_fresh",
+      target_kind: "wake_assessment",
+      target_id: "wake_7x_fresh",
+      status: "succeeded",
+      result_kind: "wake_assessment",
+      result_summary: "fresh wake evidence",
+      started_at: "2026-05-15T11:58:00.000Z",
+      completed_at: "2026-05-15T11:59:00.000Z",
+      requested_by: "operator-approval",
+    })
+    const continuePlan = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/continue-plan wake=wake_7x_fresh", allowMediumRisk: true, requestedBy: "operator-approval" }) as { staged_write_id: string }
+    const continueReady = await server.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: continuePlan.staged_write_id }) as { can_approve: boolean; readiness_status: string; blockers: string[]; required_evidence: Array<{ fresh: boolean }> }
+    expect(continueReady).toMatchObject({ can_approve: true, readiness_status: "ready_for_approval" })
+    expect(continueReady.blockers.join(" ")).not.toContain("target id is required")
+    expect(continueReady.required_evidence[0]).toMatchObject({ fresh: true })
+
     const approved = await server.command("runtime.approve_wake_scheduler_navigation_staged_write", { stagedWriteId: checkpoint.staged_write_id, reason: "token=abc123", requestedBy: "operator-approval" }) as { approval_id: string; status: string; reason: string; expires_at: string; evidence: unknown[] }
     expect(approved.status).toBe("approved")
     expect(approved.reason).not.toContain("abc123")
@@ -8262,6 +8302,8 @@ describe("RuntimeServer core", () => {
     const restagedReadiness = await server.command("runtime.preview_wake_scheduler_navigation_write_readiness", { stagedWriteId: restaged.staged_write_id }) as { existing_approval?: unknown; can_approve: boolean }
     expect(restagedReadiness.can_approve).toBe(true)
     expect(restagedReadiness.existing_approval).toBeUndefined()
+    const restagedApproval = await server.command("runtime.approve_wake_scheduler_navigation_staged_write", { stagedWriteId: restaged.staged_write_id, expiresAt: "2026-05-15T13:00:00.000Z", requestedBy: "operator-approval" }) as { approval_id: string }
+    expect(restagedApproval.approval_id).not.toBe(approved.approval_id)
     await server.shutdown()
 
     const expiredServer = new RuntimeServer({
