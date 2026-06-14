@@ -929,6 +929,33 @@ function wakeSchedulerLines(state: UiState): string[] {
   if (scheduler.writeRunStaleItems.length === 0) out.push("      - empty")
   else out.push(...scheduler.writeRunStaleItems.slice(0, 10).map((item) => `      - ${item.staged_write_id} stale=${item.stale} age_ms=${item.age_ms ?? "unknown"} after_ms=${item.stale_after_ms}: ${preview(redactText(item.command))}`))
   out.push("    note=comparison uses bounded summaries and never executes staged writes")
+  out.push("  scheduler_write_approval")
+  if (scheduler.writeReadinessPreview) {
+    const readiness = scheduler.writeReadinessPreview
+    out.push(`    readiness=${readiness.staged_write_id} ${readiness.readiness_status} can_approve=${readiness.can_approve} execute_now=${readiness.can_execute_now}: ${preview(redactText(readiness.command))}`)
+    if (readiness.existing_approval) out.push(`    existing=${readiness.existing_approval.approval_id} ${readiness.existing_approval.status}`)
+    if (readiness.blockers.length > 0) out.push(...readiness.blockers.slice(0, 10).map((blocker) => `    approval_blocker=${preview(redactText(blocker))}`))
+    if (readiness.warnings.length > 0) out.push(...readiness.warnings.slice(0, 10).map((warning) => `    approval_warning=${preview(redactText(warning))}`))
+    out.push("    required_evidence")
+    if (readiness.required_evidence.length === 0) out.push("      - empty")
+    else out.push(...readiness.required_evidence.slice(0, 10).map((item) => `      - ${item.kind} fresh=${item.fresh} status=${item.status ?? "unknown"}: ${preview(redactText(item.summary_preview))}`))
+    out.push("    recommended_commands")
+    if (readiness.recommended_commands.length === 0) out.push("      - empty")
+    else out.push(...readiness.recommended_commands.slice(0, 10).map((command) => `      - ${command.command_type}: ${preview(redactText(command.command))}`))
+  } else {
+    out.push("    readiness=none")
+  }
+  if (scheduler.selectedWriteApproval) {
+    const approval = scheduler.selectedWriteApproval
+    out.push(`    selected=${approval.approval_id} ${approval.status} staged=${approval.staged_write_id} expires=${approval.expires_at ?? "none"}: ${preview(redactText(approval.summary_preview))}`)
+  } else {
+    out.push("    selected=none")
+  }
+  out.push(`    approvals=${scheduler.writeApprovalRecords.length}`)
+  out.push("    approval_rows")
+  if (scheduler.writeApprovalRecords.length === 0) out.push("      - empty")
+  else out.push(...scheduler.writeApprovalRecords.slice(0, 10).map((item) => `      - ${item.approval_id} ${item.status} staged=${item.staged_write_id}: ${preview(redactText(item.summary_preview))}`))
+  out.push("    note=approval records future operator intent only and does not execute staged writes")
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

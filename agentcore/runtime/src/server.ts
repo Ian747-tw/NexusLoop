@@ -86,6 +86,8 @@ import { WakeSchedulerNavigationWriteRunService, readWakeSchedulerNavigationWrit
 import type { WakeSchedulerNavigationWriteRunPreview, WakeSchedulerNavigationWriteRunRecord, WakeSchedulerNavigationWriteRunResult } from "./schedules/wake-scheduler-navigation-write-run-types"
 import { WakeSchedulerNavigationWriteRunCompareService, readWakeSchedulerNavigationWriteRunCompareInput, readWakeSchedulerNavigationWriteRunGroupInput, readWakeSchedulerNavigationWriteRunHistoryInput, readWakeSchedulerNavigationWriteRunStaleInput } from "./schedules/wake-scheduler-navigation-write-run-compare-service"
 import type { WakeSchedulerNavigationWriteRunGroup, WakeSchedulerNavigationWriteRunHistory, WakeSchedulerNavigationWriteRunPairComparison, WakeSchedulerNavigationWriteRunStaleItem } from "./schedules/wake-scheduler-navigation-write-run-compare-types"
+import { WakeSchedulerNavigationWriteApprovalService, readWakeSchedulerNavigationWriteApprovalInput, readWakeSchedulerNavigationWriteApprovalListInput, readWakeSchedulerNavigationWriteApprovalRejectInput, readWakeSchedulerNavigationWriteApprovalRevokeInput, readWakeSchedulerNavigationWriteReadinessInput } from "./schedules/wake-scheduler-navigation-write-approval-service"
+import type { WakeSchedulerNavigationWriteApproval, WakeSchedulerNavigationWriteApprovalRecord, WakeSchedulerNavigationWriteReadinessPreview } from "./schedules/wake-scheduler-navigation-write-approval-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -248,6 +250,7 @@ export class RuntimeServer {
   private wakeSchedulerNavigationLowRiskWriteExecutorInstance: WakeSchedulerNavigationLowRiskWriteExecutor | null = null
   private wakeSchedulerNavigationWriteRunServiceInstance: WakeSchedulerNavigationWriteRunService | null = null
   private wakeSchedulerNavigationWriteRunCompareServiceInstance: WakeSchedulerNavigationWriteRunCompareService | null = null
+  private wakeSchedulerNavigationWriteApprovalServiceInstance: WakeSchedulerNavigationWriteApprovalService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -869,6 +872,18 @@ export class RuntimeServer {
         return this.wakeSchedulerNavigationWriteRunStale(readWakeSchedulerNavigationWriteRunStaleInput(payload))
       case "runtime.wake_scheduler_navigation_write_run_group":
         return this.wakeSchedulerNavigationWriteRunGroup(readWakeSchedulerNavigationWriteRunGroupInput(payload))
+      case "runtime.preview_wake_scheduler_navigation_write_readiness":
+        return this.previewWakeSchedulerNavigationWriteReadiness(readWakeSchedulerNavigationWriteReadinessInput(payload))
+      case "runtime.approve_wake_scheduler_navigation_staged_write":
+        return this.approveWakeSchedulerNavigationStagedWrite(readWakeSchedulerNavigationWriteApprovalInput(payload))
+      case "runtime.reject_wake_scheduler_navigation_staged_write":
+        return this.rejectWakeSchedulerNavigationStagedWrite(readWakeSchedulerNavigationWriteApprovalRejectInput(payload))
+      case "runtime.revoke_wake_scheduler_navigation_write_approval":
+        return this.revokeWakeSchedulerNavigationWriteApproval(readWakeSchedulerNavigationWriteApprovalRevokeInput(payload))
+      case "runtime.get_wake_scheduler_navigation_write_approval":
+        return this.getWakeSchedulerNavigationWriteApproval(requiredString(payload.approvalId ?? payload.approval_id, "approvalId"))
+      case "runtime.list_wake_scheduler_navigation_write_approvals":
+        return this.listWakeSchedulerNavigationWriteApprovals(readWakeSchedulerNavigationWriteApprovalListInput(payload))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -1698,6 +1713,33 @@ export class RuntimeServer {
     return this.wakeSchedulerNavigationWriteRunCompareService().group(input)
   }
 
+  async previewWakeSchedulerNavigationWriteReadiness(input: Parameters<WakeSchedulerNavigationWriteApprovalService["preview"]>[0]): Promise<WakeSchedulerNavigationWriteReadinessPreview> {
+    return this.wakeSchedulerNavigationWriteApprovalService().preview(input)
+  }
+
+  async approveWakeSchedulerNavigationStagedWrite(input: Parameters<WakeSchedulerNavigationWriteApprovalService["approve"]>[0]): Promise<WakeSchedulerNavigationWriteApproval> {
+    this.requireWakeSchedulerRuntime("runtime.approve_wake_scheduler_navigation_staged_write")
+    return this.wakeSchedulerNavigationWriteApprovalService().approve(input)
+  }
+
+  async rejectWakeSchedulerNavigationStagedWrite(input: Parameters<WakeSchedulerNavigationWriteApprovalService["reject"]>[0]): Promise<WakeSchedulerNavigationWriteApproval> {
+    this.requireWakeSchedulerRuntime("runtime.reject_wake_scheduler_navigation_staged_write")
+    return this.wakeSchedulerNavigationWriteApprovalService().reject(input)
+  }
+
+  async revokeWakeSchedulerNavigationWriteApproval(input: Parameters<WakeSchedulerNavigationWriteApprovalService["revoke"]>[0]): Promise<WakeSchedulerNavigationWriteApproval | null> {
+    this.requireWakeSchedulerRuntime("runtime.revoke_wake_scheduler_navigation_write_approval")
+    return this.wakeSchedulerNavigationWriteApprovalService().revoke(input)
+  }
+
+  async getWakeSchedulerNavigationWriteApproval(approvalId: string): Promise<WakeSchedulerNavigationWriteApproval | null> {
+    return this.wakeSchedulerNavigationWriteApprovalService().get(approvalId)
+  }
+
+  async listWakeSchedulerNavigationWriteApprovals(input: Parameters<WakeSchedulerNavigationWriteApprovalService["list"]>[0] = {}): Promise<WakeSchedulerNavigationWriteApprovalRecord[]> {
+    return this.wakeSchedulerNavigationWriteApprovalService().list(input)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -2289,6 +2331,16 @@ export class RuntimeServer {
       () => now().toISOString(),
     )
     return this.wakeSchedulerNavigationWriteRunCompareServiceInstance
+  }
+
+  private wakeSchedulerNavigationWriteApprovalService(): WakeSchedulerNavigationWriteApprovalService {
+    const now = this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow ?? (() => new Date())
+    this.wakeSchedulerNavigationWriteApprovalServiceInstance ??= new WakeSchedulerNavigationWriteApprovalService(
+      this.eventStore,
+      this.wakeSchedulerNavigationWriteStagingService(),
+      () => now().toISOString(),
+    )
+    return this.wakeSchedulerNavigationWriteApprovalServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

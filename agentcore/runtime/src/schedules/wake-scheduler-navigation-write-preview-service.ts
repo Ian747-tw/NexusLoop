@@ -54,6 +54,21 @@ interface BoardCommandSource {
   warnings: string[]
 }
 
+const APPROVAL_REQUIRED_COMMANDS = new Set([
+  "/checkpoint",
+  "/scheduler-recovery-ack",
+  "/scheduler-recovery-resolve",
+  "/scheduler-recovery-dismiss",
+  "/scheduler-recovery-workflow",
+  "/scheduler-recovery-step-done",
+  "/scheduler-recovery-step-skip",
+  "/scheduler-recovery-step-block",
+  "/scheduler-recovery-workflow-cancel",
+  "/continue-plan",
+  "/continue-pause",
+  "/continue-cancel",
+])
+
 export class WakeSchedulerNavigationWritePreviewService {
   constructor(
     private readonly navigationService: WakeSchedulerNavigationService,
@@ -155,7 +170,7 @@ export class WakeSchedulerNavigationWritePreviewService {
       safer_read_commands: spec.safer_reads(parsed).slice(0, 10),
       future_stage_policy: futurePolicy({
         dryRunFirst: parsed.command_name === "/wake-tick" || parsed.command_name === "/scheduler-start" || parsed.command_name.startsWith("/continue") || highImpact,
-        approval: highImpact,
+        approval: highImpact || APPROVAL_REQUIRED_COMMANDS.has(parsed.command_name),
       }),
       redacted_summary_preview: preview(`${spec.risk} ${spec.authority_gate} ${parsed.command}`),
     })

@@ -2173,6 +2173,78 @@ export type WakeSchedulerNavigationWriteRunStaleItemSummary = {
   recommended_commands: WakeSchedulerNavigationWriteRunCompareCommandSummary[]
 }
 
+export type WakeSchedulerNavigationWriteApprovalStatusSummary = "pending" | "approved" | "rejected" | "revoked" | "expired" | string
+
+export type WakeSchedulerNavigationWriteReadinessStatusSummary = "ready_for_approval" | "blocked" | "needs_evidence" | "unsupported" | "high_impact_blocked" | string
+
+export type WakeSchedulerNavigationWriteEvidenceSummary = {
+  evidence_id: string
+  kind: "safe_read_run" | "safe_read_comparison" | "low_risk_write_run" | "low_risk_write_comparison" | "audit_chain" | "manual_note" | string
+  related_id?: string
+  command?: string
+  status?: string
+  completed_at?: string
+  fresh: boolean
+  age_ms?: number
+  summary_preview: string
+  blockers: string[]
+  warnings: string[]
+}
+
+export type WakeSchedulerNavigationWriteReadinessPreviewSummary = {
+  staged_write_id: string
+  command: string
+  command_name: string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  target_kind: string
+  target_id?: string
+  readiness_status: WakeSchedulerNavigationWriteReadinessStatusSummary
+  can_approve: boolean
+  can_execute_now: false
+  blockers: string[]
+  warnings: string[]
+  required_evidence: WakeSchedulerNavigationWriteEvidenceSummary[]
+  optional_evidence: WakeSchedulerNavigationWriteEvidenceSummary[]
+  existing_approval?: WakeSchedulerNavigationWriteApprovalRecordSummary
+  recommended_commands: WakeSchedulerNavigationWriteCommandSummary[]
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerNavigationWriteApprovalSummary = {
+  approval_id: string
+  staged_write_id: string
+  command: string
+  command_name: string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  target_kind: string
+  target_id?: string
+  status: WakeSchedulerNavigationWriteApprovalStatusSummary
+  approved_at?: string
+  rejected_at?: string
+  revoked_at?: string
+  updated_at: string
+  requested_by: string
+  reason?: string
+  evidence: WakeSchedulerNavigationWriteEvidenceSummary[]
+  approval_hash: string
+  expires_at?: string
+  summary_preview: string
+}
+
+export type WakeSchedulerNavigationWriteApprovalRecordSummary = {
+  approval_id: string
+  staged_write_id: string
+  command: string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  status: WakeSchedulerNavigationWriteApprovalStatusSummary
+  updated_at: string
+  summary_preview: string
+  approval_hash: string
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -2214,6 +2286,9 @@ export type WakeSchedulerUiState = {
   writeRunComparison?: WakeSchedulerNavigationWriteRunPairComparisonSummary | null
   writeRunStaleItems: WakeSchedulerNavigationWriteRunStaleItemSummary[]
   selectedWriteRunGroup?: WakeSchedulerNavigationWriteRunGroupSummary | null
+  writeReadinessPreview?: WakeSchedulerNavigationWriteReadinessPreviewSummary | null
+  selectedWriteApproval?: WakeSchedulerNavigationWriteApprovalSummary | null
+  writeApprovalRecords: WakeSchedulerNavigationWriteApprovalRecordSummary[]
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

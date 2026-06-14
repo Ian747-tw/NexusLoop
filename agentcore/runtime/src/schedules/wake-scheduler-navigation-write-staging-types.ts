@@ -36,6 +36,7 @@ export interface WakeSchedulerNavigationWriteStagePreview {
 
 export interface WakeSchedulerNavigationStagedWriteCommand {
   staged_write_id: string
+  staged_event_id?: string
   command: string
   command_name: string
   risk: WakeSchedulerNavigationWriteRisk
@@ -60,6 +61,7 @@ export interface WakeSchedulerNavigationStagedWriteCommand {
 
 export interface WakeSchedulerNavigationStagedWriteCommandRecord {
   staged_write_id: string
+  staged_event_id?: string
   command: string
   risk: WakeSchedulerNavigationWriteRisk
   authority_gate: WakeSchedulerNavigationWriteAuthorityGate

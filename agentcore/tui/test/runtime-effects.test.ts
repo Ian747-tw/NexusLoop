@@ -3754,6 +3754,10 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/wake-tick-dry-run"] })
     expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "low_risk_write", authority_gate: "wake_schedule_tick", can_stage_now: false, can_execute_now: false })
+    expect(state.wakeScheduler?.writePreview?.future_stage_policy?.would_require_approval_record).toBe(false)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/checkpoint", "full"] })
+    expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "medium_risk_write", authority_gate: "checkpoint_runtime", can_stage_now: false, can_execute_now: false })
+    expect(state.wakeScheduler?.writePreview?.future_stage_policy?.would_require_approval_record).toBe(true)
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/scheduler-start", "dry-run", "every=60s"] })
     expect(state.wakeScheduler?.writePreview).toMatchObject({ risk: "medium_risk_write", authority_gate: "wake_scheduler_runtime", can_stage_now: false, can_execute_now: false })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-preview", args: ["/handoff", "token=abc123"] })
@@ -3807,6 +3811,7 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-medium", args: ["/checkpoint", "full", "token=abc123"] })
     expect(state.wakeScheduler?.selectedStagedWriteCommand).toMatchObject({ risk: "medium_risk_write", authority_gate: "checkpoint_runtime" })
     expect(state.wakeScheduler?.selectedStagedWriteCommand?.command).not.toContain("abc123")
+    expect(state.wakeScheduler?.selectedStagedWriteCommand?.future_stage_policy?.would_require_approval_record).toBe(true)
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick"] })
     expect(state.wakeScheduler?.commandError).toContain("high-impact")
@@ -3948,6 +3953,59 @@ describe("runtime UI effects", () => {
     const snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("scheduler_write_run_comparison")
     expect(snapshot).toContain("comparison uses bounded summaries")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
+
+  test("wake scheduler navigation write approval records future intent without execution", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-medium", args: ["/checkpoint", "full", "token=abc123"] })
+    const stagedWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(stagedWriteId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-readiness", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.writeReadinessPreview).toMatchObject({ staged_write_id: stagedWriteId, readiness_status: "ready_for_approval", can_approve: true, can_execute_now: false })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-approve", args: [stagedWriteId!, "token=abc123"] })
+    const approvalId = state.wakeScheduler?.selectedWriteApproval?.approval_id
+    expect(approvalId).toBeTruthy()
+    expect(state.wakeScheduler?.selectedWriteApproval).toMatchObject({ staged_write_id: stagedWriteId, status: "approved" })
+    expect(state.wakeScheduler?.selectedWriteApproval?.reason).not.toContain("abc123")
+    expect(state.wakeScheduler?.writeApprovalRecords.some((record) => record.approval_id === approvalId)).toBe(true)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-approval-show", args: [approvalId!] })
+    expect(state.wakeScheduler?.selectedWriteApproval?.approval_id).toBe(approvalId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-approval-revoke", args: [approvalId!, "token=abc123"] })
+    expect(state.wakeScheduler?.selectedWriteApproval).toMatchObject({ approval_id: approvalId, status: "revoked" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-approvals", args: [] })
+    expect(state.wakeScheduler?.writeApprovalRecords.some((record) => record.status === "revoked")).toBe(true)
+    expect(state.wakeScheduler?.writeApprovalRecords.filter((record) => record.approval_id === approvalId)).toHaveLength(1)
+    expect(state.wakeScheduler?.writeApprovalRecords.some((record) => record.approval_id === approvalId && record.status === "approved")).toBe(false)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-readiness", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.writeReadinessPreview?.existing_approval).toBeUndefined()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-reject", args: [stagedWriteId!, "token=abc123"] })
+    expect(state.wakeScheduler?.selectedWriteApproval).toMatchObject({ staged_write_id: stagedWriteId, status: "rejected" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick-dry-run"] })
+    const lowRiskId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(lowRiskId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-readiness", args: [lowRiskId!] })
+    expect(state.wakeScheduler?.writeReadinessPreview).toMatchObject({ can_approve: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "approve-wake-scheduler-navigation-staged-write", stagedWriteId: lowRiskId! })
+    expect(state.wakeScheduler?.commandError).toContain("not ready")
+    expect(state.runtimeCommandError).toBeUndefined()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-approve", args: [] })
+    expect(state.wakeScheduler?.commandError).toContain("stagedWriteId is required")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_write_approval")
+    expect(snapshot).toContain("approval records future operator intent")
     expect(snapshot).not.toContain("abc123")
     expect(JSON.stringify(state)).not.toContain("abc123")
     expect(runtime.sentCommands).toEqual([])
