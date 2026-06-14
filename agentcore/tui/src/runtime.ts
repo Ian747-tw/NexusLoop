@@ -2260,7 +2260,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (staged.risk !== "medium_risk_write") blockers.push("only medium-risk staged writes are approval-eligible in 7X")
     if (staged.command_name !== "/checkpoint") blockers.push("fake runtime requires additional evidence for this medium-risk command")
     const status = blockers.length === 0 ? "ready_for_approval" : staged.risk === "high_impact_write" ? "high_impact_blocked" : "blocked"
-    const existing = this.wakeSchedulerNavigationWriteApprovals.find((approval) => approval.staged_write_id === staged.staged_write_id && approval.status === "approved")
+    const latestDecision = this.wakeSchedulerNavigationWriteApprovals.find((approval) => approval.staged_write_id === staged.staged_write_id)
+    const existing = latestDecision?.status === "approved" ? latestDecision : undefined
     return {
       staged_write_id: staged.staged_write_id,
       command: staged.command,
@@ -2316,10 +2317,11 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private revokeWakeSchedulerNavigationWriteApproval(approvalIdValue: string, reason: string, requestedBy: string): WakeSchedulerNavigationWriteApprovalSummary | null {
     const approvalId = redactText(requiredString(approvalIdValue, "approvalId"))
-    const approval = this.wakeSchedulerNavigationWriteApprovals.find((item) => item.approval_id === approvalId)
+    const approvalIndex = this.wakeSchedulerNavigationWriteApprovals.findIndex((item) => item.approval_id === approvalId)
+    const approval = this.wakeSchedulerNavigationWriteApprovals[approvalIndex]
     if (!approval) return null
     const revoked = { ...approval, status: "revoked", revoked_at: new Date(0).toISOString(), updated_at: new Date(0).toISOString(), requested_by: preview(redactText(requestedBy)), reason: preview(redactText(reason)) }
-    this.wakeSchedulerNavigationWriteApprovals.unshift(revoked)
+    this.wakeSchedulerNavigationWriteApprovals.splice(approvalIndex, 1, revoked)
     return revoked
   }
 

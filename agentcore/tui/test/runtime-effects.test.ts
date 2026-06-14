@@ -3978,6 +3978,10 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-approvals", args: [] })
     expect(state.wakeScheduler?.writeApprovalRecords.some((record) => record.status === "revoked")).toBe(true)
+    expect(state.wakeScheduler?.writeApprovalRecords.filter((record) => record.approval_id === approvalId)).toHaveLength(1)
+    expect(state.wakeScheduler?.writeApprovalRecords.some((record) => record.approval_id === approvalId && record.status === "approved")).toBe(false)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-readiness", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.writeReadinessPreview?.existing_approval).toBeUndefined()
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-reject", args: [stagedWriteId!, "token=abc123"] })
     expect(state.wakeScheduler?.selectedWriteApproval).toMatchObject({ staged_write_id: stagedWriteId, status: "rejected" })
