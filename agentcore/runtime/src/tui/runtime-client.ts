@@ -36,6 +36,7 @@ import type { WakeSchedulerNavigationStagedWriteCommand, WakeSchedulerNavigation
 import type { WakeSchedulerNavigationWriteRunInput, WakeSchedulerNavigationWriteRunListInput, WakeSchedulerNavigationWriteRunPreview, WakeSchedulerNavigationWriteRunRecord, WakeSchedulerNavigationWriteRunResult } from "../schedules/wake-scheduler-navigation-write-run-types"
 import type { WakeSchedulerNavigationWriteRunCompareInput, WakeSchedulerNavigationWriteRunGroup, WakeSchedulerNavigationWriteRunGroupInput, WakeSchedulerNavigationWriteRunHistory, WakeSchedulerNavigationWriteRunHistoryInput, WakeSchedulerNavigationWriteRunPairComparison, WakeSchedulerNavigationWriteRunStaleInput, WakeSchedulerNavigationWriteRunStaleItem } from "../schedules/wake-scheduler-navigation-write-run-compare-types"
 import type { WakeSchedulerNavigationWriteApproval, WakeSchedulerNavigationWriteApprovalInput, WakeSchedulerNavigationWriteApprovalListInput, WakeSchedulerNavigationWriteApprovalRecord, WakeSchedulerNavigationWriteApprovalRejectInput, WakeSchedulerNavigationWriteApprovalRevokeInput, WakeSchedulerNavigationWriteReadinessInput, WakeSchedulerNavigationWriteReadinessPreview } from "../schedules/wake-scheduler-navigation-write-approval-types"
+import type { WakeSchedulerNavigationCheckpointWriteRunInput, WakeSchedulerNavigationCheckpointWriteRunListInput, WakeSchedulerNavigationCheckpointWriteRunPreview, WakeSchedulerNavigationCheckpointWriteRunRecord, WakeSchedulerNavigationCheckpointWriteRunResult } from "../schedules/wake-scheduler-navigation-checkpoint-write-run-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -306,6 +307,10 @@ export interface RuntimeClient {
   command(name: "runtime.revoke_wake_scheduler_navigation_write_approval", payload: WakeSchedulerNavigationWriteApprovalRevokeInput): Promise<WakeSchedulerNavigationWriteApproval | null>
   command(name: "runtime.get_wake_scheduler_navigation_write_approval", payload: { approvalId: string } | { approval_id: string }): Promise<WakeSchedulerNavigationWriteApproval | null>
   command(name: "runtime.list_wake_scheduler_navigation_write_approvals", payload?: WakeSchedulerNavigationWriteApprovalListInput): Promise<WakeSchedulerNavigationWriteApprovalRecord[]>
+  command(name: "runtime.preview_wake_scheduler_navigation_checkpoint_write_run", payload: WakeSchedulerNavigationCheckpointWriteRunInput): Promise<WakeSchedulerNavigationCheckpointWriteRunPreview>
+  command(name: "runtime.execute_wake_scheduler_navigation_checkpoint_write_run", payload: WakeSchedulerNavigationCheckpointWriteRunInput): Promise<WakeSchedulerNavigationCheckpointWriteRunResult>
+  command(name: "runtime.list_wake_scheduler_navigation_checkpoint_write_runs", payload?: WakeSchedulerNavigationCheckpointWriteRunListInput): Promise<WakeSchedulerNavigationCheckpointWriteRunRecord[]>
+  command(name: "runtime.get_wake_scheduler_navigation_checkpoint_write_run", payload: { runId: string } | { run_id: string }): Promise<WakeSchedulerNavigationCheckpointWriteRunResult | null>
   command(name: "runtime.list_wake_scheduler_events", payload?: { limit?: number }): Promise<WakeSchedulerEventRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
@@ -492,6 +497,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.revoke_wake_scheduler_navigation_write_approval"
     | "runtime.get_wake_scheduler_navigation_write_approval"
     | "runtime.list_wake_scheduler_navigation_write_approvals"
+    | "runtime.preview_wake_scheduler_navigation_checkpoint_write_run"
+    | "runtime.execute_wake_scheduler_navigation_checkpoint_write_run"
+    | "runtime.list_wake_scheduler_navigation_checkpoint_write_runs"
+    | "runtime.get_wake_scheduler_navigation_checkpoint_write_run"
     | "runtime.list_wake_scheduler_events"
     | "research.list_topics"
     | "research.get_topic_snapshot"

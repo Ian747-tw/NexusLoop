@@ -956,6 +956,28 @@ function wakeSchedulerLines(state: UiState): string[] {
   if (scheduler.writeApprovalRecords.length === 0) out.push("      - empty")
   else out.push(...scheduler.writeApprovalRecords.slice(0, 10).map((item) => `      - ${item.approval_id} ${item.status} staged=${item.staged_write_id}: ${preview(redactText(item.summary_preview))}`))
   out.push("    note=approval records future operator intent only and does not execute staged writes")
+  out.push("  scheduler_checkpoint_write_runs")
+  if (scheduler.checkpointWriteRunPreview) {
+    const runPreview = scheduler.checkpointWriteRunPreview
+    out.push(`    preview=${runPreview.staged_write_id} approval=${runPreview.approval_id ?? "none"} kind=${runPreview.execution_kind} can_execute=${runPreview.can_execute} scope=${runPreview.checkpoint_scope ?? "none"}: ${preview(redactText(runPreview.command))}`)
+    if (runPreview.checkpoint_reason_preview) out.push(`    checkpoint_reason=${preview(redactText(runPreview.checkpoint_reason_preview))}`)
+    if (runPreview.blockers.length > 0) out.push(...runPreview.blockers.slice(0, 10).map((blocker) => `    checkpoint_run_blocker=${preview(redactText(blocker))}`))
+    if (runPreview.warnings.length > 0) out.push(...runPreview.warnings.slice(0, 10).map((warning) => `    checkpoint_run_warning=${preview(redactText(warning))}`))
+  } else {
+    out.push("    preview=none")
+  }
+  if (scheduler.latestCheckpointWriteRunResult) {
+    const result = scheduler.latestCheckpointWriteRunResult
+    out.push(`    latest=${result.run_id} ${result.status} checkpoint=${result.checkpoint_id ?? "none"} events=${result.event_count ?? "unknown"}: ${preview(redactText(result.result_summary ?? result.error ?? result.command))}`)
+    if (result.checkpoint_hash) out.push(`    checkpoint_hash=${preview(redactText(result.checkpoint_hash))}`)
+  } else {
+    out.push("    latest=none")
+  }
+  out.push(`    checkpoint_write_runs=${scheduler.checkpointWriteRunRecords.length}`)
+  out.push("    checkpoint_write_run_rows")
+  if (scheduler.checkpointWriteRunRecords.length === 0) out.push("      - empty")
+  else out.push(...scheduler.checkpointWriteRunRecords.slice(0, 10).map((item) => `      - ${item.run_id} ${item.status} checkpoint=${item.checkpoint_id ?? "none"}: ${preview(redactText(item.summary_preview))}`))
+  out.push("    note=only approved staged checkpoint writes execute in 7Y")
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

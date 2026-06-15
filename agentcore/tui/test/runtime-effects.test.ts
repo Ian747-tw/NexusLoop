@@ -4010,4 +4010,60 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
     expect(runtime.sentCommands).toEqual([])
   })
+
+  test("wake scheduler navigation checkpoint write runs execute approved staged checkpoints only", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-medium", args: ["/checkpoint", "full", "token=abc123"] })
+    const stagedWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(stagedWriteId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-run-preview", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.checkpointWriteRunPreview).toMatchObject({ staged_write_id: stagedWriteId, can_execute: false, execution_kind: "blocked" })
+    expect(state.wakeScheduler?.checkpointWriteRunPreview?.blockers.join(" ")).toContain("approval")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-approve", args: [stagedWriteId!, "token=abc123"] })
+    const approvalId = state.wakeScheduler?.selectedWriteApproval?.approval_id
+    expect(approvalId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-run-preview", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.checkpointWriteRunPreview).toMatchObject({ staged_write_id: stagedWriteId, approval_id: approvalId, can_execute: true, execution_kind: "checkpoint_create", checkpoint_scope: "full" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-run-dry-run", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.latestCheckpointWriteRunResult).toMatchObject({ status: "succeeded", result_kind: "fake_checkpoint_write_run_dry_run" })
+    expect(state.wakeScheduler?.checkpointWriteRunRecords).toEqual([])
+    expect(state.runtimeCheckpoints?.recent ?? []).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-run", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.latestCheckpointWriteRunResult).toMatchObject({ staged_write_id: stagedWriteId, approval_id: approvalId, status: "succeeded", result_kind: "runtime_checkpoint" })
+    expect(state.wakeScheduler?.latestCheckpointWriteRunResult?.checkpoint_id).toBeTruthy()
+    expect(state.wakeScheduler?.checkpointWriteRunRecords).toHaveLength(1)
+    expect(state.wakeScheduler?.stagedWriteCommands.some((item) => item.staged_write_id === stagedWriteId)).toBe(true)
+    const runId = state.wakeScheduler?.latestCheckpointWriteRunResult?.run_id
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-runs", args: [] })
+    expect(state.wakeScheduler?.checkpointWriteRunRecords.map((record) => record.run_id)).toContain(runId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-run-show", args: [runId!] })
+    expect(state.wakeScheduler?.latestCheckpointWriteRunResult?.run_id).toBe(runId)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage", args: ["/wake-tick-dry-run"] })
+    const lowRiskId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(lowRiskId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-run-preview", args: [lowRiskId!] })
+    expect(state.wakeScheduler?.checkpointWriteRunPreview).toMatchObject({ can_execute: false, execution_kind: "blocked" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-run", args: [] })
+    expect(state.wakeScheduler?.commandError ?? state.runtimeCommandError).toContain("stagedWriteId is required")
+
+    expect(state.wakeScheduler?.status?.status).not.toBe("running")
+    expect(state.wakeSchedules?.lastTick).toBeUndefined()
+    expect(state.continuation?.lastStepResult).toBeUndefined()
+    expect(runtime.sentCommands).toEqual([])
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_checkpoint_write_runs")
+    expect(snapshot).toContain("only approved staged checkpoint writes execute in 7Y")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
 })
