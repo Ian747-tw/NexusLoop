@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -68,6 +68,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly wakeSchedulerNavigationStagedReadRuns: WakeSchedulerNavigationStagedRunResultSummary[] = []
   private readonly wakeSchedulerNavigationWriteRuns: WakeSchedulerNavigationWriteRunResultSummary[] = []
   private readonly wakeSchedulerNavigationWriteApprovals: WakeSchedulerNavigationWriteApprovalSummary[] = []
+  private readonly wakeSchedulerNavigationCheckpointWriteRuns: WakeSchedulerNavigationCheckpointWriteRunResultSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
 
@@ -559,6 +560,18 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getWakeSchedulerNavigationWriteApproval(String(payload.approvalId ?? payload.approval_id ?? ""))
       case "runtime.list_wake_scheduler_navigation_write_approvals":
         return this.listWakeSchedulerNavigationWriteApprovals(readLimit(payload.limit, 20))
+      case "runtime.preview_wake_scheduler_navigation_checkpoint_write_run":
+        return this.previewWakeSchedulerNavigationCheckpointWriteRun(String(payload.stagedWriteId ?? payload.staged_write_id ?? ""))
+      case "runtime.execute_wake_scheduler_navigation_checkpoint_write_run":
+        return this.executeWakeSchedulerNavigationCheckpointWriteRun(
+          String(payload.stagedWriteId ?? payload.staged_write_id ?? ""),
+          payload.dryRun === true || payload.dry_run === true,
+          String(payload.requestedBy ?? payload.requested_by ?? "operator"),
+        )
+      case "runtime.list_wake_scheduler_navigation_checkpoint_write_runs":
+        return this.listWakeSchedulerNavigationCheckpointWriteRuns(readLimit(payload.limit, 20), typeof (payload.stagedWriteId ?? payload.staged_write_id) === "string" ? String(payload.stagedWriteId ?? payload.staged_write_id) : undefined)
+      case "runtime.get_wake_scheduler_navigation_checkpoint_write_run":
+        return this.getWakeSchedulerNavigationCheckpointWriteRun(String(payload.runId ?? payload.run_id ?? ""))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
@@ -2332,6 +2345,104 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private listWakeSchedulerNavigationWriteApprovals(limit: number): WakeSchedulerNavigationWriteApprovalRecordSummary[] {
     return this.wakeSchedulerNavigationWriteApprovals.slice(0, limit).map(fakeNavigationWriteApprovalRecord)
+  }
+
+  private previewWakeSchedulerNavigationCheckpointWriteRun(stagedWriteId: string): WakeSchedulerNavigationCheckpointWriteRunPreviewSummary {
+    const normalizedId = redactText(requiredString(stagedWriteId, "stagedWriteId"))
+    const staged = this.wakeSchedulerNavigationStagedWriteCommands.find((item) => item.staged_write_id === normalizedId)
+    if (!staged) {
+      return {
+        staged_write_id: normalizedId,
+        command: "",
+        command_name: "",
+        can_execute: false,
+        risk: "unsupported",
+        authority_gate: "unknown",
+        target_kind: "unknown",
+        execution_kind: "blocked",
+        blockers: ["staged write command is not active"],
+        warnings: ["fake checkpoint write runs execute approved staged checkpoints only"],
+        redacted_summary_preview: "staged write command is not active",
+      }
+    }
+    const readiness = this.previewWakeSchedulerNavigationWriteReadiness(staged.staged_write_id)
+    const parsed = fakeParseCheckpointCommand(staged.command)
+    const blockers: string[] = []
+    if (staged.command_name !== "/checkpoint") blockers.push("7Y executes staged /checkpoint writes only")
+    if (staged.risk !== "medium_risk_write") blockers.push("7Y executes approved medium-risk checkpoint writes only")
+    if (staged.authority_gate !== "checkpoint_runtime") blockers.push("staged write is not owned by checkpoint_runtime")
+    blockers.push(...parsed.blockers)
+    if (!readiness.existing_approval) blockers.push("active 7X approval is required for this exact staged checkpoint write")
+    const executionKind = blockers.length === 0 ? "checkpoint_create" : "blocked"
+    return {
+      staged_write_id: staged.staged_write_id,
+      approval_id: readiness.existing_approval?.approval_id,
+      command: staged.command,
+      command_name: staged.command_name,
+      can_execute: blockers.length === 0,
+      risk: staged.risk,
+      authority_gate: staged.authority_gate,
+      target_kind: staged.target_kind,
+      target_id: staged.target_id,
+      execution_kind: executionKind,
+      checkpoint_scope: parsed.scope,
+      checkpoint_reason_preview: parsed.reason,
+      blockers,
+      warnings: ["fake checkpoint write-run execution never calls /run-staged"],
+      redacted_summary_preview: `${executionKind} can_execute=${blockers.length === 0}: ${staged.command}`,
+    }
+  }
+
+  private executeWakeSchedulerNavigationCheckpointWriteRun(stagedWriteId: string, dryRun: boolean, requestedBy: string): WakeSchedulerNavigationCheckpointWriteRunResultSummary {
+    const previewRecord = this.previewWakeSchedulerNavigationCheckpointWriteRun(stagedWriteId)
+    const completedAt = new Date(0).toISOString()
+    if (dryRun) {
+      return fakeNavigationCheckpointWriteRunResult({
+        previewRecord,
+        runId: `fake-checkpoint-write-run-dry-run-${this.sequence + 1}`,
+        status: previewRecord.can_execute ? "succeeded" : "blocked",
+        resultKind: "fake_checkpoint_write_run_dry_run",
+        resultSummary: previewRecord.can_execute ? `dry_run=true scope=${previewRecord.checkpoint_scope ?? "unknown"}` : undefined,
+        error: previewRecord.can_execute ? undefined : previewRecord.blockers.join("; "),
+        requestedBy,
+        completedAt,
+      })
+    }
+
+    let checkpoint: RuntimeCheckpointSummary | undefined
+    let status: WakeSchedulerNavigationCheckpointWriteRunResultSummary["status"] = previewRecord.can_execute ? "succeeded" : "blocked"
+    let error: string | undefined = previewRecord.can_execute ? undefined : previewRecord.blockers.join("; ")
+    let resultSummary: string | undefined
+    if (previewRecord.can_execute) {
+      checkpoint = this.createRuntimeCheckpoint({ scope: previewRecord.checkpoint_scope ?? "full", reason: previewRecord.checkpoint_reason_preview, requestedBy })
+      resultSummary = `created checkpoint ${checkpoint.checkpoint_id} scope=${checkpoint.scope} events=${checkpoint.event_count}`
+    }
+    const result = fakeNavigationCheckpointWriteRunResult({
+      previewRecord,
+      runId: `fake-checkpoint-write-run-${++this.sequence}`,
+      status,
+      checkpoint,
+      resultKind: checkpoint ? "runtime_checkpoint" : undefined,
+      resultSummary,
+      error,
+      requestedBy,
+      completedAt,
+    })
+    this.wakeSchedulerNavigationCheckpointWriteRuns.unshift(result)
+    return result
+  }
+
+  private listWakeSchedulerNavigationCheckpointWriteRuns(limit: number, stagedWriteId?: string): WakeSchedulerNavigationCheckpointWriteRunRecordSummary[] {
+    const normalizedId = stagedWriteId ? redactText(stagedWriteId) : undefined
+    return this.wakeSchedulerNavigationCheckpointWriteRuns
+      .filter((run) => !normalizedId || run.staged_write_id === normalizedId)
+      .slice(0, limit)
+      .map(fakeNavigationCheckpointWriteRunRecord)
+  }
+
+  private getWakeSchedulerNavigationCheckpointWriteRun(runId: string): WakeSchedulerNavigationCheckpointWriteRunResultSummary | null {
+    const normalizedId = redactText(requiredString(runId, "runId"))
+    return this.wakeSchedulerNavigationCheckpointWriteRuns.find((run) => run.run_id === normalizedId) ?? null
   }
 
   private fakeWriteRunGroups(): WakeSchedulerNavigationWriteRunGroupSummary[] {
@@ -4961,6 +5072,75 @@ function fakeNavigationWriteRunRecord(run: WakeSchedulerNavigationWriteRunResult
     status: run.status,
     completed_at: run.completed_at,
     summary_preview: run.result_summary ?? run.error ?? run.command,
+  }
+}
+
+function fakeNavigationCheckpointWriteRunResult(input: {
+  previewRecord: WakeSchedulerNavigationCheckpointWriteRunPreviewSummary
+  runId: string
+  status: WakeSchedulerNavigationCheckpointWriteRunResultSummary["status"]
+  checkpoint?: RuntimeCheckpointSummary
+  resultKind?: string
+  resultSummary?: string
+  error?: string
+  requestedBy: string
+  completedAt: string
+}): WakeSchedulerNavigationCheckpointWriteRunResultSummary {
+  const resultSummary = input.resultSummary ? preview(redactText(input.resultSummary)) : undefined
+  const error = input.error ? preview(redactText(input.error)) : undefined
+  return {
+    run_id: input.runId,
+    staged_write_id: input.previewRecord.staged_write_id,
+    approval_id: input.previewRecord.approval_id,
+    command: input.previewRecord.command,
+    command_name: input.previewRecord.command_name,
+    execution_kind: input.previewRecord.execution_kind,
+    risk: input.previewRecord.risk,
+    authority_gate: input.previewRecord.authority_gate,
+    status: input.status,
+    checkpoint_id: input.checkpoint?.checkpoint_id,
+    checkpoint_hash: input.checkpoint?.checkpoint_hash,
+    event_count: input.checkpoint?.event_count,
+    result_kind: input.resultKind,
+    result_summary: resultSummary,
+    error,
+    started_at: input.completedAt,
+    completed_at: input.completedAt,
+    requested_by: preview(redactText(input.requestedBy)),
+    result_hash: fakeNavigationStageHash(`${input.runId}:${input.previewRecord.staged_write_id}:${input.status}:${input.checkpoint?.checkpoint_hash ?? resultSummary ?? error ?? ""}`),
+  }
+}
+
+function fakeNavigationCheckpointWriteRunRecord(run: WakeSchedulerNavigationCheckpointWriteRunResultSummary): WakeSchedulerNavigationCheckpointWriteRunRecordSummary {
+  return {
+    run_id: run.run_id,
+    staged_write_id: run.staged_write_id,
+    approval_id: run.approval_id,
+    command: run.command,
+    status: run.status,
+    checkpoint_id: run.checkpoint_id,
+    completed_at: run.completed_at,
+    summary_preview: run.result_summary ?? run.error ?? run.command,
+  }
+}
+
+function fakeParseCheckpointCommand(command: string): { scope?: RuntimeCheckpointScope; reason?: string; blockers: string[] } {
+  const [name, scopeRaw, ...reasonParts] = command.trim().split(/\s+/)
+  const blockers: string[] = []
+  if (name !== "/checkpoint") blockers.push("checkpoint write executor supports /checkpoint only")
+  if (!scopeRaw) blockers.push("/checkpoint requires a scope")
+  let scope: RuntimeCheckpointScope | undefined
+  if (scopeRaw) {
+    try {
+      scope = readCheckpointScope(scopeRaw)
+    } catch {
+      blockers.push("checkpoint scope must be one of full, commander, executor, research, handoff")
+    }
+  }
+  return {
+    scope,
+    reason: reasonParts.length > 0 ? preview(redactText(reasonParts.join(" "))) : undefined,
+    blockers,
   }
 }
 

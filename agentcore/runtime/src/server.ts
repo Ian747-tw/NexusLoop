@@ -88,6 +88,9 @@ import { WakeSchedulerNavigationWriteRunCompareService, readWakeSchedulerNavigat
 import type { WakeSchedulerNavigationWriteRunGroup, WakeSchedulerNavigationWriteRunHistory, WakeSchedulerNavigationWriteRunPairComparison, WakeSchedulerNavigationWriteRunStaleItem } from "./schedules/wake-scheduler-navigation-write-run-compare-types"
 import { WakeSchedulerNavigationWriteApprovalService, readWakeSchedulerNavigationWriteApprovalInput, readWakeSchedulerNavigationWriteApprovalListInput, readWakeSchedulerNavigationWriteApprovalRejectInput, readWakeSchedulerNavigationWriteApprovalRevokeInput, readWakeSchedulerNavigationWriteReadinessInput } from "./schedules/wake-scheduler-navigation-write-approval-service"
 import type { WakeSchedulerNavigationWriteApproval, WakeSchedulerNavigationWriteApprovalRecord, WakeSchedulerNavigationWriteReadinessPreview } from "./schedules/wake-scheduler-navigation-write-approval-types"
+import { WakeSchedulerNavigationCheckpointWriteExecutor } from "./schedules/wake-scheduler-navigation-checkpoint-write-executor"
+import { WakeSchedulerNavigationCheckpointWriteRunService, readWakeSchedulerNavigationCheckpointWriteRunInput, readWakeSchedulerNavigationCheckpointWriteRunListInput } from "./schedules/wake-scheduler-navigation-checkpoint-write-run-service"
+import type { WakeSchedulerNavigationCheckpointWriteRunPreview, WakeSchedulerNavigationCheckpointWriteRunRecord, WakeSchedulerNavigationCheckpointWriteRunResult } from "./schedules/wake-scheduler-navigation-checkpoint-write-run-types"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -251,6 +254,8 @@ export class RuntimeServer {
   private wakeSchedulerNavigationWriteRunServiceInstance: WakeSchedulerNavigationWriteRunService | null = null
   private wakeSchedulerNavigationWriteRunCompareServiceInstance: WakeSchedulerNavigationWriteRunCompareService | null = null
   private wakeSchedulerNavigationWriteApprovalServiceInstance: WakeSchedulerNavigationWriteApprovalService | null = null
+  private wakeSchedulerNavigationCheckpointWriteExecutorInstance: WakeSchedulerNavigationCheckpointWriteExecutor | null = null
+  private wakeSchedulerNavigationCheckpointWriteRunServiceInstance: WakeSchedulerNavigationCheckpointWriteRunService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private started = false
@@ -884,6 +889,14 @@ export class RuntimeServer {
         return this.getWakeSchedulerNavigationWriteApproval(requiredString(payload.approvalId ?? payload.approval_id, "approvalId"))
       case "runtime.list_wake_scheduler_navigation_write_approvals":
         return this.listWakeSchedulerNavigationWriteApprovals(readWakeSchedulerNavigationWriteApprovalListInput(payload))
+      case "runtime.preview_wake_scheduler_navigation_checkpoint_write_run":
+        return this.previewWakeSchedulerNavigationCheckpointWriteRun(readWakeSchedulerNavigationCheckpointWriteRunInput(payload))
+      case "runtime.execute_wake_scheduler_navigation_checkpoint_write_run":
+        return this.executeWakeSchedulerNavigationCheckpointWriteRun(readWakeSchedulerNavigationCheckpointWriteRunInput(payload))
+      case "runtime.list_wake_scheduler_navigation_checkpoint_write_runs":
+        return this.listWakeSchedulerNavigationCheckpointWriteRuns(readWakeSchedulerNavigationCheckpointWriteRunListInput(payload))
+      case "runtime.get_wake_scheduler_navigation_checkpoint_write_run":
+        return this.getWakeSchedulerNavigationCheckpointWriteRun(requiredString(payload.runId ?? payload.run_id, "runId"))
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.shutdown":
@@ -1740,6 +1753,23 @@ export class RuntimeServer {
     return this.wakeSchedulerNavigationWriteApprovalService().list(input)
   }
 
+  async previewWakeSchedulerNavigationCheckpointWriteRun(input: Parameters<WakeSchedulerNavigationCheckpointWriteRunService["preview"]>[0]): Promise<WakeSchedulerNavigationCheckpointWriteRunPreview> {
+    return this.wakeSchedulerNavigationCheckpointWriteRunService().preview(input)
+  }
+
+  async executeWakeSchedulerNavigationCheckpointWriteRun(input: Parameters<WakeSchedulerNavigationCheckpointWriteRunService["execute"]>[0]): Promise<WakeSchedulerNavigationCheckpointWriteRunResult> {
+    this.requireRuntimeCheckpointWriteRuntime("runtime.execute_wake_scheduler_navigation_checkpoint_write_run")
+    return this.wakeSchedulerNavigationCheckpointWriteRunService().execute(input)
+  }
+
+  async listWakeSchedulerNavigationCheckpointWriteRuns(input: Parameters<WakeSchedulerNavigationCheckpointWriteRunService["list"]>[0] = {}): Promise<WakeSchedulerNavigationCheckpointWriteRunRecord[]> {
+    return this.wakeSchedulerNavigationCheckpointWriteRunService().list(input)
+  }
+
+  async getWakeSchedulerNavigationCheckpointWriteRun(runId: string): Promise<WakeSchedulerNavigationCheckpointWriteRunResult | null> {
+    return this.wakeSchedulerNavigationCheckpointWriteRunService().get(runId)
+  }
+
   async executeMissionTool(call: ExecutorToolCall): Promise<ExecutorToolResult> {
     const router = new MissionToolRouter({
       handlers: {
@@ -2341,6 +2371,23 @@ export class RuntimeServer {
       () => now().toISOString(),
     )
     return this.wakeSchedulerNavigationWriteApprovalServiceInstance
+  }
+
+  private wakeSchedulerNavigationCheckpointWriteExecutor(): WakeSchedulerNavigationCheckpointWriteExecutor {
+    this.wakeSchedulerNavigationCheckpointWriteExecutorInstance ??= new WakeSchedulerNavigationCheckpointWriteExecutor(this.runtimeCheckpointService())
+    return this.wakeSchedulerNavigationCheckpointWriteExecutorInstance
+  }
+
+  private wakeSchedulerNavigationCheckpointWriteRunService(): WakeSchedulerNavigationCheckpointWriteRunService {
+    const now = this.runtimeWakeSchedulerNow ?? this.runtimeWakeScheduleNow ?? this.runtimeWakeNow ?? this.runtimeResumeNow ?? this.runtimeCheckpointNow ?? (() => new Date())
+    this.wakeSchedulerNavigationCheckpointWriteRunServiceInstance ??= new WakeSchedulerNavigationCheckpointWriteRunService(
+      this.eventStore,
+      this.wakeSchedulerNavigationWriteStagingService(),
+      this.wakeSchedulerNavigationWriteApprovalService(),
+      this.wakeSchedulerNavigationCheckpointWriteExecutor(),
+      () => now().toISOString(),
+    )
+    return this.wakeSchedulerNavigationCheckpointWriteRunServiceInstance
   }
 
   private async executeContinuationReadCommand(command: string): Promise<unknown> {

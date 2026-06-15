@@ -2245,6 +2245,57 @@ export type WakeSchedulerNavigationWriteApprovalRecordSummary = {
   approval_hash: string
 }
 
+export type WakeSchedulerNavigationCheckpointWriteRunPreviewSummary = {
+  staged_write_id: string
+  approval_id?: string
+  command: string
+  command_name: string
+  can_execute: boolean
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  target_kind: string
+  target_id?: string
+  execution_kind: "checkpoint_create" | "blocked" | string
+  checkpoint_scope?: string
+  checkpoint_reason_preview?: string
+  blockers: string[]
+  warnings: string[]
+  redacted_summary_preview: string
+}
+
+export type WakeSchedulerNavigationCheckpointWriteRunResultSummary = {
+  run_id: string
+  staged_write_id: string
+  approval_id?: string
+  command: string
+  command_name: string
+  execution_kind: "checkpoint_create" | "blocked" | string
+  risk: WakeSchedulerNavigationWriteRiskSummary
+  authority_gate: WakeSchedulerNavigationWriteAuthorityGateSummary
+  status: "succeeded" | "failed" | "blocked" | string
+  checkpoint_id?: string
+  checkpoint_hash?: string
+  event_count?: number
+  result_kind?: string
+  result_summary?: string
+  error?: string
+  started_at: string
+  completed_at: string
+  requested_by: string
+  result_hash: string
+}
+
+export type WakeSchedulerNavigationCheckpointWriteRunRecordSummary = {
+  run_id: string
+  staged_write_id: string
+  approval_id?: string
+  command: string
+  status: "succeeded" | "failed" | "blocked" | string
+  checkpoint_id?: string
+  completed_at: string
+  summary_preview: string
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -2289,6 +2340,9 @@ export type WakeSchedulerUiState = {
   writeReadinessPreview?: WakeSchedulerNavigationWriteReadinessPreviewSummary | null
   selectedWriteApproval?: WakeSchedulerNavigationWriteApprovalSummary | null
   writeApprovalRecords: WakeSchedulerNavigationWriteApprovalRecordSummary[]
+  checkpointWriteRunPreview?: WakeSchedulerNavigationCheckpointWriteRunPreviewSummary | null
+  latestCheckpointWriteRunResult?: WakeSchedulerNavigationCheckpointWriteRunResultSummary | null
+  checkpointWriteRunRecords: WakeSchedulerNavigationCheckpointWriteRunRecordSummary[]
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

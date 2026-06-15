@@ -8404,6 +8404,99 @@ describe("RuntimeServer core", () => {
     await removeServer.shutdown()
   })
 
+  test("wake scheduler navigation checkpoint write runs execute only approved staged checkpoints", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await statusServer.start()
+    await expect(statusServer.command("runtime.preview_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: "missing" })).resolves.toMatchObject({ can_execute: false, execution_kind: "blocked" })
+    await expect(statusServer.command("runtime.list_wake_scheduler_navigation_checkpoint_write_runs", { limit: 10 })).resolves.toEqual([])
+    await expect(statusServer.command("runtime.execute_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: "missing", requestedBy: "operator-checkpoint-run" })).rejects.toThrow(/requires active mode/)
+    await statusServer.shutdown()
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-15T12:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-15T12:00:00.000Z"),
+    })
+    await server.start()
+
+    const checkpoint = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint full token=abc123", allowMediumRisk: true, requestedBy: "operator-checkpoint-run" }) as { staged_write_id: string; command: string }
+    expect(checkpoint.command).not.toContain("abc123")
+
+    const blockedBeforeApproval = await server.command("runtime.preview_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: checkpoint.staged_write_id }) as { can_execute: boolean; blockers: string[] }
+    expect(blockedBeforeApproval.can_execute).toBe(false)
+    expect(blockedBeforeApproval.blockers.join(" ")).toContain("approval")
+
+    const approval = await server.command("runtime.approve_wake_scheduler_navigation_staged_write", { stagedWriteId: checkpoint.staged_write_id, reason: "operator approved token=def456", requestedBy: "operator-checkpoint-run" }) as { approval_id: string; reason: string }
+    expect(approval.reason).not.toContain("def456")
+
+    const executable = await server.command("runtime.preview_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: checkpoint.staged_write_id }) as { can_execute: boolean; approval_id?: string; execution_kind: string; checkpoint_scope?: string; checkpoint_reason_preview?: string }
+    expect(executable).toMatchObject({ can_execute: true, approval_id: approval.approval_id, execution_kind: "checkpoint_create", checkpoint_scope: "full" })
+    expect(executable.checkpoint_reason_preview).not.toContain("abc123")
+
+    const beforeDryRunKinds = await readEventKinds(dir)
+    const dryRun = await server.command("runtime.execute_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: checkpoint.staged_write_id, dryRun: true, requestedBy: "operator-checkpoint-run" }) as { status: string; result_kind?: string }
+    expect(dryRun).toMatchObject({ status: "succeeded", result_kind: "checkpoint_write_run_dry_run" })
+    expect(await readEventKinds(dir)).toEqual(beforeDryRunKinds)
+
+    const result = await server.command("runtime.execute_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: checkpoint.staged_write_id, requestedBy: "operator-checkpoint-run" }) as { status: string; checkpoint_id?: string; checkpoint_hash?: string; event_count?: number; result_summary?: string }
+    expect(result.status).toBe("succeeded")
+    expect(result.checkpoint_id).toBeTruthy()
+    expect(result.checkpoint_hash).toBeTruthy()
+    expect(result.result_summary).toContain("created checkpoint")
+
+    const activeStaged = await server.command("runtime.get_wake_scheduler_navigation_staged_write_command", { stagedWriteId: checkpoint.staged_write_id })
+    expect(activeStaged).toMatchObject({ staged_write_id: checkpoint.staged_write_id, status: "staged" })
+
+    const events = await readJsonlEvents(dir)
+    const eventKinds = events.map((event) => event.kind)
+    expect(eventKinds.filter((kind) => kind === "runtime_checkpoint_created")).toHaveLength(1)
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_checkpoint_write_run_started")
+    expect(eventKinds).toContain("runtime_wake_scheduler_navigation_checkpoint_write_run_succeeded")
+    for (const forbidden of ["runtime_wake_schedule_tick_completed", "runtime_wake_scheduler_started", "runtime_continuation_step_started", "runtime_wake_scheduler_recovery_recorded", "runtime_wake_scheduler_recovery_workflow_step_recorded", "runtime_opencode_handoff_sent", "runtime_mission_completed", "runtime_proposal_applied"]) {
+      expect(eventKinds).not.toContain(forbidden)
+    }
+    expect(JSON.stringify(events)).not.toContain("abc123")
+    expect(JSON.stringify(events)).not.toContain("def456")
+
+    const records = await server.command("runtime.list_wake_scheduler_navigation_checkpoint_write_runs", { limit: 10 }) as Array<{ run_id: string; status: string; checkpoint_id?: string }>
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ status: "succeeded", checkpoint_id: result.checkpoint_id })
+    await expect(server.command("runtime.get_wake_scheduler_navigation_checkpoint_write_run", { runId: records[0].run_id })).resolves.toMatchObject({ checkpoint_id: result.checkpoint_id, status: "succeeded" })
+
+    const lowRisk = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/wake-tick-dry-run", requestedBy: "operator-checkpoint-run" }) as { staged_write_id: string }
+    await expect(server.command("runtime.preview_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: lowRisk.staged_write_id })).resolves.toMatchObject({ can_execute: false, execution_kind: "blocked" })
+
+    await server.eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_staged_read_succeeded",
+      run_id: "checkpoint_run_recovery_evidence_run",
+      staged_id: "checkpoint_run_recovery_evidence_staged",
+      command: "/scheduler-recovery-show recovery_7y_fresh",
+      target_kind: "scheduler_recovery",
+      target_id: "recovery_7y_fresh",
+      status: "succeeded",
+      result_kind: "scheduler_recovery",
+      result_summary: "fresh recovery evidence",
+      started_at: "2026-05-15T11:58:00.000Z",
+      completed_at: "2026-05-15T11:59:00.000Z",
+      requested_by: "operator-checkpoint-run",
+    })
+    const recovery = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/scheduler-recovery-ack recovery_7y_fresh", allowMediumRisk: true, requestedBy: "operator-checkpoint-run" }) as { staged_write_id: string }
+    await server.command("runtime.approve_wake_scheduler_navigation_staged_write", { stagedWriteId: recovery.staged_write_id, requestedBy: "operator-checkpoint-run" })
+    await expect(server.command("runtime.preview_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: recovery.staged_write_id })).resolves.toMatchObject({ can_execute: false, execution_kind: "blocked" })
+
+    const revokedCheckpoint = await server.command("runtime.stage_wake_scheduler_navigation_write_command", { command: "/checkpoint executor rotate", allowMediumRisk: true, requestedBy: "operator-checkpoint-run" }) as { staged_write_id: string }
+    const revokedApproval = await server.command("runtime.approve_wake_scheduler_navigation_staged_write", { stagedWriteId: revokedCheckpoint.staged_write_id, requestedBy: "operator-checkpoint-run" }) as { approval_id: string }
+    await server.command("runtime.revoke_wake_scheduler_navigation_write_approval", { approvalId: revokedApproval.approval_id, requestedBy: "operator-checkpoint-run" })
+    await expect(server.command("runtime.preview_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: revokedCheckpoint.staged_write_id })).resolves.toMatchObject({ can_execute: false, execution_kind: "blocked" })
+
+    await server.shutdown()
+  })
+
   test("wake scheduler navigation write approval validation scans uncapped active staged writes", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
