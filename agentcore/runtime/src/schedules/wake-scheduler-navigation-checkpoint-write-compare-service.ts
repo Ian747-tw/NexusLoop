@@ -170,7 +170,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
   async stale(input: WakeSchedulerNavigationCheckpointWriteStaleInput = {}): Promise<WakeSchedulerNavigationCheckpointWriteStaleItem[]> {
     const query = readStaleInput(input)
     const nowMs = Date.parse(this.now())
-    const latestByStaged = latestRunByStaged(await this.terminalRuns())
+    const terminalRuns = await this.terminalRuns()
     const activeStaged = (await this.staging.activeCommands()).filter((item) => item.command_name === "/checkpoint" && item.risk === "medium_risk_write" && item.authority_gate === "checkpoint_runtime")
     const approvals = await this.approvals()
     const activeApproved = authoritativeApprovedByStaged(approvals, activeStagedProjection(activeStaged), this.now())
@@ -179,7 +179,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
     for (const stagedWriteId of stagedIds) {
       const staged = activeStaged.find((item) => item.staged_write_id === stagedWriteId)
       const approval = activeApproved.get(stagedWriteId)
-      const latest = latestByStaged.get(stagedWriteId)
+      const latest = latestRunForApproval(terminalRuns, stagedWriteId, approval?.approval_id)
       const latestMs = latest?.completed_at ? Date.parse(latest.completed_at) : NaN
       const age = Number.isFinite(latestMs) ? Math.max(0, nowMs - latestMs) : undefined
       const stale = age === undefined || age >= query.stale_after_ms
@@ -246,7 +246,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
         const stale = isCurrentDecision && (effectiveStatus === "approved" || effectiveStatus === "expired")
           ? (!stagedActive || (Number.isFinite(staleAgeBase) ? nowMs - staleAgeBase >= input.stale_after_ms : true))
           : false
-        const expiredBeforeUse = !latest && (!stagedActive || (Number.isFinite(expiresMs) && expiresMs <= nowMs))
+        const expiredBeforeUse = !latest && (effectiveStatus === "approved" || effectiveStatus === "expired") && (!stagedActive || (Number.isFinite(expiresMs) && expiresMs <= nowMs))
         const revokedBeforeUse = !latest && Boolean(approval.revoked_at)
         const warnings: string[] = []
         if (latest && Number.isFinite(expiresMs) && Date.parse(latest.completed_at) > expiresMs) warnings.push("checkpoint write-run occurred after approval expiry in event history")
@@ -589,10 +589,8 @@ function recommendedCommands(stagedWriteId: string, runId?: string, approvalId?:
   return commands
 }
 
-function latestRunByStaged(runs: TerminalCheckpointRun[]): Map<string, TerminalCheckpointRun> {
-  const latest = new Map<string, TerminalCheckpointRun>()
-  for (const run of runs) if (!latest.has(run.staged_write_id)) latest.set(run.staged_write_id, run)
-  return latest
+function latestRunForApproval(runs: TerminalCheckpointRun[], stagedWriteId: string, approvalId?: string): TerminalCheckpointRun | undefined {
+  return runs.find((run) => run.staged_write_id === stagedWriteId && (!approvalId || run.approval_id === approvalId))
 }
 
 function approvalStatusAt(approval: ApprovalRecord, now: string): ApprovalRecord["status"] {

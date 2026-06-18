@@ -9031,6 +9031,181 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation checkpoint write stale scopes runs to current approval", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const oldStageEventId = await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_restaged_old",
+      summary_preview: "/checkpoint full restaged",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_restaged_old",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      staged_event_id: oldStageEventId,
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      stage_hash: "stage_hash_restaged_old",
+      status: "approved",
+      approved_at: "2026-05-16T08:05:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_restaged_old",
+      expires_at: "2026-05-17T08:05:00.000Z",
+      created_at: "2026-05-16T08:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_checkpoint_write_run_succeeded",
+      run_id: "checkpoint_restaged_old_run",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      approval_id: "approval_checkpoint_restaged_old",
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      execution_kind: "checkpoint_create",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      status: "succeeded",
+      checkpoint_id: "checkpoint_restaged_old",
+      checkpoint_hash: "checkpoint_hash_restaged_old",
+      event_count: 3,
+      result_kind: "runtime_checkpoint",
+      result_summary: "created checkpoint checkpoint_restaged_old scope=full events=3",
+      started_at: "2026-05-16T08:10:00.000Z",
+      completed_at: "2026-05-16T08:10:01.000Z",
+      requested_by: "fixture",
+      result_hash: "result_hash_restaged_old",
+      created_at: "2026-05-16T08:10:01.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_removed",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      requested_by: "fixture",
+      reason: "restage",
+      created_at: "2026-05-16T08:20:00.000Z",
+    })
+    const newStageEventId = await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:25:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_restaged_new",
+      summary_preview: "/checkpoint full restaged",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_restaged_new",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      staged_event_id: newStageEventId,
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:25:00.000Z",
+      stage_hash: "stage_hash_restaged_new",
+      status: "approved",
+      approved_at: "2026-05-16T08:30:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_restaged_new",
+      expires_at: "2026-05-17T08:30:00.000Z",
+      created_at: "2026-05-16T08:30:00.000Z",
+    })
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const stale = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_stale", { staleAfterMs: 3_600_000 }) as Array<{ staged_write_id: string; approval_id?: string; latest_run_id?: string; reason: string }>
+    const restaged = stale.find((item) => item.staged_write_id === "staged_checkpoint_restaged_same_id")
+    expect(restaged).toMatchObject({ approval_id: "approval_checkpoint_restaged_new", reason: expect.stringContaining("no terminal run") })
+    expect(restaged?.latest_run_id).toBeUndefined()
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation checkpoint write approval usage does not expire rejected removals", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_rejected_removed",
+      command: "/checkpoint full rejected-removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_rejected_removed",
+      summary_preview: "/checkpoint full rejected-removed",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_rejected_removed",
+      staged_write_id: "staged_checkpoint_rejected_removed",
+      command: "/checkpoint full rejected-removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      stage_hash: "stage_hash_rejected_removed",
+      status: "rejected",
+      rejected_at: "2026-05-16T08:05:00.000Z",
+      requested_by: "fixture",
+      reason: "operator rejection",
+      evidence: [],
+      approval_hash: "approval_hash_rejected_removed",
+      created_at: "2026-05-16T08:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_removed",
+      staged_write_id: "staged_checkpoint_rejected_removed",
+      requested_by: "fixture",
+      reason: "cleanup",
+      created_at: "2026-05-16T08:10:00.000Z",
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { stagedWriteId: "staged_checkpoint_rejected_removed", staleAfterMs: 3_600_000 }) as { expired_unused_count: number; approvals: Array<{ approval_id: string; approval_status: string; expired_before_use: boolean; stale: boolean }> }
+    expect(usage.expired_unused_count).toBe(0)
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_rejected_removed")).toMatchObject({ approval_status: "rejected", expired_before_use: false, stale: false })
+    await server.shutdown()
+  })
+
   test("wake scheduler navigation write approval validation scans uncapped active staged writes", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
