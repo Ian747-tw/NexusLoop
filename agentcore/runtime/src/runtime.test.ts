@@ -8663,7 +8663,7 @@ describe("RuntimeServer core", () => {
       authority_gate: "checkpoint_runtime",
       status: "succeeded",
       result_kind: "runtime_checkpoint",
-      result_summary: "created checkpoint scope=full events=42 token=abc123",
+      result_summary: "created checkpoint checkpoint_artifact_a scope=full events=42 token=abc123",
       checkpoint_scope: "full",
       event_count: 42,
     })
@@ -8675,7 +8675,7 @@ describe("RuntimeServer core", () => {
       authority_gate: "checkpoint_runtime",
       status: "succeeded",
       result_kind: "runtime_checkpoint",
-      result_summary: "created checkpoint scope=full events=42 token=def456",
+      result_summary: "created checkpoint checkpoint_artifact_b scope=full events=42 token=def456",
       checkpoint_scope: "full",
       event_count: 42,
     })
@@ -8749,6 +8749,61 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", {}))).not.toContain("def456")
     expect(JSON.stringify(await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", {}))).not.toContain("ghi789")
     await expect(server.command("runtime.wake_scheduler_navigation_checkpoint_write_compare", { stagedWriteId: "missing" })).rejects.toThrow("no terminal runs")
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation checkpoint write history filters approval usage before caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_target_old",
+      staged_write_id: "staged_checkpoint_target_old",
+      command: "/checkpoint full target",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      status: "approved",
+      approved_at: "2026-05-15T00:00:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_target_old",
+      expires_at: "2026-05-16T00:00:00.000Z",
+      created_at: "2026-05-15T00:00:00.000Z",
+    })
+    for (let index = 0; index < 105; index += 1) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+        approval_id: `approval_checkpoint_newer_${index}`,
+        staged_write_id: `staged_checkpoint_newer_${index}`,
+        command: `/checkpoint full newer-${index}`,
+        command_name: "/checkpoint",
+        risk: "medium_risk_write",
+        authority_gate: "checkpoint_runtime",
+        target_kind: "checkpoint",
+        status: "approved",
+        approved_at: `2026-05-16T09:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        requested_by: "fixture",
+        evidence: [],
+        approval_hash: `approval_hash_newer_${index}`,
+        expires_at: "2026-05-17T09:00:00.000Z",
+        created_at: `2026-05-16T09:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      })
+    }
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const byApproval = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { approvalId: "approval_checkpoint_target_old" }) as { unused_approval_count: number; stale_approval_count: number; total_groups: number }
+    expect(byApproval).toMatchObject({ unused_approval_count: 1, stale_approval_count: 1, total_groups: 0 })
+    const byStaged = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { stagedWriteId: "staged_checkpoint_target_old" }) as { unused_approval_count: number; stale_approval_count: number; total_groups: number }
+    expect(byStaged).toMatchObject({ unused_approval_count: 1, stale_approval_count: 1, total_groups: 0 })
     await server.shutdown()
   })
 

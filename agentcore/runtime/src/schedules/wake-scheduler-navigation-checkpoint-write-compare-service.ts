@@ -107,8 +107,12 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
   async history(input: WakeSchedulerNavigationCheckpointWriteHistoryInput = {}): Promise<WakeSchedulerNavigationCheckpointWriteHistory> {
     const query = readHistoryInput(input)
     const groups = await this.groups(query)
-    const usage = await this.approvalUsage({ limit: HARD_LIMIT, stale_after_ms: query.stale_after_ms })
-    const filteredUsage = usage.approvals.filter((item) => (!query.staged_write_id || item.staged_write_id === query.staged_write_id) && (!query.approval_id || item.approval_id === query.approval_id))
+    const usage = await this.approvalUsage({
+      approval_id: query.approval_id,
+      staged_write_id: query.staged_write_id,
+      limit: HARD_LIMIT,
+      stale_after_ms: query.stale_after_ms,
+    })
     return redactValue({
       staged_write_id: query.staged_write_id,
       approval_id: query.approval_id,
@@ -119,8 +123,8 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
       changed_groups: groups.filter((group) => group.comparison_status === "changed").length,
       failed_groups: groups.filter((group) => group.failed_count > 0 || group.blocked_count > 0 || group.latest_status === "failed" || group.latest_status === "blocked").length,
       artifact_changed_groups: groups.filter((group) => group.checkpoint_artifact_changed).length,
-      unused_approval_count: filteredUsage.filter((item) => !item.used).length,
-      stale_approval_count: filteredUsage.filter((item) => item.stale).length,
+      unused_approval_count: usage.approvals.filter((item) => !item.used).length,
+      stale_approval_count: usage.approvals.filter((item) => item.stale).length,
       generated_at: this.now(),
     })
   }
@@ -510,12 +514,18 @@ function outcomeHash(value: Pick<TerminalCheckpointRun, "command" | "command_nam
     authority_gate: preview(value.authority_gate),
     status: value.status,
     result_kind: value.result_kind ? preview(value.result_kind) : undefined,
-    result_summary: value.result_summary ? preview(value.result_summary) : undefined,
+    result_summary: value.result_summary ? normalizeOutcomeText(value.result_summary) : undefined,
     error: value.error ? preview(value.error) : undefined,
     checkpoint_scope: value.checkpoint_scope ? preview(value.checkpoint_scope) : undefined,
     event_count: value.event_count,
   })
   return { outcome_hash: hashText(stableJson(hash_basis)), hash_basis }
+}
+
+function normalizeOutcomeText(value: string): string {
+  return preview(value)
+    .replace(/\bcheckpoint_[A-Za-z0-9_-]+\b/g, "checkpoint_[ARTIFACT_ID]")
+    .replace(/\b[0-9a-f]{64}\b/gi, "[ARTIFACT_HASH]")
 }
 
 function recommendedCommands(stagedWriteId: string, runId?: string, approvalId?: string): WakeSchedulerNavigationCheckpointWriteCompareCommand[] {
