@@ -8502,10 +8502,9 @@ describe("RuntimeServer core", () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
     const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
-    await eventStore.append({
+    const compareStageEventId = await eventStore.append({
       kind: "runtime_wake_scheduler_navigation_write_command_staged",
       staged_write_id: "staged_checkpoint_compare",
-      staged_event_id: "stage_event_compare",
       command: "/checkpoint full token=abc123",
       command_name: "/checkpoint",
       risk: "medium_risk_write",
@@ -8521,7 +8520,7 @@ describe("RuntimeServer core", () => {
       kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
       approval_id: "approval_checkpoint_compare",
       staged_write_id: "staged_checkpoint_compare",
-      staged_event_id: "stage_event_compare",
+      staged_event_id: compareStageEventId,
       command: "/checkpoint full token=abc123",
       command_name: "/checkpoint",
       risk: "medium_risk_write",
@@ -8570,6 +8569,39 @@ describe("RuntimeServer core", () => {
       approval_hash: "approval_hash_unused",
       expires_at: "2026-05-16T07:00:00.000Z",
       created_at: "2026-05-16T06:00:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_norun",
+      command: "/checkpoint full norun",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T06:20:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_norun",
+      summary_preview: "/checkpoint full norun",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_norun",
+      staged_write_id: "staged_checkpoint_norun",
+      command: "/checkpoint full norun",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T06:20:00.000Z",
+      stage_hash: "stage_hash_norun",
+      status: "approved",
+      approved_at: "2026-05-16T06:25:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_norun",
+      expires_at: "2026-05-17T06:25:00.000Z",
+      created_at: "2026-05-16T06:25:00.000Z",
     })
     await eventStore.append({
       kind: "runtime_wake_scheduler_navigation_write_command_staged",
@@ -8651,6 +8683,21 @@ describe("RuntimeServer core", () => {
       requested_by: "fixture",
       reason: "manual remove",
       created_at: "2026-05-16T07:10:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_removed",
+      staged_event_id: "stage_event_removed_new",
+      command: "/checkpoint full removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T07:20:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_removed_new",
+      summary_preview: "/checkpoint full removed",
     })
     for (const [index, checkpointHash] of ["checkpoint_hash_a", "checkpoint_hash_b"].entries()) {
       await eventStore.append({
@@ -8765,7 +8812,7 @@ describe("RuntimeServer core", () => {
     expect(group).toMatchObject({ staged_write_id: "staged_checkpoint_compare", run_count: 3 })
     const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { staleAfterMs: 3_600_000 }) as { used_count: number; unused_count: number; expired_unused_count: number; revoked_unused_count: number; approvals: Array<{ approval_id: string; approval_status: string; used: boolean; stale: boolean; expired_before_use: boolean; revoked_before_use: boolean; warnings: string[] }> }
     expect(usage.used_count).toBe(1)
-    expect(usage.unused_count).toBe(3)
+    expect(usage.unused_count).toBe(4)
     expect(usage.expired_unused_count).toBe(2)
     expect(usage.revoked_unused_count).toBe(1)
     expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_compare")).toMatchObject({ used: true })
@@ -8776,7 +8823,7 @@ describe("RuntimeServer core", () => {
 
     const stale = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_stale", { staleAfterMs: 3_600_000 }) as Array<{ staged_write_id: string; stale: boolean; latest_run_id?: string; reason: string; recommended_commands: Array<{ command: string; command_type: string }> }>
     expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_compare" && item.latest_run_id === "checkpoint_compare_failed")).toBe(true)
-    expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_unused" && item.stale && item.reason.includes("no terminal run"))).toBe(true)
+    expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_norun" && item.stale && item.reason.includes("no terminal run"))).toBe(true)
     expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_removed")).toBe(false)
     expect(stale.some((item) => item.recommended_commands.some((command) => command.command.includes("/scheduler-nav-checkpoint-run-preview")))).toBe(true)
 

@@ -52,6 +52,7 @@ interface TerminalCheckpointRun {
 interface ApprovalRecord {
   approval_id: string
   staged_write_id: string
+  staged_event_id?: string
   command: string
   command_name: string
   risk: string
@@ -61,7 +62,15 @@ interface ApprovalRecord {
   rejected_at?: string
   revoked_at?: string
   expires_at?: string
+  staged_at?: string
+  stage_hash?: string
   updated_at: string
+}
+
+interface ActiveStagedInstance {
+  staged_event_id?: string
+  staged_at?: string
+  stage_hash?: string
 }
 
 interface HistoryQuery {
@@ -163,7 +172,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
     const activeStaged = (await this.staging.activeCommands()).filter((item) => item.command_name === "/checkpoint" && item.risk === "medium_risk_write" && item.authority_gate === "checkpoint_runtime")
     const usage = await this.approvalUsageRows({ limit: HARD_LIMIT, stale_after_ms: query.stale_after_ms })
     const activeApproved = usage.filter((item) => item.approval_status === "approved")
-    const stagedIds = new Set([...activeStaged.map((item) => item.staged_write_id), ...activeApproved.map((item) => item.staged_write_id)])
+    const stagedIds = new Set(activeApproved.map((item) => item.staged_write_id))
     const items: WakeSchedulerNavigationCheckpointWriteStaleItem[] = []
     for (const stagedWriteId of stagedIds) {
       const staged = activeStaged.find((item) => item.staged_write_id === stagedWriteId)
@@ -212,9 +221,8 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
     const approvals = await this.approvals()
     const now = this.now()
     const nowMs = Date.parse(now)
-    const activeStagedIds = new Set((await this.staging.activeCommands())
-      .filter((item) => item.command_name === "/checkpoint" && item.risk === "medium_risk_write" && item.authority_gate === "checkpoint_runtime")
-      .map((item) => item.staged_write_id))
+    const activeStaged = activeStagedProjection((await this.staging.activeCommands())
+      .filter((item) => item.command_name === "/checkpoint" && item.risk === "medium_risk_write" && item.authority_gate === "checkpoint_runtime"))
     const usage = approvals
       .filter((approval) => approval.command_name === "/checkpoint" && approval.risk === "medium_risk_write" && approval.authority_gate === "checkpoint_runtime")
       .filter((approval) => !input.approval_id || approval.approval_id === input.approval_id)
@@ -223,7 +231,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
         const approvalRuns = runs.filter((run) => run.approval_id === approval.approval_id).sort((left, right) => right.completed_at.localeCompare(left.completed_at) || left.run_id.localeCompare(right.run_id))
         const latest = approvalRuns[0]
         const approvalStatus = approvalStatusAt(approval, now)
-        const stagedActive = activeStagedIds.has(approval.staged_write_id)
+        const stagedActive = stagedInstanceIsActive(approval, activeStaged)
         const effectiveStatus = approvalStatus === "approved" && !stagedActive ? "expired" : approvalStatus
         const approvedAtMs = approval.approved_at ? Date.parse(approval.approved_at) : NaN
         const latestMs = latest?.completed_at ? Date.parse(latest.completed_at) : NaN
@@ -372,6 +380,7 @@ function approvalFromEvent(event: JsonlEvent): ApprovalRecord | null {
   return redactValue({
     approval_id: preview(event.approval_id),
     staged_write_id: preview(event.staged_write_id),
+    staged_event_id: typeof event.staged_event_id === "string" ? preview(event.staged_event_id) : undefined,
     command: preview(event.command),
     command_name: readString(event.command_name, readCommandName(event.command)),
     risk: readString(event.risk, "unsupported"),
@@ -381,8 +390,28 @@ function approvalFromEvent(event: JsonlEvent): ApprovalRecord | null {
     rejected_at: typeof event.rejected_at === "string" ? preview(event.rejected_at) : undefined,
     revoked_at: typeof event.revoked_at === "string" ? preview(event.revoked_at) : undefined,
     expires_at: typeof event.expires_at === "string" ? preview(event.expires_at) : undefined,
+    staged_at: typeof event.staged_at === "string" ? preview(event.staged_at) : undefined,
+    stage_hash: typeof event.stage_hash === "string" ? preview(event.stage_hash) : undefined,
     updated_at: readString(event.created_at ?? event.approved_at ?? event.rejected_at, ""),
   })
+}
+
+function activeStagedProjection(stagedCommands: Array<{ staged_write_id: string; staged_event_id?: string; staged_at?: string; stage_hash?: string }>): Map<string, ActiveStagedInstance[]> {
+  const out = new Map<string, ActiveStagedInstance[]>()
+  for (const staged of stagedCommands) {
+    const existing = out.get(staged.staged_write_id) ?? []
+    existing.push({ staged_event_id: staged.staged_event_id, staged_at: staged.staged_at, stage_hash: staged.stage_hash })
+    out.set(staged.staged_write_id, existing)
+  }
+  return out
+}
+
+function stagedInstanceIsActive(approval: ApprovalRecord, activeStaged: Map<string, ActiveStagedInstance[]>): boolean {
+  const active = activeStaged.get(approval.staged_write_id) ?? []
+  if (active.length === 0) return false
+  if (approval.staged_event_id) return active.some((staged) => staged.staged_event_id === approval.staged_event_id)
+  if (!approval.staged_at && !approval.stage_hash) return true
+  return active.some((staged) => staged.staged_at === approval.staged_at && staged.stage_hash === approval.stage_hash)
 }
 
 function groupFromRuns(runs: TerminalCheckpointRun[]): WakeSchedulerNavigationCheckpointWriteGroup {
