@@ -5360,11 +5360,19 @@ function fakeCheckpointWriteOutcomeHash(run: WakeSchedulerNavigationCheckpointWr
     authority_gate: run.authority_gate,
     status: run.status,
     result_kind: run.result_kind,
-    result_summary: run.result_summary,
+    result_summary: run.result_summary ? fakeCheckpointWriteNormalizedOutcomeText(run.result_summary) : undefined,
     error: run.error,
     checkpoint_scope: checkpointScope,
-    event_count: run.event_count,
   }))
+}
+
+function fakeCheckpointWriteNormalizedOutcomeText(value: string): string {
+  return value
+    .slice(0, 1024)
+    .replace(/\bcheckpoint_[A-Za-z0-9_-]+\b/g, "checkpoint_[ARTIFACT_ID]")
+    .replace(/\bfake-checkpoint-[A-Za-z0-9_-]+\b/g, "checkpoint_[ARTIFACT_ID]")
+    .replace(/\b[0-9a-f]{64}\b/gi, "[ARTIFACT_HASH]")
+    .replace(/\bevents=\d+\b/g, "events=[ARTIFACT_EVENT_COUNT]")
 }
 
 function fakeCheckpointWriteCompareCommands(stagedWriteId: string, runId?: string, approvalId?: string) {
