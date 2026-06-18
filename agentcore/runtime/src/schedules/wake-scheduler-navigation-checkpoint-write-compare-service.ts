@@ -225,6 +225,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
     const nowMs = Date.parse(now)
     const activeStaged = activeStagedProjection((await this.staging.activeCommands())
       .filter((item) => item.command_name === "/checkpoint" && item.risk === "medium_risk_write" && item.authority_gate === "checkpoint_runtime"))
+    const latestDecision = latestCheckpointApprovalDecisionByStaged(approvals, activeStaged, now)
     const usage = approvals
       .filter((approval) => approval.command_name === "/checkpoint" && approval.risk === "medium_risk_write" && approval.authority_gate === "checkpoint_runtime")
       .filter((approval) => !input.approval_id || approval.approval_id === input.approval_id)
@@ -236,12 +237,15 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
         const approvalStatus = approvalStatusAt(approval, now)
         const stagedActive = stagedInstanceIsActive(approval, activeStaged)
         const effectiveStatus = approvalStatus === "approved" && !stagedActive ? "expired" : approvalStatus
+        const isCurrentDecision = latestDecision.get(approval.staged_write_id)?.approval_id === approval.approval_id
         const approvedAtMs = approval.approved_at ? Date.parse(approval.approved_at) : NaN
         const latestMs = latest?.completed_at ? Date.parse(latest.completed_at) : NaN
         const expiresMs = approval.expires_at ? Date.parse(approval.expires_at) : NaN
         const revokedMs = approval.revoked_at ? Date.parse(approval.revoked_at) : NaN
         const staleAgeBase = Number.isFinite(latestMs) ? latestMs : approvedAtMs
-        const stale = !stagedActive || (Number.isFinite(staleAgeBase) ? nowMs - staleAgeBase >= input.stale_after_ms : true)
+        const stale = isCurrentDecision && (effectiveStatus === "approved" || effectiveStatus === "expired")
+          ? (!stagedActive || (Number.isFinite(staleAgeBase) ? nowMs - staleAgeBase >= input.stale_after_ms : true))
+          : false
         const expiredBeforeUse = !latest && (!stagedActive || (Number.isFinite(expiresMs) && expiresMs <= nowMs))
         const revokedBeforeUse = !latest && Boolean(approval.revoked_at)
         const warnings: string[] = []
@@ -610,6 +614,22 @@ function authoritativeApprovedByStaged(approvals: ApprovalRecord[], activeStaged
   for (const [stagedWriteId, rows] of grouped) {
     const latest = rows.sort((left, right) => left.approval.updated_at.localeCompare(right.approval.updated_at) || left.index - right.index).at(-1)?.approval
     if (latest?.status === "approved") out.set(stagedWriteId, latest)
+  }
+  return out
+}
+
+function latestCheckpointApprovalDecisionByStaged(approvals: ApprovalRecord[], activeStaged: Map<string, ActiveStagedInstance[]>, now: string): Map<string, ApprovalRecord> {
+  const grouped = new Map<string, Array<{ approval: ApprovalRecord; index: number }>>()
+  approvals.forEach((approval, index) => {
+    if (approval.command_name !== "/checkpoint" || approval.risk !== "medium_risk_write" || approval.authority_gate !== "checkpoint_runtime") return
+    const rows = grouped.get(approval.staged_write_id) ?? []
+    rows.push({ approval: effectiveApprovalForActiveStaged(approval, activeStaged, now), index })
+    grouped.set(approval.staged_write_id, rows)
+  })
+  const out = new Map<string, ApprovalRecord>()
+  for (const [stagedWriteId, rows] of grouped) {
+    const latest = rows.sort((left, right) => left.approval.updated_at.localeCompare(right.approval.updated_at) || left.index - right.index).at(-1)?.approval
+    if (latest) out.set(stagedWriteId, latest)
   }
   return out
 }

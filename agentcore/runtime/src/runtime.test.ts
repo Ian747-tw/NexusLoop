@@ -8967,8 +8967,10 @@ describe("RuntimeServer core", () => {
     await server.start()
     const stale = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_stale", { staleAfterMs: 3_600_000 }) as Array<{ staged_write_id: string; recommended_commands: Array<{ command: string }> }>
     expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_rejected_current")).toBe(false)
-    const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { stagedWriteId: "staged_checkpoint_rejected_current", staleAfterMs: 3_600_000 }) as { approvals: Array<{ approval_id: string; approval_status: string }> }
+    const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { stagedWriteId: "staged_checkpoint_rejected_current", staleAfterMs: 3_600_000 }) as { stale_count: number; approvals: Array<{ approval_id: string; approval_status: string; stale: boolean }> }
     expect(usage.approvals.map((approval) => approval.approval_id)).toEqual(expect.arrayContaining(["approval_checkpoint_rejected_current_approved", "approval_checkpoint_rejected_current_rejected"]))
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_rejected_current_rejected")).toMatchObject({ approval_status: "rejected", stale: false })
+    expect(usage.stale_count).toBe(0)
     await server.shutdown()
   })
 
