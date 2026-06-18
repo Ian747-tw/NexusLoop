@@ -4066,4 +4066,63 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("abc123")
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
+
+  test("wake scheduler navigation checkpoint write comparison is read-only and bounded", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-stage-medium", args: ["/checkpoint", "full", "token=abc123"] })
+    const stagedWriteId = state.wakeScheduler?.selectedStagedWriteCommand?.staged_write_id
+    expect(stagedWriteId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-write-approve", args: [stagedWriteId!, "token=abc123"] })
+    const approvalId = state.wakeScheduler?.selectedWriteApproval?.approval_id
+    expect(approvalId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-run", args: [stagedWriteId!] })
+    const firstRunId = state.wakeScheduler?.latestCheckpointWriteRunResult?.run_id
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-run", args: [stagedWriteId!] })
+    const secondRunId = state.wakeScheduler?.latestCheckpointWriteRunResult?.run_id
+    expect(firstRunId).toBeTruthy()
+    expect(secondRunId).toBeTruthy()
+    expect(secondRunId).not.toBe(firstRunId)
+    const runCount = state.wakeScheduler?.checkpointWriteRunRecords.length
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-history", args: [] })
+    expect(state.wakeScheduler?.checkpointWriteHistory).toMatchObject({ total_groups: 1, total_runs: 2 })
+    expect(state.wakeScheduler?.checkpointWriteHistory?.groups[0]).toMatchObject({ staged_write_id: stagedWriteId, run_count: 2 })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-history", args: [`staged=${stagedWriteId}`] })
+    expect(state.wakeScheduler?.checkpointWriteHistory?.staged_write_id).toBe(stagedWriteId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-history", args: [`approval=${approvalId}`] })
+    expect(state.wakeScheduler?.checkpointWriteHistory?.groups[0].approval_ids).toContain(approvalId)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-compare", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.checkpointWriteComparison?.staged_write_id).toBe(stagedWriteId)
+    expect(state.wakeScheduler?.checkpointWriteComparison?.checkpoint_artifact_delta).toContain("checkpoint artifact")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-compare-runs", args: [firstRunId!, secondRunId!] })
+    expect(state.wakeScheduler?.checkpointWriteComparison?.left_run_id).toBe(firstRunId)
+    expect(state.wakeScheduler?.checkpointWriteComparison?.right_run_id).toBe(secondRunId)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-stale", args: ["after=1d"] })
+    expect(state.wakeScheduler?.checkpointWriteStaleItems.some((item) => item.staged_write_id === stagedWriteId)).toBe(true)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-group", args: [stagedWriteId!] })
+    expect(state.wakeScheduler?.selectedCheckpointWriteGroup).toMatchObject({ staged_write_id: stagedWriteId, run_count: 2 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-approval-usage", args: [] })
+    expect(state.wakeScheduler?.checkpointApprovalUsage).toMatchObject({ total_approvals: 1, used_count: 1 })
+    expect(state.wakeScheduler?.checkpointApprovalUsage?.approvals[0]).toMatchObject({ approval_id: approvalId, used: true })
+    expect(state.wakeScheduler?.checkpointWriteRunRecords.length).toBe(runCount)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "scheduler-nav-checkpoint-history", args: ["bad"] })
+    expect(state.wakeScheduler?.commandError).toContain("key=value")
+
+    expect(state.wakeScheduler?.status?.status).not.toBe("running")
+    expect(state.wakeSchedules?.lastTick).toBeUndefined()
+    expect(state.continuation?.lastStepResult).toBeUndefined()
+    expect(runtime.sentCommands).toEqual([])
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("scheduler_checkpoint_write_comparison")
+    expect(snapshot).toContain("comparison uses bounded summaries")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
 })
