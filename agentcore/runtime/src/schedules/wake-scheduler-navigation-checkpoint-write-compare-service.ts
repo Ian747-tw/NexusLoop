@@ -517,7 +517,6 @@ function outcomeHash(value: Pick<TerminalCheckpointRun, "command" | "command_nam
     result_summary: value.result_summary ? normalizeOutcomeText(value.result_summary) : undefined,
     error: value.error ? preview(value.error) : undefined,
     checkpoint_scope: value.checkpoint_scope ? preview(value.checkpoint_scope) : undefined,
-    event_count: value.event_count,
   })
   return { outcome_hash: hashText(stableJson(hash_basis)), hash_basis }
 }
@@ -526,6 +525,7 @@ function normalizeOutcomeText(value: string): string {
   return preview(value)
     .replace(/\bcheckpoint_[A-Za-z0-9_-]+\b/g, "checkpoint_[ARTIFACT_ID]")
     .replace(/\b[0-9a-f]{64}\b/gi, "[ARTIFACT_HASH]")
+    .replace(/\bevents=\d+\b/g, "events=[ARTIFACT_EVENT_COUNT]")
 }
 
 function recommendedCommands(stagedWriteId: string, runId?: string, approvalId?: string): WakeSchedulerNavigationCheckpointWriteCompareCommand[] {

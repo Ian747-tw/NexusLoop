@@ -13,7 +13,6 @@ export interface WakeSchedulerNavigationCheckpointWriteOutcomeHash {
     result_summary?: string
     error?: string
     checkpoint_scope?: string
-    event_count?: number
   }
 }
 

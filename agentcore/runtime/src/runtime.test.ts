@@ -8626,9 +8626,9 @@ describe("RuntimeServer core", () => {
         status: "succeeded",
         checkpoint_id: `checkpoint_artifact_${index + 1}`,
         checkpoint_hash: checkpointHash,
-        event_count: 42,
+        event_count: 42 + index,
         result_kind: "runtime_checkpoint",
-        result_summary: "created checkpoint scope=full events=42 token=ghi789",
+        result_summary: `created checkpoint checkpoint_artifact_${index + 1} scope=full events=${42 + index} token=ghi789`,
         started_at: `2026-05-16T09:0${index}:00.000Z`,
         completed_at: `2026-05-16T09:0${index}:01.000Z`,
         requested_by: `operator-${index}`,
@@ -8675,9 +8675,9 @@ describe("RuntimeServer core", () => {
       authority_gate: "checkpoint_runtime",
       status: "succeeded",
       result_kind: "runtime_checkpoint",
-      result_summary: "created checkpoint checkpoint_artifact_b scope=full events=42 token=def456",
+      result_summary: "created checkpoint checkpoint_artifact_b scope=full events=43 token=def456",
       checkpoint_scope: "full",
-      event_count: 42,
+      event_count: 43,
     })
     const changed = stableWakeSchedulerNavigationCheckpointWriteOutcomeHash({
       command: "/checkpoint full [REDACTED]",
@@ -8687,9 +8687,9 @@ describe("RuntimeServer core", () => {
       authority_gate: "checkpoint_runtime",
       status: "succeeded",
       result_kind: "runtime_checkpoint",
-      result_summary: "created checkpoint scope=full events=43",
-      checkpoint_scope: "full",
-      event_count: 43,
+      result_summary: "created checkpoint checkpoint_artifact_c scope=executor events=42",
+      checkpoint_scope: "executor",
+      event_count: 42,
     })
     expect(sameA.outcome_hash).toBe(sameB.outcome_hash)
     expect(sameA.outcome_hash).not.toBe(changed.outcome_hash)
