@@ -8897,6 +8897,81 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation checkpoint write stale uses current approval decision", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_rejected_current",
+      staged_event_id: "stage_event_rejected_current",
+      command: "/checkpoint full current-decision",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_rejected_current",
+      summary_preview: "/checkpoint full current-decision",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_rejected_current_approved",
+      staged_write_id: "staged_checkpoint_rejected_current",
+      staged_event_id: "stage_event_rejected_current",
+      command: "/checkpoint full current-decision",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      stage_hash: "stage_hash_rejected_current",
+      status: "approved",
+      approved_at: "2026-05-16T08:05:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_rejected_current_approved",
+      expires_at: "2026-05-17T08:05:00.000Z",
+      created_at: "2026-05-16T08:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_rejected_current_rejected",
+      staged_write_id: "staged_checkpoint_rejected_current",
+      staged_event_id: "stage_event_rejected_current",
+      command: "/checkpoint full current-decision",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      stage_hash: "stage_hash_rejected_current",
+      status: "rejected",
+      rejected_at: "2026-05-16T08:10:00.000Z",
+      requested_by: "fixture",
+      reason: "operator changed mind",
+      evidence: [],
+      approval_hash: "approval_hash_rejected_current_rejected",
+      created_at: "2026-05-16T08:10:00.000Z",
+    })
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const stale = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_stale", { staleAfterMs: 3_600_000 }) as Array<{ staged_write_id: string; recommended_commands: Array<{ command: string }> }>
+    expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_rejected_current")).toBe(false)
+    const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { stagedWriteId: "staged_checkpoint_rejected_current", staleAfterMs: 3_600_000 }) as { approvals: Array<{ approval_id: string; approval_status: string }> }
+    expect(usage.approvals.map((approval) => approval.approval_id)).toEqual(expect.arrayContaining(["approval_checkpoint_rejected_current_approved", "approval_checkpoint_rejected_current_rejected"]))
+    await server.shutdown()
+  })
+
   test("wake scheduler navigation write approval validation scans uncapped active staged writes", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

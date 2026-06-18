@@ -170,13 +170,13 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
     const nowMs = Date.parse(this.now())
     const latestByStaged = latestRunByStaged(await this.terminalRuns())
     const activeStaged = (await this.staging.activeCommands()).filter((item) => item.command_name === "/checkpoint" && item.risk === "medium_risk_write" && item.authority_gate === "checkpoint_runtime")
-    const usage = await this.approvalUsageRows({ limit: HARD_LIMIT, stale_after_ms: query.stale_after_ms })
-    const activeApproved = usage.filter((item) => item.approval_status === "approved")
-    const stagedIds = new Set(activeApproved.map((item) => item.staged_write_id))
+    const approvals = await this.approvals()
+    const activeApproved = authoritativeApprovedByStaged(approvals, activeStagedProjection(activeStaged), this.now())
+    const stagedIds = new Set(activeApproved.keys())
     const items: WakeSchedulerNavigationCheckpointWriteStaleItem[] = []
     for (const stagedWriteId of stagedIds) {
       const staged = activeStaged.find((item) => item.staged_write_id === stagedWriteId)
-      const approval = activeApproved.find((item) => item.staged_write_id === stagedWriteId)
+      const approval = activeApproved.get(stagedWriteId)
       const latest = latestByStaged.get(stagedWriteId)
       const latestMs = latest?.completed_at ? Date.parse(latest.completed_at) : NaN
       const age = Number.isFinite(latestMs) ? Math.max(0, nowMs - latestMs) : undefined
@@ -591,6 +591,30 @@ function latestRunByStaged(runs: TerminalCheckpointRun[]): Map<string, TerminalC
 function approvalStatusAt(approval: ApprovalRecord, now: string): ApprovalRecord["status"] {
   if (approval.status === "approved" && approval.expires_at && Date.parse(approval.expires_at) <= Date.parse(now)) return "expired"
   return approval.status
+}
+
+function authoritativeApprovedByStaged(approvals: ApprovalRecord[], activeStaged: Map<string, ActiveStagedInstance[]>, now: string): Map<string, ApprovalRecord> {
+  const grouped = new Map<string, Array<{ approval: ApprovalRecord; index: number }>>()
+  approvals.forEach((approval, index) => {
+    if (approval.command_name !== "/checkpoint" || approval.risk !== "medium_risk_write" || approval.authority_gate !== "checkpoint_runtime") return
+    const effective = effectiveApprovalForActiveStaged(approval, activeStaged, now)
+    if (effective.status === "expired") return
+    const rows = grouped.get(effective.staged_write_id) ?? []
+    rows.push({ approval: effective, index })
+    grouped.set(effective.staged_write_id, rows)
+  })
+  const out = new Map<string, ApprovalRecord>()
+  for (const [stagedWriteId, rows] of grouped) {
+    const latest = rows.sort((left, right) => left.approval.updated_at.localeCompare(right.approval.updated_at) || left.index - right.index).at(-1)?.approval
+    if (latest?.status === "approved") out.set(stagedWriteId, latest)
+  }
+  return out
+}
+
+function effectiveApprovalForActiveStaged(approval: ApprovalRecord, activeStaged: Map<string, ActiveStagedInstance[]>, now: string): ApprovalRecord {
+  const status = approvalStatusAt(approval, now)
+  if (status === "approved" && !stagedInstanceIsActive(approval, activeStaged)) return { ...approval, status: "expired" }
+  return { ...approval, status }
 }
 
 function readHistoryInput(value: unknown): HistoryQuery {
