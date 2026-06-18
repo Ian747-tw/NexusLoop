@@ -8972,6 +8972,63 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("wake scheduler navigation checkpoint write history filters approval counts by command", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    for (const suffix of ["target", "other"]) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_write_command_staged",
+        staged_write_id: `staged_checkpoint_${suffix}`,
+        command: `/checkpoint full ${suffix}`,
+        command_name: "/checkpoint",
+        risk: "medium_risk_write",
+        authority_gate: "checkpoint_runtime",
+        target_kind: "checkpoint",
+        staged_at: "2026-05-16T08:00:00.000Z",
+        staged_by: "fixture",
+        status: "staged",
+        stage_hash: `stage_hash_${suffix}`,
+        summary_preview: `/checkpoint full ${suffix}`,
+      })
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+        approval_id: `approval_checkpoint_${suffix}`,
+        staged_write_id: `staged_checkpoint_${suffix}`,
+        command: `/checkpoint full ${suffix}`,
+        command_name: "/checkpoint",
+        risk: "medium_risk_write",
+        authority_gate: "checkpoint_runtime",
+        target_kind: "checkpoint",
+        staged_at: "2026-05-16T08:00:00.000Z",
+        stage_hash: `stage_hash_${suffix}`,
+        status: "approved",
+        approved_at: "2026-05-16T08:05:00.000Z",
+        requested_by: "fixture",
+        evidence: [],
+        approval_hash: `approval_hash_${suffix}`,
+        expires_at: "2026-05-17T08:05:00.000Z",
+        created_at: "2026-05-16T08:05:00.000Z",
+      })
+    }
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const filtered = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { command: "/checkpoint full target", staleAfterMs: 3_600_000 }) as { unused_approval_count: number; stale_approval_count: number }
+    expect(filtered.unused_approval_count).toBe(1)
+    expect(filtered.stale_approval_count).toBe(1)
+    const unfiltered = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { staleAfterMs: 3_600_000 }) as { unused_approval_count: number; stale_approval_count: number }
+    expect(unfiltered.unused_approval_count).toBe(2)
+    expect(unfiltered.stale_approval_count).toBe(2)
+    await server.shutdown()
+  })
+
   test("wake scheduler navigation write approval validation scans uncapped active staged writes", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

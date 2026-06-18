@@ -102,6 +102,7 @@ interface StaleQuery {
 interface ApprovalUsageQuery {
   approval_id?: string
   staged_write_id?: string
+  command?: string
   limit: number
   stale_after_ms: number
 }
@@ -119,6 +120,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
     const usage = await this.approvalUsageRows({
       approval_id: query.approval_id,
       staged_write_id: query.staged_write_id,
+      command: query.command,
       limit: HARD_LIMIT,
       stale_after_ms: query.stale_after_ms,
     })
@@ -227,6 +229,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
       .filter((approval) => approval.command_name === "/checkpoint" && approval.risk === "medium_risk_write" && approval.authority_gate === "checkpoint_runtime")
       .filter((approval) => !input.approval_id || approval.approval_id === input.approval_id)
       .filter((approval) => !input.staged_write_id || approval.staged_write_id === input.staged_write_id)
+      .filter((approval) => !input.command || approval.command === input.command)
       .map((approval): WakeSchedulerNavigationCheckpointApprovalUsage => {
         const approvalRuns = runs.filter((run) => run.approval_id === approval.approval_id).sort((left, right) => right.completed_at.localeCompare(left.completed_at) || left.run_id.localeCompare(right.run_id))
         const latest = approvalRuns[0]
@@ -659,6 +662,7 @@ function readApprovalUsageInput(value: unknown): ApprovalUsageQuery {
   return {
     approval_id: optionalCleanString(record.approval_id ?? record.approvalId),
     staged_write_id: optionalCleanString(record.staged_write_id ?? record.stagedWriteId),
+    command: optionalCleanString(record.command),
     limit: readLimit(record.limit),
     stale_after_ms: readDurationMs(record.stale_after_ms ?? record.staleAfterMs, DEFAULT_STALE_AFTER_MS, "stale_after_ms"),
   }
