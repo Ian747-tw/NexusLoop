@@ -107,7 +107,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
   async history(input: WakeSchedulerNavigationCheckpointWriteHistoryInput = {}): Promise<WakeSchedulerNavigationCheckpointWriteHistory> {
     const query = readHistoryInput(input)
     const groups = await this.groups(query)
-    const usage = await this.approvalUsage({
+    const usage = await this.approvalUsageRows({
       approval_id: query.approval_id,
       staged_write_id: query.staged_write_id,
       limit: HARD_LIMIT,
@@ -123,8 +123,8 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
       changed_groups: groups.filter((group) => group.comparison_status === "changed").length,
       failed_groups: groups.filter((group) => group.failed_count > 0 || group.blocked_count > 0 || group.latest_status === "failed" || group.latest_status === "blocked").length,
       artifact_changed_groups: groups.filter((group) => group.checkpoint_artifact_changed).length,
-      unused_approval_count: usage.approvals.filter((item) => !item.used).length,
-      stale_approval_count: usage.approvals.filter((item) => item.stale).length,
+      unused_approval_count: usage.filter((item) => !item.used).length,
+      stale_approval_count: usage.filter((item) => item.stale).length,
       generated_at: this.now(),
     })
   }
@@ -161,8 +161,8 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
     const nowMs = Date.parse(this.now())
     const latestByStaged = latestRunByStaged(await this.terminalRuns())
     const activeStaged = (await this.staging.activeCommands()).filter((item) => item.command_name === "/checkpoint" && item.risk === "medium_risk_write" && item.authority_gate === "checkpoint_runtime")
-    const usage = await this.approvalUsage({ limit: HARD_LIMIT, stale_after_ms: query.stale_after_ms })
-    const activeApproved = usage.approvals.filter((item) => item.approval_status === "approved")
+    const usage = await this.approvalUsageRows({ limit: HARD_LIMIT, stale_after_ms: query.stale_after_ms })
+    const activeApproved = usage.filter((item) => item.approval_status === "approved")
     const stagedIds = new Set([...activeStaged.map((item) => item.staged_write_id), ...activeApproved.map((item) => item.staged_write_id)])
     const items: WakeSchedulerNavigationCheckpointWriteStaleItem[] = []
     for (const stagedWriteId of stagedIds) {
@@ -193,34 +193,56 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
 
   async approvalUsage(input: WakeSchedulerNavigationCheckpointApprovalUsageInput = {}): Promise<WakeSchedulerNavigationCheckpointApprovalUsageSummary> {
     const query = readApprovalUsageInput(input)
+    const allUsage = await this.approvalUsageRows(query)
+    const usage = allUsage.slice(0, query.limit)
+    return redactValue({
+      approvals: usage,
+      total_approvals: allUsage.length,
+      used_count: allUsage.filter((item) => item.used).length,
+      unused_count: allUsage.filter((item) => !item.used).length,
+      stale_count: allUsage.filter((item) => item.stale).length,
+      expired_unused_count: allUsage.filter((item) => item.expired_before_use).length,
+      revoked_unused_count: allUsage.filter((item) => item.revoked_before_use).length,
+      generated_at: this.now(),
+    })
+  }
+
+  async approvalUsageRows(input: ApprovalUsageQuery): Promise<WakeSchedulerNavigationCheckpointApprovalUsage[]> {
     const runs = await this.terminalRuns()
     const approvals = await this.approvals()
     const now = this.now()
     const nowMs = Date.parse(now)
+    const activeStagedIds = new Set((await this.staging.activeCommands())
+      .filter((item) => item.command_name === "/checkpoint" && item.risk === "medium_risk_write" && item.authority_gate === "checkpoint_runtime")
+      .map((item) => item.staged_write_id))
     const usage = approvals
       .filter((approval) => approval.command_name === "/checkpoint" && approval.risk === "medium_risk_write" && approval.authority_gate === "checkpoint_runtime")
-      .filter((approval) => !query.approval_id || approval.approval_id === query.approval_id)
-      .filter((approval) => !query.staged_write_id || approval.staged_write_id === query.staged_write_id)
+      .filter((approval) => !input.approval_id || approval.approval_id === input.approval_id)
+      .filter((approval) => !input.staged_write_id || approval.staged_write_id === input.staged_write_id)
       .map((approval): WakeSchedulerNavigationCheckpointApprovalUsage => {
         const approvalRuns = runs.filter((run) => run.approval_id === approval.approval_id).sort((left, right) => right.completed_at.localeCompare(left.completed_at) || left.run_id.localeCompare(right.run_id))
         const latest = approvalRuns[0]
+        const approvalStatus = approvalStatusAt(approval, now)
+        const stagedActive = activeStagedIds.has(approval.staged_write_id)
+        const effectiveStatus = approvalStatus === "approved" && !stagedActive ? "expired" : approvalStatus
         const approvedAtMs = approval.approved_at ? Date.parse(approval.approved_at) : NaN
         const latestMs = latest?.completed_at ? Date.parse(latest.completed_at) : NaN
         const expiresMs = approval.expires_at ? Date.parse(approval.expires_at) : NaN
         const revokedMs = approval.revoked_at ? Date.parse(approval.revoked_at) : NaN
         const staleAgeBase = Number.isFinite(latestMs) ? latestMs : approvedAtMs
-        const stale = Number.isFinite(staleAgeBase) ? nowMs - staleAgeBase >= query.stale_after_ms : true
-        const expiredBeforeUse = !latest && Number.isFinite(expiresMs) && expiresMs <= nowMs
+        const stale = !stagedActive || (Number.isFinite(staleAgeBase) ? nowMs - staleAgeBase >= input.stale_after_ms : true)
+        const expiredBeforeUse = !latest && (!stagedActive || (Number.isFinite(expiresMs) && expiresMs <= nowMs))
         const revokedBeforeUse = !latest && Boolean(approval.revoked_at)
         const warnings: string[] = []
         if (latest && Number.isFinite(expiresMs) && Date.parse(latest.completed_at) > expiresMs) warnings.push("checkpoint write-run occurred after approval expiry in event history")
         if (latest && Number.isFinite(revokedMs) && Date.parse(latest.completed_at) > revokedMs) warnings.push("checkpoint write-run occurred after approval revocation in event history")
-        if (!latest && approval.status === "approved" && stale) warnings.push("approved checkpoint write has not been used within stale threshold")
+        if (!stagedActive) warnings.push("staged checkpoint write is no longer active")
+        if (!latest && effectiveStatus === "approved" && stale) warnings.push("approved checkpoint write has not been used within stale threshold")
         return redactValue({
           approval_id: approval.approval_id,
           staged_write_id: approval.staged_write_id,
           command: approval.command,
-          approval_status: approvalStatusAt(approval, now),
+          approval_status: effectiveStatus,
           approved_at: approval.approved_at,
           expires_at: approval.expires_at,
           revoked_at: approval.revoked_at,
@@ -237,17 +259,7 @@ export class WakeSchedulerNavigationCheckpointWriteCompareService {
         })
       })
       .sort((left, right) => (right.latest_run_at ?? right.approved_at ?? "").localeCompare(left.latest_run_at ?? left.approved_at ?? "") || left.approval_id.localeCompare(right.approval_id))
-      .slice(0, query.limit)
-    return redactValue({
-      approvals: usage,
-      total_approvals: usage.length,
-      used_count: usage.filter((item) => item.used).length,
-      unused_count: usage.filter((item) => !item.used).length,
-      stale_count: usage.filter((item) => item.stale).length,
-      expired_unused_count: usage.filter((item) => item.expired_before_use).length,
-      revoked_unused_count: usage.filter((item) => item.revoked_before_use).length,
-      generated_at: now,
-    })
+    return redactValue(usage)
   }
 
   outcomeHash(run: Pick<TerminalCheckpointRun, "command" | "command_name" | "execution_kind" | "risk" | "authority_gate" | "status" | "result_kind" | "result_summary" | "error" | "checkpoint_scope" | "event_count">): WakeSchedulerNavigationCheckpointWriteOutcomeHash {

@@ -8612,6 +8612,46 @@ describe("RuntimeServer core", () => {
       revoked_at: "2026-05-16T06:10:00.000Z",
       created_at: "2026-05-16T06:10:00.000Z",
     })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_removed",
+      command: "/checkpoint full removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T07:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_removed",
+      summary_preview: "/checkpoint full removed",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_removed",
+      staged_write_id: "staged_checkpoint_removed",
+      command: "/checkpoint full removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T07:00:00.000Z",
+      stage_hash: "stage_hash_removed",
+      status: "approved",
+      approved_at: "2026-05-16T07:05:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_removed",
+      expires_at: "2026-05-17T07:05:00.000Z",
+      created_at: "2026-05-16T07:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_removed",
+      staged_write_id: "staged_checkpoint_removed",
+      requested_by: "fixture",
+      reason: "manual remove",
+      created_at: "2026-05-16T07:10:00.000Z",
+    })
     for (const [index, checkpointHash] of ["checkpoint_hash_a", "checkpoint_hash_b"].entries()) {
       await eventStore.append({
         kind: "runtime_wake_scheduler_navigation_checkpoint_write_run_succeeded",
@@ -8723,18 +8763,21 @@ describe("RuntimeServer core", () => {
 
     const group = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_group", { stagedWriteId: "staged_checkpoint_compare" }) as { staged_write_id: string; run_count: number }
     expect(group).toMatchObject({ staged_write_id: "staged_checkpoint_compare", run_count: 3 })
-    const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { staleAfterMs: 3_600_000 }) as { used_count: number; unused_count: number; expired_unused_count: number; revoked_unused_count: number; approvals: Array<{ approval_id: string; used: boolean; stale: boolean; expired_before_use: boolean; revoked_before_use: boolean; warnings: string[] }> }
+    const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { staleAfterMs: 3_600_000 }) as { used_count: number; unused_count: number; expired_unused_count: number; revoked_unused_count: number; approvals: Array<{ approval_id: string; approval_status: string; used: boolean; stale: boolean; expired_before_use: boolean; revoked_before_use: boolean; warnings: string[] }> }
     expect(usage.used_count).toBe(1)
-    expect(usage.unused_count).toBe(2)
-    expect(usage.expired_unused_count).toBe(1)
+    expect(usage.unused_count).toBe(3)
+    expect(usage.expired_unused_count).toBe(2)
     expect(usage.revoked_unused_count).toBe(1)
     expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_compare")).toMatchObject({ used: true })
     expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_unused")).toMatchObject({ expired_before_use: true })
     expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_revoked")).toMatchObject({ revoked_before_use: true })
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_removed")).toMatchObject({ approval_status: "expired", expired_before_use: true })
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_removed")?.warnings.join(" ")).toContain("no longer active")
 
     const stale = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_stale", { staleAfterMs: 3_600_000 }) as Array<{ staged_write_id: string; stale: boolean; latest_run_id?: string; reason: string; recommended_commands: Array<{ command: string; command_type: string }> }>
     expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_compare" && item.latest_run_id === "checkpoint_compare_failed")).toBe(true)
     expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_unused" && item.stale && item.reason.includes("no terminal run"))).toBe(true)
+    expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_removed")).toBe(false)
     expect(stale.some((item) => item.recommended_commands.some((command) => command.command.includes("/scheduler-nav-checkpoint-run-preview")))).toBe(true)
 
     const eventsBefore = await readJsonlEvents(dir)
