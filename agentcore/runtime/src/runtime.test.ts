@@ -53,6 +53,8 @@ import {
 } from "./research-db/research-db"
 import { stableWakeSchedulerNavigationWriteRunOutcomeHash } from "./schedules/wake-scheduler-navigation-write-run-compare-service"
 import { stableWakeSchedulerNavigationCheckpointWriteOutcomeHash } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-service"
+import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-registry"
+import { CommandAuthorityService } from "./authority/command-authority-service"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -731,6 +733,91 @@ async function appendJsonlLine(dir: string, event: unknown): Promise<void> {
   }
   await writeFile(path, existing + JSON.stringify(event) + "\n")
 }
+
+describe("CommandAuthorityService", () => {
+  test("registry has unique ids and covers critical command families", () => {
+    const ids = new Set(COMMAND_AUTHORITY_REGISTRY.map((record) => record.authority_id))
+    const commands = new Set(COMMAND_AUTHORITY_REGISTRY.map((record) => record.slash_command))
+    expect(ids.size).toBe(COMMAND_AUTHORITY_REGISTRY.length)
+    expect(commands.size).toBe(COMMAND_AUTHORITY_REGISTRY.length)
+    for (const command of [
+      "/status",
+      "/missions",
+      "/checkpoint",
+      "/wake-tick",
+      "/scheduler-status",
+      "/scheduler-nav",
+      "/scheduler-nav-stage",
+      "/scheduler-nav-run",
+      "/scheduler-nav-write-preview",
+      "/scheduler-nav-write-stage",
+      "/scheduler-nav-write-run",
+      "/scheduler-nav-write-approve",
+      "/scheduler-nav-checkpoint-run",
+      "/scheduler-nav-checkpoint-history",
+      "/continuations",
+      "/handoff",
+      "/proposal-review",
+      "/apply-proposal",
+      "/complete",
+      "/api-call",
+    ]) {
+      expect(commands.has(command)).toBe(true)
+    }
+  })
+
+  test("registry classifies critical authority and risk boundaries", () => {
+    const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
+    expect(service.get("/scheduler-status")).toMatchObject({ risk: "safe_read", mutates_events: false })
+    expect(service.get("/wake-tick")).toMatchObject({ risk: "high_impact_write", gate: "wake_schedule_tick", mutates_events: true })
+    expect(service.get("/scheduler-nav-checkpoint-run")).toMatchObject({ gate: "checkpoint_runtime", owner: "scheduler_navigation_checkpoint_write", requires_approval: true })
+    expect(service.get("/scheduler-nav-stage")).toMatchObject({ owner: "scheduler_navigation_staging" })
+    expect(service.get("/scheduler-nav-run")).toMatchObject({ owner: "scheduler_navigation_staged_read" })
+    expect(service.get("/scheduler-nav-write-stage")).toMatchObject({ owner: "scheduler_navigation_write_staging" })
+    expect(service.get("/scheduler-nav-write-run")).toMatchObject({ owner: "scheduler_navigation_write_run" })
+    expect(service.get("/proposal-review")).toMatchObject({ risk: "high_impact_write", gate: "proposal_review_runtime" })
+    expect(service.get("/apply-proposal")).toMatchObject({ risk: "high_impact_write", gate: "proposal_review_runtime" })
+    expect(service.get("/complete")).toMatchObject({ risk: "high_impact_write", gate: "mission_runtime" })
+    expect(service.get("/handoff")).toMatchObject({ risk: "high_impact_write", gate: "handoff_runtime", creates_external_process: true })
+  })
+
+  test("validation profiles recommend targeted suites without full historical E2E by default", () => {
+    const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
+    const checkpoint = service.validationProfile("/scheduler-nav-checkpoint-run")
+    expect(checkpoint.targeted_e2e).toContain("tests/e2e_user/scenarios/test_wake_scheduler_navigation_checkpoint_write_tui.py")
+    expect(checkpoint.targeted_e2e).not.toContain("tests/e2e_user/scenarios/test_opencode_handoff_tui.py")
+    expect(checkpoint.full_e2e_required_when.join(" ")).toContain("release-candidate")
+
+    const handoff = service.validationProfile("/handoff")
+    expect(handoff.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_handoff_tui.py")
+    expect(handoff.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py")
+    expect(handoff.targeted_e2e).not.toContain("tests/e2e_user/scenarios/test_wake_scheduler_navigation_checkpoint_write_tui.py")
+  })
+
+  test("query and unsupported command handling fail closed", () => {
+    const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
+    expect(service.list({ risk: "high_impact_write", limit: 100 }).every((record) => record.risk === "high_impact_write")).toBe(true)
+    expect(service.list({ gate: "checkpoint_runtime", limit: 100 }).some((record) => record.slash_command === "/scheduler-nav-checkpoint-run")).toBe(true)
+    expect(service.list({ owner: "scheduler_navigation_write_run", limit: 100 }).every((record) => record.owner === "scheduler_navigation_write_run")).toBe(true)
+    expect(service.get("/tmp/repro token=abc123")).toMatchObject({ risk: "unsupported", blocked_by_default: true, mutates_events: false })
+    expect(JSON.stringify(service.get("/handoff token=abc123"))).not.toContain("abc123")
+  })
+
+  test("runtime authority commands are read-only and append no events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled" })
+    const before = await readJsonlEvents(dir)
+
+    await expect(server.command("runtime.command_authority_summary")).resolves.toMatchObject({ total_records: expect.any(Number) })
+    await expect(server.command("runtime.command_authority_list", { risk: "high_impact_write", limit: 10 })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ risk: "high_impact_write" })]))
+    await expect(server.command("runtime.command_authority_get", { command: "/scheduler-nav-checkpoint-run" })).resolves.toMatchObject({ slash_command: "/scheduler-nav-checkpoint-run", gate: "checkpoint_runtime" })
+    await expect(server.command("runtime.command_authority_get", { command: "/tmp/repro token=abc123" })).resolves.toMatchObject({ risk: "unsupported" })
+    await expect(server.command("runtime.command_authority_validation_profile", { command: "/handoff token=abc123" })).resolves.toMatchObject({ real_opencode_required: false })
+
+    expect(await readJsonlEvents(dir)).toHaveLength(before.length)
+  })
+})
 
 describe("RuntimeServer core", () => {
   test("starts in initialized project with approved spec", async () => {

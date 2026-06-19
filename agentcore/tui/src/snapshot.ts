@@ -43,6 +43,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(`  obligations=${state.commander.obligations.join(", ") || "none"}`)
   out.push(`  candidates=${state.commander.candidates.join(", ") || "none"}`)
   out.push(...runtimeLines(state))
+  out.push(...commandAuthorityLines(state))
   out.push(...reasoningProviderLines(state))
   out.push(...missionExecutionLines(state))
   out.push("Live system actions")
@@ -125,6 +126,52 @@ function runtimeLines(state: UiState): string[] {
     else out.push(...state.missions.recent.map((mission) => `    - ${mission.mission_id} [${mission.status}]`))
   }
   if (state.runtimeCommandError) out.push(`  command_error=${redactText(state.runtimeCommandError)}`)
+  return out
+}
+
+function commandAuthorityLines(state: UiState): string[] {
+  const authority = state.commandAuthority
+  const out = ["Command authority"]
+  if (!authority) {
+    out.push("  records=0")
+    return out
+  }
+  if (authority.summary) {
+    const summary = authority.summary
+    out.push(`  total=${summary.total_records} mutating=${summary.mutating_count} high_impact=${summary.high_impact_count} approval_required=${summary.approval_required_count}`)
+    out.push(`  risks=${countMapSummary(summary.risks)}`)
+    out.push(`  gates=${countMapSummary(summary.gates)}`)
+  } else {
+    out.push(`  records=${authority.records.length}`)
+  }
+  if (authority.selected) {
+    const selected = authority.selected
+    out.push(`  selected=${preview(redactText(selected.slash_command))} risk=${selected.risk} gate=${selected.gate} owner=${selected.owner} mutates_events=${selected.mutates_events}`)
+    out.push(`  runtime=${selected.runtime_command ?? "none"} requires_active_runtime=${selected.requires_active_runtime} requires_run_lock=${selected.requires_run_lock} requires_approval=${selected.requires_approval}`)
+    out.push(`  phase=${selected.current_phase_status} blocked_by_default=${selected.blocked_by_default}`)
+    if (selected.approval_surface) out.push(`  approval_surface=${preview(redactText(selected.approval_surface))}`)
+    if (selected.execution_surface) out.push(`  execution_surface=${preview(redactText(selected.execution_surface))}`)
+    if (selected.expected_event_kinds.length > 0) out.push(`  expected_events=${selected.expected_event_kinds.slice(0, 8).join(",")}`)
+    if (selected.recommended_reads.length > 0) out.push(`  recommended_reads=${selected.recommended_reads.slice(0, 8).join(",")}`)
+    if (selected.notes.length > 0) out.push(`  notes=${selected.notes.slice(0, 3).map((note) => preview(redactText(note))).join(" | ")}`)
+    if (selected.out_of_scope.length > 0) out.push(`  out_of_scope=${selected.out_of_scope.slice(0, 5).map((item) => preview(redactText(item))).join(",")}`)
+  } else {
+    out.push("  selected=none")
+  }
+  if (authority.validationProfile) {
+    const profile = authority.validationProfile
+    out.push(`  validation runtime_unit=${profile.unit_runtime} tui_unit=${profile.unit_tui} runtime_typecheck=${profile.typecheck_runtime} tui_typecheck=${profile.typecheck_tui} cli=${profile.integration_cli}`)
+    out.push(`  targeted_e2e=${profile.targeted_e2e.slice(0, 8).join(",") || "none"}`)
+    out.push(`  full_e2e_required_when=${profile.full_e2e_required_when.slice(0, 3).map((item) => preview(redactText(item))).join(" | ") || "none"}`)
+  }
+  out.push("  records")
+  if (authority.records.length === 0) out.push("    - empty")
+  else {
+    out.push(...authority.records.slice(0, 20).map((record) => {
+      return `    - ${preview(redactText(record.slash_command))} risk=${record.risk} gate=${record.gate} owner=${record.owner} mutates=${record.mutates_events} approval=${record.requires_approval}`
+    }))
+  }
+  if (authority.commandError) out.push(`  command_error=${redactText(authority.commandError)}`)
   return out
 }
 
@@ -1507,6 +1554,14 @@ function missionExecutionLines(state: UiState): string[] {
   }
   if (execution.commandError) out.push(`  command_error=${redactText(execution.commandError)}`)
   return out
+}
+
+function countMapSummary(value: Record<string, number>): string {
+  const entries = Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(0, 8)
+    .map(([key, count]) => `${redactText(key)}=${count}`)
+  return entries.join(",") || "none"
 }
 
 function preview(value: string): string {

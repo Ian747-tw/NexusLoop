@@ -2529,6 +2529,63 @@ export type ResearchRecordsState = {
   commandError?: string
 }
 
+export type CommandAuthorityValidationProfileSummary = {
+  unit_runtime: boolean
+  unit_tui: boolean
+  typecheck_runtime: boolean
+  typecheck_tui: boolean
+  integration_cli: boolean
+  targeted_e2e: string[]
+  optional_regression_e2e: string[]
+  full_e2e_required_when: string[]
+  live_provider_required: false
+  real_opencode_required: false
+}
+
+export type CommandAuthorityRecordSummary = {
+  authority_id: string
+  slash_command: string
+  runtime_command?: string
+  aliases: string[]
+  risk: string
+  gate: string
+  owner: string
+  mutates_events: boolean
+  creates_external_process: boolean
+  calls_provider: boolean
+  requires_active_runtime: boolean
+  requires_run_lock: boolean
+  requires_approval: boolean
+  approval_surface?: string
+  execution_surface?: string
+  expected_event_kinds: string[]
+  blocked_by_default: boolean
+  current_phase_status: string
+  recommended_reads: string[]
+  validation_profile: CommandAuthorityValidationProfileSummary
+  notes: string[]
+  out_of_scope: string[]
+}
+
+export type CommandAuthoritySummaryState = {
+  total_records: number
+  risks: Record<string, number>
+  gates: Record<string, number>
+  owners: Record<string, number>
+  mutating_count: number
+  high_impact_count: number
+  approval_required_count: number
+  generated_at: string
+}
+
+export type CommandAuthorityState = {
+  summary?: CommandAuthoritySummaryState | null
+  records: CommandAuthorityRecordSummary[]
+  selected?: CommandAuthorityRecordSummary | null
+  validationProfile?: CommandAuthorityValidationProfileSummary | null
+  commandError?: string
+}
+
 export type UiState = {
   screen: Screen
   projectDir: string
@@ -2555,6 +2612,7 @@ export type UiState = {
   missions?: MissionSummaryState
   missionExecution?: MissionExecutionState
   runtimeCommandError?: string
+  commandAuthority?: CommandAuthorityState
   research?: ResearchRecordsState
   reviews?: ReviewsState
   proposals?: ProposalsState

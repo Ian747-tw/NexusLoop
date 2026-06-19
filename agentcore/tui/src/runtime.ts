@@ -4,6 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -198,6 +199,19 @@ export class FakeRuntimeClient implements RuntimeClient {
         }
       case "runtime.reasoning_provider_status":
         return this.reasoningProviderStatus()
+      case "runtime.command_authority_summary":
+        return fakeCommandAuthoritySummary()
+      case "runtime.command_authority_list":
+        return fakeCommandAuthorityRecords().filter((record) => {
+          if (typeof payload.risk === "string" && record.risk !== payload.risk) return false
+          if (typeof payload.gate === "string" && record.gate !== payload.gate) return false
+          if (typeof payload.owner === "string" && record.owner !== payload.owner) return false
+          return true
+        }).slice(0, readLimit(payload.limit, 20))
+      case "runtime.command_authority_get":
+        return fakeCommandAuthorityGet(String(payload.command ?? ""))
+      case "runtime.command_authority_validation_profile":
+        return fakeCommandAuthorityGet(String(payload.command ?? "")).validation_profile
       case "runtime.reasoning_provider_health":
         return this.reasoningProviderHealth()
       case "runtime.preview_reasoning_provider_smoke":
@@ -5595,6 +5609,158 @@ function fakeRuntimeCommandFor(name: string): string | undefined {
 function fakeNavigationTargetKind(value: string): WakeSchedulerNavigationTargetKindSummary {
   const aliases: Record<string, WakeSchedulerNavigationTargetKindSummary> = { recovery: "scheduler_recovery", workflow: "scheduler_recovery_workflow", schedule: "wake_schedule", wake: "wake_assessment", continuation: "continuation_plan", resume: "resume_anchor", handoff: "handoff_followup" }
   return aliases[value] ?? value
+}
+
+function fakeCommandAuthoritySummary(): CommandAuthoritySummaryState {
+  const records = fakeCommandAuthorityRecords()
+  const risks = fakeCountBy(records, "risk")
+  const gates = fakeCountBy(records, "gate")
+  const owners = fakeCountBy(records, "owner")
+  return {
+    total_records: records.length,
+    risks,
+    gates,
+    owners,
+    mutating_count: records.filter((record) => record.mutates_events).length,
+    high_impact_count: records.filter((record) => record.risk === "high_impact_write").length,
+    approval_required_count: records.filter((record) => record.requires_approval).length,
+    generated_at: new Date(0).toISOString(),
+  }
+}
+
+function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
+  return [
+    fakeCommandAuthorityRecord("/authority", "runtime.command_authority_summary", "safe_read", "none", "runtime_status", { targeted: ["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"] }),
+    fakeCommandAuthorityRecord("/status", "runtime.status", "safe_read", "none", "runtime_status", { targeted: ["tests/e2e_user/scenarios/test_spec_onboarding_tui.py"] }),
+    fakeCommandAuthorityRecord("/scheduler-nav-checkpoint-run", "runtime.execute_wake_scheduler_navigation_checkpoint_write_run", "medium_risk_write", "checkpoint_runtime", "scheduler_navigation_checkpoint_write", {
+      mutates: true,
+      active: true,
+      lock: true,
+      approval: true,
+      approvalSurface: "/scheduler-nav-write-approve",
+      executionSurface: "checkpoint_create",
+      events: ["runtime_wake_scheduler_navigation_checkpoint_write_run_started", "runtime_wake_scheduler_navigation_checkpoint_write_run_succeeded", "runtime_checkpoint_created"],
+      reads: ["/scheduler-nav-checkpoint-run-preview", "/scheduler-nav-checkpoint-runs"],
+      targeted: ["tests/e2e_user/scenarios/test_wake_scheduler_navigation_checkpoint_write_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/scheduler-nav-checkpoint-history", "runtime.wake_scheduler_navigation_checkpoint_write_history", "safe_read", "none", "scheduler_navigation_checkpoint_compare", { targeted: ["tests/e2e_user/scenarios/test_wake_scheduler_navigation_checkpoint_write_compare_tui.py"] }),
+    fakeCommandAuthorityRecord("/wake-tick", "runtime.execute_wake_schedule_tick", "high_impact_write", "wake_schedule_tick", "wake_schedule", {
+      mutates: true,
+      active: true,
+      lock: true,
+      events: ["runtime_wake_schedule_tick_completed"],
+      reads: ["/wake-tick-preview", "/wake-tick-dry-run"],
+      targeted: ["tests/e2e_user/scenarios/test_wake_schedule_tui.py"],
+      out: ["real wake tick execution"],
+    }),
+    fakeCommandAuthorityRecord("/handoff", "runtime.execute_opencode_handoff", "high_impact_write", "handoff_runtime", "opencode_handoff", {
+      mutates: true,
+      active: true,
+      lock: true,
+      process: true,
+      events: ["runtime_opencode_handoff_started", "runtime_opencode_handoff_succeeded"],
+      reads: ["/handoff-preview", "/handoff-followups"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_handoff_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py"],
+      out: ["OpenCode process launch"],
+    }),
+    fakeCommandAuthorityRecord("/apply-proposal", "runtime.apply_commander_proposal", "high_impact_write", "proposal_review_runtime", "proposal", {
+      mutates: true,
+      active: true,
+      lock: true,
+      events: ["commander_proposal_applied"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_cycle_tui.py"],
+    }),
+  ]
+}
+
+function fakeCommandAuthorityGet(command: string): CommandAuthorityRecordSummary {
+  const normalized = fakeNormalizeAuthorityCommand(command)
+  const found = normalized ? fakeCommandAuthorityRecords().find((record) => record.slash_command === normalized || record.aliases.includes(normalized)) : undefined
+  if (found) return found
+  return fakeCommandAuthorityRecord(redactText(command).slice(0, 160) || "<empty>", undefined, "unsupported", "unknown", "unknown", {
+    blocked: true,
+    status: "blocked",
+    notes: ["Unsupported, unknown, non-slash, or path-like command text. Authority inventory does not execute inspected commands."],
+    out: ["command execution", "command staging", "approval mutation"],
+    targeted: ["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"],
+  })
+}
+
+function fakeCommandAuthorityRecord(
+  slashCommand: string,
+  runtimeCommand: string | undefined,
+  risk: string,
+  gate: string,
+  owner: string,
+  options: {
+    mutates?: boolean
+    active?: boolean
+    lock?: boolean
+    approval?: boolean
+    approvalSurface?: string
+    executionSurface?: string
+    events?: string[]
+    reads?: string[]
+    targeted?: string[]
+    aliases?: string[]
+    status?: string
+    blocked?: boolean
+    process?: boolean
+    provider?: boolean
+    notes?: string[]
+    out?: string[]
+  } = {},
+): CommandAuthorityRecordSummary {
+  return {
+    authority_id: `fake_authority_${slashCommand.replace(/^\//, "").replace(/[^a-z0-9]+/gi, "_") || "unknown"}`,
+    slash_command: redactText(slashCommand),
+    runtime_command: runtimeCommand,
+    aliases: options.aliases ?? [],
+    risk,
+    gate,
+    owner,
+    mutates_events: options.mutates === true,
+    creates_external_process: options.process === true,
+    calls_provider: options.provider === true,
+    requires_active_runtime: options.active === true,
+    requires_run_lock: options.lock === true,
+    requires_approval: options.approval === true,
+    approval_surface: options.approvalSurface,
+    execution_surface: options.executionSurface,
+    expected_event_kinds: options.events ?? [],
+    blocked_by_default: options.blocked ?? (risk === "high_impact_write" || risk === "unsupported"),
+    current_phase_status: options.status ?? "implemented",
+    recommended_reads: options.reads ?? [],
+    validation_profile: fakeCommandAuthorityProfile(options.targeted ?? ["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"]),
+    notes: options.notes ?? ["Read-only authority inventory; inspected commands are not executed."],
+    out_of_scope: options.out ?? [],
+  }
+}
+
+function fakeCommandAuthorityProfile(targeted: string[]): CommandAuthorityValidationProfileSummary {
+  return {
+    unit_runtime: true,
+    unit_tui: true,
+    typecheck_runtime: true,
+    typecheck_tui: true,
+    integration_cli: true,
+    targeted_e2e: targeted,
+    optional_regression_e2e: [],
+    full_e2e_required_when: ["Run full historical E2E only for release-candidate gates, shared parser/global dispatch changes, broad snapshot/state merge changes, or explicit reviewer request."],
+    live_provider_required: false,
+    real_opencode_required: false,
+  }
+}
+
+function fakeNormalizeAuthorityCommand(value: string): string | undefined {
+  const match = /^\/([a-z][a-z-]*)(?:\s|$)/i.exec(redactText(value).trim())
+  return match ? `/${match[1].toLowerCase()}` : undefined
+}
+
+function fakeCountBy(records: CommandAuthorityRecordSummary[], key: "risk" | "gate" | "owner"): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const record of records) counts[record[key]] = (counts[record[key]] ?? 0) + 1
+  return counts
 }
 
 function proposalPayloadsForPlaybook(playbookId: string, fields: Record<string, string>, proposedBy: string): Record<string, unknown>[] {

@@ -38,6 +38,7 @@ import type { WakeSchedulerNavigationWriteRunCompareInput, WakeSchedulerNavigati
 import type { WakeSchedulerNavigationWriteApproval, WakeSchedulerNavigationWriteApprovalInput, WakeSchedulerNavigationWriteApprovalListInput, WakeSchedulerNavigationWriteApprovalRecord, WakeSchedulerNavigationWriteApprovalRejectInput, WakeSchedulerNavigationWriteApprovalRevokeInput, WakeSchedulerNavigationWriteReadinessInput, WakeSchedulerNavigationWriteReadinessPreview } from "../schedules/wake-scheduler-navigation-write-approval-types"
 import type { WakeSchedulerNavigationCheckpointWriteRunInput, WakeSchedulerNavigationCheckpointWriteRunListInput, WakeSchedulerNavigationCheckpointWriteRunPreview, WakeSchedulerNavigationCheckpointWriteRunRecord, WakeSchedulerNavigationCheckpointWriteRunResult } from "../schedules/wake-scheduler-navigation-checkpoint-write-run-types"
 import type { WakeSchedulerNavigationCheckpointApprovalUsageInput, WakeSchedulerNavigationCheckpointApprovalUsageSummary, WakeSchedulerNavigationCheckpointWriteCompareInput, WakeSchedulerNavigationCheckpointWriteGroup, WakeSchedulerNavigationCheckpointWriteGroupInput, WakeSchedulerNavigationCheckpointWriteHistory, WakeSchedulerNavigationCheckpointWriteHistoryInput, WakeSchedulerNavigationCheckpointWritePairComparison, WakeSchedulerNavigationCheckpointWriteStaleInput, WakeSchedulerNavigationCheckpointWriteStaleItem } from "../schedules/wake-scheduler-navigation-checkpoint-write-compare-types"
+import type { CommandAuthorityQuery, CommandAuthorityRecord, CommandAuthoritySummary, CommandValidationProfile } from "../authority/command-authority-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -49,6 +50,10 @@ export interface SubmitUserMessageResult {
 export interface RuntimeClient {
   command(name: "runtime.status"): Promise<RuntimeStatus>
   command(name: "runtime.reasoning_provider_status"): Promise<ReasoningProviderStatus>
+  command(name: "runtime.command_authority_summary"): Promise<CommandAuthoritySummary>
+  command(name: "runtime.command_authority_list", payload?: CommandAuthorityQuery): Promise<CommandAuthorityRecord[]>
+  command(name: "runtime.command_authority_get", payload: { command: string }): Promise<CommandAuthorityRecord>
+  command(name: "runtime.command_authority_validation_profile", payload: { command: string; changedFiles?: string[]; changed_files?: string[] }): Promise<CommandValidationProfile>
   command(name: "runtime.reasoning_provider_health"): Promise<ReasoningProviderHealth>
   command(name: "runtime.preview_reasoning_provider_smoke", payload?: { surface?: string; requestedBy?: string; requested_by?: string }): Promise<ReasoningProviderSmokePreview>
   command(name: "runtime.execute_reasoning_provider_smoke", payload?: { surface?: string; dryRun?: boolean; dry_run?: boolean; requestedBy?: string; requested_by?: string }): Promise<ReasoningProviderSmokeResult>

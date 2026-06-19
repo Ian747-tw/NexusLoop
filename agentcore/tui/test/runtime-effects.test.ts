@@ -4126,4 +4126,42 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("abc123")
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
+
+  test("command authority commands render filtered inventory and validation profiles without executing inspected commands", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority", args: [] })
+    expect(state.commandAuthority?.summary?.total_records).toBeGreaterThan(0)
+    expect(state.commandAuthority?.records.length).toBeGreaterThan(0)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-list", args: ["risk=high_impact_write"] })
+    expect(state.commandAuthority?.records.every((record) => record.risk === "high_impact_write")).toBe(true)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/scheduler-nav-checkpoint-run"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/scheduler-nav-checkpoint-run", gate: "checkpoint_runtime" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/scheduler-nav-checkpoint-run"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_wake_scheduler_navigation_checkpoint_write_tui.py")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/handoff", "token=abc123"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/handoff", risk: "high_impact_write" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/tmp/repro"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ risk: "unsupported", blocked_by_default: true })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-list", args: ["bad"] })
+    expect(state.commandAuthority?.commandError).toContain("key=value")
+
+    expect(runtime.sentCommands).toEqual([])
+    expect(state.wakeScheduler?.status?.status).not.toBe("running")
+    expect(state.wakeSchedules?.lastTick).toBeUndefined()
+    expect(state.runtimeCheckpoints?.selected).toBeUndefined()
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Command authority")
+    expect(snapshot).toContain("risk=unsupported")
+    expect(snapshot).toContain("targeted_e2e=")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
 })
