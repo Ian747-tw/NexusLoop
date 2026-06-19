@@ -3,7 +3,7 @@ import { COMMAND_AUTHORITY_REGISTRY } from "./command-authority-registry"
 import type { CommandAuthorityGate, CommandAuthorityOwner, CommandAuthorityQuery, CommandAuthorityRecord, CommandAuthorityRisk, CommandAuthoritySummary, CommandValidationProfile } from "./command-authority-types"
 
 const DEFAULT_LIMIT = 20
-const HARD_LIMIT = 100
+const HARD_LIMIT = Math.max(100, COMMAND_AUTHORITY_REGISTRY.length)
 
 export class CommandAuthorityService {
   constructor(private readonly now: () => string = () => new Date().toISOString()) {}

@@ -761,6 +761,8 @@ describe("CommandAuthorityService", () => {
       "/apply-proposal",
       "/complete",
       "/api-call",
+      "/api-ingest",
+      "/api-ingest-dry-run",
     ]) {
       expect(commands.has(command)).toBe(true)
     }
@@ -779,6 +781,13 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/apply-proposal")).toMatchObject({ risk: "high_impact_write", gate: "proposal_review_runtime" })
     expect(service.get("/complete")).toMatchObject({ risk: "high_impact_write", gate: "mission_runtime" })
     expect(service.get("/handoff")).toMatchObject({ risk: "high_impact_write", gate: "handoff_runtime", creates_external_process: true })
+    expect(service.get("/api-ingest")).toMatchObject({ risk: "high_impact_write", gate: "external_api_runtime", owner: "research", mutates_events: true })
+    expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
+    expect(service.get("/handoff").expected_event_kinds).toEqual(["opencode_handoff_started", "opencode_handoff_created", "opencode_handoff_failed"])
+    expect(service.get("/synthesize").expected_event_kinds).toEqual(["research_synthesis_created"])
+    expect(service.get("/cycle").expected_event_kinds).toEqual(["commander_cycle_completed"])
+    expect(service.get("/api-call").expected_event_kinds).toEqual(["external_api_request_executed", "external_api_request_failed"])
+    expect(service.get("/api-ingest").expected_event_kinds).toEqual(["external_api_request_executed", "external_api_request_failed", "external_api_research_ingestion_succeeded", "external_api_research_ingestion_failed"])
   })
 
   test("validation profiles recommend targeted suites without full historical E2E by default", () => {
@@ -799,6 +808,7 @@ describe("CommandAuthorityService", () => {
     expect(service.list({ risk: "high_impact_write", limit: 100 }).every((record) => record.risk === "high_impact_write")).toBe(true)
     expect(service.list({ gate: "checkpoint_runtime", limit: 100 }).some((record) => record.slash_command === "/scheduler-nav-checkpoint-run")).toBe(true)
     expect(service.list({ owner: "scheduler_navigation_write_run", limit: 100 }).every((record) => record.owner === "scheduler_navigation_write_run")).toBe(true)
+    expect(service.list({ limit: 1000 })).toHaveLength(COMMAND_AUTHORITY_REGISTRY.length)
     expect(service.get("/tmp/repro token=abc123")).toMatchObject({ risk: "unsupported", blocked_by_default: true, mutates_events: false })
     expect(JSON.stringify(service.get("/handoff token=abc123"))).not.toContain("abc123")
   })
