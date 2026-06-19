@@ -778,6 +778,10 @@ describe("CommandAuthorityService", () => {
       "/api-ingest",
       "/api-ingest-dry-run",
       "/reasoning-smoke-dry-run",
+      "/synthesize-preview",
+      "/syntheses",
+      "/cycle-preview",
+      "/cycles",
     ]) {
       expect(lookups.has(command)).toBe(true)
     }
@@ -815,6 +819,10 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
     expect(service.get("/api-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "reasoning_provider", mutates_events: false, expected_event_kinds: [] })
     expect(service.get("/reasoning-smoke-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "reasoning_provider_runtime", owner: "reasoning_provider", mutates_events: false, expected_event_kinds: [] })
+    expect(service.get("/synthesize-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_research_synthesis", mutates_events: false })
+    expect(service.get("/syntheses")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_research_syntheses", mutates_events: false })
+    expect(service.get("/cycle-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_commander_cycle", mutates_events: false })
+    expect(service.get("/cycles")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_commander_cycles", mutates_events: false })
     expect(service.get("/reasoning-smoke").expected_event_kinds).toEqual(["reasoning_provider_smoke_succeeded", "reasoning_provider_smoke_failed"])
     expect(service.get("/scheduler-recovery-ack").expected_event_kinds).toEqual(["runtime_wake_scheduler_recovery_recorded"])
     expect(service.get("/scheduler-recovery-resolve").expected_event_kinds).toEqual(["runtime_wake_scheduler_recovery_recorded"])
