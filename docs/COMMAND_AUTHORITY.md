@@ -14,7 +14,7 @@ The inventory covers runtime/status reads, research and reasoning provider surfa
 - `runtime.command_authority_get`
 - `runtime.command_authority_validation_profile`
 
-All four commands are read-like and require no active runtime or run lock.
+All four commands are read-like, require no active runtime or run lock, and are routed by the TUI runtime client without auto-starting the runtime.
 
 ## TUI Surface
 
@@ -33,7 +33,7 @@ Aliases:
 
 The authority inventory recommends targeted validation profiles. Full historical E2E is reserved for release-candidate gates, shared parser/global dispatch changes, broad snapshot/state merge changes, or explicit reviewer request.
 
-Authority records use the concrete event kinds emitted by owner services. For example, OpenCode handoff records `opencode_handoff_started` and `opencode_handoff_created`, research synthesis records `research_synthesis_created`, commander cycle records `commander_cycle_completed`, wake schedule mutations record `runtime_wake_schedule_*` events, and external API ingestion records `external_api_request_*` plus `external_api_research_ingestion_*` terminal events. Dry-run surfaces that append no events, such as `/wake-tick-dry-run` and `/handoff-dry-run`, are marked non-mutating. Local TUI commands such as `/cancel` are represented separately from runtime mutation commands.
+Authority records use the concrete event kinds emitted by owner services. For example, OpenCode handoff records `opencode_handoff_started` and `opencode_handoff_created`, reasoning smoke records `reasoning_provider_smoke_succeeded` or `reasoning_provider_smoke_failed`, recovery acknowledgement records `runtime_wake_scheduler_recovery_recorded`, continuation step execution records `runtime_continuation_step_*` events, and external API ingestion records `external_api_request_*` plus `external_api_research_ingestion_*` terminal events. Dry-run surfaces that append no events, such as `/wake-tick-dry-run` and `/handoff-dry-run`, are marked non-mutating. Local TUI commands such as `/cancel` are represented separately from runtime mutation commands. Handoff read routes such as `/handoffs`, `/handoff-show`, `/handoff-followup-summary`, and queue aliases are represented as safe reads.
 
 For Branch 8A, targeted validation is:
 

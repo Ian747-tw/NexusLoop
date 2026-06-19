@@ -760,6 +760,10 @@ describe("CommandAuthorityService", () => {
       "/continuations",
       "/handoff",
       "/handoff-dry-run",
+      "/handoffs",
+      "/handoff-show",
+      "/handoff-followup-summary",
+      "/handoff-queue",
       "/proposal-review",
       "/apply-proposal",
       "/complete",
@@ -791,14 +795,25 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/cancel")).toMatchObject({ risk: "safe_read", gate: "none", owner: "runtime_status", mutates_events: false })
     expect(service.get("/cancel-mission")).toMatchObject({ risk: "high_impact_write", gate: "mission_runtime", mutates_events: true })
     expect(service.get("/handoff-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "handoff_runtime", creates_external_process: false, mutates_events: false, expected_event_kinds: [] })
+    expect(service.get("/handoffs")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_opencode_handoffs", owner: "opencode_handoff" })
+    expect(service.get("/handoff-show")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.get_opencode_handoff", owner: "opencode_handoff" })
+    expect(service.get("/handoff-followup-summary")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_handoff_followup_summary", owner: "opencode_handoff" })
+    expect(service.get("/handoff-queue")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_handoff_followup_queue", owner: "opencode_handoff" })
     expect(service.get("/handoff")).toMatchObject({ risk: "high_impact_write", gate: "handoff_runtime", creates_external_process: true })
     expect(service.get("/api-ingest")).toMatchObject({ risk: "high_impact_write", gate: "external_api_runtime", owner: "research", mutates_events: true })
     expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
+    expect(service.get("/reasoning-smoke").expected_event_kinds).toEqual(["reasoning_provider_smoke_succeeded", "reasoning_provider_smoke_failed"])
+    expect(service.get("/scheduler-recovery-ack").expected_event_kinds).toEqual(["runtime_wake_scheduler_recovery_recorded"])
+    expect(service.get("/scheduler-recovery-resolve").expected_event_kinds).toEqual(["runtime_wake_scheduler_recovery_recorded"])
+    expect(service.get("/scheduler-recovery-dismiss").expected_event_kinds).toEqual(["runtime_wake_scheduler_recovery_recorded"])
+    expect(service.get("/continue-step").expected_event_kinds).toEqual(["runtime_continuation_step_started", "runtime_continuation_step_succeeded", "runtime_continuation_step_failed", "runtime_continuation_plan_completed"])
     expect(service.get("/handoff").expected_event_kinds).toEqual(["opencode_handoff_started", "opencode_handoff_created", "opencode_handoff_failed"])
     expect(service.get("/synthesize").expected_event_kinds).toEqual(["research_synthesis_created"])
     expect(service.get("/cycle").expected_event_kinds).toEqual(["commander_cycle_completed"])
     expect(service.get("/api-call").expected_event_kinds).toEqual(["external_api_request_executed", "external_api_request_failed"])
     expect(service.get("/api-ingest").expected_event_kinds).toEqual(["external_api_request_executed", "external_api_request_failed", "external_api_research_ingestion_succeeded", "external_api_research_ingestion_failed"])
+    expect(service.get("/bundle-review").expected_event_kinds).toEqual(["commander_proposal_bundle_review_requested"])
+    expect(service.get("/apply-target").expected_event_kinds).toEqual(["commander_proposal_applied", "commander_proposal_apply_failed", "commander_proposal_bundle_applied", "commander_proposal_bundle_apply_failed"])
   })
 
   test("validation profiles recommend targeted suites without full historical E2E by default", () => {
@@ -12278,6 +12293,19 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
 })
 
 describe("RuntimeServerClient", () => {
+  test("authority inventory commands do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.command_authority_summary")).resolves.toMatchObject({ total_records: expect.any(Number) })
+    await expect(client.command("runtime.command_authority_get", { command: "/handoff-dry-run" })).resolves.toMatchObject({ slash_command: "/handoff-dry-run" })
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
   test("delegates runtime.status", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
