@@ -774,8 +774,10 @@ describe("CommandAuthorityService", () => {
       "/complete",
       "/cancel",
       "/api-call",
+      "/api-dry-run",
       "/api-ingest",
       "/api-ingest-dry-run",
+      "/reasoning-smoke-dry-run",
     ]) {
       expect(lookups.has(command)).toBe(true)
     }
@@ -811,6 +813,8 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/handoff")).toMatchObject({ risk: "high_impact_write", gate: "handoff_runtime", creates_external_process: true })
     expect(service.get("/api-ingest")).toMatchObject({ risk: "high_impact_write", gate: "external_api_runtime", owner: "research", mutates_events: true })
     expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
+    expect(service.get("/api-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "reasoning_provider", mutates_events: false, expected_event_kinds: [] })
+    expect(service.get("/reasoning-smoke-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "reasoning_provider_runtime", owner: "reasoning_provider", mutates_events: false, expected_event_kinds: [] })
     expect(service.get("/reasoning-smoke").expected_event_kinds).toEqual(["reasoning_provider_smoke_succeeded", "reasoning_provider_smoke_failed"])
     expect(service.get("/scheduler-recovery-ack").expected_event_kinds).toEqual(["runtime_wake_scheduler_recovery_recorded"])
     expect(service.get("/scheduler-recovery-resolve").expected_event_kinds).toEqual(["runtime_wake_scheduler_recovery_recorded"])
