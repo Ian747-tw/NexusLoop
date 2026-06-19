@@ -33,7 +33,7 @@ Aliases:
 
 The authority inventory recommends targeted validation profiles. Full historical E2E is reserved for release-candidate gates, shared parser/global dispatch changes, broad snapshot/state merge changes, or explicit reviewer request.
 
-Authority records use the concrete event kinds emitted by owner services. For example, OpenCode handoff records `opencode_handoff_started` and `opencode_handoff_created`, research synthesis records `research_synthesis_created`, commander cycle records `commander_cycle_completed`, wake schedule mutations record `runtime_wake_schedule_*` events, and external API ingestion records `external_api_request_*` plus `external_api_research_ingestion_*` terminal events. Dry-run surfaces that append no events, such as `/wake-tick-dry-run`, are marked non-mutating.
+Authority records use the concrete event kinds emitted by owner services. For example, OpenCode handoff records `opencode_handoff_started` and `opencode_handoff_created`, research synthesis records `research_synthesis_created`, commander cycle records `commander_cycle_completed`, wake schedule mutations record `runtime_wake_schedule_*` events, and external API ingestion records `external_api_request_*` plus `external_api_research_ingestion_*` terminal events. Dry-run surfaces that append no events, such as `/wake-tick-dry-run` and `/handoff-dry-run`, are marked non-mutating. Local TUI commands such as `/cancel` are represented separately from runtime mutation commands.
 
 For Branch 8A, targeted validation is:
 

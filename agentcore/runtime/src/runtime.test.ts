@@ -759,9 +759,11 @@ describe("CommandAuthorityService", () => {
       "/scheduler-nav-checkpoint-history",
       "/continuations",
       "/handoff",
+      "/handoff-dry-run",
       "/proposal-review",
       "/apply-proposal",
       "/complete",
+      "/cancel",
       "/api-call",
       "/api-ingest",
       "/api-ingest-dry-run",
@@ -786,6 +788,9 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/proposal-review")).toMatchObject({ risk: "high_impact_write", gate: "proposal_review_runtime" })
     expect(service.get("/apply-proposal")).toMatchObject({ risk: "high_impact_write", gate: "proposal_review_runtime" })
     expect(service.get("/complete")).toMatchObject({ risk: "high_impact_write", gate: "mission_runtime" })
+    expect(service.get("/cancel")).toMatchObject({ risk: "safe_read", gate: "none", owner: "runtime_status", mutates_events: false })
+    expect(service.get("/cancel-mission")).toMatchObject({ risk: "high_impact_write", gate: "mission_runtime", mutates_events: true })
+    expect(service.get("/handoff-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "handoff_runtime", creates_external_process: false, mutates_events: false, expected_event_kinds: [] })
     expect(service.get("/handoff")).toMatchObject({ risk: "high_impact_write", gate: "handoff_runtime", creates_external_process: true })
     expect(service.get("/api-ingest")).toMatchObject({ risk: "high_impact_write", gate: "external_api_runtime", owner: "research", mutates_events: true })
     expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
