@@ -738,6 +738,7 @@ describe("CommandAuthorityService", () => {
   test("registry has unique ids and covers critical command families", () => {
     const ids = new Set(COMMAND_AUTHORITY_REGISTRY.map((record) => record.authority_id))
     const commands = new Set(COMMAND_AUTHORITY_REGISTRY.map((record) => record.slash_command))
+    const lookups = new Set(COMMAND_AUTHORITY_REGISTRY.flatMap((record) => [record.slash_command, ...record.aliases]))
     expect(ids.size).toBe(COMMAND_AUTHORITY_REGISTRY.length)
     expect(commands.size).toBe(COMMAND_AUTHORITY_REGISTRY.length)
     for (const command of [
@@ -748,6 +749,8 @@ describe("CommandAuthorityService", () => {
       "/wake-tick-dry-run",
       "/wake-schedule-cancel",
       "/scheduler-status",
+      "/wake-scheduler-start",
+      "/wake-scheduler-stop",
       "/scheduler-nav",
       "/scheduler-nav-stage",
       "/scheduler-nav-run",
@@ -765,6 +768,8 @@ describe("CommandAuthorityService", () => {
       "/handoff-followup-summary",
       "/handoff-queue",
       "/proposal-review",
+      "/request-review",
+      "/cancel-review",
       "/apply-proposal",
       "/complete",
       "/cancel",
@@ -772,7 +777,7 @@ describe("CommandAuthorityService", () => {
       "/api-ingest",
       "/api-ingest-dry-run",
     ]) {
-      expect(commands.has(command)).toBe(true)
+      expect(lookups.has(command)).toBe(true)
     }
   })
 
@@ -781,6 +786,8 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/scheduler-status")).toMatchObject({ risk: "safe_read", mutates_events: false })
     expect(service.get("/wake-tick-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "wake_schedule_tick", mutates_events: false, expected_event_kinds: [] })
     expect(service.get("/wake-tick")).toMatchObject({ risk: "high_impact_write", gate: "wake_schedule_tick", mutates_events: true })
+    expect(service.get("/wake-scheduler-start")).toMatchObject({ slash_command: "/scheduler-start", risk: "high_impact_write", gate: "wake_scheduler_runtime", mutates_events: true })
+    expect(service.get("/wake-scheduler-stop")).toMatchObject({ slash_command: "/scheduler-stop", risk: "high_impact_write", gate: "wake_scheduler_runtime", mutates_events: true })
     expect(service.get("/wake-schedule-pause")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_paused"] })
     expect(service.get("/wake-schedule-resume")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_resumed"] })
     expect(service.get("/wake-schedule-cancel")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_cancelled"] })
@@ -790,6 +797,8 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/scheduler-nav-write-stage")).toMatchObject({ owner: "scheduler_navigation_write_staging" })
     expect(service.get("/scheduler-nav-write-run")).toMatchObject({ owner: "scheduler_navigation_write_run" })
     expect(service.get("/proposal-review")).toMatchObject({ risk: "high_impact_write", gate: "proposal_review_runtime" })
+    expect(service.get("/request-review")).toMatchObject({ risk: "high_impact_write", gate: "proposal_review_runtime", owner: "review", expected_event_kinds: ["review_request_created"] })
+    expect(service.get("/cancel-review")).toMatchObject({ risk: "high_impact_write", gate: "proposal_review_runtime", owner: "review", expected_event_kinds: ["review_request_cancelled"] })
     expect(service.get("/apply-proposal")).toMatchObject({ risk: "high_impact_write", gate: "proposal_review_runtime" })
     expect(service.get("/complete")).toMatchObject({ risk: "high_impact_write", gate: "mission_runtime" })
     expect(service.get("/cancel")).toMatchObject({ risk: "safe_read", gate: "none", owner: "runtime_status", mutates_events: false })
