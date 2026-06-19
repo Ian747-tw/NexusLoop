@@ -759,6 +759,9 @@ describe("CommandAuthorityService", () => {
       "/scheduler-nav-write-run",
       "/scheduler-nav-write-approve",
       "/scheduler-nav-checkpoint-run",
+      "/scheduler-nav-run-dry-run",
+      "/scheduler-nav-write-run-dry-run",
+      "/scheduler-nav-checkpoint-run-dry-run",
       "/scheduler-nav-checkpoint-history",
       "/continuations",
       "/handoff",
@@ -798,6 +801,9 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/wake-schedule-resume")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_resumed"] })
     expect(service.get("/wake-schedule-cancel")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_cancelled"] })
     expect(service.get("/scheduler-nav-checkpoint-run")).toMatchObject({ gate: "checkpoint_runtime", owner: "scheduler_navigation_checkpoint_write", requires_approval: true })
+    expect(service.get("/scheduler-nav-run-dry-run")).toMatchObject({ risk: "safe_read", owner: "scheduler_navigation_staged_read", mutates_events: false })
+    expect(service.get("/scheduler-nav-write-run-dry-run")).toMatchObject({ risk: "low_risk_write", owner: "scheduler_navigation_write_run", mutates_events: false, expected_event_kinds: [] })
+    expect(service.get("/scheduler-nav-checkpoint-run-dry-run")).toMatchObject({ risk: "medium_risk_write", gate: "checkpoint_runtime", owner: "scheduler_navigation_checkpoint_write", mutates_events: false, requires_approval: true, expected_event_kinds: [] })
     expect(service.get("/scheduler-nav-stage")).toMatchObject({ owner: "scheduler_navigation_staging" })
     expect(service.get("/scheduler-nav-run")).toMatchObject({ owner: "scheduler_navigation_staged_read" })
     expect(service.get("/scheduler-nav-write-stage")).toMatchObject({ owner: "scheduler_navigation_write_staging" })
@@ -12592,6 +12598,7 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
 
     await expect(client.command("runtime.status")).rejects.toThrow("runtime client has been shut down")
+    await expect(client.command("runtime.command_authority_summary")).rejects.toThrow("runtime client has been shut down")
     await expect(client.submitUserMessage("after shutdown")).rejects.toThrow("runtime client has been shut down")
   })
 

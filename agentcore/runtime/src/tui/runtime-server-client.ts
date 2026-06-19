@@ -59,6 +59,7 @@ export class RuntimeServerClient implements RuntimeClient {
   }
 
   command = (async (name: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
+    if (this.shutdownRequested) throw new Error("runtime client has been shut down")
     if (name !== "runtime.shutdown" && !noStartCommands.has(name)) await this.ensureStarted()
     try {
       const result = await this.server.command(name, payload)
