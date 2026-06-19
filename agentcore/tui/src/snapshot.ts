@@ -978,6 +978,46 @@ function wakeSchedulerLines(state: UiState): string[] {
   if (scheduler.checkpointWriteRunRecords.length === 0) out.push("      - empty")
   else out.push(...scheduler.checkpointWriteRunRecords.slice(0, 10).map((item) => `      - ${item.run_id} ${item.status} checkpoint=${item.checkpoint_id ?? "none"}: ${preview(redactText(item.summary_preview))}`))
   out.push("    note=only approved staged checkpoint writes execute in 7Y")
+  out.push("  scheduler_checkpoint_write_comparison")
+  if (scheduler.checkpointWriteHistory) {
+    const history = scheduler.checkpointWriteHistory
+    out.push(`    history_groups=${history.total_groups} runs=${history.total_runs} changed=${history.changed_groups} failed=${history.failed_groups} artifact_changed=${history.artifact_changed_groups} unused_approvals=${history.unused_approval_count} stale_approvals=${history.stale_approval_count}`)
+    out.push("    history_rows")
+    if (history.groups.length === 0) out.push("      - empty")
+    else out.push(...history.groups.slice(0, 10).map((group) => `      - ${group.staged_write_id} ${group.comparison_status} runs=${group.run_count} latest=${group.latest_run_id ?? "none"} approval=${group.latest_approval_id ?? "none"} checkpoint=${group.latest_checkpoint_id ?? "none"} artifact_changed=${group.checkpoint_artifact_changed ?? false}: ${preview(redactText(group.summary_preview))}`))
+  } else {
+    out.push("    history=none")
+  }
+  if (scheduler.checkpointWriteComparison) {
+    const comparison = scheduler.checkpointWriteComparison
+    out.push(`    comparison=${comparison.comparison_id} ${comparison.comparison_status} left=${comparison.left_run_id} right=${comparison.right_run_id}: ${preview(redactText(comparison.summary_delta))}`)
+    if (comparison.checkpoint_artifact_delta) out.push(`    artifact_delta=${preview(redactText(comparison.checkpoint_artifact_delta))}`)
+    if (comparison.approval_delta) out.push(`    approval_delta=${preview(redactText(comparison.approval_delta))}`)
+    if (comparison.warnings.length > 0) out.push(...comparison.warnings.slice(0, 10).map((warning) => `    comparison_warning=${preview(redactText(warning))}`))
+    if (comparison.recommended_commands.length > 0) out.push(...comparison.recommended_commands.slice(0, 5).map((command) => `    recommended=${command.command_type}: ${preview(redactText(command.command))}`))
+  } else {
+    out.push("    comparison=none")
+  }
+  out.push(`    stale_items=${scheduler.checkpointWriteStaleItems.length}`)
+  out.push("    stale_rows")
+  if (scheduler.checkpointWriteStaleItems.length === 0) out.push("      - empty")
+  else out.push(...scheduler.checkpointWriteStaleItems.slice(0, 10).map((item) => `      - ${item.staged_write_id} stale=${item.stale} approval=${item.approval_id ?? "none"} latest=${item.latest_run_id ?? "none"} checkpoint=${item.checkpoint_id ?? "none"}: ${preview(redactText(item.reason))}`))
+  if (scheduler.selectedCheckpointWriteGroup) {
+    const group = scheduler.selectedCheckpointWriteGroup
+    out.push(`    selected_group=${group.staged_write_id} ${group.comparison_status} runs=${group.run_count} checkpoint=${group.latest_checkpoint_id ?? "none"} artifact_changed=${group.checkpoint_artifact_changed ?? false}`)
+  } else {
+    out.push("    selected_group=none")
+  }
+  if (scheduler.checkpointApprovalUsage) {
+    const usage = scheduler.checkpointApprovalUsage
+    out.push(`    approval_usage total=${usage.total_approvals} used=${usage.used_count} unused=${usage.unused_count} stale=${usage.stale_count} expired_unused=${usage.expired_unused_count} revoked_unused=${usage.revoked_unused_count}`)
+    out.push("    approval_usage_rows")
+    if (usage.approvals.length === 0) out.push("      - empty")
+    else out.push(...usage.approvals.slice(0, 10).map((item) => `      - ${item.approval_id} ${item.approval_status} used=${item.used} stale=${item.stale} latest=${item.latest_run_id ?? "none"} warnings=${item.warnings.length}`))
+  } else {
+    out.push("    approval_usage=none")
+  }
+  out.push("    note=comparison uses bounded summaries and separate checkpoint artifact hashes; it does not create checkpoints")
   out.push(`  events=${scheduler.events.length}`)
   out.push("  recent_events")
   if (scheduler.events.length === 0) out.push("    - empty")

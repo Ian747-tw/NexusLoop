@@ -123,6 +123,13 @@ import type {
   WakeSchedulerNavigationCheckpointWriteRunPreviewSummary,
   WakeSchedulerNavigationCheckpointWriteRunRecordSummary,
   WakeSchedulerNavigationCheckpointWriteRunResultSummary,
+  WakeSchedulerNavigationCheckpointApprovalUsageSummary,
+  WakeSchedulerNavigationCheckpointApprovalUsageSummaryState,
+  WakeSchedulerNavigationCheckpointWriteCompareCommandSummary,
+  WakeSchedulerNavigationCheckpointWriteGroupSummary,
+  WakeSchedulerNavigationCheckpointWriteHistorySummary,
+  WakeSchedulerNavigationCheckpointWritePairComparisonSummary,
+  WakeSchedulerNavigationCheckpointWriteStaleItemSummary,
   WakeSchedulerNavigationWriteEvidenceSummary,
   WakeSchedulerNavigationWriteReadinessPreviewSummary,
   WakeSchedulerNavigationWriteStageEligibilitySummary,
@@ -377,6 +384,12 @@ export type RuntimeUiEffect =
   | { type: "dry-run-wake-scheduler-navigation-checkpoint-write-run"; stagedWriteId: string }
   | { type: "load-wake-scheduler-navigation-checkpoint-write-runs"; limit?: number; stagedWriteId?: string }
   | { type: "load-wake-scheduler-navigation-checkpoint-write-run"; runId: string }
+  | { type: "load-wake-scheduler-navigation-checkpoint-write-history"; stagedWriteId?: string; approvalId?: string; command?: string; limit?: number; staleAfterMs?: number }
+  | { type: "compare-wake-scheduler-navigation-checkpoint-write"; stagedWriteId: string }
+  | { type: "compare-wake-scheduler-navigation-checkpoint-write-runs"; leftRunId: string; rightRunId: string }
+  | { type: "load-wake-scheduler-navigation-checkpoint-write-stale"; staleAfterMs?: number; limit?: number }
+  | { type: "load-wake-scheduler-navigation-checkpoint-write-group"; stagedWriteId: string; limit?: number }
+  | { type: "load-wake-scheduler-navigation-checkpoint-approval-usage"; approvalId?: string; stagedWriteId?: string; limit?: number; staleAfterMs?: number }
   | { type: "load-wake-scheduler-events"; limit?: number }
 
 export async function applyRuntimeUiEffect(
@@ -1230,6 +1243,18 @@ export async function applyRuntimeUiEffect(
         return applyWakeSchedulerNavigationCheckpointWriteRunRecords(state, await runtime.command("runtime.list_wake_scheduler_navigation_checkpoint_write_runs", { limit: effect.limit ?? CHECKPOINT_LIMIT, stagedWriteId: effect.stagedWriteId }), effect.limit ?? CHECKPOINT_LIMIT)
       case "load-wake-scheduler-navigation-checkpoint-write-run":
         return applyWakeSchedulerNavigationCheckpointWriteRunResult(state, await runtime.command("runtime.get_wake_scheduler_navigation_checkpoint_write_run", { runId: effect.runId }), effect.runId)
+      case "load-wake-scheduler-navigation-checkpoint-write-history":
+        return applyWakeSchedulerNavigationCheckpointWriteHistory(state, await runtime.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { stagedWriteId: effect.stagedWriteId, approvalId: effect.approvalId, command: effect.command, limit: effect.limit ?? CHECKPOINT_LIMIT, staleAfterMs: effect.staleAfterMs }))
+      case "compare-wake-scheduler-navigation-checkpoint-write":
+        return applyWakeSchedulerNavigationCheckpointWriteComparison(state, await runtime.command("runtime.wake_scheduler_navigation_checkpoint_write_compare", { stagedWriteId: effect.stagedWriteId, latest: true }))
+      case "compare-wake-scheduler-navigation-checkpoint-write-runs":
+        return applyWakeSchedulerNavigationCheckpointWriteComparison(state, await runtime.command("runtime.wake_scheduler_navigation_checkpoint_write_compare", { leftRunId: effect.leftRunId, rightRunId: effect.rightRunId }))
+      case "load-wake-scheduler-navigation-checkpoint-write-stale":
+        return applyWakeSchedulerNavigationCheckpointWriteStale(state, await runtime.command("runtime.wake_scheduler_navigation_checkpoint_write_stale", { staleAfterMs: effect.staleAfterMs, limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.limit ?? CHECKPOINT_LIMIT)
+      case "load-wake-scheduler-navigation-checkpoint-write-group":
+        return applyWakeSchedulerNavigationCheckpointWriteGroup(state, await runtime.command("runtime.wake_scheduler_navigation_checkpoint_write_group", { stagedWriteId: effect.stagedWriteId, limit: effect.limit ?? CHECKPOINT_LIMIT }), effect.stagedWriteId)
+      case "load-wake-scheduler-navigation-checkpoint-approval-usage":
+        return applyWakeSchedulerNavigationCheckpointApprovalUsage(state, await runtime.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { approvalId: effect.approvalId, stagedWriteId: effect.stagedWriteId, limit: effect.limit ?? CHECKPOINT_LIMIT, staleAfterMs: effect.staleAfterMs }))
       case "load-wake-scheduler-events":
         return await loadWakeSchedulerEvents(state, runtime, effect.limit ?? CHECKPOINT_LIMIT)
       case "send-user-message": {
@@ -2744,6 +2769,71 @@ function applyWakeSchedulerNavigationCheckpointWriteRunRecords(state: UiState, v
   }
 }
 
+function applyWakeSchedulerNavigationCheckpointWriteHistory(state: UiState, value: unknown): UiState {
+  const history = readWakeSchedulerNavigationCheckpointWriteHistory(value, "runtime.wake_scheduler_navigation_checkpoint_write_history")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      checkpointWriteHistory: history,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler checkpoint write history", detail: `groups=${history.total_groups} runs=${history.total_runs}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationCheckpointWriteComparison(state: UiState, value: unknown): UiState {
+  const comparison = readWakeSchedulerNavigationCheckpointWriteComparison(value, "runtime.wake_scheduler_navigation_checkpoint_write_compare")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      checkpointWriteComparison: comparison,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler checkpoint write comparison", detail: `status=${comparison.comparison_status}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationCheckpointWriteStale(state: UiState, value: unknown, limit: number): UiState {
+  const stale = readWakeSchedulerNavigationCheckpointWriteStaleItems(value, "runtime.wake_scheduler_navigation_checkpoint_write_stale", limit)
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      checkpointWriteStaleItems: stale,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler stale checkpoint writes", detail: `items=${stale.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationCheckpointWriteGroup(state: UiState, value: unknown, stagedWriteId: string): UiState {
+  const group = readWakeSchedulerNavigationCheckpointWriteGroup(value, "runtime.wake_scheduler_navigation_checkpoint_write_group")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      selectedCheckpointWriteGroup: group,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler checkpoint write group", detail: `staged_write_id=${redactText(stagedWriteId)}`, status: group ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyWakeSchedulerNavigationCheckpointApprovalUsage(state: UiState, value: unknown): UiState {
+  const usage = readWakeSchedulerNavigationCheckpointApprovalUsage(value, "runtime.wake_scheduler_navigation_checkpoint_write_approval_usage")
+  return {
+    ...state,
+    wakeScheduler: {
+      ...wakeSchedulerState(state),
+      checkpointApprovalUsage: usage,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "scheduler checkpoint approval usage", detail: `approvals=${usage.total_approvals} used=${usage.used_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchSynthesisResult(state: UiState, value: unknown, synthesisId?: string): UiState {
   const result = readResearchSynthesisResult(value)
   if (!result && value !== null) throw new Error("runtime.get_research_synthesis returned invalid result")
@@ -3342,6 +3432,27 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-checkpoint-write-runs", limit: CHECKPOINT_LIMIT })
     case "scheduler-nav-checkpoint-run-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-checkpoint-write-run", runId: requiredArg(args, 0, "runId") })
+    case "scheduler-nav-checkpoint-history":
+    case "scheduler-checkpoint-history": {
+      const query = schedulerNavCheckpointHistoryArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-checkpoint-write-history", ...query })
+    }
+    case "scheduler-nav-checkpoint-compare":
+    case "scheduler-checkpoint-compare":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "compare-wake-scheduler-navigation-checkpoint-write", stagedWriteId: requiredArg(args, 0, "stagedWriteId") })
+    case "scheduler-nav-checkpoint-compare-runs":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "compare-wake-scheduler-navigation-checkpoint-write-runs", leftRunId: requiredArg(args, 0, "leftRunId"), rightRunId: requiredArg(args, 1, "rightRunId") })
+    case "scheduler-nav-checkpoint-stale":
+    case "scheduler-checkpoint-stale": {
+      const query = schedulerNavCheckpointStaleArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-checkpoint-write-stale", ...query })
+    }
+    case "scheduler-nav-checkpoint-group":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-checkpoint-write-group", stagedWriteId: requiredArg(args, 0, "stagedWriteId") })
+    case "scheduler-nav-checkpoint-approval-usage": {
+      const query = schedulerNavCheckpointApprovalUsageArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-navigation-checkpoint-approval-usage", ...query })
+    }
     case "scheduler-events":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-wake-scheduler-events", limit: CHECKPOINT_LIMIT })
     case "reasoning":
@@ -4083,6 +4194,15 @@ const wakeSchedulerCommands = new Set([
   "scheduler-write-approve",
   "scheduler-write-reject",
   "scheduler-write-approvals",
+  "scheduler-nav-checkpoint-history",
+  "scheduler-nav-checkpoint-compare",
+  "scheduler-nav-checkpoint-compare-runs",
+  "scheduler-nav-checkpoint-stale",
+  "scheduler-nav-checkpoint-group",
+  "scheduler-nav-checkpoint-approval-usage",
+  "scheduler-checkpoint-history",
+  "scheduler-checkpoint-compare",
+  "scheduler-checkpoint-stale",
   "scheduler-events",
   "wake-scheduler-preview",
   "wake-scheduler-start",
@@ -4254,6 +4374,12 @@ const wakeSchedulerEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "dry-run-wake-scheduler-navigation-checkpoint-write-run",
   "load-wake-scheduler-navigation-checkpoint-write-runs",
   "load-wake-scheduler-navigation-checkpoint-write-run",
+  "load-wake-scheduler-navigation-checkpoint-write-history",
+  "compare-wake-scheduler-navigation-checkpoint-write",
+  "compare-wake-scheduler-navigation-checkpoint-write-runs",
+  "load-wake-scheduler-navigation-checkpoint-write-stale",
+  "load-wake-scheduler-navigation-checkpoint-write-group",
+  "load-wake-scheduler-navigation-checkpoint-approval-usage",
   "load-wake-scheduler-events",
 ])
 
@@ -7185,6 +7311,161 @@ function readWakeSchedulerNavigationCheckpointWriteRunResult(value: unknown, com
   }
 }
 
+function readWakeSchedulerNavigationCheckpointWriteHistory(value: unknown, commandName: string): WakeSchedulerNavigationCheckpointWriteHistorySummary {
+  if (!isRecord(value) || !Array.isArray(value.groups)) throw new Error(`${commandName} returned invalid checkpoint write history`)
+  return {
+    staged_write_id: typeof value.staged_write_id === "string" ? redactText(value.staged_write_id) : undefined,
+    approval_id: typeof value.approval_id === "string" ? redactText(value.approval_id) : undefined,
+    command: typeof value.command === "string" ? preview(readString(value.command, "")) : undefined,
+    groups: value.groups.map(readWakeSchedulerNavigationCheckpointWriteGroupRecord).filter((group): group is WakeSchedulerNavigationCheckpointWriteGroupSummary => group !== null).slice(0, CHECKPOINT_LIMIT),
+    total_runs: readNumber(value.total_runs, 0),
+    total_groups: readNumber(value.total_groups, 0),
+    changed_groups: readNumber(value.changed_groups, 0),
+    failed_groups: readNumber(value.failed_groups, 0),
+    artifact_changed_groups: readNumber(value.artifact_changed_groups, 0),
+    unused_approval_count: readNumber(value.unused_approval_count, 0),
+    stale_approval_count: readNumber(value.stale_approval_count, 0),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readWakeSchedulerNavigationCheckpointWriteGroup(value: unknown, commandName: string): WakeSchedulerNavigationCheckpointWriteGroupSummary | null {
+  if (value === null) return null
+  const group = readWakeSchedulerNavigationCheckpointWriteGroupRecord(value)
+  if (!group) throw new Error(`${commandName} returned invalid checkpoint write group`)
+  return group
+}
+
+function readWakeSchedulerNavigationCheckpointWriteGroupRecord(value: unknown): WakeSchedulerNavigationCheckpointWriteGroupSummary | null {
+  if (!isRecord(value) || typeof value.group_id !== "string" || typeof value.staged_write_id !== "string" || typeof value.command !== "string") return null
+  return {
+    group_id: redactText(value.group_id),
+    staged_write_id: redactText(value.staged_write_id),
+    command: preview(readString(value.command, "")),
+    command_name: preview(readString(value.command_name, "")),
+    approval_ids: readStringList(value.approval_ids, 10).map((id) => redactText(id)),
+    run_count: readNumber(value.run_count, 0),
+    succeeded_count: readNumber(value.succeeded_count, 0),
+    failed_count: readNumber(value.failed_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    latest_run_id: typeof value.latest_run_id === "string" ? redactText(value.latest_run_id) : undefined,
+    latest_approval_id: typeof value.latest_approval_id === "string" ? redactText(value.latest_approval_id) : undefined,
+    latest_checkpoint_id: typeof value.latest_checkpoint_id === "string" ? redactText(value.latest_checkpoint_id) : undefined,
+    latest_checkpoint_hash: typeof value.latest_checkpoint_hash === "string" ? preview(redactText(value.latest_checkpoint_hash)) : undefined,
+    latest_event_count: typeof value.latest_event_count === "number" ? value.latest_event_count : undefined,
+    latest_completed_at: readString(value.latest_completed_at, ""),
+    latest_status: readString(value.latest_status, "unknown"),
+    latest_outcome_hash: typeof value.latest_outcome_hash === "string" ? preview(redactText(value.latest_outcome_hash)) : undefined,
+    previous_run_id: typeof value.previous_run_id === "string" ? redactText(value.previous_run_id) : undefined,
+    previous_outcome_hash: typeof value.previous_outcome_hash === "string" ? preview(redactText(value.previous_outcome_hash)) : undefined,
+    comparison_status: readString(value.comparison_status, "unknown"),
+    checkpoint_artifact_changed: typeof value.checkpoint_artifact_changed === "boolean" ? value.checkpoint_artifact_changed : undefined,
+    summary_preview: preview(readString(value.summary_preview, "")),
+    recommended_commands: readWakeSchedulerNavigationCheckpointWriteCompareCommands(value.recommended_commands),
+  }
+}
+
+function readWakeSchedulerNavigationCheckpointWriteComparison(value: unknown, commandName: string): WakeSchedulerNavigationCheckpointWritePairComparisonSummary {
+  if (!isRecord(value) || typeof value.comparison_id !== "string" || typeof value.left_run_id !== "string" || typeof value.right_run_id !== "string") throw new Error(`${commandName} returned invalid checkpoint write comparison`)
+  return {
+    comparison_id: redactText(value.comparison_id),
+    staged_write_id: readString(value.staged_write_id, ""),
+    command: preview(readString(value.command, "")),
+    left_run_id: redactText(value.left_run_id),
+    right_run_id: redactText(value.right_run_id),
+    left_approval_id: typeof value.left_approval_id === "string" ? redactText(value.left_approval_id) : undefined,
+    right_approval_id: typeof value.right_approval_id === "string" ? redactText(value.right_approval_id) : undefined,
+    left_checkpoint_id: typeof value.left_checkpoint_id === "string" ? redactText(value.left_checkpoint_id) : undefined,
+    right_checkpoint_id: typeof value.right_checkpoint_id === "string" ? redactText(value.right_checkpoint_id) : undefined,
+    left_checkpoint_hash: typeof value.left_checkpoint_hash === "string" ? preview(redactText(value.left_checkpoint_hash)) : undefined,
+    right_checkpoint_hash: typeof value.right_checkpoint_hash === "string" ? preview(redactText(value.right_checkpoint_hash)) : undefined,
+    left_event_count: typeof value.left_event_count === "number" ? value.left_event_count : undefined,
+    right_event_count: typeof value.right_event_count === "number" ? value.right_event_count : undefined,
+    left_completed_at: readString(value.left_completed_at, ""),
+    right_completed_at: readString(value.right_completed_at, ""),
+    left_status: readString(value.left_status, "unknown"),
+    right_status: readString(value.right_status, "unknown"),
+    left_outcome_hash: preview(redactText(readString(value.left_outcome_hash, ""))),
+    right_outcome_hash: preview(redactText(readString(value.right_outcome_hash, ""))),
+    comparison_status: readString(value.comparison_status, "unknown"),
+    checkpoint_artifact_delta: typeof value.checkpoint_artifact_delta === "string" ? preview(readString(value.checkpoint_artifact_delta, "")) : undefined,
+    approval_delta: typeof value.approval_delta === "string" ? preview(readString(value.approval_delta, "")) : undefined,
+    summary_delta: preview(readString(value.summary_delta, "")),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    recommended_commands: readWakeSchedulerNavigationCheckpointWriteCompareCommands(value.recommended_commands),
+  }
+}
+
+function readWakeSchedulerNavigationCheckpointWriteStaleItems(value: unknown, commandName: string, limit: number): WakeSchedulerNavigationCheckpointWriteStaleItemSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readWakeSchedulerNavigationCheckpointWriteStaleItem).filter((item): item is WakeSchedulerNavigationCheckpointWriteStaleItemSummary => item !== null).slice(0, limit)
+}
+
+function readWakeSchedulerNavigationCheckpointWriteStaleItem(value: unknown): WakeSchedulerNavigationCheckpointWriteStaleItemSummary | null {
+  if (!isRecord(value) || typeof value.staged_write_id !== "string" || typeof value.command !== "string") return null
+  return {
+    staged_write_id: redactText(value.staged_write_id),
+    approval_id: typeof value.approval_id === "string" ? redactText(value.approval_id) : undefined,
+    command: preview(readString(value.command, "")),
+    latest_run_id: typeof value.latest_run_id === "string" ? redactText(value.latest_run_id) : undefined,
+    latest_completed_at: readString(value.latest_completed_at, ""),
+    checkpoint_id: typeof value.checkpoint_id === "string" ? redactText(value.checkpoint_id) : undefined,
+    age_ms: typeof value.age_ms === "number" ? value.age_ms : undefined,
+    stale_after_ms: readNumber(value.stale_after_ms, 0),
+    stale: readBoolean(value.stale),
+    reason: preview(readString(value.reason, "")),
+    recommended_commands: readWakeSchedulerNavigationCheckpointWriteCompareCommands(value.recommended_commands),
+  }
+}
+
+function readWakeSchedulerNavigationCheckpointApprovalUsage(value: unknown, commandName: string): WakeSchedulerNavigationCheckpointApprovalUsageSummaryState {
+  if (!isRecord(value) || !Array.isArray(value.approvals)) throw new Error(`${commandName} returned invalid checkpoint approval usage`)
+  return {
+    approvals: value.approvals.map(readWakeSchedulerNavigationCheckpointApprovalUsageItem).filter((item): item is WakeSchedulerNavigationCheckpointApprovalUsageSummary => item !== null).slice(0, CHECKPOINT_LIMIT),
+    total_approvals: readNumber(value.total_approvals, 0),
+    used_count: readNumber(value.used_count, 0),
+    unused_count: readNumber(value.unused_count, 0),
+    stale_count: readNumber(value.stale_count, 0),
+    expired_unused_count: readNumber(value.expired_unused_count, 0),
+    revoked_unused_count: readNumber(value.revoked_unused_count, 0),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readWakeSchedulerNavigationCheckpointApprovalUsageItem(value: unknown): WakeSchedulerNavigationCheckpointApprovalUsageSummary | null {
+  if (!isRecord(value) || typeof value.approval_id !== "string" || typeof value.staged_write_id !== "string" || typeof value.command !== "string") return null
+  return {
+    approval_id: redactText(value.approval_id),
+    staged_write_id: redactText(value.staged_write_id),
+    command: preview(readString(value.command, "")),
+    approval_status: readString(value.approval_status, "pending"),
+    approved_at: typeof value.approved_at === "string" ? readString(value.approved_at, "") : undefined,
+    expires_at: typeof value.expires_at === "string" ? readString(value.expires_at, "") : undefined,
+    revoked_at: typeof value.revoked_at === "string" ? readString(value.revoked_at, "") : undefined,
+    used: readBoolean(value.used),
+    run_ids: readStringList(value.run_ids, 10).map((id) => redactText(id)),
+    latest_run_id: typeof value.latest_run_id === "string" ? redactText(value.latest_run_id) : undefined,
+    latest_run_status: readString(value.latest_run_status, "unknown"),
+    latest_run_at: readString(value.latest_run_at, ""),
+    stale: readBoolean(value.stale),
+    expired_before_use: readBoolean(value.expired_before_use),
+    revoked_before_use: readBoolean(value.revoked_before_use),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    recommended_commands: readWakeSchedulerNavigationCheckpointWriteCompareCommands(value.recommended_commands),
+  }
+}
+
+function readWakeSchedulerNavigationCheckpointWriteCompareCommands(value: unknown): WakeSchedulerNavigationCheckpointWriteCompareCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 10).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: readString(command.command_type, "read"),
+    requires_active_runtime: typeof command.requires_active_runtime === "boolean" ? command.requires_active_runtime : undefined,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
 function readWakeSchedulerNavigationWriteEvidenceList(value: unknown): WakeSchedulerNavigationWriteEvidenceSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 10).map((item) => ({
@@ -8083,6 +8364,11 @@ function wakeSchedulerState(state: UiState): WakeSchedulerUiState {
     checkpointWriteRunPreview: scheduler.checkpointWriteRunPreview ?? null,
     latestCheckpointWriteRunResult: scheduler.latestCheckpointWriteRunResult ?? null,
     checkpointWriteRunRecords: scheduler.checkpointWriteRunRecords ?? [],
+    checkpointWriteHistory: scheduler.checkpointWriteHistory ?? null,
+    checkpointWriteComparison: scheduler.checkpointWriteComparison ?? null,
+    checkpointWriteStaleItems: scheduler.checkpointWriteStaleItems ?? [],
+    selectedCheckpointWriteGroup: scheduler.selectedCheckpointWriteGroup ?? null,
+    checkpointApprovalUsage: scheduler.checkpointApprovalUsage ?? null,
     events: scheduler.events ?? [],
     commandError: scheduler.commandError,
   }
@@ -8404,6 +8690,50 @@ function schedulerNavWriteRunStaleArgs(args: string[]): { staleAfterMs?: number;
     if (key === "after") out.staleAfterMs = readDurationArg(value)
     else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
     else throw new Error("scheduler navigation write-run stale arg is invalid")
+  }
+  return out
+}
+
+function schedulerNavCheckpointHistoryArgs(args: string[]): { stagedWriteId?: string; approvalId?: string; command?: string; limit?: number; staleAfterMs?: number } {
+  const out: { stagedWriteId?: string; approvalId?: string; command?: string; limit?: number; staleAfterMs?: number } = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("scheduler checkpoint history args must use key=value")
+    if (key === "staged") out.stagedWriteId = value
+    else if (key === "approval") out.approvalId = value
+    else if (key === "command") out.command = value
+    else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
+    else if (key === "after") out.staleAfterMs = readDurationArg(value)
+    else throw new Error("scheduler checkpoint history arg is invalid")
+  }
+  return out
+}
+
+function schedulerNavCheckpointStaleArgs(args: string[]): { staleAfterMs?: number; limit?: number } {
+  const out: { staleAfterMs?: number; limit?: number } = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("scheduler checkpoint stale args must use key=value")
+    if (key === "after") out.staleAfterMs = readDurationArg(value)
+    else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
+    else throw new Error("scheduler checkpoint stale arg is invalid")
+  }
+  return out
+}
+
+function schedulerNavCheckpointApprovalUsageArgs(args: string[]): { approvalId?: string; stagedWriteId?: string; limit?: number; staleAfterMs?: number } {
+  const out: { approvalId?: string; stagedWriteId?: string; limit?: number; staleAfterMs?: number } = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("scheduler checkpoint approval usage args must use key=value")
+    if (key === "approval") out.approvalId = value
+    else if (key === "staged") out.stagedWriteId = value
+    else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
+    else if (key === "after") out.staleAfterMs = readDurationArg(value)
+    else throw new Error("scheduler checkpoint approval usage arg is invalid")
   }
   return out
 }

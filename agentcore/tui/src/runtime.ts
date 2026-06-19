@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -572,6 +572,16 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.listWakeSchedulerNavigationCheckpointWriteRuns(readLimit(payload.limit, 20), typeof (payload.stagedWriteId ?? payload.staged_write_id) === "string" ? String(payload.stagedWriteId ?? payload.staged_write_id) : undefined)
       case "runtime.get_wake_scheduler_navigation_checkpoint_write_run":
         return this.getWakeSchedulerNavigationCheckpointWriteRun(String(payload.runId ?? payload.run_id ?? ""))
+      case "runtime.wake_scheduler_navigation_checkpoint_write_history":
+        return this.wakeSchedulerNavigationCheckpointWriteHistory(payload)
+      case "runtime.wake_scheduler_navigation_checkpoint_write_compare":
+        return this.wakeSchedulerNavigationCheckpointWriteCompare(payload)
+      case "runtime.wake_scheduler_navigation_checkpoint_write_stale":
+        return this.wakeSchedulerNavigationCheckpointWriteStale(payload)
+      case "runtime.wake_scheduler_navigation_checkpoint_write_group":
+        return this.wakeSchedulerNavigationCheckpointWriteGroup(payload)
+      case "runtime.wake_scheduler_navigation_checkpoint_write_approval_usage":
+        return this.wakeSchedulerNavigationCheckpointApprovalUsage(payload)
       case "runtime.list_wake_scheduler_events":
         return this.listWakeSchedulerEvents(readLimit(payload.limit, 20))
       case "runtime.submit_user_message":
@@ -2443,6 +2453,134 @@ export class FakeRuntimeClient implements RuntimeClient {
   private getWakeSchedulerNavigationCheckpointWriteRun(runId: string): WakeSchedulerNavigationCheckpointWriteRunResultSummary | null {
     const normalizedId = redactText(requiredString(runId, "runId"))
     return this.wakeSchedulerNavigationCheckpointWriteRuns.find((run) => run.run_id === normalizedId) ?? null
+  }
+
+  private wakeSchedulerNavigationCheckpointWriteHistory(payload: Record<string, unknown>): WakeSchedulerNavigationCheckpointWriteHistorySummary {
+    const stagedWriteId = typeof (payload.stagedWriteId ?? payload.staged_write_id) === "string" ? redactText(String(payload.stagedWriteId ?? payload.staged_write_id)) : undefined
+    const approvalId = typeof (payload.approvalId ?? payload.approval_id) === "string" ? redactText(String(payload.approvalId ?? payload.approval_id)) : undefined
+    const command = typeof payload.command === "string" ? preview(redactText(payload.command)) : undefined
+    const limit = readLimit(payload.limit, 20)
+    const groups = this.fakeCheckpointWriteGroups()
+      .filter((group) => !stagedWriteId || group.staged_write_id === stagedWriteId)
+      .filter((group) => !approvalId || group.approval_ids.includes(approvalId))
+      .filter((group) => !command || group.command === command)
+      .slice(0, limit)
+    const usage = this.wakeSchedulerNavigationCheckpointApprovalUsage(payload)
+    return {
+      staged_write_id: stagedWriteId,
+      approval_id: approvalId,
+      command,
+      groups,
+      total_runs: groups.reduce((sum, group) => sum + group.run_count, 0),
+      total_groups: groups.length,
+      changed_groups: groups.filter((group) => group.comparison_status === "changed").length,
+      failed_groups: groups.filter((group) => group.failed_count > 0 || group.blocked_count > 0).length,
+      artifact_changed_groups: groups.filter((group) => group.checkpoint_artifact_changed).length,
+      unused_approval_count: usage.unused_count,
+      stale_approval_count: usage.stale_count,
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private wakeSchedulerNavigationCheckpointWriteCompare(payload: Record<string, unknown>): WakeSchedulerNavigationCheckpointWritePairComparisonSummary {
+    const leftRunId = typeof (payload.leftRunId ?? payload.left_run_id) === "string" ? redactText(String(payload.leftRunId ?? payload.left_run_id)) : undefined
+    const rightRunId = typeof (payload.rightRunId ?? payload.right_run_id) === "string" ? redactText(String(payload.rightRunId ?? payload.right_run_id)) : undefined
+    let left: WakeSchedulerNavigationCheckpointWriteRunResultSummary | undefined
+    let right: WakeSchedulerNavigationCheckpointWriteRunResultSummary | undefined
+    if (leftRunId || rightRunId) {
+      left = this.wakeSchedulerNavigationCheckpointWriteRuns.find((run) => run.run_id === leftRunId)
+      right = this.wakeSchedulerNavigationCheckpointWriteRuns.find((run) => run.run_id === rightRunId)
+    } else {
+      const stagedWriteId = redactText(requiredString(String(payload.stagedWriteId ?? payload.staged_write_id ?? ""), "stagedWriteId"))
+      const runs = this.wakeSchedulerNavigationCheckpointWriteRuns.filter((run) => run.staged_write_id === stagedWriteId)
+      if (runs.length === 1) return fakeCheckpointWritePairComparison(runs[0], runs[0], "first_run")
+      left = runs[1]
+      right = runs[0]
+    }
+    if (!left || !right) throw new Error("fake checkpoint write comparison run id not found")
+    return fakeCheckpointWritePairComparison(left, right, fakeCheckpointWriteComparisonStatus(left, right))
+  }
+
+  private wakeSchedulerNavigationCheckpointWriteStale(payload: Record<string, unknown>): WakeSchedulerNavigationCheckpointWriteStaleItemSummary[] {
+    const staleAfterMs = typeof (payload.staleAfterMs ?? payload.stale_after_ms) === "number" ? Number(payload.staleAfterMs ?? payload.stale_after_ms) : 86_400_000
+    const limit = readLimit(payload.limit, 20)
+    return this.wakeSchedulerNavigationStagedWriteCommands
+      .filter((staged) => staged.command_name === "/checkpoint")
+      .slice(0, limit)
+      .map((staged) => {
+        const latest = this.wakeSchedulerNavigationCheckpointWriteRuns.find((run) => run.staged_write_id === staged.staged_write_id)
+        const approval = this.wakeSchedulerNavigationWriteApprovals.find((item) => item.staged_write_id === staged.staged_write_id && item.status === "approved")
+        return {
+          staged_write_id: staged.staged_write_id,
+          approval_id: approval?.approval_id,
+          command: staged.command,
+          latest_run_id: latest?.run_id,
+          latest_completed_at: latest?.completed_at,
+          checkpoint_id: latest?.checkpoint_id,
+          age_ms: latest ? 0 : undefined,
+          stale_after_ms: staleAfterMs,
+          stale: !latest,
+          reason: latest ? "latest checkpoint write-run is fresh" : "approved staged checkpoint write has no terminal run",
+          recommended_commands: fakeCheckpointWriteCompareCommands(staged.staged_write_id, latest?.run_id, approval?.approval_id),
+        }
+      })
+  }
+
+  private wakeSchedulerNavigationCheckpointWriteGroup(payload: Record<string, unknown>): WakeSchedulerNavigationCheckpointWriteGroupSummary | null {
+    const stagedWriteId = redactText(requiredString(String(payload.stagedWriteId ?? payload.staged_write_id ?? ""), "stagedWriteId"))
+    return this.fakeCheckpointWriteGroups().find((group) => group.staged_write_id === stagedWriteId) ?? null
+  }
+
+  private wakeSchedulerNavigationCheckpointApprovalUsage(payload: Record<string, unknown>): WakeSchedulerNavigationCheckpointApprovalUsageSummaryState {
+    const approvalId = typeof (payload.approvalId ?? payload.approval_id) === "string" ? redactText(String(payload.approvalId ?? payload.approval_id)) : undefined
+    const stagedWriteId = typeof (payload.stagedWriteId ?? payload.staged_write_id) === "string" ? redactText(String(payload.stagedWriteId ?? payload.staged_write_id)) : undefined
+    const limit = readLimit(payload.limit, 20)
+    const approvals = this.wakeSchedulerNavigationWriteApprovals
+      .filter((approval) => approval.command_name === "/checkpoint")
+      .filter((approval) => !approvalId || approval.approval_id === approvalId)
+      .filter((approval) => !stagedWriteId || approval.staged_write_id === stagedWriteId)
+      .slice(0, limit)
+      .map((approval) => {
+        const runs = this.wakeSchedulerNavigationCheckpointWriteRuns.filter((run) => run.approval_id === approval.approval_id)
+        const latest = runs[0]
+        return {
+          approval_id: approval.approval_id,
+          staged_write_id: approval.staged_write_id,
+          command: approval.command,
+          approval_status: approval.status,
+          approved_at: approval.approved_at,
+          expires_at: approval.expires_at,
+          revoked_at: approval.revoked_at,
+          used: runs.length > 0,
+          run_ids: runs.map((run) => run.run_id),
+          latest_run_id: latest?.run_id,
+          latest_run_status: latest?.status,
+          latest_run_at: latest?.completed_at,
+          stale: runs.length === 0,
+          expired_before_use: approval.status === "expired" && runs.length === 0,
+          revoked_before_use: approval.status === "revoked" && runs.length === 0,
+          warnings: runs.length === 0 ? ["checkpoint approval has not been used"] : [],
+          recommended_commands: fakeCheckpointWriteCompareCommands(approval.staged_write_id, latest?.run_id, approval.approval_id),
+        }
+      })
+    return {
+      approvals,
+      total_approvals: approvals.length,
+      used_count: approvals.filter((item) => item.used).length,
+      unused_count: approvals.filter((item) => !item.used).length,
+      stale_count: approvals.filter((item) => item.stale).length,
+      expired_unused_count: approvals.filter((item) => item.expired_before_use).length,
+      revoked_unused_count: approvals.filter((item) => item.revoked_before_use).length,
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private fakeCheckpointWriteGroups(): WakeSchedulerNavigationCheckpointWriteGroupSummary[] {
+    const stagedWriteIds = [...new Set(this.wakeSchedulerNavigationCheckpointWriteRuns.map((run) => run.staged_write_id))]
+    return stagedWriteIds.map((stagedWriteId) => {
+      const runs = this.wakeSchedulerNavigationCheckpointWriteRuns.filter((run) => run.staged_write_id === stagedWriteId)
+      return fakeCheckpointWriteGroup(stagedWriteId, runs)
+    })
   }
 
   private fakeWriteRunGroups(): WakeSchedulerNavigationWriteRunGroupSummary[] {
@@ -5124,6 +5262,38 @@ function fakeNavigationCheckpointWriteRunRecord(run: WakeSchedulerNavigationChec
   }
 }
 
+function fakeCheckpointWriteGroup(stagedWriteId: string, runs: WakeSchedulerNavigationCheckpointWriteRunResultSummary[]): WakeSchedulerNavigationCheckpointWriteGroupSummary {
+  const latest = runs[0]
+  const previous = runs[1]
+  const comparisonStatus = previous ? fakeCheckpointWriteComparisonStatus(previous, latest) : "first_run"
+  const artifactChanged = Boolean(previous && ((previous.checkpoint_hash ?? "") !== (latest.checkpoint_hash ?? "") || (previous.event_count ?? -1) !== (latest.event_count ?? -1)))
+  return {
+    group_id: `fake-checkpoint-write-group-${stagedWriteId}`,
+    staged_write_id: stagedWriteId,
+    command: latest.command,
+    command_name: latest.command_name,
+    approval_ids: [...new Set(runs.map((run) => run.approval_id).filter((id): id is string => Boolean(id)))],
+    run_count: runs.length,
+    succeeded_count: runs.filter((run) => run.status === "succeeded").length,
+    failed_count: runs.filter((run) => run.status === "failed").length,
+    blocked_count: runs.filter((run) => run.status === "blocked").length,
+    latest_run_id: latest.run_id,
+    latest_approval_id: latest.approval_id,
+    latest_checkpoint_id: latest.checkpoint_id,
+    latest_checkpoint_hash: latest.checkpoint_hash,
+    latest_event_count: latest.event_count,
+    latest_completed_at: latest.completed_at,
+    latest_status: latest.status,
+    latest_outcome_hash: fakeCheckpointWriteOutcomeHash(latest),
+    previous_run_id: previous?.run_id,
+    previous_outcome_hash: previous ? fakeCheckpointWriteOutcomeHash(previous) : undefined,
+    comparison_status: comparisonStatus,
+    checkpoint_artifact_changed: artifactChanged,
+    summary_preview: `${comparisonStatus} checkpoint write: ${latest.result_summary ?? latest.error ?? latest.command}`,
+    recommended_commands: fakeCheckpointWriteCompareCommands(stagedWriteId, latest.run_id, latest.approval_id),
+  }
+}
+
 function fakeParseCheckpointCommand(command: string): { scope?: RuntimeCheckpointScope; reason?: string; blockers: string[] } {
   const [name, scopeRaw, ...reasonParts] = command.trim().split(/\s+/)
   const blockers: string[] = []
@@ -5142,6 +5312,80 @@ function fakeParseCheckpointCommand(command: string): { scope?: RuntimeCheckpoin
     reason: reasonParts.length > 0 ? preview(redactText(reasonParts.join(" "))) : undefined,
     blockers,
   }
+}
+
+function fakeCheckpointWritePairComparison(left: WakeSchedulerNavigationCheckpointWriteRunResultSummary, right: WakeSchedulerNavigationCheckpointWriteRunResultSummary, status: WakeSchedulerNavigationCheckpointWritePairComparisonSummary["comparison_status"]): WakeSchedulerNavigationCheckpointWritePairComparisonSummary {
+  return {
+    comparison_id: `fake-checkpoint-write-compare-${left.run_id}-${right.run_id}`,
+    staged_write_id: left.staged_write_id === right.staged_write_id ? left.staged_write_id : "mixed",
+    command: left.command === right.command ? left.command : `${left.command} <> ${right.command}`,
+    left_run_id: left.run_id,
+    right_run_id: right.run_id,
+    left_approval_id: left.approval_id,
+    right_approval_id: right.approval_id,
+    left_checkpoint_id: left.checkpoint_id,
+    right_checkpoint_id: right.checkpoint_id,
+    left_checkpoint_hash: left.checkpoint_hash,
+    right_checkpoint_hash: right.checkpoint_hash,
+    left_event_count: left.event_count,
+    right_event_count: right.event_count,
+    left_completed_at: left.completed_at,
+    right_completed_at: right.completed_at,
+    left_status: left.status,
+    right_status: right.status,
+    left_outcome_hash: fakeCheckpointWriteOutcomeHash(left),
+    right_outcome_hash: fakeCheckpointWriteOutcomeHash(right),
+    comparison_status: status,
+    checkpoint_artifact_delta: (left.checkpoint_hash !== right.checkpoint_hash || left.event_count !== right.event_count) ? `checkpoint artifact changed hash ${left.checkpoint_hash ?? "none"} -> ${right.checkpoint_hash ?? "none"} events ${left.event_count ?? "unknown"} -> ${right.event_count ?? "unknown"}` : `checkpoint artifact unchanged hash=${right.checkpoint_hash ?? "none"} events=${right.event_count ?? "unknown"}`,
+    approval_delta: left.approval_id === right.approval_id ? `same approval ${right.approval_id ?? "none"}` : `approval changed from ${left.approval_id ?? "none"} to ${right.approval_id ?? "none"}`,
+    summary_delta: status === "unchanged" ? `unchanged bounded checkpoint write outcome for ${right.command}` : status === "first_run" ? `first recorded checkpoint write-run outcome for ${right.command}` : `changed bounded checkpoint write outcome for ${right.command}`,
+    warnings: ["comparison uses bounded checkpoint write-run summaries; checkpoint artifacts are tracked separately"],
+    recommended_commands: fakeCheckpointWriteCompareCommands(right.staged_write_id, right.run_id, right.approval_id),
+  }
+}
+
+function fakeCheckpointWriteComparisonStatus(left: WakeSchedulerNavigationCheckpointWriteRunResultSummary, right: WakeSchedulerNavigationCheckpointWriteRunResultSummary): WakeSchedulerNavigationCheckpointWritePairComparisonSummary["comparison_status"] {
+  if (left.status === "failed" || right.status === "failed") return fakeCheckpointWriteOutcomeHash(left) === fakeCheckpointWriteOutcomeHash(right) ? "failed" : "changed"
+  if (left.status === "blocked" || right.status === "blocked") return fakeCheckpointWriteOutcomeHash(left) === fakeCheckpointWriteOutcomeHash(right) ? "blocked" : "changed"
+  return fakeCheckpointWriteOutcomeHash(left) === fakeCheckpointWriteOutcomeHash(right) ? "unchanged" : "changed"
+}
+
+function fakeCheckpointWriteOutcomeHash(run: WakeSchedulerNavigationCheckpointWriteRunResultSummary): string {
+  const [, checkpointScope] = run.command.trim().split(/\s+/)
+  return fakeNavigationStageHash(JSON.stringify({
+    command: run.command,
+    command_name: run.command_name,
+    execution_kind: run.execution_kind,
+    risk: run.risk,
+    authority_gate: run.authority_gate,
+    status: run.status,
+    result_kind: run.result_kind,
+    result_summary: run.result_summary ? fakeCheckpointWriteNormalizedOutcomeText(run.result_summary) : undefined,
+    error: run.error,
+    checkpoint_scope: checkpointScope,
+  }))
+}
+
+function fakeCheckpointWriteNormalizedOutcomeText(value: string): string {
+  return value
+    .slice(0, 1024)
+    .replace(/\bcheckpoint_[A-Za-z0-9_-]+\b/g, "checkpoint_[ARTIFACT_ID]")
+    .replace(/\bfake-checkpoint-[A-Za-z0-9_-]+\b/g, "checkpoint_[ARTIFACT_ID]")
+    .replace(/\b[0-9a-f]{64}\b/gi, "[ARTIFACT_HASH]")
+    .replace(/\bevents=\d+\b/g, "events=[ARTIFACT_EVENT_COUNT]")
+}
+
+function fakeCheckpointWriteCompareCommands(stagedWriteId: string, runId?: string, approvalId?: string) {
+  const commands = [
+    { label: "Preview checkpoint write", command: `/scheduler-nav-checkpoint-run-preview ${stagedWriteId}`, command_type: "read" },
+    { label: "Run checkpoint write", command: `/scheduler-nav-checkpoint-run ${stagedWriteId}`, command_type: "write", requires_active_runtime: true },
+    { label: "List checkpoint write runs", command: "/scheduler-nav-checkpoint-runs", command_type: "read" },
+    { label: "Compare checkpoint writes", command: `/scheduler-nav-checkpoint-compare ${stagedWriteId}`, command_type: "read" },
+    { label: "List write approvals", command: "/scheduler-nav-write-approvals", command_type: "read" },
+  ]
+  if (runId) commands.push({ label: "Show checkpoint write run", command: `/scheduler-nav-checkpoint-run-show ${runId}`, command_type: "read" })
+  if (approvalId) commands.push({ label: "Show write approval", command: `/scheduler-nav-write-approval-show ${approvalId}`, command_type: "read" })
+  return commands
 }
 
 function fakeWriteRunPairComparison(left: WakeSchedulerNavigationWriteRunResultSummary, right: WakeSchedulerNavigationWriteRunResultSummary, status: WakeSchedulerNavigationWriteRunPairComparisonSummary["comparison_status"]): WakeSchedulerNavigationWriteRunPairComparisonSummary {

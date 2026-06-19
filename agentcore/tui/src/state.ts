@@ -2296,6 +2296,130 @@ export type WakeSchedulerNavigationCheckpointWriteRunRecordSummary = {
   summary_preview: string
 }
 
+export type WakeSchedulerNavigationCheckpointWriteComparisonStatusSummary = "unchanged" | "changed" | "first_run" | "failed" | "blocked" | "unknown" | string
+
+export type WakeSchedulerNavigationCheckpointWriteCompareCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type WakeSchedulerNavigationCheckpointWriteGroupSummary = {
+  group_id: string
+  staged_write_id: string
+  command: string
+  command_name: string
+  approval_ids: string[]
+  run_count: number
+  succeeded_count: number
+  failed_count: number
+  blocked_count: number
+  latest_run_id?: string
+  latest_approval_id?: string
+  latest_checkpoint_id?: string
+  latest_checkpoint_hash?: string
+  latest_event_count?: number
+  latest_completed_at?: string
+  latest_status?: "succeeded" | "failed" | "blocked" | string
+  latest_outcome_hash?: string
+  previous_run_id?: string
+  previous_outcome_hash?: string
+  comparison_status: WakeSchedulerNavigationCheckpointWriteComparisonStatusSummary
+  checkpoint_artifact_changed?: boolean
+  summary_preview: string
+  recommended_commands: WakeSchedulerNavigationCheckpointWriteCompareCommandSummary[]
+}
+
+export type WakeSchedulerNavigationCheckpointWritePairComparisonSummary = {
+  comparison_id: string
+  staged_write_id: string
+  command: string
+  left_run_id: string
+  right_run_id: string
+  left_approval_id?: string
+  right_approval_id?: string
+  left_checkpoint_id?: string
+  right_checkpoint_id?: string
+  left_checkpoint_hash?: string
+  right_checkpoint_hash?: string
+  left_event_count?: number
+  right_event_count?: number
+  left_completed_at?: string
+  right_completed_at?: string
+  left_status: "succeeded" | "failed" | "blocked" | string
+  right_status: "succeeded" | "failed" | "blocked" | string
+  left_outcome_hash: string
+  right_outcome_hash: string
+  comparison_status: WakeSchedulerNavigationCheckpointWriteComparisonStatusSummary
+  checkpoint_artifact_delta?: string
+  approval_delta?: string
+  summary_delta: string
+  warnings: string[]
+  recommended_commands: WakeSchedulerNavigationCheckpointWriteCompareCommandSummary[]
+}
+
+export type WakeSchedulerNavigationCheckpointWriteHistorySummary = {
+  staged_write_id?: string
+  approval_id?: string
+  command?: string
+  groups: WakeSchedulerNavigationCheckpointWriteGroupSummary[]
+  total_runs: number
+  total_groups: number
+  changed_groups: number
+  failed_groups: number
+  artifact_changed_groups: number
+  unused_approval_count: number
+  stale_approval_count: number
+  generated_at: string
+}
+
+export type WakeSchedulerNavigationCheckpointApprovalUsageSummary = {
+  approval_id: string
+  staged_write_id: string
+  command: string
+  approval_status: WakeSchedulerNavigationWriteApprovalStatusSummary
+  approved_at?: string
+  expires_at?: string
+  revoked_at?: string
+  used: boolean
+  run_ids: string[]
+  latest_run_id?: string
+  latest_run_status?: "succeeded" | "failed" | "blocked" | string
+  latest_run_at?: string
+  stale: boolean
+  expired_before_use: boolean
+  revoked_before_use: boolean
+  warnings: string[]
+  recommended_commands: WakeSchedulerNavigationCheckpointWriteCompareCommandSummary[]
+}
+
+export type WakeSchedulerNavigationCheckpointApprovalUsageSummaryState = {
+  approvals: WakeSchedulerNavigationCheckpointApprovalUsageSummary[]
+  total_approvals: number
+  used_count: number
+  unused_count: number
+  stale_count: number
+  expired_unused_count: number
+  revoked_unused_count: number
+  generated_at: string
+}
+
+export type WakeSchedulerNavigationCheckpointWriteStaleItemSummary = {
+  staged_write_id: string
+  approval_id?: string
+  command: string
+  latest_run_id?: string
+  latest_completed_at?: string
+  checkpoint_id?: string
+  age_ms?: number
+  stale_after_ms: number
+  stale: boolean
+  reason: string
+  recommended_commands: WakeSchedulerNavigationCheckpointWriteCompareCommandSummary[]
+}
+
 export type WakeSchedulerUiState = {
   preview?: WakeSchedulerPreviewSummary | null
   status?: WakeSchedulerStateSummary | null
@@ -2343,6 +2467,11 @@ export type WakeSchedulerUiState = {
   checkpointWriteRunPreview?: WakeSchedulerNavigationCheckpointWriteRunPreviewSummary | null
   latestCheckpointWriteRunResult?: WakeSchedulerNavigationCheckpointWriteRunResultSummary | null
   checkpointWriteRunRecords: WakeSchedulerNavigationCheckpointWriteRunRecordSummary[]
+  checkpointWriteHistory?: WakeSchedulerNavigationCheckpointWriteHistorySummary | null
+  checkpointWriteComparison?: WakeSchedulerNavigationCheckpointWritePairComparisonSummary | null
+  checkpointWriteStaleItems: WakeSchedulerNavigationCheckpointWriteStaleItemSummary[]
+  selectedCheckpointWriteGroup?: WakeSchedulerNavigationCheckpointWriteGroupSummary | null
+  checkpointApprovalUsage?: WakeSchedulerNavigationCheckpointApprovalUsageSummaryState | null
   events: WakeSchedulerEventRecordSummary[]
   commandError?: string
 }

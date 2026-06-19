@@ -37,6 +37,7 @@ import type { WakeSchedulerNavigationWriteRunInput, WakeSchedulerNavigationWrite
 import type { WakeSchedulerNavigationWriteRunCompareInput, WakeSchedulerNavigationWriteRunGroup, WakeSchedulerNavigationWriteRunGroupInput, WakeSchedulerNavigationWriteRunHistory, WakeSchedulerNavigationWriteRunHistoryInput, WakeSchedulerNavigationWriteRunPairComparison, WakeSchedulerNavigationWriteRunStaleInput, WakeSchedulerNavigationWriteRunStaleItem } from "../schedules/wake-scheduler-navigation-write-run-compare-types"
 import type { WakeSchedulerNavigationWriteApproval, WakeSchedulerNavigationWriteApprovalInput, WakeSchedulerNavigationWriteApprovalListInput, WakeSchedulerNavigationWriteApprovalRecord, WakeSchedulerNavigationWriteApprovalRejectInput, WakeSchedulerNavigationWriteApprovalRevokeInput, WakeSchedulerNavigationWriteReadinessInput, WakeSchedulerNavigationWriteReadinessPreview } from "../schedules/wake-scheduler-navigation-write-approval-types"
 import type { WakeSchedulerNavigationCheckpointWriteRunInput, WakeSchedulerNavigationCheckpointWriteRunListInput, WakeSchedulerNavigationCheckpointWriteRunPreview, WakeSchedulerNavigationCheckpointWriteRunRecord, WakeSchedulerNavigationCheckpointWriteRunResult } from "../schedules/wake-scheduler-navigation-checkpoint-write-run-types"
+import type { WakeSchedulerNavigationCheckpointApprovalUsageInput, WakeSchedulerNavigationCheckpointApprovalUsageSummary, WakeSchedulerNavigationCheckpointWriteCompareInput, WakeSchedulerNavigationCheckpointWriteGroup, WakeSchedulerNavigationCheckpointWriteGroupInput, WakeSchedulerNavigationCheckpointWriteHistory, WakeSchedulerNavigationCheckpointWriteHistoryInput, WakeSchedulerNavigationCheckpointWritePairComparison, WakeSchedulerNavigationCheckpointWriteStaleInput, WakeSchedulerNavigationCheckpointWriteStaleItem } from "../schedules/wake-scheduler-navigation-checkpoint-write-compare-types"
 import type { ListResearchEventsOptions, Note, ResearchEvent, SearchOptions, Topic, TopicSnapshot } from "../research-db/research-db"
 
 export interface SubmitUserMessageResult {
@@ -311,6 +312,11 @@ export interface RuntimeClient {
   command(name: "runtime.execute_wake_scheduler_navigation_checkpoint_write_run", payload: WakeSchedulerNavigationCheckpointWriteRunInput): Promise<WakeSchedulerNavigationCheckpointWriteRunResult>
   command(name: "runtime.list_wake_scheduler_navigation_checkpoint_write_runs", payload?: WakeSchedulerNavigationCheckpointWriteRunListInput): Promise<WakeSchedulerNavigationCheckpointWriteRunRecord[]>
   command(name: "runtime.get_wake_scheduler_navigation_checkpoint_write_run", payload: { runId: string } | { run_id: string }): Promise<WakeSchedulerNavigationCheckpointWriteRunResult | null>
+  command(name: "runtime.wake_scheduler_navigation_checkpoint_write_history", payload?: WakeSchedulerNavigationCheckpointWriteHistoryInput): Promise<WakeSchedulerNavigationCheckpointWriteHistory>
+  command(name: "runtime.wake_scheduler_navigation_checkpoint_write_compare", payload: WakeSchedulerNavigationCheckpointWriteCompareInput): Promise<WakeSchedulerNavigationCheckpointWritePairComparison>
+  command(name: "runtime.wake_scheduler_navigation_checkpoint_write_stale", payload?: WakeSchedulerNavigationCheckpointWriteStaleInput): Promise<WakeSchedulerNavigationCheckpointWriteStaleItem[]>
+  command(name: "runtime.wake_scheduler_navigation_checkpoint_write_group", payload: WakeSchedulerNavigationCheckpointWriteGroupInput): Promise<WakeSchedulerNavigationCheckpointWriteGroup | null>
+  command(name: "runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", payload?: WakeSchedulerNavigationCheckpointApprovalUsageInput): Promise<WakeSchedulerNavigationCheckpointApprovalUsageSummary>
   command(name: "runtime.list_wake_scheduler_events", payload?: { limit?: number }): Promise<WakeSchedulerEventRecord[]>
   command(name: "research.list_topics", payload?: { query?: string }): Promise<Topic[]>
   command(name: "research.get_topic_snapshot", payload: { topicId: string }): Promise<TopicSnapshot | null>
@@ -501,6 +507,11 @@ export interface RuntimeCommandEnvelope {
     | "runtime.execute_wake_scheduler_navigation_checkpoint_write_run"
     | "runtime.list_wake_scheduler_navigation_checkpoint_write_runs"
     | "runtime.get_wake_scheduler_navigation_checkpoint_write_run"
+    | "runtime.wake_scheduler_navigation_checkpoint_write_history"
+    | "runtime.wake_scheduler_navigation_checkpoint_write_compare"
+    | "runtime.wake_scheduler_navigation_checkpoint_write_stale"
+    | "runtime.wake_scheduler_navigation_checkpoint_write_group"
+    | "runtime.wake_scheduler_navigation_checkpoint_write_approval_usage"
     | "runtime.list_wake_scheduler_events"
     | "research.list_topics"
     | "research.get_topic_snapshot"

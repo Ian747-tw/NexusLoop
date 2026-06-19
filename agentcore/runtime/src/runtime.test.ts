@@ -52,6 +52,7 @@ import {
   type TopicSnapshot,
 } from "./research-db/research-db"
 import { stableWakeSchedulerNavigationWriteRunOutcomeHash } from "./schedules/wake-scheduler-navigation-write-run-compare-service"
+import { stableWakeSchedulerNavigationCheckpointWriteOutcomeHash } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-service"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -8494,6 +8495,714 @@ describe("RuntimeServer core", () => {
     await server.command("runtime.revoke_wake_scheduler_navigation_write_approval", { approvalId: revokedApproval.approval_id, requestedBy: "operator-checkpoint-run" })
     await expect(server.command("runtime.preview_wake_scheduler_navigation_checkpoint_write_run", { stagedWriteId: revokedCheckpoint.staged_write_id })).resolves.toMatchObject({ can_execute: false, execution_kind: "blocked" })
 
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation checkpoint write comparison audits outcomes artifacts and approvals read-only", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const compareStageEventId = await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_compare",
+      command: "/checkpoint full token=abc123",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_compare",
+      summary_preview: "/checkpoint full [REDACTED]",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_compare",
+      staged_write_id: "staged_checkpoint_compare",
+      staged_event_id: compareStageEventId,
+      command: "/checkpoint full token=abc123",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      stage_hash: "stage_hash_compare",
+      status: "approved",
+      approved_at: "2026-05-16T08:05:00.000Z",
+      requested_by: "fixture",
+      reason: "approved token=def456",
+      evidence: [],
+      approval_hash: "approval_hash_compare",
+      expires_at: "2026-05-17T08:05:00.000Z",
+      created_at: "2026-05-16T08:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_unused",
+      command: "/checkpoint full unused",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T06:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_unused",
+      summary_preview: "/checkpoint full unused",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_unused",
+      staged_write_id: "staged_checkpoint_unused",
+      command: "/checkpoint full unused",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T06:00:00.000Z",
+      stage_hash: "stage_hash_unused",
+      status: "approved",
+      approved_at: "2026-05-16T06:00:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_unused",
+      expires_at: "2026-05-16T07:00:00.000Z",
+      created_at: "2026-05-16T06:00:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_norun",
+      command: "/checkpoint full norun",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T06:20:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_norun",
+      summary_preview: "/checkpoint full norun",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_norun",
+      staged_write_id: "staged_checkpoint_norun",
+      command: "/checkpoint full norun",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T06:20:00.000Z",
+      stage_hash: "stage_hash_norun",
+      status: "approved",
+      approved_at: "2026-05-16T06:25:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_norun",
+      expires_at: "2026-05-17T06:25:00.000Z",
+      created_at: "2026-05-16T06:25:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_revoked",
+      command: "/checkpoint executor revoked",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T06:05:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_revoked",
+      summary_preview: "/checkpoint executor revoked",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_revoked",
+      staged_write_id: "staged_checkpoint_revoked",
+      command: "/checkpoint executor revoked",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T06:05:00.000Z",
+      stage_hash: "stage_hash_revoked",
+      status: "approved",
+      approved_at: "2026-05-16T06:05:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_revoked",
+      expires_at: "2026-05-17T06:05:00.000Z",
+      created_at: "2026-05-16T06:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_revoked",
+      approval_id: "approval_checkpoint_revoked",
+      staged_write_id: "staged_checkpoint_revoked",
+      requested_by: "fixture",
+      revoked_at: "2026-05-16T06:10:00.000Z",
+      created_at: "2026-05-16T06:10:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_removed",
+      command: "/checkpoint full removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T07:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_removed",
+      summary_preview: "/checkpoint full removed",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_removed",
+      staged_write_id: "staged_checkpoint_removed",
+      command: "/checkpoint full removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T07:00:00.000Z",
+      stage_hash: "stage_hash_removed",
+      status: "approved",
+      approved_at: "2026-05-16T07:05:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_removed",
+      expires_at: "2026-05-17T07:05:00.000Z",
+      created_at: "2026-05-16T07:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_removed",
+      staged_write_id: "staged_checkpoint_removed",
+      requested_by: "fixture",
+      reason: "manual remove",
+      created_at: "2026-05-16T07:10:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_removed",
+      staged_event_id: "stage_event_removed_new",
+      command: "/checkpoint full removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T07:20:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_removed_new",
+      summary_preview: "/checkpoint full removed",
+    })
+    for (const [index, checkpointHash] of ["checkpoint_hash_a", "checkpoint_hash_b"].entries()) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_checkpoint_write_run_succeeded",
+        run_id: `checkpoint_compare_run_${index + 1}`,
+        staged_write_id: "staged_checkpoint_compare",
+        approval_id: "approval_checkpoint_compare",
+        command: "/checkpoint full token=abc123",
+        command_name: "/checkpoint",
+        execution_kind: "checkpoint_create",
+        risk: "medium_risk_write",
+        authority_gate: "checkpoint_runtime",
+        status: "succeeded",
+        checkpoint_id: `checkpoint_artifact_${index + 1}`,
+        checkpoint_hash: checkpointHash,
+        event_count: 42 + index,
+        result_kind: "runtime_checkpoint",
+        result_summary: `created checkpoint checkpoint_artifact_${index + 1} scope=full events=${42 + index} token=ghi789`,
+        started_at: `2026-05-16T09:0${index}:00.000Z`,
+        completed_at: `2026-05-16T09:0${index}:01.000Z`,
+        requested_by: `operator-${index}`,
+        result_hash: `entropy_checkpoint_${index}`,
+        created_at: `2026-05-16T09:0${index}:01.000Z`,
+      })
+    }
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_checkpoint_write_run_failed",
+      run_id: "checkpoint_compare_failed",
+      staged_write_id: "staged_checkpoint_compare",
+      approval_id: "approval_checkpoint_compare",
+      command: "/checkpoint full token=abc123",
+      command_name: "/checkpoint",
+      execution_kind: "checkpoint_create",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      status: "failed",
+      error: "checkpoint failed token=jkl012",
+      started_at: "2026-05-16T09:02:00.000Z",
+      completed_at: "2026-05-16T09:02:01.000Z",
+      requested_by: "operator-secret",
+      result_hash: "entropy_failed",
+      created_at: "2026-05-16T09:02:01.000Z",
+    })
+
+    const sameA = stableWakeSchedulerNavigationCheckpointWriteOutcomeHash({
+      command: "/checkpoint full [REDACTED]",
+      command_name: "/checkpoint",
+      execution_kind: "checkpoint_create",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      status: "succeeded",
+      result_kind: "runtime_checkpoint",
+      result_summary: "created checkpoint checkpoint_artifact_a scope=full events=42 token=abc123",
+      checkpoint_scope: "full",
+      event_count: 42,
+    })
+    const sameB = stableWakeSchedulerNavigationCheckpointWriteOutcomeHash({
+      command: "/checkpoint full [REDACTED]",
+      command_name: "/checkpoint",
+      execution_kind: "checkpoint_create",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      status: "succeeded",
+      result_kind: "runtime_checkpoint",
+      result_summary: "created checkpoint checkpoint_artifact_b scope=full events=43 token=def456",
+      checkpoint_scope: "full",
+      event_count: 43,
+    })
+    const changed = stableWakeSchedulerNavigationCheckpointWriteOutcomeHash({
+      command: "/checkpoint full [REDACTED]",
+      command_name: "/checkpoint",
+      execution_kind: "checkpoint_create",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      status: "succeeded",
+      result_kind: "runtime_checkpoint",
+      result_summary: "created checkpoint checkpoint_artifact_c scope=executor events=42",
+      checkpoint_scope: "executor",
+      event_count: 42,
+    })
+    expect(sameA.outcome_hash).toBe(sameB.outcome_hash)
+    expect(sameA.outcome_hash).not.toBe(changed.outcome_hash)
+    expect(JSON.stringify(sameA)).not.toContain("abc123")
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+
+    const unchangedArtifactDelta = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_compare", { leftRunId: "checkpoint_compare_run_1", rightRunId: "checkpoint_compare_run_2" }) as { comparison_status: string; left_outcome_hash: string; right_outcome_hash: string; checkpoint_artifact_delta?: string }
+    expect(unchangedArtifactDelta.comparison_status).toBe("unchanged")
+    expect(unchangedArtifactDelta.left_outcome_hash).toBe(unchangedArtifactDelta.right_outcome_hash)
+    expect(unchangedArtifactDelta.checkpoint_artifact_delta).toContain("changed")
+
+    const failedCompare = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_compare", { leftRunId: "checkpoint_compare_run_2", rightRunId: "checkpoint_compare_failed" }) as { comparison_status: string; summary_delta: string }
+    expect(failedCompare.comparison_status).toBe("changed")
+    expect(JSON.stringify(failedCompare)).not.toContain("jkl012")
+
+    const history = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { stagedWriteId: "staged_checkpoint_compare" }) as { total_groups: number; total_runs: number; failed_groups: number; artifact_changed_groups: number; groups: Array<{ comparison_status: string; checkpoint_artifact_changed: boolean; approval_ids: string[] }> }
+    expect(history.total_groups).toBe(1)
+    expect(history.total_runs).toBe(3)
+    expect(history.failed_groups).toBe(1)
+    expect(history.artifact_changed_groups).toBe(1)
+    expect(history.groups[0].approval_ids).toContain("approval_checkpoint_compare")
+    expect(JSON.stringify(history)).not.toContain("abc123")
+
+    const group = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_group", { stagedWriteId: "staged_checkpoint_compare" }) as { staged_write_id: string; run_count: number }
+    expect(group).toMatchObject({ staged_write_id: "staged_checkpoint_compare", run_count: 3 })
+    const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { staleAfterMs: 3_600_000 }) as { used_count: number; unused_count: number; expired_unused_count: number; revoked_unused_count: number; approvals: Array<{ approval_id: string; approval_status: string; used: boolean; stale: boolean; expired_before_use: boolean; revoked_before_use: boolean; warnings: string[] }> }
+    expect(usage.used_count).toBe(1)
+    expect(usage.unused_count).toBe(4)
+    expect(usage.expired_unused_count).toBe(2)
+    expect(usage.revoked_unused_count).toBe(1)
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_compare")).toMatchObject({ used: true })
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_unused")).toMatchObject({ expired_before_use: true })
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_revoked")).toMatchObject({ revoked_before_use: true })
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_removed")).toMatchObject({ approval_status: "expired", expired_before_use: true })
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_removed")?.warnings.join(" ")).toContain("no longer active")
+
+    const stale = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_stale", { staleAfterMs: 3_600_000 }) as Array<{ staged_write_id: string; stale: boolean; latest_run_id?: string; reason: string; recommended_commands: Array<{ command: string; command_type: string }> }>
+    expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_compare" && item.latest_run_id === "checkpoint_compare_failed")).toBe(true)
+    expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_norun" && item.stale && item.reason.includes("no terminal run"))).toBe(true)
+    expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_removed")).toBe(false)
+    expect(stale.some((item) => item.recommended_commands.some((command) => command.command.includes("/scheduler-nav-checkpoint-run-preview")))).toBe(true)
+
+    const eventsBefore = await readJsonlEvents(dir)
+    await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { approvalId: "approval_checkpoint_compare" })
+    await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { approvalId: "approval_checkpoint_compare" })
+    const eventsAfter = await readJsonlEvents(dir)
+    expect(eventsAfter.length).toBe(eventsBefore.length)
+    for (const forbidden of ["runtime_wake_scheduler_navigation_checkpoint_write_run_started", "runtime_checkpoint_created", "runtime_wake_scheduler_started", "runtime_wake_schedule_tick_completed", "runtime_continuation_step_started", "runtime_wake_scheduler_recovery_recorded", "runtime_wake_scheduler_recovery_workflow_step_recorded", "runtime_opencode_handoff_sent", "runtime_mission_completed", "runtime_proposal_applied"]) {
+      expect(eventsAfter.slice(eventsBefore.length).map((event) => event.kind)).not.toContain(forbidden)
+    }
+    expect(JSON.stringify(await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", {}))).not.toContain("abc123")
+    expect(JSON.stringify(await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", {}))).not.toContain("def456")
+    expect(JSON.stringify(await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", {}))).not.toContain("ghi789")
+    await expect(server.command("runtime.wake_scheduler_navigation_checkpoint_write_compare", { stagedWriteId: "missing" })).rejects.toThrow("no terminal runs")
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation checkpoint write history filters approval usage before caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_target_old",
+      staged_write_id: "staged_checkpoint_target_old",
+      command: "/checkpoint full target",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      status: "approved",
+      approved_at: "2026-05-15T00:00:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_target_old",
+      expires_at: "2026-05-16T00:00:00.000Z",
+      created_at: "2026-05-15T00:00:00.000Z",
+    })
+    for (let index = 0; index < 105; index += 1) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+        approval_id: `approval_checkpoint_newer_${index}`,
+        staged_write_id: `staged_checkpoint_newer_${index}`,
+        command: `/checkpoint full newer-${index}`,
+        command_name: "/checkpoint",
+        risk: "medium_risk_write",
+        authority_gate: "checkpoint_runtime",
+        target_kind: "checkpoint",
+        status: "approved",
+        approved_at: `2026-05-16T09:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        requested_by: "fixture",
+        evidence: [],
+        approval_hash: `approval_hash_newer_${index}`,
+        expires_at: "2026-05-17T09:00:00.000Z",
+        created_at: `2026-05-16T09:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      })
+    }
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const byApproval = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { approvalId: "approval_checkpoint_target_old" }) as { unused_approval_count: number; stale_approval_count: number; total_groups: number }
+    expect(byApproval).toMatchObject({ unused_approval_count: 1, stale_approval_count: 1, total_groups: 0 })
+    const byStaged = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { stagedWriteId: "staged_checkpoint_target_old" }) as { unused_approval_count: number; stale_approval_count: number; total_groups: number }
+    expect(byStaged).toMatchObject({ unused_approval_count: 1, stale_approval_count: 1, total_groups: 0 })
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation checkpoint write stale uses current approval decision", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_rejected_current",
+      staged_event_id: "stage_event_rejected_current",
+      command: "/checkpoint full current-decision",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_rejected_current",
+      summary_preview: "/checkpoint full current-decision",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_rejected_current_approved",
+      staged_write_id: "staged_checkpoint_rejected_current",
+      staged_event_id: "stage_event_rejected_current",
+      command: "/checkpoint full current-decision",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      stage_hash: "stage_hash_rejected_current",
+      status: "approved",
+      approved_at: "2026-05-16T08:05:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_rejected_current_approved",
+      expires_at: "2026-05-17T08:05:00.000Z",
+      created_at: "2026-05-16T08:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_rejected_current_rejected",
+      staged_write_id: "staged_checkpoint_rejected_current",
+      staged_event_id: "stage_event_rejected_current",
+      command: "/checkpoint full current-decision",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      stage_hash: "stage_hash_rejected_current",
+      status: "rejected",
+      rejected_at: "2026-05-16T08:10:00.000Z",
+      requested_by: "fixture",
+      reason: "operator changed mind",
+      evidence: [],
+      approval_hash: "approval_hash_rejected_current_rejected",
+      created_at: "2026-05-16T08:10:00.000Z",
+    })
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const stale = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_stale", { staleAfterMs: 3_600_000 }) as Array<{ staged_write_id: string; recommended_commands: Array<{ command: string }> }>
+    expect(stale.some((item) => item.staged_write_id === "staged_checkpoint_rejected_current")).toBe(false)
+    const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { stagedWriteId: "staged_checkpoint_rejected_current", staleAfterMs: 3_600_000 }) as { stale_count: number; approvals: Array<{ approval_id: string; approval_status: string; stale: boolean }> }
+    expect(usage.approvals.map((approval) => approval.approval_id)).toEqual(expect.arrayContaining(["approval_checkpoint_rejected_current_approved", "approval_checkpoint_rejected_current_rejected"]))
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_rejected_current_rejected")).toMatchObject({ approval_status: "rejected", stale: false })
+    expect(usage.stale_count).toBe(0)
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation checkpoint write history filters approval counts by command", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    for (const suffix of ["target", "other"]) {
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_write_command_staged",
+        staged_write_id: `staged_checkpoint_${suffix}`,
+        command: `/checkpoint full ${suffix}`,
+        command_name: "/checkpoint",
+        risk: "medium_risk_write",
+        authority_gate: "checkpoint_runtime",
+        target_kind: "checkpoint",
+        staged_at: "2026-05-16T08:00:00.000Z",
+        staged_by: "fixture",
+        status: "staged",
+        stage_hash: `stage_hash_${suffix}`,
+        summary_preview: `/checkpoint full ${suffix}`,
+      })
+      await eventStore.append({
+        kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+        approval_id: `approval_checkpoint_${suffix}`,
+        staged_write_id: `staged_checkpoint_${suffix}`,
+        command: `/checkpoint full ${suffix}`,
+        command_name: "/checkpoint",
+        risk: "medium_risk_write",
+        authority_gate: "checkpoint_runtime",
+        target_kind: "checkpoint",
+        staged_at: "2026-05-16T08:00:00.000Z",
+        stage_hash: `stage_hash_${suffix}`,
+        status: "approved",
+        approved_at: "2026-05-16T08:05:00.000Z",
+        requested_by: "fixture",
+        evidence: [],
+        approval_hash: `approval_hash_${suffix}`,
+        expires_at: "2026-05-17T08:05:00.000Z",
+        created_at: "2026-05-16T08:05:00.000Z",
+      })
+    }
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const filtered = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { command: "/checkpoint full target", staleAfterMs: 3_600_000 }) as { unused_approval_count: number; stale_approval_count: number }
+    expect(filtered.unused_approval_count).toBe(1)
+    expect(filtered.stale_approval_count).toBe(1)
+    const unfiltered = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_history", { staleAfterMs: 3_600_000 }) as { unused_approval_count: number; stale_approval_count: number }
+    expect(unfiltered.unused_approval_count).toBe(2)
+    expect(unfiltered.stale_approval_count).toBe(2)
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation checkpoint write stale scopes runs to current approval", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const oldStageEventId = await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_restaged_old",
+      summary_preview: "/checkpoint full restaged",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_restaged_old",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      staged_event_id: oldStageEventId,
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      stage_hash: "stage_hash_restaged_old",
+      status: "approved",
+      approved_at: "2026-05-16T08:05:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_restaged_old",
+      expires_at: "2026-05-17T08:05:00.000Z",
+      created_at: "2026-05-16T08:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_checkpoint_write_run_succeeded",
+      run_id: "checkpoint_restaged_old_run",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      approval_id: "approval_checkpoint_restaged_old",
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      execution_kind: "checkpoint_create",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      status: "succeeded",
+      checkpoint_id: "checkpoint_restaged_old",
+      checkpoint_hash: "checkpoint_hash_restaged_old",
+      event_count: 3,
+      result_kind: "runtime_checkpoint",
+      result_summary: "created checkpoint checkpoint_restaged_old scope=full events=3",
+      started_at: "2026-05-16T08:10:00.000Z",
+      completed_at: "2026-05-16T08:10:01.000Z",
+      requested_by: "fixture",
+      result_hash: "result_hash_restaged_old",
+      created_at: "2026-05-16T08:10:01.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_removed",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      requested_by: "fixture",
+      reason: "restage",
+      created_at: "2026-05-16T08:20:00.000Z",
+    })
+    const newStageEventId = await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:25:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_restaged_new",
+      summary_preview: "/checkpoint full restaged",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_restaged_new",
+      staged_write_id: "staged_checkpoint_restaged_same_id",
+      staged_event_id: newStageEventId,
+      command: "/checkpoint full restaged",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:25:00.000Z",
+      stage_hash: "stage_hash_restaged_new",
+      status: "approved",
+      approved_at: "2026-05-16T08:30:00.000Z",
+      requested_by: "fixture",
+      evidence: [],
+      approval_hash: "approval_hash_restaged_new",
+      expires_at: "2026-05-17T08:30:00.000Z",
+      created_at: "2026-05-16T08:30:00.000Z",
+    })
+
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const stale = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_stale", { staleAfterMs: 3_600_000 }) as Array<{ staged_write_id: string; approval_id?: string; latest_run_id?: string; reason: string }>
+    const restaged = stale.find((item) => item.staged_write_id === "staged_checkpoint_restaged_same_id")
+    expect(restaged).toMatchObject({ approval_id: "approval_checkpoint_restaged_new", reason: expect.stringContaining("no terminal run") })
+    expect(restaged?.latest_run_id).toBeUndefined()
+    await server.shutdown()
+  })
+
+  test("wake scheduler navigation checkpoint write approval usage does not expire rejected removals", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_staged",
+      staged_write_id: "staged_checkpoint_rejected_removed",
+      command: "/checkpoint full rejected-removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      staged_by: "fixture",
+      status: "staged",
+      stage_hash: "stage_hash_rejected_removed",
+      summary_preview: "/checkpoint full rejected-removed",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_approval_recorded",
+      approval_id: "approval_checkpoint_rejected_removed",
+      staged_write_id: "staged_checkpoint_rejected_removed",
+      command: "/checkpoint full rejected-removed",
+      command_name: "/checkpoint",
+      risk: "medium_risk_write",
+      authority_gate: "checkpoint_runtime",
+      target_kind: "checkpoint",
+      staged_at: "2026-05-16T08:00:00.000Z",
+      stage_hash: "stage_hash_rejected_removed",
+      status: "rejected",
+      rejected_at: "2026-05-16T08:05:00.000Z",
+      requested_by: "fixture",
+      reason: "operator rejection",
+      evidence: [],
+      approval_hash: "approval_hash_rejected_removed",
+      created_at: "2026-05-16T08:05:00.000Z",
+    })
+    await eventStore.append({
+      kind: "runtime_wake_scheduler_navigation_write_command_removed",
+      staged_write_id: "staged_checkpoint_rejected_removed",
+      requested_by: "fixture",
+      reason: "cleanup",
+      created_at: "2026-05-16T08:10:00.000Z",
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      runtimeWakeSchedulerNow: () => new Date("2026-05-16T10:00:00.000Z"),
+      runtimeCheckpointNow: () => new Date("2026-05-16T10:00:00.000Z"),
+    })
+    await server.start()
+    const usage = await server.command("runtime.wake_scheduler_navigation_checkpoint_write_approval_usage", { stagedWriteId: "staged_checkpoint_rejected_removed", staleAfterMs: 3_600_000 }) as { expired_unused_count: number; approvals: Array<{ approval_id: string; approval_status: string; expired_before_use: boolean; stale: boolean }> }
+    expect(usage.expired_unused_count).toBe(0)
+    expect(usage.approvals.find((approval) => approval.approval_id === "approval_checkpoint_rejected_removed")).toMatchObject({ approval_status: "rejected", expired_before_use: false, stale: false })
     await server.shutdown()
   })
 
