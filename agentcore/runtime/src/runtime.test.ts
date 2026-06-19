@@ -745,6 +745,8 @@ describe("CommandAuthorityService", () => {
       "/missions",
       "/checkpoint",
       "/wake-tick",
+      "/wake-tick-dry-run",
+      "/wake-schedule-cancel",
       "/scheduler-status",
       "/scheduler-nav",
       "/scheduler-nav-stage",
@@ -771,7 +773,11 @@ describe("CommandAuthorityService", () => {
   test("registry classifies critical authority and risk boundaries", () => {
     const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
     expect(service.get("/scheduler-status")).toMatchObject({ risk: "safe_read", mutates_events: false })
+    expect(service.get("/wake-tick-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "wake_schedule_tick", mutates_events: false, expected_event_kinds: [] })
     expect(service.get("/wake-tick")).toMatchObject({ risk: "high_impact_write", gate: "wake_schedule_tick", mutates_events: true })
+    expect(service.get("/wake-schedule-pause")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_paused"] })
+    expect(service.get("/wake-schedule-resume")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_resumed"] })
+    expect(service.get("/wake-schedule-cancel")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_cancelled"] })
     expect(service.get("/scheduler-nav-checkpoint-run")).toMatchObject({ gate: "checkpoint_runtime", owner: "scheduler_navigation_checkpoint_write", requires_approval: true })
     expect(service.get("/scheduler-nav-stage")).toMatchObject({ owner: "scheduler_navigation_staging" })
     expect(service.get("/scheduler-nav-run")).toMatchObject({ owner: "scheduler_navigation_staged_read" })
