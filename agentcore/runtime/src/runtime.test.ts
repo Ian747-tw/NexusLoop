@@ -790,6 +790,19 @@ describe("CommandAuthorityService", () => {
     }
   })
 
+  test("registry covers every whitelisted TUI slash command", async () => {
+    const source = await readFile(join(import.meta.dir, "../../tui/src/keyboard.ts"), "utf8")
+    const body = source.split("const runtimeCommands = new Set([", 2)[1]?.split("])", 1)[0]
+    expect(body).toBeTruthy()
+    const commands = Array.from(body!.matchAll(/"([^"]+)"/g), (match) => `/${match[1]}`)
+    const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
+    const unsupported = commands
+      .map((command) => service.get(command))
+      .filter((record) => record.risk === "unsupported")
+      .map((record) => record.slash_command)
+    expect(unsupported).toEqual([])
+  })
+
   test("registry classifies critical authority and risk boundaries", () => {
     const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
     expect(service.get("/scheduler-status")).toMatchObject({ risk: "safe_read", mutates_events: false })
@@ -800,6 +813,7 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/wake-schedule-pause")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_paused"] })
     expect(service.get("/wake-schedule-resume")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_resumed"] })
     expect(service.get("/wake-schedule-cancel")).toMatchObject({ risk: "medium_risk_write", gate: "wake_schedule_tick", mutates_events: true, expected_event_kinds: ["runtime_wake_schedule_cancelled"] })
+    expect(service.get("/rebuild-projection")).toMatchObject({ risk: "low_risk_write", gate: "research_runtime", mutates_events: false, requires_run_lock: true })
     expect(service.get("/scheduler-nav-checkpoint-run")).toMatchObject({ gate: "checkpoint_runtime", owner: "scheduler_navigation_checkpoint_write", requires_approval: true })
     expect(service.get("/scheduler-nav-run-dry-run")).toMatchObject({ risk: "safe_read", owner: "scheduler_navigation_staged_read", mutates_events: false })
     expect(service.get("/scheduler-nav-write-run-dry-run")).toMatchObject({ risk: "low_risk_write", owner: "scheduler_navigation_write_run", mutates_events: false, expected_event_kinds: [] })
