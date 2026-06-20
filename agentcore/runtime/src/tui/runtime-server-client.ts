@@ -129,7 +129,7 @@ export class RuntimeServerClient implements RuntimeClient {
 
   private shouldAutoStart(name: string, payload: Record<string, unknown>): boolean {
     if (name === "runtime.shutdown") return false
-    if (name === "runtime.execute_opencode_process_smoke" && payload.dryRun === true) return false
+    if (name === "runtime.execute_opencode_process_smoke" && (payload.dryRun === true || payload.dry_run === true)) return false
     return !noStartCommands.has(name)
   }
 }

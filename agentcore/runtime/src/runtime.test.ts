@@ -12546,6 +12546,7 @@ describe("RuntimeServerClient", () => {
 
     await expect(client.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({ opt_in_required: true })
     await expect(client.command("runtime.execute_opencode_process_smoke", { dryRun: true })).resolves.toMatchObject({ status: "skipped" })
+    await expect(client.command("runtime.execute_opencode_process_smoke", { dry_run: true })).resolves.toMatchObject({ status: "skipped" })
     await expect(client.command("runtime.list_opencode_process_smokes")).resolves.toEqual([])
     await expect(client.command("runtime.get_opencode_process_smoke", { smokeId: "missing" })).resolves.toBeNull()
 
