@@ -114,6 +114,7 @@ function write(args: {
   aliases?: string[]
   provider?: boolean
   process?: boolean
+  blockedByDefault?: boolean
   notes?: string[]
   out?: string[]
   profile: CommandValidationProfile
@@ -139,7 +140,7 @@ function write(args: {
     validation_profile: args.profile,
     notes: args.notes,
     out_of_scope: args.out,
-    blocked_by_default: args.risk === "high_impact_write" || args.status === "blocked",
+    blocked_by_default: args.blockedByDefault ?? (args.risk === "high_impact_write" || args.status === "blocked"),
   })
 }
 
@@ -283,7 +284,7 @@ export const COMMAND_AUTHORITY_REGISTRY: CommandAuthorityRecord[] = [
   write({ slash: "/handoff", runtime: "runtime.execute_opencode_handoff", risk: "high_impact_write", gate: "handoff_runtime", owner: "opencode_handoff", events: ["opencode_handoff_started", "opencode_handoff_created", "opencode_handoff_failed"], reads: ["/handoff-preview", "/handoff-followups"], process: true, profile: profiles.handoff }),
   read("/opencode-smoke-preview", "runtime.preview_opencode_process_smoke", "opencode_handoff", "opencode_runtime", profiles.opencodeSmoke),
   record({ slash_command: "/opencode-smoke-dry-run", runtime_command: "runtime.execute_opencode_process_smoke", risk: "safe_read", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: false, creates_external_process: false, calls_provider: false, requires_active_runtime: false, requires_run_lock: false, requires_approval: false, current_phase_status: "implemented", validation_profile: profiles.opencodeSmoke, recommended_reads: ["/opencode-smoke-preview", "/opencode-smokes"], notes: ["Dry-run OpenCode process smoke returns predicted diagnostics only; it does not append events or launch OpenCode."] }),
-  write({ slash: "/opencode-smoke", runtime: "runtime.execute_opencode_process_smoke", risk: "low_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", events: ["opencode_process_smoke_started", "opencode_process_smoke_succeeded", "opencode_process_smoke_failed", "opencode_process_smoke_blocked"], reads: ["/opencode-smoke-preview", "/opencode-smokes"], aliases: ["/opencode-process-smoke", "/opencode-health-smoke"], process: true, profile: profiles.opencodeSmoke, notes: ["Real OpenCode smoke is opt-in via NXL_REAL_OPENCODE_SMOKE=1 and records only bounded process diagnostics."] }),
+  write({ slash: "/opencode-smoke", runtime: "runtime.execute_opencode_process_smoke", risk: "low_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", events: ["opencode_process_smoke_started", "opencode_process_smoke_succeeded", "opencode_process_smoke_failed", "opencode_process_smoke_blocked"], reads: ["/opencode-smoke-preview", "/opencode-smokes"], aliases: ["/opencode-process-smoke", "/opencode-health-smoke"], process: true, blockedByDefault: true, profile: profiles.opencodeSmoke, notes: ["Real OpenCode smoke is opt-in via NXL_REAL_OPENCODE_SMOKE=1 and records only bounded process diagnostics."] }),
   read("/opencode-smokes", "runtime.list_opencode_process_smokes", "opencode_handoff", "opencode_runtime", profiles.opencodeSmoke),
   read("/opencode-smoke-show", "runtime.get_opencode_process_smoke", "opencode_handoff", "opencode_runtime", profiles.opencodeSmoke),
   write({ slash: "/synthesize", runtime: "runtime.execute_research_synthesis", risk: "high_impact_write", gate: "reasoning_provider_runtime", owner: "reasoning_provider", events: ["research_synthesis_created"], provider: true, reads: ["/synthesize-preview", "/syntheses"], profile: profiles.synthesis }),

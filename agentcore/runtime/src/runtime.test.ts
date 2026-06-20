@@ -846,7 +846,7 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/handoff")).toMatchObject({ risk: "high_impact_write", gate: "handoff_runtime", creates_external_process: true })
     expect(service.get("/opencode-smoke-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_process_smoke", mutates_events: false })
     expect(service.get("/opencode-smoke-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.execute_opencode_process_smoke", creates_external_process: false, mutates_events: false })
-    expect(service.get("/opencode-smoke")).toMatchObject({ risk: "low_risk_write", gate: "opencode_runtime", creates_external_process: true, mutates_events: true })
+    expect(service.get("/opencode-smoke")).toMatchObject({ risk: "low_risk_write", gate: "opencode_runtime", creates_external_process: true, mutates_events: true, blocked_by_default: true })
     expect(service.get("/api-ingest")).toMatchObject({ risk: "high_impact_write", gate: "external_api_runtime", owner: "research", mutates_events: true })
     expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
     expect(service.get("/api-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "reasoning_provider", mutates_events: false, expected_event_kinds: [] })
