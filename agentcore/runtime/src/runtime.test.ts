@@ -961,6 +961,26 @@ describe("OpenCode process smoke", () => {
     await server.shutdown()
   })
 
+  test("preview resolves relative path-like smoke commands from project dir", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const binDir = join(dir, "node_modules", ".bin")
+    const binPath = join(binDir, "opencode")
+    await mkdir(binDir, { recursive: true })
+    await writeFile(binPath, "#!/bin/sh\nexit 0\n")
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "./node_modules/.bin/opencode" },
+    })
+
+    await expect(server.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "ready",
+      binary_detected: true,
+      binary_path: binPath,
+    })
+  })
+
   test("opt-in process smoke uses adapter spawn and records redacted success", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

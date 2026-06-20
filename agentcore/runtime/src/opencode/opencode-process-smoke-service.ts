@@ -196,7 +196,10 @@ export class OpenCodeProcessSmokeService {
 
   private resolveCommand(): string | undefined {
     const candidate = this.env.NXL_OPENCODE_BIN?.trim() || this.env.NXL_OPENCODE_COMMAND?.trim() || (this.adapterConfig?.kind === "process" ? this.adapterConfig.command : undefined)
-    return candidate?.trim() || undefined
+    const command = candidate?.trim()
+    if (!command) return undefined
+    if (command.includes("/") && !isAbsolute(command)) return join(this.projectDir, command)
+    return command
   }
 
   private async detectBinary(command: string): Promise<{ detected: boolean; path?: string }> {

@@ -3127,6 +3127,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (researchSynthesisCommands.has(command)) return state.researchSynthesis?.commandError
   if (commanderCycleCommands.has(command)) return state.commanderCycle?.commandError
   if (opencodeHandoffCommands.has(command)) return state.opencodeHandoff?.commandError
+  if (opencodeProcessSmokeCommands.has(command)) return state.opencodeProcessSmoke?.commandError
   if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
   if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
   if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError
@@ -3155,6 +3156,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (researchSynthesisCommands.has(command)) return { ...state, researchSynthesis: { ...researchSynthesisState(state), commandError: undefined } }
   if (commanderCycleCommands.has(command)) return { ...state, commanderCycle: { ...commanderCycleState(state), commandError: undefined } }
   if (opencodeHandoffCommands.has(command)) return { ...state, opencodeHandoff: { ...opencodeHandoffState(state), commandError: undefined } }
+  if (opencodeProcessSmokeCommands.has(command)) return { ...state, opencodeProcessSmoke: { ...opencodeProcessSmokeState(state), commandError: undefined } }
   if (opencodeFollowupCommands.has(command)) return { ...state, opencodeFollowup: { ...opencodeFollowupState(state), commandError: undefined } }
   if (runtimeCheckpointCommands.has(command)) return { ...state, runtimeCheckpoints: { ...runtimeCheckpointsState(state), commandError: undefined } }
   if (runtimeRestoreCommands.has(command)) return { ...state, runtimeRestore: { ...runtimeRestoreState(state), commandError: undefined } }

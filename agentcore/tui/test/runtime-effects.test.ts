@@ -2669,6 +2669,22 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.commandError).toContain("not found")
     expect(state.operatorActions?.staged?.command).toBe("/handoff missing-proposal")
 
+    const smokeRuntime: RuntimeClient = {
+      stream: () => runtime.stream(),
+      sendUserMessage: (message: string) => runtime.sendUserMessage(message),
+      sendCommand: (command: string) => runtime.sendCommand(command),
+      command: async (name: string, payload?: Record<string, unknown>) => {
+        if (name === "runtime.execute_opencode_process_smoke") throw new Error("token=smoke-secret denied")
+        return runtime.command(name, payload)
+      },
+    }
+    state = await applyRuntimeUiEffect(state, smokeRuntime, { type: "send-command", command: "stage-command", args: ["/opencode-smoke"] })
+    expect(state.operatorActions?.staged?.command).toBe("/opencode-smoke")
+    state = await applyRuntimeUiEffect(state, smokeRuntime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/opencode-smoke", ok: false })
+    expect(state.operatorActions?.commandError).toContain("[REDACTED]")
+    expect(state.operatorActions?.staged?.command).toBe("/opencode-smoke")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/schedule-wake", "resume=missing-resume", "every=60s"] })
     expect(state.operatorActions?.staged?.command).toBe("/schedule-wake resume=missing-resume every=60s")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
