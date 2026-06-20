@@ -84,6 +84,7 @@ def test_user_inspects_opencode_process_smoke_without_live_process(sandbox) -> N
         if line.strip()
     ]
     event_kinds = [event["kind"] for event in events]
+    assert "runtime_started" not in event_kinds
     assert "opencode_process_smoke_blocked" in event_kinds
     assert "opencode_process_smoke_started" not in event_kinds
     assert "opencode_process_smoke_succeeded" not in event_kinds

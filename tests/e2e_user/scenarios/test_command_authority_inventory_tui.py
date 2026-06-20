@@ -76,11 +76,15 @@ def test_user_inspects_command_authority_inventory_without_mutation(sandbox) -> 
     assert "token=abc123" not in result.stdout
 
     events_path = project / ".nxl" / "events.jsonl"
-    events = [
-        json.loads(line)
-        for line in events_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    events = (
+        [
+            json.loads(line)
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if events_path.exists()
+        else []
+    )
     event_kinds = [event["kind"] for event in events]
     forbidden = {
         "runtime_wake_scheduler_started",

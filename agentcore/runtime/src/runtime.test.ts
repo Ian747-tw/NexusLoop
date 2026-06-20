@@ -12583,6 +12583,10 @@ describe("RuntimeServerClient", () => {
     await makeProject(dir, { approvedSpec: true })
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "/bin/echo" } })
     const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+    const iterator = client.stream()[Symbol.asyncIterator]()
+
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { type: "RuntimeReady" } })
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { type: "ProjectInitialized" } })
 
     await expect(client.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({ opt_in_required: true })
     await expect(client.command("runtime.execute_opencode_process_smoke", { dryRun: true })).resolves.toMatchObject({ status: "skipped" })
@@ -12592,6 +12596,7 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).resolves.toMatchObject({ status: "blocked" })
 
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await iterator.return?.()
     await client.shutdown()
   })
 
@@ -12651,8 +12656,9 @@ describe("RuntimeServerClient", () => {
   test("streams runtime events from RuntimeServer", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
     const client = new RuntimeServerClient({
-      server: new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() }),
+      server: new RuntimeServer({ projectDir: dir, adapter }),
       autoStart: true,
       ownsServer: true,
     })
@@ -12672,6 +12678,8 @@ describe("RuntimeServerClient", () => {
     }
 
     expect(events.map((event) => event.type)).toContain("RuntimeReady")
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
     await iterator.return?.()
     await client.shutdown()
   })
@@ -12699,15 +12707,8 @@ describe("RuntimeServerClient", () => {
     }
 
     expect(events.map((event) => event.type)).toEqual(["RuntimeReady", "ProjectInitialized"])
-    const nextEvent = iterator.next()
     await client.command("runtime.resume")
-    const possibleQueuedDuplicate = await Promise.race([
-      nextEvent.then((next) => next.value?.type ?? "done"),
-      timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
-        throw new Error("timed out waiting for client stream post-start event")
-      }),
-    ])
-    expect(possibleQueuedDuplicate).toBe("ResumeSummaryLoaded")
+    expect(await readEventKinds(dir)).toContain("runtime_started")
 
     await iterator.return?.()
     await client.shutdown()

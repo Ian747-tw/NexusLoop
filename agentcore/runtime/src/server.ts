@@ -964,11 +964,16 @@ export class RuntimeServer {
     this.checkResearchProjectionForStatus()
     const policy = await this.policyService.metadata()
     const adapterStatus = await this.adapter.getStatus()
+    let specSummary = this.specSummary
+    if (!specSummary) {
+      const current = await this.specService.readCurrent()
+      specSummary = current?.status === "approved" ? this.specService.toSummary(current) : null
+    }
     return redactValue({
       projectDir: this.projectDir,
       projectName: projectName(this.projectDir),
       mode: this.mode,
-      specApproved: this.specSummary?.status === "approved",
+      specApproved: specSummary?.status === "approved",
       runtimeStatus: this.started ? "started" : "created",
       lockHeld: this.runLock.isHeld(),
       fakeOpenCode: String(adapterStatus.message ?? ""),

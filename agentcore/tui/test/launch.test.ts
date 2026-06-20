@@ -10,6 +10,7 @@ class TestRuntimeClient implements RuntimeClient {
   constructor(private readonly firstEventDelayMs = 0) {}
 
   shutdownCount = 0
+  commandNames: string[] = []
 
   async *stream(): AsyncIterable<RuntimeEvent> {
     if (this.firstEventDelayMs > 0) {
@@ -23,6 +24,7 @@ class TestRuntimeClient implements RuntimeClient {
   async sendCommand(_command: string): Promise<void> {}
 
   async command(name: string): Promise<unknown> {
+    this.commandNames.push(name)
     if (name === "runtime.status") {
       return {
         runtimeStatus: "started",
@@ -39,6 +41,32 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "runtime.list_recent_missions") return []
     if (name === "runtime.review_status") return { pending_count: 0, approved_count: 0, rejected_count: 0, cancelled_count: 0 }
     if (name === "runtime.list_review_requests") return []
+    if (name === "runtime.preview_opencode_process_smoke") return { status: "not_configured", can_execute: false, opt_in_required: true, opt_in_present: false, binary_detected: false, blockers: ["missing"], warnings: [], recommended_commands: [] }
+    if (name === "runtime.execute_opencode_process_smoke") return { smoke_id: "smoke_test", status: "blocked", summary_preview: "blocked", diagnostics: [], requested_by: "operator", started_at: "2026-06-20T00:00:00.000Z", completed_at: "2026-06-20T00:00:00.000Z", smoke_hash: "hash" }
+    if (name === "runtime.list_opencode_process_smokes") return []
+    if (name === "runtime.command_authority_get") {
+      return {
+        authority_id: "authority_opencode_smoke",
+        slash_command: "/opencode-smoke",
+        aliases: [],
+        risk: "low_risk_write",
+        gate: "opencode_runtime",
+        owner: "opencode_handoff",
+        mutates_events: true,
+        creates_external_process: true,
+        calls_provider: false,
+        requires_active_runtime: true,
+        requires_run_lock: true,
+        requires_approval: false,
+        expected_event_kinds: [],
+        blocked_by_default: true,
+        current_phase_status: "implemented",
+        recommended_reads: [],
+        validation_profile: { targeted_e2e: [] },
+        notes: [],
+        out_of_scope: [],
+      }
+    }
     if (name === "research.projection_status" || name === "research.rebuild_projection") {
       return { mode: "auto_rebuild", ok: true, stale: false, pending_count: 0, last_event_id: "research-event-1" }
     }
@@ -636,6 +664,35 @@ describe("TUI launch boundary", () => {
     const snapshot = output.join("\n")
     expect(snapshot).toContain("command_error=runtime failed [REDACTED]")
     expect(snapshot).not.toContain("launch-secret")
+  })
+
+  test("headless OpenCode smoke inspection scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/opencode-smoke-preview" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-smoke" },
+      { type: "submit" },
+      { type: "insert", text: "/authority-show /opencode-smoke" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-opencode-smoke-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("OpenCode process smoke")
+    expect(runtime.commandNames).toContain("runtime.preview_opencode_process_smoke")
+    expect(runtime.commandNames).toContain("runtime.execute_opencode_process_smoke")
+    expect(runtime.commandNames).toContain("runtime.command_authority_get")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })
 
   test("shutdown command does not report a false post-shutdown refresh error", async () => {
