@@ -770,6 +770,11 @@ describe("CommandAuthorityService", () => {
       "/handoff-show",
       "/handoff-followup-summary",
       "/handoff-queue",
+      "/opencode-smoke-preview",
+      "/opencode-smoke-dry-run",
+      "/opencode-smoke",
+      "/opencode-smokes",
+      "/opencode-smoke-show",
       "/proposal-review",
       "/request-review",
       "/cancel-review",
@@ -839,6 +844,9 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/handoff-followup-summary")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_handoff_followup_summary", owner: "opencode_handoff" })
     expect(service.get("/handoff-queue")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_handoff_followup_queue", owner: "opencode_handoff" })
     expect(service.get("/handoff")).toMatchObject({ risk: "high_impact_write", gate: "handoff_runtime", creates_external_process: true })
+    expect(service.get("/opencode-smoke-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_process_smoke", mutates_events: false })
+    expect(service.get("/opencode-smoke-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.execute_opencode_process_smoke", creates_external_process: false, mutates_events: false })
+    expect(service.get("/opencode-smoke")).toMatchObject({ risk: "low_risk_write", gate: "opencode_runtime", creates_external_process: true, mutates_events: true })
     expect(service.get("/api-ingest")).toMatchObject({ risk: "high_impact_write", gate: "external_api_runtime", owner: "research", mutates_events: true })
     expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
     expect(service.get("/api-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "reasoning_provider", mutates_events: false, expected_event_kinds: [] })
@@ -853,6 +861,7 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/scheduler-recovery-dismiss").expected_event_kinds).toEqual(["runtime_wake_scheduler_recovery_recorded"])
     expect(service.get("/continue-step").expected_event_kinds).toEqual(["runtime_continuation_step_started", "runtime_continuation_step_succeeded", "runtime_continuation_step_failed", "runtime_continuation_plan_completed"])
     expect(service.get("/handoff").expected_event_kinds).toEqual(["opencode_handoff_started", "opencode_handoff_created", "opencode_handoff_failed"])
+    expect(service.get("/opencode-smoke").expected_event_kinds).toEqual(["opencode_process_smoke_started", "opencode_process_smoke_succeeded", "opencode_process_smoke_failed", "opencode_process_smoke_blocked"])
     expect(service.get("/synthesize").expected_event_kinds).toEqual(["research_synthesis_created"])
     expect(service.get("/cycle").expected_event_kinds).toEqual(["commander_cycle_completed"])
     expect(service.get("/api-call").expected_event_kinds).toEqual(["external_api_request_executed", "external_api_request_failed"])
@@ -872,6 +881,10 @@ describe("CommandAuthorityService", () => {
     expect(handoff.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_handoff_tui.py")
     expect(handoff.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py")
     expect(handoff.targeted_e2e).not.toContain("tests/e2e_user/scenarios/test_wake_scheduler_navigation_checkpoint_write_tui.py")
+
+    const smoke = service.validationProfile("/opencode-smoke")
+    expect(smoke.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_process_smoke_tui.py"])
+    expect(smoke.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_handoff_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py"])
   })
 
   test("query and unsupported command handling fail closed", () => {
@@ -897,6 +910,105 @@ describe("CommandAuthorityService", () => {
     await expect(server.command("runtime.command_authority_validation_profile", { command: "/handoff token=abc123" })).resolves.toMatchObject({ real_opencode_required: false })
 
     expect(await readJsonlEvents(dir)).toHaveLength(before.length)
+  })
+})
+
+describe("OpenCode process smoke", () => {
+  test("preview and dry-run do not append events or launch a process", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let spawnCalls = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeProcessSmokeEnv: {},
+      opencodeProcessSmokeSpawn: () => {
+        spawnCalls += 1
+        return new FakeSpawnedProcess()
+      },
+    })
+
+    await expect(server.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "ready",
+      can_execute: false,
+      opt_in_present: false,
+      warnings: expect.arrayContaining(["Set NXL_REAL_OPENCODE_SMOKE=1 to allow explicit real process smoke execution."]),
+    })
+    await expect(server.command("runtime.execute_opencode_process_smoke", { dryRun: true })).resolves.toMatchObject({
+      status: "skipped",
+      diagnostics: expect.arrayContaining(["dry-run requested; no process launched and no events appended"]),
+    })
+    expect(spawnCalls).toBe(0)
+    expect((await readJsonlEvents(dir)).map((event) => event.kind).filter((kind) => String(kind).startsWith("opencode_process_smoke"))).toEqual([])
+  })
+
+  test("execute blocks without explicit opt-in and persists bounded blocked metadata", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled", opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "/bin/echo" }, opencodeProcessSmokeId: () => "smoke_blocked" })
+
+    await server.start()
+    await expect(server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).resolves.toMatchObject({
+      smoke_id: "smoke_blocked",
+      status: "blocked",
+      error: "real OpenCode process smoke requires NXL_REAL_OPENCODE_SMOKE=1",
+    })
+    await expect(server.command("runtime.list_opencode_process_smokes")).resolves.toMatchObject([{ smoke_id: "smoke_blocked", status: "blocked" }])
+    await expect(server.command("runtime.get_opencode_process_smoke", { smokeId: "smoke_blocked" })).resolves.toMatchObject({ smoke_id: "smoke_blocked", status: "blocked" })
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("opencode_process_smoke_blocked")
+    await server.shutdown()
+  })
+
+  test("opt-in process smoke uses adapter spawn and records redacted success", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    let spawnCalls = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_success",
+      opencodeProcessSmokeNow: () => new Date("2026-06-20T00:00:00.000Z"),
+      opencodeProcessSmokeSpawn: () => {
+        spawnCalls += 1
+        return process
+      },
+    })
+
+    await server.start()
+    const result = await server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", timeoutMs: 1000 }) as { status: string; smoke_id: string; smoke_hash: string }
+    expect(result).toMatchObject({ smoke_id: "smoke_success", status: "succeeded" })
+    expect(result.smoke_hash).toHaveLength(64)
+    expect(spawnCalls).toBe(1)
+    expect(process.stdinWrites.join("\n")).not.toContain("token=")
+    await expect(server.command("runtime.list_opencode_process_smokes")).resolves.toMatchObject([{ smoke_id: "smoke_success", status: "succeeded" }])
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toEqual(expect.arrayContaining(["opencode_process_smoke_started", "opencode_process_smoke_succeeded"]))
+    expect(JSON.stringify(events)).not.toContain("abc123")
+    await server.shutdown()
+  })
+
+  test("execute requires active started runtime while preview list and get work in read modes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled" })
+    await expect(notStarted.command("runtime.execute_opencode_process_smoke")).rejects.toThrow("runtime must be started before opencode process smoke writes")
+    await expect(notStarted.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({ opt_in_required: true })
+    await expect(notStarted.command("runtime.list_opencode_process_smokes")).resolves.toEqual([])
+    await expect(notStarted.command("runtime.get_opencode_process_smoke", { smokeId: "missing" })).resolves.toBeNull()
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir, { approvedSpec: true })
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", researchProjectionMode: "disabled" })
+    await expect(statusServer.command("runtime.execute_opencode_process_smoke")).rejects.toThrow("runtime.execute_opencode_process_smoke requires active mode")
+    await expect(statusServer.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({ opt_in_required: true })
   })
 })
 

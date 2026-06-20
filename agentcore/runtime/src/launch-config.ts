@@ -17,6 +17,7 @@ export function readRuntimeServerLaunchOptionsFromEnv(
     options.externalApiConnectors = readExternalApiConnectorsFromEnv(env)
   }
   if (!options.externalApiEnv) options.externalApiEnv = env
+  if (!options.opencodeProcessSmokeEnv) options.opencodeProcessSmokeEnv = env
   if (!options.reasoningProviderConfig) {
     const reasoningProviderConfig = readReasoningProviderConfigFromEnv(env)
     if (reasoningProviderConfig) options.reasoningProviderConfig = reasoningProviderConfig

@@ -48,6 +48,9 @@ import { OpenCodeHandoffService } from "./opencode/opencode-handoff-service"
 import type { OpenCodeHandoffInput, OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "./opencode/opencode-handoff-types"
 import { OpenCodeHandoffFollowupService, readOpenCodeHandoffFollowupQueueKind } from "./opencode/opencode-handoff-followup-service"
 import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupSummary } from "./opencode/opencode-handoff-followup-types"
+import { OpenCodeProcessSmokeService } from "./opencode/opencode-process-smoke-service"
+import type { OpenCodeProcessSmokeExecuteInput, OpenCodeProcessSmokePreview, OpenCodeProcessSmokeRecord, OpenCodeProcessSmokeResult } from "./opencode/opencode-process-smoke-types"
+import type { OpenCodeSpawn } from "./opencode/process-adapter"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
 import { RuntimeRestoreService } from "./checkpoints/runtime-restore-service"
@@ -140,6 +143,10 @@ export interface RuntimeServerOptions {
   commanderCycleId?: () => string
   opencodeHandoffNow?: () => Date
   opencodeHandoffId?: () => string
+  opencodeProcessSmokeEnv?: Record<string, string | undefined>
+  opencodeProcessSmokeNow?: () => Date
+  opencodeProcessSmokeId?: () => string
+  opencodeProcessSmokeSpawn?: OpenCodeSpawn
   runtimeCheckpointNow?: () => Date
   runtimeCheckpointId?: () => string
   runtimeResumeNow?: () => Date
@@ -197,6 +204,7 @@ export class RuntimeServer {
   readonly proposalBundleRegistry: ProposalBundleRegistry
   readonly commanderPlaybookDraftRegistry: CommanderPlaybookDraftRegistry
   readonly externalApiConnectorRegistry: ExternalApiConnectorRegistry
+  private readonly openCodeAdapterConfig?: OpenCodeAdapterConfig
   private readonly runLock: RunLock
   private readonly externalApiTransport: ExternalApiTransport
   private readonly externalApiEnv: Record<string, string | undefined>
@@ -212,6 +220,10 @@ export class RuntimeServer {
   private readonly commanderCycleId?: () => string
   private readonly opencodeHandoffNow?: () => Date
   private readonly opencodeHandoffId?: () => string
+  private readonly opencodeProcessSmokeEnv: Record<string, string | undefined>
+  private readonly opencodeProcessSmokeNow?: () => Date
+  private readonly opencodeProcessSmokeId?: () => string
+  private readonly opencodeProcessSmokeSpawn?: OpenCodeSpawn
   private readonly runtimeCheckpointNow?: () => Date
   private readonly runtimeCheckpointId?: () => string
   private readonly runtimeResumeNow?: () => Date
@@ -236,6 +248,7 @@ export class RuntimeServer {
   private readonly ownsResearchDb: boolean
   private researchDb: RuntimeResearchDbProjection | null = null
   private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
+  private opencodeProcessSmokeServiceInstance: OpenCodeProcessSmokeService | null = null
   private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
   private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
   private wakeAssessmentServiceInstance: WakeAssessmentService | null = null
@@ -274,6 +287,7 @@ export class RuntimeServer {
     this.specService = new SpecService(this.projectDir)
     this.policyService = new PolicyService(this.projectDir)
     this.runLock = new RunLock(join(this.projectDir, ".nxl", "run.lock"))
+    this.openCodeAdapterConfig = options.openCodeAdapterConfig
     this.adapter = options.adapter ?? (options.openCodeAdapterConfig ? createOpenCodeAdapter(options.openCodeAdapterConfig, { ...options.openCodeAdapterFactoryOptions, projectDir: this.projectDir }) : new FakeOpenCodeAdapter())
     this.registerExecutorToolHandler(this.adapter)
     this.missionRegistry = options.missionRegistry ?? new MissionRegistry({ eventStore: this.eventStore, projectDir: this.projectDir })
@@ -297,6 +311,10 @@ export class RuntimeServer {
     this.commanderCycleId = options.commanderCycleId
     this.opencodeHandoffNow = options.opencodeHandoffNow
     this.opencodeHandoffId = options.opencodeHandoffId
+    this.opencodeProcessSmokeEnv = options.opencodeProcessSmokeEnv ?? process.env
+    this.opencodeProcessSmokeNow = options.opencodeProcessSmokeNow
+    this.opencodeProcessSmokeId = options.opencodeProcessSmokeId
+    this.opencodeProcessSmokeSpawn = options.opencodeProcessSmokeSpawn ?? options.openCodeAdapterFactoryOptions?.spawn
     this.runtimeCheckpointNow = options.runtimeCheckpointNow
     this.runtimeCheckpointId = options.runtimeCheckpointId
     this.runtimeResumeNow = options.runtimeResumeNow
@@ -703,6 +721,20 @@ export class RuntimeServer {
         return this.listOpenCodeHandoffs(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.get_opencode_handoff":
         return this.getOpenCodeHandoff(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
+      case "runtime.preview_opencode_process_smoke":
+        return this.previewOpenCodeProcessSmoke({
+          timeout_ms: optionalPositiveInteger(payload.timeoutMs ?? payload.timeout_ms, "timeoutMs", 60_000),
+        })
+      case "runtime.execute_opencode_process_smoke":
+        return this.executeOpenCodeProcessSmoke({
+          requested_by: optionalString(payload.requestedBy ?? payload.requested_by, "requestedBy"),
+          timeout_ms: optionalPositiveInteger(payload.timeoutMs ?? payload.timeout_ms, "timeoutMs", 60_000),
+          dry_run: optionalBoolean(payload.dryRun ?? payload.dry_run, "dryRun"),
+        })
+      case "runtime.list_opencode_process_smokes":
+        return this.listOpenCodeProcessSmokes(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.get_opencode_process_smoke":
+        return this.getOpenCodeProcessSmoke(requiredString(payload.smokeId ?? payload.smoke_id, "smokeId"))
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
       case "runtime.list_opencode_handoff_followups":
@@ -1368,6 +1400,23 @@ export class RuntimeServer {
 
   async getOpenCodeHandoff(handoffId: string): Promise<OpenCodeHandoffResult | null> {
     return this.opencodeHandoffService().get(handoffId)
+  }
+
+  async previewOpenCodeProcessSmoke(input: { timeout_ms?: number } = {}): Promise<OpenCodeProcessSmokePreview> {
+    return this.opencodeProcessSmokeService().preview(input)
+  }
+
+  async executeOpenCodeProcessSmoke(input: OpenCodeProcessSmokeExecuteInput = {}): Promise<OpenCodeProcessSmokeResult> {
+    if (input.dry_run !== true) this.requireOpenCodeProcessSmokeRuntime("runtime.execute_opencode_process_smoke")
+    return this.opencodeProcessSmokeService().execute(input)
+  }
+
+  async listOpenCodeProcessSmokes(limit = 20): Promise<OpenCodeProcessSmokeRecord[]> {
+    return this.opencodeProcessSmokeService().list(limit)
+  }
+
+  async getOpenCodeProcessSmoke(smokeId: string): Promise<OpenCodeProcessSmokeResult | null> {
+    return this.opencodeProcessSmokeService().get(smokeId)
   }
 
   async getOpenCodeHandoffFollowup(handoffId: string): Promise<OpenCodeHandoffFollowup | null> {
@@ -2134,6 +2183,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before opencode handoff writes")
   }
 
+  private requireOpenCodeProcessSmokeRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before opencode process smoke writes")
+  }
+
   private requireRuntimeCheckpointWriteRuntime(commandName: string): void {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before runtime checkpoint writes")
@@ -2192,6 +2246,19 @@ export class RuntimeServer {
       idFactory: this.opencodeHandoffId ? () => this.opencodeHandoffId!() : undefined,
     })
     return this.opencodeHandoffServiceInstance
+  }
+
+  private opencodeProcessSmokeService(): OpenCodeProcessSmokeService {
+    this.opencodeProcessSmokeServiceInstance ??= new OpenCodeProcessSmokeService({
+      eventStore: this.eventStore,
+      projectDir: this.projectDir,
+      adapterConfig: this.openCodeAdapterConfig,
+      env: this.opencodeProcessSmokeEnv,
+      spawn: this.opencodeProcessSmokeSpawn,
+      now: this.opencodeProcessSmokeNow,
+      idFactory: this.opencodeProcessSmokeId ? () => this.opencodeProcessSmokeId!() : undefined,
+    })
+    return this.opencodeProcessSmokeServiceInstance
   }
 
   private opencodeHandoffFollowupService(): OpenCodeHandoffFollowupService {

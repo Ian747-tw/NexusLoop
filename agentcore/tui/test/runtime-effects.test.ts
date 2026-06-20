@@ -2999,6 +2999,38 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("execute-secret")
   })
 
+  test("opencode process smoke commands render preview dry-run execute records and authority profile", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smoke-preview" })
+    expect(state.opencodeProcessSmoke?.preview).toMatchObject({ status: "ready", can_execute: true, adapter_kind: "fake" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode process smoke")
+    expect(snapshot).toContain("preview_status=ready")
+    expect(snapshot).toContain("note=real smoke is opt-in and not part of default CI")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smoke-dry-run" })
+    expect(state.opencodeProcessSmoke?.latestResult).toMatchObject({ smoke_id: "fake-smoke-dry-run", status: "skipped" })
+    expect(state.opencodeProcessSmoke?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smoke" })
+    expect(state.opencodeProcessSmoke?.latestResult).toMatchObject({ smoke_id: "fake-smoke-1", status: "succeeded" })
+    expect(state.opencodeProcessSmoke?.records.at(0)).toMatchObject({ smoke_id: "fake-smoke-1", status: "succeeded" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smokes" })
+    expect(state.opencodeProcessSmoke?.records.at(0)).toMatchObject({ smoke_id: "fake-smoke-1" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smoke-show", args: ["fake-smoke-1"] })
+    expect(state.opencodeProcessSmoke?.selected).toMatchObject({ smoke_id: "fake-smoke-1" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/opencode-smoke"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_process_smoke_tui.py")
+
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("latest=fake-smoke-1 status=succeeded")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
+
   test("opencode handoff follow-up slash commands render summary queues selected and redact secrets", async () => {
     const runtime = new OpenCodeHandoffRuntime()
     let state = initialState("/tmp/demo")

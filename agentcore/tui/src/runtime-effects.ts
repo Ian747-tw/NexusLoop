@@ -17,6 +17,10 @@ import type {
   MissionResultSummary,
   MissionSummaryState,
   OpenCodeHandoffPreviewSummary,
+  OpenCodeProcessSmokePreviewSummary,
+  OpenCodeProcessSmokeRecordSummary,
+  OpenCodeProcessSmokeResultSummary,
+  OpenCodeProcessSmokeState,
   OpenCodeHandoffRecordSummary,
   OpenCodeHandoffResultSummary,
   OpenCodeHandoffState,
@@ -290,6 +294,10 @@ export type RuntimeUiEffect =
   | { type: "execute-opencode-handoff"; proposalId: string; dryRun?: boolean }
   | { type: "load-opencode-handoff"; handoffId: string }
   | { type: "load-opencode-handoffs"; limit?: number }
+  | { type: "preview-opencode-process-smoke"; timeoutMs?: number }
+  | { type: "execute-opencode-process-smoke"; dryRun?: boolean; timeoutMs?: number }
+  | { type: "load-opencode-process-smokes"; limit?: number }
+  | { type: "load-opencode-process-smoke"; smokeId: string }
   | { type: "load-opencode-handoff-followup"; handoffId: string }
   | { type: "load-opencode-handoff-followups"; limit?: number }
   | { type: "load-opencode-handoff-followup-summary" }
@@ -900,6 +908,30 @@ export async function applyRuntimeUiEffect(
         )
       case "load-opencode-handoffs":
         return await loadOpenCodeHandoffs(state, runtime, effect.limit ?? HANDOFF_LIMIT)
+      case "preview-opencode-process-smoke":
+        return applyOpenCodeProcessSmokePreview(
+          state,
+          await runtime.command("runtime.preview_opencode_process_smoke", { timeoutMs: effect.timeoutMs }),
+        )
+      case "execute-opencode-process-smoke": {
+        const next = applyOpenCodeProcessSmokeResult(
+          state,
+          await runtime.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", dryRun: effect.dryRun === true, timeoutMs: effect.timeoutMs }),
+        )
+        return effect.dryRun === true ? next : applyOpenCodeProcessSmokeRecords(next, await runtime.command("runtime.list_opencode_process_smokes", { limit: HANDOFF_LIMIT }), HANDOFF_LIMIT)
+      }
+      case "load-opencode-process-smokes":
+        return applyOpenCodeProcessSmokeRecords(
+          state,
+          await runtime.command("runtime.list_opencode_process_smokes", { limit: effect.limit ?? HANDOFF_LIMIT }),
+          effect.limit ?? HANDOFF_LIMIT,
+        )
+      case "load-opencode-process-smoke":
+        return applyOpenCodeProcessSmokeResult(
+          state,
+          await runtime.command("runtime.get_opencode_process_smoke", { smokeId: effect.smokeId }),
+          effect.smokeId,
+        )
       case "load-opencode-handoff-followup":
         return applyOpenCodeHandoffFollowup(
           state,
@@ -1304,6 +1336,7 @@ export async function applyRuntimeUiEffect(
     if (isResearchSynthesisEffect(effect)) return recordResearchSynthesisCommandError(state, error)
     if (isCommanderCycleEffect(effect)) return recordCommanderCycleCommandError(state, error)
     if (isOpenCodeHandoffEffect(effect)) return recordOpenCodeHandoffCommandError(state, error)
+    if (isOpenCodeProcessSmokeEffect(effect)) return recordOpenCodeProcessSmokeCommandError(state, error)
     if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
     if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
     if (isRuntimeRestoreEffect(effect)) return recordRuntimeRestoreCommandError(state, error)
@@ -1842,6 +1875,52 @@ function applyOpenCodeHandoffResult(state: UiState, value: unknown, handoffId?: 
     systemActions: selectedId
       ? [...state.systemActions, { title: "opencode handoff result", detail: `handoff_id=${selectedId}`, status: result?.sent ? "sent" : "dry-run" }].slice(-12)
       : state.systemActions,
+  }
+}
+
+function applyOpenCodeProcessSmokePreview(state: UiState, value: unknown): UiState {
+  const smokePreview = readOpenCodeProcessSmokePreview(value)
+  return {
+    ...state,
+    opencodeProcessSmoke: {
+      ...opencodeProcessSmokeState(state),
+      preview: smokePreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode process smoke preview", detail: `status=${smokePreview.status}`, status: smokePreview.can_execute ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeProcessSmokeResult(state: UiState, value: unknown, smokeId?: string): UiState {
+  const result = readOpenCodeProcessSmokeResult(value)
+  if (!result && value !== null) throw new Error("runtime.get_opencode_process_smoke returned invalid result")
+  const current = opencodeProcessSmokeState(state)
+  const selectedId = result?.smoke_id ?? (smokeId ? redactText(smokeId) : undefined)
+  return {
+    ...state,
+    opencodeProcessSmoke: {
+      ...current,
+      latestResult: result ?? current.latestResult ?? null,
+      selected: result ?? (smokeId ? null : current.selected ?? null),
+      records: result && result.status !== "skipped" ? [recordFromOpenCodeProcessSmokeResult(result), ...current.records.filter((item) => item.smoke_id !== result.smoke_id)].slice(0, HANDOFF_LIMIT) : current.records,
+      commandError: undefined,
+    },
+    systemActions: selectedId
+      ? [...state.systemActions, { title: "opencode process smoke result", detail: `smoke_id=${selectedId}`, status: result?.status ?? "missing" }].slice(-12)
+      : state.systemActions,
+  }
+}
+
+function applyOpenCodeProcessSmokeRecords(state: UiState, value: unknown, limit: number): UiState {
+  const records = readOpenCodeProcessSmokeRecordList(value, "runtime.list_opencode_process_smokes", limit)
+  return {
+    ...state,
+    opencodeProcessSmoke: {
+      ...opencodeProcessSmokeState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode process smoke records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
   }
 }
 
@@ -3179,6 +3258,18 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoffs", limit: HANDOFF_LIMIT })
     case "handoff-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff", handoffId: requiredArg(args, 0, "handoffId") })
+    case "opencode-smoke-preview":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-opencode-process-smoke" })
+    case "opencode-smoke":
+    case "opencode-process-smoke":
+    case "opencode-health-smoke":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-opencode-process-smoke" })
+    case "opencode-smoke-dry-run":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-opencode-process-smoke", dryRun: true })
+    case "opencode-smokes":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-process-smokes", limit: HANDOFF_LIMIT })
+    case "opencode-smoke-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-process-smoke", smokeId: requiredArg(args, 0, "smokeId") })
     case "handoff-followup":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup", handoffId: requiredArg(args, 0, "handoffId") })
     case "handoff-followups":
@@ -3933,6 +4024,11 @@ function isOpenCodeHandoffEffect(effect: RuntimeUiEffect): boolean {
   return opencodeHandoffCommands.has(effect.command)
 }
 
+function isOpenCodeProcessSmokeEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return opencodeProcessSmokeEffectTypes.has(effect.type)
+  return opencodeProcessSmokeCommands.has(effect.command)
+}
+
 function isOpenCodeFollowupEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return opencodeFollowupEffectTypes.has(effect.type)
   return opencodeFollowupCommands.has(effect.command)
@@ -4093,6 +4189,16 @@ const opencodeHandoffCommands = new Set([
   "handoff-dry-run",
   "handoffs",
   "handoff-show",
+])
+
+const opencodeProcessSmokeCommands = new Set([
+  "opencode-smoke-preview",
+  "opencode-smoke",
+  "opencode-smoke-dry-run",
+  "opencode-smokes",
+  "opencode-smoke-show",
+  "opencode-process-smoke",
+  "opencode-health-smoke",
 ])
 
 const opencodeFollowupCommands = new Set([
@@ -4304,6 +4410,13 @@ const opencodeHandoffEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "execute-opencode-handoff",
   "load-opencode-handoff",
   "load-opencode-handoffs",
+])
+
+const opencodeProcessSmokeEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-opencode-process-smoke",
+  "execute-opencode-process-smoke",
+  "load-opencode-process-smokes",
+  "load-opencode-process-smoke",
 ])
 
 const opencodeFollowupEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -5270,6 +5383,18 @@ function recordOpenCodeHandoffCommandError(state: UiState, error: unknown): UiSt
   }
 }
 
+function recordOpenCodeProcessSmokeCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    opencodeProcessSmoke: {
+      ...opencodeProcessSmokeState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "opencode process smoke command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function recordOpenCodeFollowupCommandError(state: UiState, error: unknown): UiState {
   const message = redactText(error instanceof Error ? error.message : String(error))
   return {
@@ -5779,6 +5904,80 @@ function recordFromOpenCodeHandoffResult(result: OpenCodeHandoffResultSummary): 
     requested_by: result.requested_by,
     source_cycle_id: result.source_cycle_id,
     source_synthesis_id: result.source_synthesis_id,
+  }
+}
+
+function readOpenCodeProcessSmokePreview(value: unknown): OpenCodeProcessSmokePreviewSummary {
+  if (!isRecord(value) || typeof value.status !== "string") throw new Error("runtime.preview_opencode_process_smoke returned invalid preview")
+  return {
+    smoke_id: typeof value.smoke_id === "string" ? redactText(value.smoke_id) : undefined,
+    status: redactText(value.status),
+    can_execute: readBoolean(value.can_execute),
+    adapter_kind: typeof value.adapter_kind === "string" ? redactText(value.adapter_kind) : undefined,
+    project_dir: preview(readString(value.project_dir, "")),
+    binary_path: typeof value.binary_path === "string" ? preview(value.binary_path) : undefined,
+    binary_detected: readBoolean(value.binary_detected),
+    opt_in_required: readBoolean(value.opt_in_required),
+    opt_in_present: readBoolean(value.opt_in_present),
+    timeout_ms: readNumber(value.timeout_ms, 0),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readOpenCodeProcessSmokeResult(value: unknown): OpenCodeProcessSmokeResultSummary | null {
+  if (value === null || value === undefined) return null
+  if (!isRecord(value) || typeof value.smoke_id !== "string") throw new Error("runtime.get_opencode_process_smoke returned invalid result")
+  return {
+    smoke_id: redactText(value.smoke_id),
+    status: readString(value.status, "unknown"),
+    adapter_kind: typeof value.adapter_kind === "string" ? redactText(value.adapter_kind) : undefined,
+    project_dir: preview(readString(value.project_dir, "")),
+    binary_path: typeof value.binary_path === "string" ? preview(value.binary_path) : undefined,
+    started_at: readString(value.started_at, ""),
+    completed_at: readString(value.completed_at, ""),
+    duration_ms: typeof value.duration_ms === "number" ? value.duration_ms : undefined,
+    exit_code: typeof value.exit_code === "number" ? value.exit_code : undefined,
+    signal: typeof value.signal === "string" ? redactText(value.signal) : undefined,
+    stdout_preview: typeof value.stdout_preview === "string" ? preview(value.stdout_preview) : undefined,
+    stderr_preview: typeof value.stderr_preview === "string" ? preview(value.stderr_preview) : undefined,
+    diagnostics: readStringList(value.diagnostics, 12).map(preview),
+    error: typeof value.error === "string" ? preview(value.error) : undefined,
+    requested_by: readString(value.requested_by, "unknown"),
+    smoke_hash: readString(value.smoke_hash, ""),
+  }
+}
+
+function readOpenCodeProcessSmokeRecordList(value: unknown, commandName: string, limit: number): OpenCodeProcessSmokeRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readOpenCodeProcessSmokeRecord).filter((record): record is OpenCodeProcessSmokeRecordSummary => record !== null).slice(0, limit)
+}
+
+function readOpenCodeProcessSmokeRecord(value: unknown): OpenCodeProcessSmokeRecordSummary | null {
+  if (!isRecord(value) || typeof value.smoke_id !== "string") return null
+  return {
+    smoke_id: redactText(value.smoke_id),
+    status: readString(value.status, "unknown"),
+    adapter_kind: typeof value.adapter_kind === "string" ? redactText(value.adapter_kind) : undefined,
+    completed_at: readString(value.completed_at, ""),
+    duration_ms: typeof value.duration_ms === "number" ? value.duration_ms : undefined,
+    exit_code: typeof value.exit_code === "number" ? value.exit_code : undefined,
+    summary_preview: preview(readString(value.summary_preview, "")),
+    smoke_hash: readString(value.smoke_hash, ""),
+  }
+}
+
+function recordFromOpenCodeProcessSmokeResult(result: OpenCodeProcessSmokeResultSummary): OpenCodeProcessSmokeRecordSummary {
+  return {
+    smoke_id: result.smoke_id,
+    status: result.status,
+    adapter_kind: result.adapter_kind,
+    completed_at: result.completed_at,
+    duration_ms: result.duration_ms,
+    exit_code: result.exit_code,
+    summary_preview: result.error ?? result.diagnostics[0] ?? result.status,
+    smoke_hash: result.smoke_hash,
   }
 }
 
@@ -8477,6 +8676,10 @@ function commanderCycleState(state: UiState): CommanderCycleState {
 
 function opencodeHandoffState(state: UiState): OpenCodeHandoffState {
   return state.opencodeHandoff ?? { preview: null, lastResult: null, recent: [] }
+}
+
+function opencodeProcessSmokeState(state: UiState): OpenCodeProcessSmokeState {
+  return state.opencodeProcessSmoke ?? { preview: null, latestResult: null, records: [], selected: null }
 }
 
 function opencodeFollowupState(state: UiState): OpenCodeHandoffFollowupState {
