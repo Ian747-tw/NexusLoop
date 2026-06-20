@@ -12515,6 +12515,21 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("OpenCode process smoke read and dry-run commands do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "/bin/echo" } })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({ opt_in_required: true })
+    await expect(client.command("runtime.execute_opencode_process_smoke", { dryRun: true })).resolves.toMatchObject({ status: "skipped" })
+    await expect(client.command("runtime.list_opencode_process_smokes")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_process_smoke", { smokeId: "missing" })).resolves.toBeNull()
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
   test("delegates runtime.status", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

@@ -9,6 +9,10 @@ const noStartCommands = new Set([
   "runtime.command_authority_list",
   "runtime.command_authority_get",
   "runtime.command_authority_validation_profile",
+  "runtime.preview_opencode_process_smoke",
+  "runtime.execute_opencode_process_smoke",
+  "runtime.list_opencode_process_smokes",
+  "runtime.get_opencode_process_smoke",
 ])
 
 export interface RuntimeServerClientOptions {
