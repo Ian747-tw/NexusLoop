@@ -2685,6 +2685,33 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.commandError).toContain("[REDACTED]")
     expect(state.operatorActions?.staged?.command).toBe("/opencode-smoke")
 
+    const blockedSmokeResult = {
+      smoke_id: "smoke-blocked",
+      status: "blocked",
+      project_dir: "/tmp/demo",
+      started_at: "2026-06-20T00:00:00.000Z",
+      completed_at: "2026-06-20T00:00:00.000Z",
+      diagnostics: ["opt-in missing"],
+      error: "real OpenCode process smoke requires NXL_REAL_OPENCODE_SMOKE=1",
+      requested_by: "operator",
+      smoke_hash: "a".repeat(64),
+    }
+    const blockedSmokeRuntime: RuntimeClient = {
+      stream: () => runtime.stream(),
+      sendUserMessage: (message: string) => runtime.sendUserMessage(message),
+      sendCommand: (command: string) => runtime.sendCommand(command),
+      command: async (name: string, payload?: Record<string, unknown>) => {
+        if (name === "runtime.execute_opencode_process_smoke") return blockedSmokeResult
+        if (name === "runtime.list_opencode_process_smokes") return [{ smoke_id: "smoke-blocked", status: "blocked", completed_at: "2026-06-20T00:00:00.000Z", summary_preview: "blocked", smoke_hash: "a".repeat(64) }]
+        return runtime.command(name, payload)
+      },
+    }
+    state = await applyRuntimeUiEffect(state, blockedSmokeRuntime, { type: "send-command", command: "stage-command", args: ["/opencode-smoke"] })
+    state = await applyRuntimeUiEffect(state, blockedSmokeRuntime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/opencode-smoke", ok: false })
+    expect(state.operatorActions?.commandError).toContain("NXL_REAL_OPENCODE_SMOKE")
+    expect(state.operatorActions?.staged?.command).toBe("/opencode-smoke")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/schedule-wake", "resume=missing-resume", "every=60s"] })
     expect(state.operatorActions?.staged?.command).toBe("/schedule-wake resume=missing-resume every=60s")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })

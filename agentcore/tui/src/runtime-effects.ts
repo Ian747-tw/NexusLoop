@@ -918,7 +918,7 @@ export async function applyRuntimeUiEffect(
           state,
           await runtime.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", dryRun: effect.dryRun === true, timeoutMs: effect.timeoutMs }),
         )
-        return effect.dryRun === true ? next : applyOpenCodeProcessSmokeRecords(next, await runtime.command("runtime.list_opencode_process_smokes", { limit: HANDOFF_LIMIT }), HANDOFF_LIMIT)
+        return effect.dryRun === true ? next : applyOpenCodeProcessSmokeRecords(next, await runtime.command("runtime.list_opencode_process_smokes", { limit: HANDOFF_LIMIT }), HANDOFF_LIMIT, { preserveCommandError: true })
       }
       case "load-opencode-process-smokes":
         return applyOpenCodeProcessSmokeRecords(
@@ -1896,6 +1896,9 @@ function applyOpenCodeProcessSmokeResult(state: UiState, value: unknown, smokeId
   if (!result && value !== null) throw new Error("runtime.get_opencode_process_smoke returned invalid result")
   const current = opencodeProcessSmokeState(state)
   const selectedId = result?.smoke_id ?? (smokeId ? redactText(smokeId) : undefined)
+  const resultError = result && (result.status === "blocked" || result.status === "failed")
+    ? (result.error ?? `OpenCode process smoke ${result.status}`)
+    : undefined
   return {
     ...state,
     opencodeProcessSmoke: {
@@ -1903,7 +1906,7 @@ function applyOpenCodeProcessSmokeResult(state: UiState, value: unknown, smokeId
       latestResult: result ?? current.latestResult ?? null,
       selected: result ?? (smokeId ? null : current.selected ?? null),
       records: result && result.status !== "skipped" ? [recordFromOpenCodeProcessSmokeResult(result), ...current.records.filter((item) => item.smoke_id !== result.smoke_id)].slice(0, HANDOFF_LIMIT) : current.records,
-      commandError: undefined,
+      commandError: resultError ? redactText(resultError) : undefined,
     },
     systemActions: selectedId
       ? [...state.systemActions, { title: "opencode process smoke result", detail: `smoke_id=${selectedId}`, status: result?.status ?? "missing" }].slice(-12)
@@ -1911,14 +1914,15 @@ function applyOpenCodeProcessSmokeResult(state: UiState, value: unknown, smokeId
   }
 }
 
-function applyOpenCodeProcessSmokeRecords(state: UiState, value: unknown, limit: number): UiState {
+function applyOpenCodeProcessSmokeRecords(state: UiState, value: unknown, limit: number, options: { preserveCommandError?: boolean } = {}): UiState {
   const records = readOpenCodeProcessSmokeRecordList(value, "runtime.list_opencode_process_smokes", limit)
+  const current = opencodeProcessSmokeState(state)
   return {
     ...state,
     opencodeProcessSmoke: {
-      ...opencodeProcessSmokeState(state),
+      ...current,
       records,
-      commandError: undefined,
+      commandError: options.preserveCommandError ? current.commandError : undefined,
     },
     systemActions: [...state.systemActions, { title: "opencode process smoke records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
   }

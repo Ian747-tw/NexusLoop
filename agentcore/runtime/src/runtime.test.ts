@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
@@ -968,6 +968,7 @@ describe("OpenCode process smoke", () => {
     const binPath = join(binDir, "opencode")
     await mkdir(binDir, { recursive: true })
     await writeFile(binPath, "#!/bin/sh\nexit 0\n")
+    await chmod(binPath, 0o755)
     const server = new RuntimeServer({
       projectDir: dir,
       researchProjectionMode: "disabled",
@@ -978,6 +979,37 @@ describe("OpenCode process smoke", () => {
       status: "ready",
       binary_detected: true,
       binary_path: binPath,
+    })
+  })
+
+  test("preview blocks existing smoke command paths that are not executable files", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const nonExecutable = join(dir, "opencode")
+    await writeFile(nonExecutable, "#!/bin/sh\nexit 0\n")
+    const directoryPath = join(dir, "opencode-dir")
+    await mkdir(directoryPath)
+
+    const fileServer = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "./opencode" },
+    })
+    await expect(fileServer.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      binary_detected: false,
+    })
+
+    const directoryServer = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "./opencode-dir" },
+    })
+    await expect(directoryServer.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      binary_detected: false,
     })
   })
 

@@ -1,4 +1,5 @@
-import { access } from "node:fs/promises"
+import { constants } from "node:fs"
+import { access, stat } from "node:fs/promises"
 import { delimiter, isAbsolute, join } from "node:path"
 import { createHash } from "node:crypto"
 import type { EventStore } from "../events/event-store"
@@ -208,7 +209,9 @@ export class OpenCodeProcessSmokeService {
       : (this.env.PATH ?? process.env.PATH ?? "").split(delimiter).filter(Boolean).map((entry) => join(entry, command))
     for (const candidate of candidates) {
       try {
-        await access(candidate)
+        const info = await stat(candidate)
+        if (!info.isFile()) continue
+        await access(candidate, constants.X_OK)
         return { detected: true, path: candidate }
       } catch {
         // continue checking PATH entries
