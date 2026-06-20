@@ -339,6 +339,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   stdinWritable: boolean
   stdinDestroyed: boolean
   onStdinWriteBeforeAck: (() => void) | null = null
+  onStdinWriteAfterAck: (() => void) | null = null
   private spawned = false
   private readonly autoClose: boolean
   private readonly spawnListeners: Array<() => void> = []
@@ -366,6 +367,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
         if (!owner.neverAckStdinWrite) {
           queueMicrotask(() => {
             callback?.(owner.stdinAsyncWriteError)
+            if (!owner.stdinAsyncWriteError) owner.onStdinWriteAfterAck?.()
             if (!owner.stdinAsyncWriteError && owner.stdinErrorAfterAck) queueMicrotask(() => owner.emitStdinError(owner.stdinErrorAfterAck!))
           })
         }
@@ -1066,6 +1068,29 @@ describe("OpenCode process smoke", () => {
     expect(result.error).toBe("OpenCode smoke timed out during session start")
     expect(process.killedWith).toBe("SIGTERM")
     expect(result.diagnostics ?? []).toContain("OpenCode process shutdown failed: timed out after 5ms")
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).toEqual(expect.arrayContaining(["opencode_process_smoke_started", "opencode_process_smoke_failed"]))
+    await server.shutdown()
+  })
+
+  test("opt-in process smoke fails when process exits immediately after startup", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    process.onStdinWriteAfterAck = () => {
+      setTimeout(() => process.emitExit(7, null), 0)
+    }
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_exit",
+      opencodeProcessSmokeSpawn: () => process,
+    })
+
+    await server.start()
+    const result = await server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", timeoutMs: 1000 }) as { status: string; error?: string }
+
+    expect(result).toMatchObject({ status: "failed", error: "OpenCode process exited unexpectedly with code 7" })
     expect((await readJsonlEvents(dir)).map((event) => event.kind)).toEqual(expect.arrayContaining(["opencode_process_smoke_started", "opencode_process_smoke_failed"]))
     await server.shutdown()
   })

@@ -57,6 +57,9 @@ const WRITE_COMMANDS = new Set([
   "cancel-draft",
   "apply-target",
   "apply-partial",
+  "opencode-smoke",
+  "opencode-process-smoke",
+  "opencode-health-smoke",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

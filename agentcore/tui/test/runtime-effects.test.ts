@@ -2680,6 +2680,7 @@ describe("runtime UI effects", () => {
     }
     state = await applyRuntimeUiEffect(state, smokeRuntime, { type: "send-command", command: "stage-command", args: ["/opencode-smoke"] })
     expect(state.operatorActions?.staged?.command).toBe("/opencode-smoke")
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
     state = await applyRuntimeUiEffect(state, smokeRuntime, { type: "send-command", command: "run-staged" })
     expect(state.operatorActions?.lastResult).toMatchObject({ command: "/opencode-smoke", ok: false })
     expect(state.operatorActions?.commandError).toContain("[REDACTED]")

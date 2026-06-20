@@ -133,6 +133,11 @@ export class OpenCodeProcessSmokeService {
         shutdownTimeoutMs: Math.min(timeoutMs, 5_000),
       })
       await withTimeout(adapter.startSession({ projectDir: this.projectDir, objective: SMOKE_OBJECTIVE }), timeoutMs, "OpenCode smoke timed out during session start")
+      await nextTurn()
+      const adapterStatus = await adapter.getStatus()
+      if (adapterStatus.phase !== "running") {
+        throw new Error(typeof adapterStatus.lastError === "string" ? adapterStatus.lastError : `OpenCode process smoke did not remain running after session start: ${String(adapterStatus.phase ?? "unknown")}`)
+      }
       await withTimeout(adapter.shutdown(), Math.min(timeoutMs, 5_000), "OpenCode smoke timed out during shutdown")
       for await (const event of adapter.streamExecutorEvents()) {
         if (event.type === "ExecutorLifecycle") diagnostics.push(`${event.phase}: ${event.message}`)
@@ -338,4 +343,8 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   } finally {
     if (timeout) clearTimeout(timeout)
   }
+}
+
+async function nextTurn(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
 }
