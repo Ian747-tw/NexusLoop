@@ -118,10 +118,11 @@ export class OpenCodeProcessSmokeService {
 
     const startedTime = Date.now()
     const diagnostics: string[] = []
+    let adapter: ProcessOpenCodeAdapter | null = null
     try {
       const command = this.resolveCommand()
       if (!command) throw new Error("OpenCode process command is not configured")
-      const adapter = new ProcessOpenCodeAdapter({
+      adapter = new ProcessOpenCodeAdapter({
         command,
         args: this.adapterConfig?.kind === "process" ? this.adapterConfig.args : undefined,
         cwd: this.projectDir,
@@ -150,6 +151,13 @@ export class OpenCodeProcessSmokeService {
       await this.append("opencode_process_smoke_succeeded", result)
       return result
     } catch (error) {
+      if (adapter) {
+        try {
+          await withTimeout(adapter.shutdown(), Math.min(timeoutMs, 5_000), "OpenCode smoke timed out during failure cleanup")
+        } catch (shutdownError) {
+          diagnostics.push(this.safe(shutdownError instanceof Error ? shutdownError.message : String(shutdownError)))
+        }
+      }
       const message = this.safe(error instanceof Error ? error.message : String(error))
       const result = this.result({
         smokeId,

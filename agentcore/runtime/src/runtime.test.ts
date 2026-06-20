@@ -1047,6 +1047,29 @@ describe("OpenCode process smoke", () => {
     await server.shutdown()
   })
 
+  test("opt-in process smoke terminates adapter after session start timeout", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess(4242, { neverAckStdinWrite: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_timeout",
+      opencodeProcessSmokeSpawn: () => process,
+    })
+
+    await server.start()
+    const result = await server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", timeoutMs: 5 }) as { status: string; error?: string; diagnostics?: string[] }
+
+    expect(result.status).toBe("failed")
+    expect(result.error).toBe("OpenCode smoke timed out during session start")
+    expect(process.killedWith).toBe("SIGTERM")
+    expect(result.diagnostics ?? []).toContain("OpenCode process shutdown failed: timed out after 5ms")
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).toEqual(expect.arrayContaining(["opencode_process_smoke_started", "opencode_process_smoke_failed"]))
+    await server.shutdown()
+  })
+
   test("execute requires active started runtime while preview list and get work in read modes", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -12527,6 +12550,29 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.get_opencode_process_smoke", { smokeId: "missing" })).resolves.toBeNull()
 
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
+  test("OpenCode process smoke live execution can auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_autostart",
+      opencodeProcessSmokeSpawn: () => process,
+    })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).resolves.toMatchObject({ smoke_id: "smoke_autostart", status: "succeeded" })
+
+    expect(await readEventKinds(dir)).toEqual(expect.arrayContaining(["runtime_started", "opencode_process_smoke_started", "opencode_process_smoke_succeeded"]))
     await client.shutdown()
   })
 

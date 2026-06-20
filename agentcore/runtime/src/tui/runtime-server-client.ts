@@ -10,7 +10,6 @@ const noStartCommands = new Set([
   "runtime.command_authority_get",
   "runtime.command_authority_validation_profile",
   "runtime.preview_opencode_process_smoke",
-  "runtime.execute_opencode_process_smoke",
   "runtime.list_opencode_process_smokes",
   "runtime.get_opencode_process_smoke",
 ])
@@ -64,7 +63,7 @@ export class RuntimeServerClient implements RuntimeClient {
 
   command = (async (name: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
     if (this.shutdownRequested) throw new Error("runtime client has been shut down")
-    if (name !== "runtime.shutdown" && !noStartCommands.has(name)) await this.ensureStarted()
+    if (this.shouldAutoStart(name, payload)) await this.ensureStarted()
     try {
       const result = await this.server.command(name, payload)
       if (name === "runtime.shutdown") {
@@ -126,6 +125,12 @@ export class RuntimeServerClient implements RuntimeClient {
   private async ensureStarted(): Promise<void> {
     if (!this.autoStart) return
     await this.start()
+  }
+
+  private shouldAutoStart(name: string, payload: Record<string, unknown>): boolean {
+    if (name === "runtime.shutdown") return false
+    if (name === "runtime.execute_opencode_process_smoke" && payload.dryRun === true) return false
+    return !noStartCommands.has(name)
   }
 }
 
