@@ -4223,6 +4223,9 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/handoff", "token=abc123"] })
     expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/handoff", risk: "high_impact_write" })
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-smoke"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/opencode-smoke", risk: "low_risk_write", blocked_by_default: true })
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/tmp/repro"] })
     expect(state.commandAuthority?.selected).toMatchObject({ risk: "unsupported", blocked_by_default: true })
 

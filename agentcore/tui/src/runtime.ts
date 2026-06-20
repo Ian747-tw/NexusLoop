@@ -5740,6 +5740,7 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       active: true,
       lock: true,
       process: true,
+      blocked: true,
       events: ["opencode_process_smoke_started", "opencode_process_smoke_succeeded", "opencode_process_smoke_failed", "opencode_process_smoke_blocked"],
       reads: ["/opencode-smoke-preview", "/opencode-smokes"],
       targeted: ["tests/e2e_user/scenarios/test_opencode_process_smoke_tui.py"],
