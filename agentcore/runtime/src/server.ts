@@ -93,6 +93,7 @@ import { WakeSchedulerNavigationCheckpointWriteRunService, readWakeSchedulerNavi
 import type { WakeSchedulerNavigationCheckpointWriteRunPreview, WakeSchedulerNavigationCheckpointWriteRunRecord, WakeSchedulerNavigationCheckpointWriteRunResult } from "./schedules/wake-scheduler-navigation-checkpoint-write-run-types"
 import { WakeSchedulerNavigationCheckpointWriteCompareService, readWakeSchedulerNavigationCheckpointApprovalUsageInput, readWakeSchedulerNavigationCheckpointWriteCompareInput, readWakeSchedulerNavigationCheckpointWriteGroupInput, readWakeSchedulerNavigationCheckpointWriteHistoryInput, readWakeSchedulerNavigationCheckpointWriteStaleInput } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-service"
 import type { WakeSchedulerNavigationCheckpointApprovalUsageSummary, WakeSchedulerNavigationCheckpointWriteGroup, WakeSchedulerNavigationCheckpointWriteHistory, WakeSchedulerNavigationCheckpointWritePairComparison, WakeSchedulerNavigationCheckpointWriteStaleItem } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-types"
+import { CommandAuthorityService } from "./authority/command-authority-service"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -458,6 +459,14 @@ export class RuntimeServer {
         return this.status()
       case "runtime.reasoning_provider_status":
         return this.reasoningProviderStatus()
+      case "runtime.command_authority_summary":
+        return new CommandAuthorityService().summary()
+      case "runtime.command_authority_list":
+        return new CommandAuthorityService().list(payload)
+      case "runtime.command_authority_get":
+        return new CommandAuthorityService().get(requiredString(payload.command, "command"))
+      case "runtime.command_authority_validation_profile":
+        return new CommandAuthorityService().validationProfile(requiredString(payload.command, "command"), optionalStringArray(payload.changedFiles ?? payload.changed_files, "changedFiles") ?? [])
       case "runtime.reasoning_provider_health":
         return this.reasoningProviderHealth()
       case "runtime.preview_reasoning_provider_smoke":

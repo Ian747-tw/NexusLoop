@@ -168,6 +168,10 @@ import type {
   ProposalBundleStatusSummary,
   ProposalsState,
   ProposalStatusSummary,
+  CommandAuthorityRecordSummary,
+  CommandAuthorityState,
+  CommandAuthoritySummaryState,
+  CommandAuthorityValidationProfileSummary,
   ReasoningProviderHealthCheckSummary,
   ReasoningProviderHealthSummary,
   ReasoningProviderSmokePreviewSummary,
@@ -202,6 +206,10 @@ const PREVIEW_LENGTH = 160
 export type RuntimeUiEffect =
   | KeySideEffect
   | { type: "load-runtime-status" }
+  | { type: "load-command-authority-summary" }
+  | { type: "load-command-authority-list"; risk?: string; gate?: string; owner?: string; limit?: number }
+  | { type: "load-command-authority-record"; command: string }
+  | { type: "load-command-authority-validation-profile"; command: string; changedFiles?: string[] }
   | { type: "load-reasoning-provider-status" }
   | { type: "load-reasoning-provider-health" }
   | { type: "preview-reasoning-provider-smoke"; surface?: string }
@@ -401,6 +409,19 @@ export async function applyRuntimeUiEffect(
     switch (effect.type) {
       case "load-runtime-status":
         return applyRuntimeStatus(state, await runtime.command("runtime.status"))
+      case "load-command-authority-summary":
+        return applyCommandAuthoritySummary(state, await runtime.command("runtime.command_authority_summary"))
+      case "load-command-authority-list":
+        return applyCommandAuthorityRecords(state, await runtime.command("runtime.command_authority_list", {
+          risk: effect.risk,
+          gate: effect.gate,
+          owner: effect.owner,
+          limit: effect.limit ?? 20,
+        }), effect.limit ?? 20)
+      case "load-command-authority-record":
+        return applyCommandAuthorityRecord(state, await runtime.command("runtime.command_authority_get", { command: effect.command }))
+      case "load-command-authority-validation-profile":
+        return applyCommandAuthorityValidationProfile(state, await runtime.command("runtime.command_authority_validation_profile", { command: effect.command, changedFiles: effect.changedFiles ?? [] }))
       case "load-reasoning-provider-status":
         return applyReasoningProviderStatus(state, await runtime.command("runtime.reasoning_provider_status"))
       case "load-reasoning-provider-health":
@@ -1290,6 +1311,7 @@ export async function applyRuntimeUiEffect(
     if (isContinuationEffect(effect)) return recordContinuationCommandError(state, error)
     if (isWakeScheduleEffect(effect)) return recordWakeScheduleCommandError(state, error)
     if (isWakeSchedulerEffect(effect)) return recordWakeSchedulerCommandError(state, error)
+    if (isCommandAuthorityEffect(effect)) return recordCommandAuthorityCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
     return recordRuntimeCommandError(state, error)
@@ -3011,6 +3033,7 @@ function affectedTarget(command: string | undefined, args: string[]): Pick<Opera
 }
 
 function commandErrorFor(command: string, state: UiState): string | undefined {
+  if (commandAuthorityCommands.has(command)) return state.commandAuthority?.commandError
   if (missionExecutionCommands.has(command)) return state.missionExecution?.commandError
   if (reviewCommands.has(command)) return state.reviews?.commandError
   if (proposalCommands.has(command)) return state.proposals?.commandError
@@ -3038,6 +3061,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
 }
 
 function clearCommandErrorFor(command: string, state: UiState): UiState {
+  if (commandAuthorityCommands.has(command)) return { ...state, commandAuthority: { ...commandAuthorityState(state), commandError: undefined } }
   if (missionExecutionCommands.has(command)) return { ...state, missionExecution: { ...missionExecutionState(state), commandError: undefined } }
   if (reviewCommands.has(command)) return { ...state, reviews: { ...reviewsState(state), commandError: undefined } }
   if (proposalCommands.has(command)) return { ...state, proposals: { ...proposalsState(state), commandError: undefined } }
@@ -3078,6 +3102,18 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "run-staged":
     case "execute-staged":
       return runStagedOperatorCommand(commandState, runtime)
+    case "authority":
+    case "authority-summary":
+    case "command-authority":
+    case "command-map":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-command-authority-summary" })
+        .then((next) => applyRuntimeUiEffect(next, runtime, { type: "load-command-authority-list", limit: 20 }))
+    case "authority-list":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-command-authority-list", ...authorityListArgs(args) })
+    case "authority-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-command-authority-record", command: requiredRest(args, 0, "slashCommand") })
+    case "authority-profile":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-command-authority-validation-profile", command: requiredRest(args, 0, "slashCommand") })
     case "apis":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-external-api-connectors", limit: EXTERNAL_API_LIMIT })
     case "api":
@@ -3692,6 +3728,23 @@ const operatorActionCommands = new Set([
   "run-staged",
   "execute-staged",
   "stage-preview",
+])
+
+function isCommandAuthorityEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") {
+    return effect.type.startsWith("load-command-authority")
+  }
+  return commandAuthorityCommands.has(effect.command)
+}
+
+const commandAuthorityCommands = new Set([
+  "authority",
+  "authority-summary",
+  "authority-list",
+  "authority-show",
+  "authority-profile",
+  "command-authority",
+  "command-map",
 ])
 
 function isResearchEffect(effect: RuntimeUiEffect): boolean {
@@ -4542,6 +4595,58 @@ function applyRecentMissions(state: UiState, value: unknown): UiState {
   }
 }
 
+function applyCommandAuthoritySummary(state: UiState, value: unknown): UiState {
+  return {
+    ...state,
+    commandAuthority: {
+      ...commandAuthorityState(state),
+      summary: readCommandAuthoritySummary(value),
+      commandError: undefined,
+    },
+    runtimeCommandError: undefined,
+  }
+}
+
+function applyCommandAuthorityRecords(state: UiState, value: unknown, limit: number): UiState {
+  if (!Array.isArray(value)) throw new Error("runtime.command_authority_list returned non-array result")
+  return {
+    ...state,
+    commandAuthority: {
+      ...commandAuthorityState(state),
+      records: value.map(readCommandAuthorityRecord).filter((record): record is CommandAuthorityRecordSummary => record !== null).slice(0, limit),
+      commandError: undefined,
+    },
+    runtimeCommandError: undefined,
+  }
+}
+
+function applyCommandAuthorityRecord(state: UiState, value: unknown): UiState {
+  const selected = readCommandAuthorityRecord(value)
+  if (!selected) throw new Error("runtime.command_authority_get returned invalid record")
+  return {
+    ...state,
+    commandAuthority: {
+      ...commandAuthorityState(state),
+      selected,
+      commandError: undefined,
+    },
+    runtimeCommandError: undefined,
+    systemActions: [...state.systemActions, { title: "command authority selected", detail: `${selected.slash_command} risk=${selected.risk} gate=${selected.gate}`, status: selected.current_phase_status }].slice(-12),
+  }
+}
+
+function applyCommandAuthorityValidationProfile(state: UiState, value: unknown): UiState {
+  return {
+    ...state,
+    commandAuthority: {
+      ...commandAuthorityState(state),
+      validationProfile: readCommandAuthorityValidationProfile(value),
+      commandError: undefined,
+    },
+    runtimeCommandError: undefined,
+  }
+}
+
 function applySelectedReview(state: UiState, value: unknown, reviewId: string | undefined): UiState {
   const review = readReview(value)
   if (!review && value !== null) throw new Error("runtime.get_review_request returned invalid review")
@@ -4958,6 +5063,18 @@ function recordResearchCommandError(state: UiState, error: unknown): UiState {
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "research command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordCommandAuthorityCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commandAuthority: {
+      ...commandAuthorityState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "command authority error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
@@ -8084,6 +8201,73 @@ function readStringMap(value: unknown, limit: number): Record<string, string> {
   return out
 }
 
+function readNumberMap(value: unknown, limit: number): Record<string, number> {
+  if (!isRecord(value)) return {}
+  const out: Record<string, number> = {}
+  for (const [key, raw] of Object.entries(value).slice(0, limit)) {
+    if (typeof raw === "number" && Number.isFinite(raw)) out[redactText(key)] = raw
+  }
+  return out
+}
+
+function readCommandAuthoritySummary(value: unknown): CommandAuthoritySummaryState {
+  if (!isRecord(value)) throw new Error("runtime.command_authority_summary returned invalid summary")
+  return {
+    total_records: readNumber(value.total_records, 0),
+    risks: readNumberMap(value.risks, 20),
+    gates: readNumberMap(value.gates, 40),
+    owners: readNumberMap(value.owners, 40),
+    mutating_count: readNumber(value.mutating_count, 0),
+    high_impact_count: readNumber(value.high_impact_count, 0),
+    approval_required_count: readNumber(value.approval_required_count, 0),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readCommandAuthorityRecord(value: unknown): CommandAuthorityRecordSummary | null {
+  if (!isRecord(value) || typeof value.authority_id !== "string" || typeof value.slash_command !== "string") return null
+  return {
+    authority_id: redactText(value.authority_id),
+    slash_command: redactText(value.slash_command),
+    runtime_command: typeof value.runtime_command === "string" ? redactText(value.runtime_command) : undefined,
+    aliases: readStringList(value.aliases, 12),
+    risk: readString(value.risk, "unknown"),
+    gate: readString(value.gate, "unknown"),
+    owner: readString(value.owner, "unknown"),
+    mutates_events: readBoolean(value.mutates_events),
+    creates_external_process: readBoolean(value.creates_external_process),
+    calls_provider: readBoolean(value.calls_provider),
+    requires_active_runtime: readBoolean(value.requires_active_runtime),
+    requires_run_lock: readBoolean(value.requires_run_lock),
+    requires_approval: readBoolean(value.requires_approval),
+    approval_surface: typeof value.approval_surface === "string" ? redactText(value.approval_surface) : undefined,
+    execution_surface: typeof value.execution_surface === "string" ? redactText(value.execution_surface) : undefined,
+    expected_event_kinds: readStringList(value.expected_event_kinds, 20),
+    blocked_by_default: readBoolean(value.blocked_by_default),
+    current_phase_status: readString(value.current_phase_status, "unknown"),
+    recommended_reads: readStringList(value.recommended_reads, 12),
+    validation_profile: readCommandAuthorityValidationProfile(value.validation_profile),
+    notes: readStringList(value.notes, 12).map(preview),
+    out_of_scope: readStringList(value.out_of_scope, 12).map(preview),
+  }
+}
+
+function readCommandAuthorityValidationProfile(value: unknown): CommandAuthorityValidationProfileSummary {
+  const raw = isRecord(value) ? value : {}
+  return {
+    unit_runtime: readBoolean(raw.unit_runtime),
+    unit_tui: readBoolean(raw.unit_tui),
+    typecheck_runtime: readBoolean(raw.typecheck_runtime),
+    typecheck_tui: readBoolean(raw.typecheck_tui),
+    integration_cli: readBoolean(raw.integration_cli),
+    targeted_e2e: readStringList(raw.targeted_e2e, 20),
+    optional_regression_e2e: readStringList(raw.optional_regression_e2e, 20),
+    full_e2e_required_when: readStringList(raw.full_e2e_required_when, 20).map(preview),
+    live_provider_required: false,
+    real_opencode_required: false,
+  }
+}
+
 function readQueueKind(value: string): CommanderQueueKind {
   if (value === "needs_review" ||
     value === "ready_to_apply" ||
@@ -8229,6 +8413,10 @@ function readTopicSnapshot(value: unknown): ResearchTopicSnapshotSummary | null 
 
 function researchState(state: UiState): ResearchRecordsState {
   return state.research ?? { topics: [], selectedTopic: null, notes: [], events: [] }
+}
+
+function commandAuthorityState(state: UiState): CommandAuthorityState {
+  return state.commandAuthority ?? { summary: null, records: [], selected: null, validationProfile: null }
 }
 
 function reviewsState(state: UiState): ReviewsState {
@@ -8734,6 +8922,21 @@ function schedulerNavCheckpointApprovalUsageArgs(args: string[]): { approvalId?:
     else if (key === "limit") out.limit = readPositiveInteger(value, "limit", CHECKPOINT_LIMIT)
     else if (key === "after") out.staleAfterMs = readDurationArg(value)
     else throw new Error("scheduler checkpoint approval usage arg is invalid")
+  }
+  return out
+}
+
+function authorityListArgs(args: string[]): { risk?: string; gate?: string; owner?: string; limit?: number } {
+  const out: { risk?: string; gate?: string; owner?: string; limit?: number } = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("authority list args must use key=value")
+    if (key === "risk") out.risk = value
+    else if (key === "gate") out.gate = value
+    else if (key === "owner") out.owner = value
+    else if (key === "limit") out.limit = readPositiveInteger(value, "limit", 100)
+    else throw new Error("authority list arg is invalid")
   }
   return out
 }

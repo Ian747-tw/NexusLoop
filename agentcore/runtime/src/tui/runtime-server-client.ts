@@ -4,6 +4,12 @@ import { RuntimeServer } from "../server"
 import type { RuntimeClient, SubmitUserMessageResult } from "./runtime-client"
 
 const serverStartTasks = new WeakMap<RuntimeServer, Promise<void>>()
+const noStartCommands = new Set([
+  "runtime.command_authority_summary",
+  "runtime.command_authority_list",
+  "runtime.command_authority_get",
+  "runtime.command_authority_validation_profile",
+])
 
 export interface RuntimeServerClientOptions {
   server: RuntimeServer
@@ -53,7 +59,8 @@ export class RuntimeServerClient implements RuntimeClient {
   }
 
   command = (async (name: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
-    if (name !== "runtime.shutdown") await this.ensureStarted()
+    if (this.shutdownRequested) throw new Error("runtime client has been shut down")
+    if (name !== "runtime.shutdown" && !noStartCommands.has(name)) await this.ensureStarted()
     try {
       const result = await this.server.command(name, payload)
       if (name === "runtime.shutdown") {
