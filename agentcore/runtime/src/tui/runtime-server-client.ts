@@ -63,8 +63,8 @@ export class RuntimeServerClient implements RuntimeClient {
 
   command = (async (name: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
     if (this.shutdownRequested) throw new Error("runtime client has been shut down")
-    if (this.shouldAutoStart(name, payload)) await this.ensureStarted()
     try {
+      if (await this.shouldAutoStart(name, payload)) await this.ensureStarted()
       const result = await this.server.command(name, payload)
       if (name === "runtime.shutdown") {
         this.started = false
@@ -127,9 +127,16 @@ export class RuntimeServerClient implements RuntimeClient {
     await this.start()
   }
 
-  private shouldAutoStart(name: string, payload: Record<string, unknown>): boolean {
+  private async shouldAutoStart(name: string, payload: Record<string, unknown>): Promise<boolean> {
     if (name === "runtime.shutdown") return false
     if (name === "runtime.execute_opencode_process_smoke" && (payload.dryRun === true || payload.dry_run === true)) return false
+    if (name === "runtime.execute_opencode_process_smoke") {
+      const preview = await this.server.command("runtime.preview_opencode_process_smoke", {
+        timeoutMs: payload.timeoutMs,
+        timeout_ms: payload.timeout_ms,
+      }) as { can_execute?: unknown; opt_in_present?: unknown }
+      return preview.opt_in_present === true && preview.can_execute === true
+    }
     return !noStartCommands.has(name)
   }
 }

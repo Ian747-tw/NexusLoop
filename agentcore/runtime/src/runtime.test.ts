@@ -1099,10 +1099,25 @@ describe("OpenCode process smoke", () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
     const notStarted = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled" })
-    await expect(notStarted.command("runtime.execute_opencode_process_smoke")).rejects.toThrow("runtime must be started before opencode process smoke writes")
     await expect(notStarted.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({ opt_in_required: true })
     await expect(notStarted.command("runtime.list_opencode_process_smokes")).resolves.toEqual([])
     await expect(notStarted.command("runtime.get_opencode_process_smoke", { smokeId: "missing" })).resolves.toBeNull()
+
+    const blockedDir = await tempProject()
+    await makeProject(blockedDir, { approvedSpec: true })
+    const blockedServer = new RuntimeServer({ projectDir: blockedDir, researchProjectionMode: "disabled", opencodeProcessSmokeId: () => "smoke_no_opt_in" })
+    await expect(blockedServer.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).resolves.toMatchObject({ smoke_id: "smoke_no_opt_in", status: "blocked" })
+    expect((await readJsonlEvents(blockedDir)).map((event) => event.kind)).not.toContain("runtime_started")
+
+    const optInDir = await tempProject()
+    await makeProject(optInDir, { approvedSpec: true })
+    const optInNotStarted = new RuntimeServer({
+      projectDir: optInDir,
+      researchProjectionMode: "disabled",
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+    })
+    await expect(optInNotStarted.command("runtime.execute_opencode_process_smoke")).rejects.toThrow("runtime must be started before opencode process smoke writes")
 
     const statusDir = await tempProject()
     await makeProject(statusDir, { approvedSpec: true })
@@ -12574,6 +12589,7 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.execute_opencode_process_smoke", { dry_run: true })).resolves.toMatchObject({ status: "skipped" })
     await expect(client.command("runtime.list_opencode_process_smokes")).resolves.toEqual([])
     await expect(client.command("runtime.get_opencode_process_smoke", { smokeId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).resolves.toMatchObject({ status: "blocked" })
 
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
     await client.shutdown()

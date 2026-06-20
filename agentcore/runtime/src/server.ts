@@ -1407,7 +1407,13 @@ export class RuntimeServer {
   }
 
   async executeOpenCodeProcessSmoke(input: OpenCodeProcessSmokeExecuteInput = {}): Promise<OpenCodeProcessSmokeResult> {
-    if (input.dry_run !== true) this.requireOpenCodeProcessSmokeRuntime("runtime.execute_opencode_process_smoke")
+    if (input.dry_run !== true) {
+      if (this.mode !== "active") throw new Error("runtime.execute_opencode_process_smoke requires active mode")
+      const preview = await this.opencodeProcessSmokeService().preview({ timeout_ms: input.timeout_ms })
+      if (preview.opt_in_present === true && preview.can_execute === true) {
+        this.requireOpenCodeProcessSmokeRuntime("runtime.execute_opencode_process_smoke")
+      }
+    }
     return this.opencodeProcessSmokeService().execute(input)
   }
 
