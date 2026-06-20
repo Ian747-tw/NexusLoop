@@ -125,7 +125,7 @@ export class OpenCodeProcessSmokeService {
       adapter = new ProcessOpenCodeAdapter({
         command,
         args: this.adapterConfig?.kind === "process" ? this.adapterConfig.args : undefined,
-        cwd: this.projectDir,
+        cwd: this.adapterCwd(),
         env: this.adapterConfig?.kind === "process" ? this.adapterConfig.env : undefined,
         spawn: this.spawn,
         spawnTimeoutMs: timeoutMs,
@@ -209,11 +209,23 @@ export class OpenCodeProcessSmokeService {
   }
 
   private resolveCommand(): string | undefined {
-    const candidate = this.env.NXL_OPENCODE_BIN?.trim() || this.env.NXL_OPENCODE_COMMAND?.trim() || (this.adapterConfig?.kind === "process" ? this.adapterConfig.command : undefined)
-    const command = candidate?.trim()
+    const resolved = this.resolveCommandCandidate()
+    const command = resolved?.command
     if (!command) return undefined
-    if (command.includes("/") && !isAbsolute(command)) return join(this.projectDir, command)
+    if (command.includes("/") && !isAbsolute(command)) return join(resolved.cwd, command)
     return command
+  }
+
+  private resolveCommandCandidate(): { command: string; cwd: string } | undefined {
+    const envCommand = this.env.NXL_OPENCODE_BIN?.trim() || this.env.NXL_OPENCODE_COMMAND?.trim()
+    if (envCommand) return { command: envCommand, cwd: this.projectDir }
+    const adapterCommand = this.adapterConfig?.kind === "process" ? this.adapterConfig.command?.trim() : undefined
+    if (adapterCommand) return { command: adapterCommand, cwd: this.adapterCwd() }
+    return undefined
+  }
+
+  private adapterCwd(): string {
+    return this.adapterConfig?.kind === "process" && this.adapterConfig.cwd ? this.adapterConfig.cwd : this.projectDir
   }
 
   private async detectBinary(command: string): Promise<{ detected: boolean; path?: string }> {
