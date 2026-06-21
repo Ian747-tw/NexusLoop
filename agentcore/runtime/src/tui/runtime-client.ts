@@ -18,6 +18,7 @@ import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningP
 import type { OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "../opencode/opencode-handoff-types"
 import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary } from "../opencode/opencode-handoff-followup-types"
 import type { OpenCodeProcessSmokePreview, OpenCodeProcessSmokeRecord, OpenCodeProcessSmokeResult } from "../opencode/opencode-process-smoke-types"
+import type { OpenCodeHandoffReadinessInput, OpenCodeHandoffReadinessPreview, OpenCodeHandoffReadinessSummary } from "../opencode/opencode-handoff-readiness-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAssessmentRecord } from "../wake/wake-hook-types"
@@ -225,6 +226,17 @@ export interface RuntimeClient {
   command(name: "runtime.execute_opencode_process_smoke", payload?: { requestedBy?: string; requested_by?: string; timeoutMs?: number; timeout_ms?: number; dryRun?: boolean; dry_run?: boolean }): Promise<OpenCodeProcessSmokeResult>
   command(name: "runtime.list_opencode_process_smokes", payload?: { limit?: number }): Promise<OpenCodeProcessSmokeRecord[]>
   command(name: "runtime.get_opencode_process_smoke", payload: { smokeId: string } | { smoke_id: string }): Promise<OpenCodeProcessSmokeResult | null>
+  command(name: "runtime.preview_opencode_handoff_readiness", payload?: OpenCodeHandoffReadinessInput | {
+    proposalId?: string
+    reviewId?: string
+    missionId?: string
+    handoffId?: string
+    command?: string
+    requireRecentSmoke?: boolean
+    maxSmokeAgeMs?: number
+    includeAuthority?: boolean
+  }): Promise<OpenCodeHandoffReadinessPreview>
+  command(name: "runtime.opencode_handoff_readiness_summary", payload?: { maxSmokeAgeMs?: number; max_smoke_age_ms?: number }): Promise<OpenCodeHandoffReadinessSummary>
   command(name: "runtime.get_opencode_handoff_followup", payload: { handoffId: string } | { handoff_id: string }): Promise<OpenCodeHandoffFollowup | null>
   command(name: "runtime.list_opencode_handoff_followups", payload?: { limit?: number; staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowup[]>
   command(name: "runtime.opencode_handoff_followup_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowupSummary>
@@ -424,6 +436,8 @@ export interface RuntimeCommandEnvelope {
     | "runtime.execute_opencode_process_smoke"
     | "runtime.list_opencode_process_smokes"
     | "runtime.get_opencode_process_smoke"
+    | "runtime.preview_opencode_handoff_readiness"
+    | "runtime.opencode_handoff_readiness_summary"
     | "runtime.get_opencode_handoff_followup"
     | "runtime.list_opencode_handoff_followups"
     | "runtime.opencode_handoff_followup_summary"

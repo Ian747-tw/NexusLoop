@@ -1980,6 +1980,150 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("opencode handoff readiness composes authority smoke and handoff preview without events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const before = await readEventKinds(dir)
+    await expect(server.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      status: "ready",
+      can_execute_now: false,
+      authority: expect.objectContaining({
+        command: "/handoff",
+        risk: "high_impact_write",
+        gate: "handoff_runtime",
+        blocked_by_default: true,
+      }),
+      required_evidence: expect.arrayContaining([
+        expect.objectContaining({ kind: "authority_record", status: "high_impact_write", fresh: true }),
+        expect.objectContaining({ kind: "process_smoke", status: "missing", fresh: false }),
+      ]),
+      warnings: expect.arrayContaining([expect.stringContaining("fake/default adapter does not require real smoke")]),
+    })
+    const readinessAuthority = await server.command("runtime.preview_opencode_handoff_readiness", { command: "/handoff-readiness" }) as {
+      authority: { command: string; risk: string }
+      required_evidence: Array<{ kind: string; related_id?: string; status: string; summary_preview: string }>
+    }
+    expect(readinessAuthority.authority).toMatchObject({ command: "/handoff-readiness", risk: "safe_read" })
+    expect(readinessAuthority.required_evidence).toContainEqual(expect.objectContaining({
+      kind: "authority_record",
+      related_id: "/handoff-readiness",
+      status: "safe_read",
+      summary_preview: expect.stringContaining("/handoff-readiness is safe_read"),
+    }))
+    expect(readinessAuthority.required_evidence.find((item) => item.kind === "authority_record")?.summary_preview).not.toContain("/handoff is safe_read")
+
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "handoff objective" },
+    }) as { proposal_id: string }
+    await expect(server.command("runtime.preview_opencode_handoff_readiness", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      status: "needs_review",
+      proposal_id: proposal.proposal_id,
+      can_execute_now: false,
+      required_evidence: expect.arrayContaining([
+        expect.objectContaining({ kind: "handoff_preview", status: "blocked", blockers: expect.arrayContaining(["proposal requires linked review"]) }),
+      ]),
+    })
+    const missionReadiness = await server.command("runtime.preview_opencode_handoff_readiness", { missionId: "mission_1" }) as {
+      status: string
+      recommended_commands: Array<{ command: string; command_type: string }>
+    }
+    expect(missionReadiness.status).toBe("ready")
+    expect(missionReadiness.recommended_commands).not.toContainEqual(expect.objectContaining({ command: "/handoff <proposalId>" }))
+    expect(missionReadiness.recommended_commands.filter((command) => command.command_type === "write")).toEqual([])
+    expect(await readEventKinds(dir)).toEqual(expect.arrayContaining(before))
+    expect((await readEventKinds(dir)).filter((kind) => String(kind).startsWith("opencode_handoff"))).toEqual([])
+    await server.shutdown()
+  })
+
+  test("opencode handoff readiness requires fresh smoke for process mode and remains read-only", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeProcessSmokeEnv: {},
+      opencodeProcessSmokeId: () => "smoke_blocked_for_readiness",
+    })
+
+    await expect(server.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      status: "needs_smoke",
+      blockers: expect.arrayContaining([expect.stringContaining("no OpenCode process smoke record found")]),
+    })
+    const before = await readEventKinds(dir)
+    await server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })
+    const afterSmoke = await readEventKinds(dir)
+    await expect(server.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      status: "blocked",
+      latest_smoke: expect.objectContaining({ smoke_id: "smoke_blocked_for_readiness", status: "blocked" }),
+      blockers: expect.arrayContaining(["latest OpenCode smoke is blocked"]),
+    })
+    await expect(server.command("runtime.opencode_handoff_readiness_summary")).resolves.toMatchObject({
+      total_considered: 1,
+      blocked_count: 1,
+      latest_smoke_status: "blocked",
+    })
+    expect((await readEventKinds(dir)).slice(afterSmoke.length)).toEqual([])
+    expect(before.filter((kind) => String(kind).startsWith("opencode_process_smoke"))).toEqual([])
+    expect(afterSmoke).toContain("opencode_process_smoke_blocked")
+  })
+
+  test("opencode handoff readiness requires process smoke evidence for process mode", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    const fakeSmokeServer = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_fake_adapter",
+      opencodeProcessSmokeNow: () => new Date("2026-06-20T00:00:00.000Z"),
+      opencodeProcessSmokeSpawn: () => process,
+    })
+
+    await fakeSmokeServer.start()
+    await expect(fakeSmokeServer.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", timeoutMs: 1000 })).resolves.toMatchObject({
+      smoke_id: "smoke_fake_adapter",
+      status: "succeeded",
+      adapter_kind: "fake",
+    })
+    await fakeSmokeServer.shutdown()
+
+    const processModeServer = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeHandoffNow: () => new Date("2026-06-20T00:30:00.000Z"),
+    })
+    const before = await readEventKinds(dir)
+
+    await expect(processModeServer.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      status: "blocked",
+      latest_smoke: expect.objectContaining({ smoke_id: "smoke_fake_adapter", status: "succeeded", adapter_kind: "fake" }),
+      required_evidence: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "process_smoke",
+          status: "succeeded",
+          fresh: false,
+          blockers: expect.arrayContaining([expect.stringContaining("process adapter smoke is required")]),
+        }),
+      ]),
+      blockers: expect.arrayContaining([expect.stringContaining("process adapter smoke is required")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+  })
+
   test("opencode handoff execute sends mission through adapter records provenance and is idempotent", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -12739,6 +12883,30 @@ describe("RuntimeServerClient", () => {
 
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
     await iterator.return?.()
+    await client.shutdown()
+  })
+
+  test("OpenCode handoff readiness commands do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "/bin/echo" },
+    })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      can_execute_now: false,
+      authority: expect.objectContaining({ command: "/handoff", risk: "high_impact_write" }),
+    })
+    await expect(client.command("runtime.opencode_handoff_readiness_summary")).resolves.toMatchObject({
+      total_considered: 1,
+      needs_smoke_count: 1,
+    })
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
     await client.shutdown()
   })
 

@@ -80,6 +80,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...commanderCycleLines(state))
   out.push(...opencodeHandoffLines(state))
   out.push(...opencodeProcessSmokeLines(state))
+  out.push(...opencodeHandoffReadinessLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
@@ -410,6 +411,54 @@ function opencodeProcessSmokeLines(state: UiState): string[] {
   else out.push(...smoke.records.slice(0, 10).map((record) => `    - ${record.smoke_id} status=${record.status} duration_ms=${record.duration_ms ?? "unknown"}: ${preview(redactText(record.summary_preview))}`))
   if (smoke.commandError) out.push(`  command_error=${redactText(smoke.commandError)}`)
   out.push("  note=real smoke is opt-in and not part of default CI")
+  return out
+}
+
+function opencodeHandoffReadinessLines(state: UiState): string[] {
+  const readiness = state.opencodeHandoffReadiness
+  const out = ["OpenCode handoff readiness"]
+  if (!readiness) {
+    out.push("  preview=none")
+    out.push("  note=readiness preview does not execute handoff or launch OpenCode")
+    return out
+  }
+  if (readiness.summary) {
+    const summary = readiness.summary
+    out.push(`  summary ready=${summary.ready_count} blocked=${summary.blocked_count} needs_smoke=${summary.needs_smoke_count} needs_review=${summary.needs_review_count}`)
+    out.push(`  latest_smoke=${summary.latest_smoke_status ?? "none"} latest_handoff=${summary.latest_handoff_status ?? "none"}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (readiness.preview) {
+    const previewRecord = readiness.preview
+    out.push(`  preview=${previewRecord.readiness_id} status=${previewRecord.status} can_execute_now=${previewRecord.can_execute_now}`)
+    out.push(`  targets proposal=${previewRecord.proposal_id ?? "none"} review=${previewRecord.review_id ?? "none"} mission=${previewRecord.mission_id ?? "none"} handoff=${previewRecord.handoff_id ?? "none"}`)
+    out.push(`  authority=${previewRecord.authority.command} risk=${previewRecord.authority.risk} gate=${previewRecord.authority.gate} owner=${previewRecord.authority.owner} blocked_by_default=${previewRecord.authority.blocked_by_default}`)
+    if (previewRecord.latest_smoke) out.push(`  latest_smoke=${previewRecord.latest_smoke.smoke_id} status=${previewRecord.latest_smoke.status} at=${previewRecord.latest_smoke.completed_at}`)
+    if (previewRecord.handoff_preview_summary) out.push(`  handoff_preview=${preview(redactText(previewRecord.handoff_preview_summary))}`)
+    if (previewRecord.redacted_summary_preview) out.push(`  summary_preview=${preview(redactText(previewRecord.redacted_summary_preview))}`)
+    if (previewRecord.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewRecord.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (previewRecord.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...previewRecord.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  required_evidence")
+    if (previewRecord.required_evidence.length === 0) out.push("    - empty")
+    else out.push(...previewRecord.required_evidence.slice(0, 10).map((item) => `    - ${item.kind}:${item.status} fresh=${item.fresh} ${preview(redactText(item.summary_preview))}`))
+    out.push("  optional_evidence")
+    if (previewRecord.optional_evidence.length === 0) out.push("    - empty")
+    else out.push(...previewRecord.optional_evidence.slice(0, 10).map((item) => `    - ${item.kind}:${item.status} fresh=${item.fresh} ${preview(redactText(item.summary_preview))}`))
+    out.push("  recommended_commands")
+    if (previewRecord.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...previewRecord.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (readiness.commandError) out.push(`  command_error=${redactText(readiness.commandError)}`)
+  out.push("  note=readiness preview does not execute handoff or launch OpenCode")
   return out
 }
 

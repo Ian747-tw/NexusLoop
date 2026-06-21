@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary } from "./state"
 
 export interface SubmitUserMessageResult {
@@ -393,6 +393,10 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.listOpenCodeProcessSmokes(readLimit(payload.limit, 20))
       case "runtime.get_opencode_process_smoke":
         return this.getOpenCodeProcessSmoke(String(payload.smokeId ?? payload.smoke_id ?? ""))
+      case "runtime.preview_opencode_handoff_readiness":
+        return this.previewOpenCodeHandoffReadiness(payload)
+      case "runtime.opencode_handoff_readiness_summary":
+        return this.openCodeHandoffReadinessSummary()
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(String(payload.handoffId ?? payload.handoff_id ?? ""))
       case "runtime.list_opencode_handoff_followups":
@@ -1184,6 +1188,104 @@ export class FakeRuntimeClient implements RuntimeClient {
   private getOpenCodeProcessSmoke(smokeId: string): OpenCodeProcessSmokeResultSummary | null {
     const id = requiredString(smokeId, "smokeId")
     return this.opencodeProcessSmokes.find((item) => item.smoke_id === id) ?? null
+  }
+
+  private previewOpenCodeHandoffReadiness(payload: Record<string, unknown>): OpenCodeHandoffReadinessPreviewSummary {
+    const proposalId = optionalString(payload.proposalId ?? payload.proposal_id)
+    const reviewId = optionalString(payload.reviewId ?? payload.review_id)
+    const missionId = optionalString(payload.missionId ?? payload.mission_id)
+    const handoffId = optionalString(payload.handoffId ?? payload.handoff_id)
+    const latestSmoke = this.listOpenCodeProcessSmokes(1)[0]
+    const blockers: string[] = []
+    const warnings = ["fake/default runtime does not require real OpenCode smoke", "readiness preview does not execute handoff or launch OpenCode"]
+    let handoffPreview: OpenCodeHandoffPreviewSummary | null = null
+    if (proposalId) {
+      try {
+        handoffPreview = this.previewOpenCodeHandoff({ proposalId })
+        if (!handoffPreview.eligible) blockers.push(...handoffPreview.blockers)
+      } catch (error) {
+        blockers.push(error instanceof Error ? error.message : String(error))
+      }
+    }
+    const status = blockers.length > 0 ? "needs_review" : "ready"
+    return {
+      readiness_id: `fake-handoff-readiness-${proposalId ?? reviewId ?? missionId ?? handoffId ?? "general"}`,
+      status,
+      can_execute_now: false,
+      proposal_id: proposalId,
+      review_id: reviewId,
+      mission_id: missionId,
+      handoff_id: handoffId,
+      authority: {
+        command: "/handoff",
+        slash_command: "/handoff",
+        risk: "high_impact_write",
+        gate: "handoff_runtime",
+        owner: "opencode_handoff",
+        blocked_by_default: true,
+      },
+      latest_smoke: latestSmoke,
+      handoff_preview_summary: handoffPreview ? `eligible=${handoffPreview.eligible} proposal=${handoffPreview.proposal_id}` : undefined,
+      required_evidence: [
+        {
+          evidence_id: latestSmoke ? `process_smoke:${latestSmoke.smoke_id}` : "process_smoke:none",
+          kind: "process_smoke",
+          related_id: latestSmoke?.smoke_id,
+          status: latestSmoke?.status ?? "missing",
+          fresh: latestSmoke?.status === "succeeded",
+          completed_at: latestSmoke?.completed_at,
+          age_ms: 0,
+          summary_preview: latestSmoke?.summary_preview ?? "fake/default runtime smoke is optional",
+          blockers: [],
+          warnings: latestSmoke ? [] : ["no fake smoke record yet; run /opencode-smoke-dry-run or /opencode-smoke-preview"],
+        },
+        {
+          evidence_id: "authority:/handoff",
+          kind: "authority_record",
+          related_id: "/handoff",
+          status: "high_impact_write",
+          fresh: true,
+          summary_preview: "/handoff remains a high-impact explicit command",
+          blockers: [],
+          warnings: ["readiness does not execute high-impact handoff"],
+        },
+      ],
+      optional_evidence: [
+        {
+          evidence_id: "handoff_followup:summary",
+          kind: "handoff_followup",
+          status: "ok",
+          fresh: true,
+          summary_preview: "fake handoff follow-up summary is available on demand",
+          blockers: [],
+          warnings: [],
+        },
+      ],
+      blockers: blockers.map(redactText),
+      warnings: warnings.map(redactText),
+      recommended_commands: [
+        { label: "Show handoff authority", command: "/authority-show /handoff", command_type: "read" },
+        { label: "Preview OpenCode smoke", command: "/opencode-smoke-preview", command_type: "read" },
+        { label: "List handoff follow-ups", command: "/handoff-followups", command_type: "read" },
+        ...(proposalId ? [{ label: "Preview handoff", command: `/handoff-preview ${proposalId}`, command_type: "read" as const }] : []),
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: status === "ready" ? "fake handoff readiness is ready; execution remains explicit" : `fake handoff readiness blocked: ${blockers[0]}`,
+    }
+  }
+
+  private openCodeHandoffReadinessSummary(): OpenCodeHandoffReadinessSummary {
+    const preview = this.previewOpenCodeHandoffReadiness({})
+    return {
+      total_considered: 1,
+      ready_count: preview.status === "ready" ? 1 : 0,
+      blocked_count: preview.status === "blocked" ? 1 : 0,
+      needs_smoke_count: preview.status === "needs_smoke" ? 1 : 0,
+      needs_review_count: preview.status === "needs_review" ? 1 : 0,
+      latest_smoke_status: preview.latest_smoke?.status,
+      latest_handoff_status: this.opencodeHandoffs[0] ? (this.opencodeHandoffs[0].sent ? "sent" : "not_sent") : undefined,
+      generated_at: new Date(0).toISOString(),
+    }
   }
 
   private getOpenCodeHandoffFollowup(handoffId: string): OpenCodeHandoffFollowupSummary | null {
@@ -5746,6 +5848,19 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       targeted: ["tests/e2e_user/scenarios/test_opencode_process_smoke_tui.py"],
       aliases: ["/opencode-process-smoke", "/opencode-health-smoke"],
       out: ["mission mutation", "proposal mutation", "review mutation", "MiniMax live provider calls"],
+    }),
+    fakeCommandAuthorityRecord("/handoff-readiness", "runtime.preview_opencode_handoff_readiness", "safe_read", "handoff_runtime", "opencode_handoff", {
+      reads: ["/authority-show /handoff", "/opencode-smoke-preview", "/handoff-followups"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_handoff_readiness_tui.py"],
+      aliases: ["/opencode-handoff-readiness", "/handoff-ready"],
+      notes: ["Read-only OpenCode handoff readiness diagnostics; does not launch OpenCode or execute handoff."],
+      out: ["OpenCode launch", "handoff execution", "mission mutation", "proposal mutation", "review mutation"],
+    }),
+    fakeCommandAuthorityRecord("/handoff-readiness-summary", "runtime.opencode_handoff_readiness_summary", "safe_read", "handoff_runtime", "opencode_handoff", {
+      reads: ["/handoff-readiness", "/authority-show /handoff", "/opencode-smokes"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_handoff_readiness_tui.py"],
+      notes: ["Read-only OpenCode handoff readiness summary; does not launch OpenCode or execute handoff."],
+      out: ["OpenCode launch", "handoff execution", "mission mutation", "proposal mutation", "review mutation"],
     }),
     fakeCommandAuthorityRecord("/apply-proposal", "runtime.apply_commander_proposal", "high_impact_write", "proposal_review_runtime", "proposal", {
       mutates: true,

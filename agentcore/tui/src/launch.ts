@@ -79,10 +79,13 @@ function isNoStartInspectionScript(commands: KeyCommand[]): boolean {
 function isNoStartInspectionText(text: string): boolean {
   const trimmed = text.trim()
   return (
-    trimmed.startsWith("/opencode-smoke")
-    || trimmed.startsWith("/opencode-process-smoke")
-    || trimmed.startsWith("/opencode-health-smoke")
-    || trimmed.startsWith("/authority")
+	    trimmed.startsWith("/opencode-smoke")
+	    || trimmed.startsWith("/opencode-process-smoke")
+	    || trimmed.startsWith("/opencode-health-smoke")
+	    || trimmed.startsWith("/handoff-readiness")
+	    || trimmed.startsWith("/opencode-handoff-readiness")
+	    || trimmed.startsWith("/handoff-ready")
+	    || trimmed.startsWith("/authority")
     || trimmed.startsWith("/command-authority")
     || trimmed.startsWith("/command-map")
   )

@@ -50,6 +50,8 @@ import { OpenCodeHandoffFollowupService, readOpenCodeHandoffFollowupQueueKind } 
 import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupSummary } from "./opencode/opencode-handoff-followup-types"
 import { OpenCodeProcessSmokeService } from "./opencode/opencode-process-smoke-service"
 import type { OpenCodeProcessSmokeExecuteInput, OpenCodeProcessSmokePreview, OpenCodeProcessSmokeRecord, OpenCodeProcessSmokeResult } from "./opencode/opencode-process-smoke-types"
+import { OpenCodeHandoffReadinessService, readOpenCodeHandoffReadinessInput } from "./opencode/opencode-handoff-readiness-service"
+import type { OpenCodeHandoffReadinessPreview, OpenCodeHandoffReadinessSummary } from "./opencode/opencode-handoff-readiness-types"
 import type { OpenCodeSpawn } from "./opencode/process-adapter"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
@@ -249,6 +251,7 @@ export class RuntimeServer {
   private researchDb: RuntimeResearchDbProjection | null = null
   private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
   private opencodeProcessSmokeServiceInstance: OpenCodeProcessSmokeService | null = null
+  private opencodeHandoffReadinessServiceInstance: OpenCodeHandoffReadinessService | null = null
   private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
   private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
   private wakeAssessmentServiceInstance: WakeAssessmentService | null = null
@@ -735,6 +738,12 @@ export class RuntimeServer {
         return this.listOpenCodeProcessSmokes(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
       case "runtime.get_opencode_process_smoke":
         return this.getOpenCodeProcessSmoke(requiredString(payload.smokeId ?? payload.smoke_id, "smokeId"))
+      case "runtime.preview_opencode_handoff_readiness":
+        return this.previewOpenCodeHandoffReadiness(readOpenCodeHandoffReadinessInput(payload))
+      case "runtime.opencode_handoff_readiness_summary":
+        return this.openCodeHandoffReadinessSummary({
+          max_smoke_age_ms: optionalPositiveIntegerUnbounded(payload.maxSmokeAgeMs ?? payload.max_smoke_age_ms, "maxSmokeAgeMs"),
+        })
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
       case "runtime.list_opencode_handoff_followups":
@@ -1430,6 +1439,14 @@ export class RuntimeServer {
 
   async getOpenCodeProcessSmoke(smokeId: string): Promise<OpenCodeProcessSmokeResult | null> {
     return this.opencodeProcessSmokeService().get(smokeId)
+  }
+
+  async previewOpenCodeHandoffReadiness(input: Parameters<OpenCodeHandoffReadinessService["preview"]>[0] = {}): Promise<OpenCodeHandoffReadinessPreview> {
+    return this.opencodeHandoffReadinessService().preview(input)
+  }
+
+  async openCodeHandoffReadinessSummary(input: Parameters<OpenCodeHandoffReadinessService["summary"]>[0] = {}): Promise<OpenCodeHandoffReadinessSummary> {
+    return this.opencodeHandoffReadinessService().summary(input)
   }
 
   async getOpenCodeHandoffFollowup(handoffId: string): Promise<OpenCodeHandoffFollowup | null> {
@@ -2272,6 +2289,19 @@ export class RuntimeServer {
       idFactory: this.opencodeProcessSmokeId ? () => this.opencodeProcessSmokeId!() : undefined,
     })
     return this.opencodeProcessSmokeServiceInstance
+  }
+
+  private opencodeHandoffReadinessService(): OpenCodeHandoffReadinessService {
+    this.opencodeHandoffReadinessServiceInstance ??= new OpenCodeHandoffReadinessService({
+      adapterKind: this.openCodeAdapterConfig?.kind ?? "fake",
+      now: this.opencodeHandoffNow,
+      listSmokes: (limit) => this.opencodeProcessSmokeService().list(limit),
+      previewHandoff: (input) => this.opencodeHandoffService().preview(input),
+      listHandoffs: (limit) => this.opencodeHandoffService().list(limit),
+      getHandoff: (handoffId) => this.opencodeHandoffService().get(handoffId),
+      followupSummary: () => this.opencodeHandoffFollowupService().summary(),
+    })
+    return this.opencodeHandoffReadinessServiceInstance
   }
 
   private opencodeHandoffFollowupService(): OpenCodeHandoffFollowupService {
