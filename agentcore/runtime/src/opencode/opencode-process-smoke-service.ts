@@ -25,6 +25,11 @@ export interface OpenCodeProcessSmokeServiceOptions {
   idFactory?: () => string
 }
 
+interface OpenCodeProcessSmokeInspection {
+  preview: OpenCodeProcessSmokePreview
+  executablePath?: string
+}
+
 export class OpenCodeProcessSmokeService {
   private readonly eventStore: EventStore
   private readonly projectDir: string
@@ -45,33 +50,7 @@ export class OpenCodeProcessSmokeService {
   }
 
   async preview(input: { timeout_ms?: number } = {}): Promise<OpenCodeProcessSmokePreview> {
-    const timeoutMs = this.readTimeout(input.timeout_ms)
-    const command = this.resolveCommand()
-    const binary = command ? await this.detectBinary(command) : { detected: false, path: undefined }
-    const optIn = this.env.NXL_REAL_OPENCODE_SMOKE === "1"
-    const adapterKind = this.adapterConfig?.kind ?? "fake"
-    const blockers: string[] = []
-    const warnings: string[] = []
-    if (!command) blockers.push("OpenCode process command is not configured. Set NXL_OPENCODE_BIN or NXL_OPENCODE_COMMAND.")
-    if (!binary.detected) blockers.push("OpenCode binary was not detected on the configured path or PATH.")
-    if (!optIn) warnings.push("Set NXL_REAL_OPENCODE_SMOKE=1 to allow explicit real process smoke execution.")
-    if (adapterKind !== "process") warnings.push("Runtime adapter is not configured for process mode; smoke will use the explicit configured binary only when opted in.")
-    const canExecute = blockers.length === 0 && optIn
-    return {
-      status: blockers.length > 0 ? (command ? "blocked" : "not_configured") : "ready",
-      can_execute: canExecute,
-      adapter_kind: adapterKind,
-      project_dir: this.safe(this.projectDir),
-      binary_path: binary.path ? this.safe(binary.path) : command ? this.safe(command) : undefined,
-      binary_detected: binary.detected,
-      opt_in_required: true,
-      opt_in_present: optIn,
-      timeout_ms: timeoutMs,
-      blockers,
-      warnings,
-      redacted_summary_preview: this.safe(canExecute ? "real OpenCode process smoke is ready" : [...blockers, ...warnings].join("; ")),
-      recommended_commands: smokeCommands(),
-    }
+    return (await this.inspect(input)).preview
   }
 
   async execute(input: OpenCodeProcessSmokeExecuteInput = {}): Promise<OpenCodeProcessSmokeResult> {
@@ -79,7 +58,8 @@ export class OpenCodeProcessSmokeService {
     const requestedBy = this.safe(input.requested_by ?? "operator")
     const startedAt = this.now().toISOString()
     const smokeId = this.idFactory()
-    const preview = await this.preview({ timeout_ms: timeoutMs })
+    const inspection = await this.inspect({ timeout_ms: timeoutMs })
+    const preview = inspection.preview
     if (input.dry_run) {
       return this.result({
         smokeId,
@@ -120,7 +100,7 @@ export class OpenCodeProcessSmokeService {
     const diagnostics: string[] = []
     let adapter: ProcessOpenCodeAdapter | null = null
     try {
-      const command = this.resolveCommand()
+      const command = inspection.executablePath
       if (!command) throw new Error("OpenCode process command is not configured")
       adapter = new ProcessOpenCodeAdapter({
         command,
@@ -206,6 +186,39 @@ export class OpenCodeProcessSmokeService {
       .filter((event) => typeof event.kind === "string" && event.kind.startsWith("opencode_process_smoke_") && event.kind !== "opencode_process_smoke_started")
       .map((event) => eventToResult(event))
       .filter((result): result is OpenCodeProcessSmokeResult => result !== null)
+  }
+
+  private async inspect(input: { timeout_ms?: number } = {}): Promise<OpenCodeProcessSmokeInspection> {
+    const timeoutMs = this.readTimeout(input.timeout_ms)
+    const command = this.resolveCommand()
+    const binary = command ? await this.detectBinary(command) : { detected: false, path: undefined }
+    const optIn = this.env.NXL_REAL_OPENCODE_SMOKE === "1"
+    const adapterKind = this.adapterConfig?.kind ?? "fake"
+    const blockers: string[] = []
+    const warnings: string[] = []
+    if (!command) blockers.push("OpenCode process command is not configured. Set NXL_OPENCODE_BIN or NXL_OPENCODE_COMMAND.")
+    if (!binary.detected) blockers.push("OpenCode binary was not detected on the configured path or PATH.")
+    if (!optIn) warnings.push("Set NXL_REAL_OPENCODE_SMOKE=1 to allow explicit real process smoke execution.")
+    if (adapterKind !== "process") warnings.push("Runtime adapter is not configured for process mode; smoke will use the explicit configured binary only when opted in.")
+    const canExecute = blockers.length === 0 && optIn
+    return {
+      preview: {
+        status: blockers.length > 0 ? (command ? "blocked" : "not_configured") : "ready",
+        can_execute: canExecute,
+        adapter_kind: adapterKind,
+        project_dir: this.safe(this.projectDir),
+        binary_path: binary.path ? this.safe(binary.path) : command ? this.safe(command) : undefined,
+        binary_detected: binary.detected,
+        opt_in_required: true,
+        opt_in_present: optIn,
+        timeout_ms: timeoutMs,
+        blockers,
+        warnings,
+        redacted_summary_preview: this.safe(canExecute ? "real OpenCode process smoke is ready" : [...blockers, ...warnings].join("; ")),
+        recommended_commands: smokeCommands(),
+      },
+      executablePath: binary.detected ? binary.path : undefined,
+    }
   }
 
   private resolveCommand(): string | undefined {

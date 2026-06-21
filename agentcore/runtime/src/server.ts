@@ -1417,6 +1417,8 @@ export class RuntimeServer {
       const preview = await this.opencodeProcessSmokeService().preview({ timeout_ms: input.timeout_ms })
       if (preview.opt_in_present === true && preview.can_execute === true) {
         this.requireOpenCodeProcessSmokeRuntime("runtime.execute_opencode_process_smoke")
+      } else {
+        this.specSummary ??= await this.specService.requireApproved()
       }
     }
     return this.opencodeProcessSmokeService().execute(input)

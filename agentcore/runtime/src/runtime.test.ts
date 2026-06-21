@@ -963,6 +963,19 @@ describe("OpenCode process smoke", () => {
     await server.shutdown()
   })
 
+  test("blocked smoke execute requires initialized project before appending metadata", async () => {
+    const dir = await tempProject()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_uninitialized",
+    })
+
+    await expect(server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).rejects.toThrow("approved spec missing")
+    expect(await readJsonlEvents(dir)).toEqual([])
+  })
+
   test("preview resolves relative path-like smoke commands from project dir", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -1026,6 +1039,48 @@ describe("OpenCode process smoke", () => {
       status: "succeeded",
     })
     expect(spawnCalls).toEqual([{ command: binPath, cwd: adapterDir }])
+    await server.shutdown()
+  })
+
+  test("execute uses the PATH executable resolved during smoke inspection", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const binDir = await tempProject()
+    const binPath = join(binDir, "opencode")
+    await writeFile(binPath, "#!/bin/sh\nexit 0\n")
+    await chmod(binPath, 0o755)
+
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    const spawnCalls: Array<{ command: string; cwd: string }> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new FakeOpenCodeAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "fallback-opencode" },
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "opencode", PATH: binDir },
+      opencodeProcessSmokeId: () => "smoke_path",
+      opencodeProcessSmokeSpawn: (command, _args, options) => {
+        spawnCalls.push({ command, cwd: options.cwd })
+        return process
+      },
+    })
+
+    await expect(server.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "ready",
+      binary_detected: true,
+      binary_path: binPath,
+    })
+
+    await server.start()
+    await expect(server.command("runtime.execute_opencode_process_smoke", { timeoutMs: 1000 })).resolves.toMatchObject({
+      smoke_id: "smoke_path",
+      status: "succeeded",
+    })
+    expect(spawnCalls).toEqual([{ command: binPath, cwd: dir }])
     await server.shutdown()
   })
 
