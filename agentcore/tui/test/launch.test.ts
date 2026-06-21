@@ -695,6 +695,36 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })
 
+  test("headless OpenCode handoff readiness scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/handoff-readiness" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-handoff-readiness" },
+      { type: "submit" },
+      { type: "insert", text: "/handoff-readiness-summary" },
+      { type: "submit" },
+      { type: "insert", text: "/handoff-ready" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-handoff-readiness-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("OpenCode handoff readiness")
+    expect(runtime.commandNames).toContain("runtime.preview_opencode_handoff_readiness")
+    expect(runtime.commandNames).toContain("runtime.opencode_handoff_readiness_summary")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
   test("shutdown command does not report a false post-shutdown refresh error", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)

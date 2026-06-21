@@ -458,4 +458,38 @@ describe("interactive runtime effect state merge", () => {
     expect(merged.opencodeProcessSmoke?.preview?.status).toBe("not_configured")
     expect(merged.opencodeProcessSmoke?.preview?.blockers).toContain("OpenCode process command is not configured.")
   })
+
+  test("preserves OpenCode handoff readiness updates from async runtime effects", () => {
+    const baseline = initialState("/tmp/demo")
+    const current = initialState("/tmp/demo")
+    const effectResult = initialState("/tmp/demo")
+    effectResult.opencodeHandoffReadiness = {
+      preview: {
+        readiness_id: "readiness-1",
+        status: "needs_smoke",
+        can_execute_now: false,
+        authority: {
+          command: "/handoff",
+          slash_command: "/handoff",
+          risk: "high_impact_write",
+          gate: "handoff_runtime",
+          owner: "opencode_handoff",
+          blocked_by_default: true,
+        },
+        required_evidence: [],
+        optional_evidence: [],
+        blockers: ["no OpenCode process smoke record found"],
+        warnings: [],
+        recommended_commands: [],
+        generated_at: "1970-01-01T00:00:00.000Z",
+        redacted_summary_preview: "handoff readiness needs_smoke",
+      },
+      summary: null,
+    }
+
+    const merged = mergeRuntimeEffectState(current, effectResult, 0, baseline)
+
+    expect(merged.opencodeHandoffReadiness?.preview?.status).toBe("needs_smoke")
+    expect(merged.opencodeHandoffReadiness?.preview?.blockers).toContain("no OpenCode process smoke record found")
+  })
 })
