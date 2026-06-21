@@ -21,6 +21,11 @@ import type {
   OpenCodeProcessSmokeRecordSummary,
   OpenCodeProcessSmokeResultSummary,
   OpenCodeProcessSmokeState,
+  OpenCodeHandoffReadinessCommandSummary,
+  OpenCodeHandoffReadinessEvidenceSummary,
+  OpenCodeHandoffReadinessPreviewSummary,
+  OpenCodeHandoffReadinessState,
+  OpenCodeHandoffReadinessSummary,
   OpenCodeHandoffRecordSummary,
   OpenCodeHandoffResultSummary,
   OpenCodeHandoffState,
@@ -298,6 +303,8 @@ export type RuntimeUiEffect =
   | { type: "execute-opencode-process-smoke"; dryRun?: boolean; timeoutMs?: number }
   | { type: "load-opencode-process-smokes"; limit?: number }
   | { type: "load-opencode-process-smoke"; smokeId: string }
+  | { type: "preview-opencode-handoff-readiness"; proposalId?: string; reviewId?: string; missionId?: string; handoffId?: string; requireRecentSmoke?: boolean; maxSmokeAgeMs?: number }
+  | { type: "load-opencode-handoff-readiness-summary"; maxSmokeAgeMs?: number }
   | { type: "load-opencode-handoff-followup"; handoffId: string }
   | { type: "load-opencode-handoff-followups"; limit?: number }
   | { type: "load-opencode-handoff-followup-summary" }
@@ -932,6 +939,23 @@ export async function applyRuntimeUiEffect(
           await runtime.command("runtime.get_opencode_process_smoke", { smokeId: effect.smokeId }),
           effect.smokeId,
         )
+      case "preview-opencode-handoff-readiness":
+        return applyOpenCodeHandoffReadinessPreview(
+          state,
+          await runtime.command("runtime.preview_opencode_handoff_readiness", {
+            proposalId: effect.proposalId,
+            reviewId: effect.reviewId,
+            missionId: effect.missionId,
+            handoffId: effect.handoffId,
+            requireRecentSmoke: effect.requireRecentSmoke,
+            maxSmokeAgeMs: effect.maxSmokeAgeMs,
+          }),
+        )
+      case "load-opencode-handoff-readiness-summary":
+        return applyOpenCodeHandoffReadinessSummary(
+          state,
+          await runtime.command("runtime.opencode_handoff_readiness_summary", { maxSmokeAgeMs: effect.maxSmokeAgeMs }),
+        )
       case "load-opencode-handoff-followup":
         return applyOpenCodeHandoffFollowup(
           state,
@@ -1337,6 +1361,7 @@ export async function applyRuntimeUiEffect(
     if (isCommanderCycleEffect(effect)) return recordCommanderCycleCommandError(state, error)
     if (isOpenCodeHandoffEffect(effect)) return recordOpenCodeHandoffCommandError(state, error)
     if (isOpenCodeProcessSmokeEffect(effect)) return recordOpenCodeProcessSmokeCommandError(state, error)
+    if (isOpenCodeHandoffReadinessEffect(effect)) return recordOpenCodeHandoffReadinessCommandError(state, error)
     if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
     if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
     if (isRuntimeRestoreEffect(effect)) return recordRuntimeRestoreCommandError(state, error)
@@ -1925,6 +1950,32 @@ function applyOpenCodeProcessSmokeRecords(state: UiState, value: unknown, limit:
       commandError: options.preserveCommandError ? current.commandError : undefined,
     },
     systemActions: [...state.systemActions, { title: "opencode process smoke records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeHandoffReadinessPreview(state: UiState, value: unknown): UiState {
+  const readiness = readOpenCodeHandoffReadinessPreview(value)
+  return {
+    ...state,
+    opencodeHandoffReadiness: {
+      ...opencodeHandoffReadinessState(state),
+      preview: readiness,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode handoff readiness", detail: `status=${readiness.status}`, status: readiness.status === "ready" ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeHandoffReadinessSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeHandoffReadinessSummary(value)
+  return {
+    ...state,
+    opencodeHandoffReadiness: {
+      ...opencodeHandoffReadinessState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode handoff readiness summary", detail: `ready=${summary.ready_count} blocked=${summary.blocked_count} smoke=${summary.needs_smoke_count}`, status: "loaded" }].slice(-12),
   }
 }
 
@@ -3132,6 +3183,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (commanderCycleCommands.has(command)) return state.commanderCycle?.commandError
   if (opencodeHandoffCommands.has(command)) return state.opencodeHandoff?.commandError
   if (opencodeProcessSmokeCommands.has(command)) return state.opencodeProcessSmoke?.commandError
+  if (opencodeHandoffReadinessCommands.has(command)) return state.opencodeHandoffReadiness?.commandError
   if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
   if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
   if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError
@@ -3161,6 +3213,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (commanderCycleCommands.has(command)) return { ...state, commanderCycle: { ...commanderCycleState(state), commandError: undefined } }
   if (opencodeHandoffCommands.has(command)) return { ...state, opencodeHandoff: { ...opencodeHandoffState(state), commandError: undefined } }
   if (opencodeProcessSmokeCommands.has(command)) return { ...state, opencodeProcessSmoke: { ...opencodeProcessSmokeState(state), commandError: undefined } }
+  if (opencodeHandoffReadinessCommands.has(command)) return { ...state, opencodeHandoffReadiness: { ...opencodeHandoffReadinessState(state), commandError: undefined } }
   if (opencodeFollowupCommands.has(command)) return { ...state, opencodeFollowup: { ...opencodeFollowupState(state), commandError: undefined } }
   if (runtimeCheckpointCommands.has(command)) return { ...state, runtimeCheckpoints: { ...runtimeCheckpointsState(state), commandError: undefined } }
   if (runtimeRestoreCommands.has(command)) return { ...state, runtimeRestore: { ...runtimeRestoreState(state), commandError: undefined } }
@@ -3276,6 +3329,12 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-process-smokes", limit: HANDOFF_LIMIT })
     case "opencode-smoke-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-process-smoke", smokeId: requiredArg(args, 0, "smokeId") })
+    case "handoff-readiness":
+    case "opencode-handoff-readiness":
+    case "handoff-ready":
+      return applyRuntimeUiEffect(commandState, runtime, handoffReadinessEffect(args))
+    case "handoff-readiness-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-readiness-summary" })
     case "handoff-followup":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup", handoffId: requiredArg(args, 0, "handoffId") })
     case "handoff-followups":
@@ -4035,6 +4094,11 @@ function isOpenCodeProcessSmokeEffect(effect: RuntimeUiEffect): boolean {
   return opencodeProcessSmokeCommands.has(effect.command)
 }
 
+function isOpenCodeHandoffReadinessEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return opencodeHandoffReadinessEffectTypes.has(effect.type)
+  return opencodeHandoffReadinessCommands.has(effect.command)
+}
+
 function isOpenCodeFollowupEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return opencodeFollowupEffectTypes.has(effect.type)
   return opencodeFollowupCommands.has(effect.command)
@@ -4205,6 +4269,13 @@ const opencodeProcessSmokeCommands = new Set([
   "opencode-smoke-show",
   "opencode-process-smoke",
   "opencode-health-smoke",
+])
+
+const opencodeHandoffReadinessCommands = new Set([
+  "handoff-readiness",
+  "handoff-readiness-summary",
+  "opencode-handoff-readiness",
+  "handoff-ready",
 ])
 
 const opencodeFollowupCommands = new Set([
@@ -4423,6 +4494,11 @@ const opencodeProcessSmokeEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "execute-opencode-process-smoke",
   "load-opencode-process-smokes",
   "load-opencode-process-smoke",
+])
+
+const opencodeHandoffReadinessEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-opencode-handoff-readiness",
+  "load-opencode-handoff-readiness-summary",
 ])
 
 const opencodeFollowupEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -5401,6 +5477,18 @@ function recordOpenCodeProcessSmokeCommandError(state: UiState, error: unknown):
   }
 }
 
+function recordOpenCodeHandoffReadinessCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    opencodeHandoffReadiness: {
+      ...opencodeHandoffReadinessState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "opencode handoff readiness command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function recordOpenCodeFollowupCommandError(state: UiState, error: unknown): UiState {
   const message = redactText(error instanceof Error ? error.message : String(error))
   return {
@@ -5985,6 +6073,82 @@ function recordFromOpenCodeProcessSmokeResult(result: OpenCodeProcessSmokeResult
     summary_preview: result.error ?? result.diagnostics[0] ?? result.status,
     smoke_hash: result.smoke_hash,
   }
+}
+
+function readOpenCodeHandoffReadinessPreview(value: unknown): OpenCodeHandoffReadinessPreviewSummary {
+  if (!isRecord(value) || typeof value.readiness_id !== "string" || typeof value.status !== "string" || !isRecord(value.authority)) throw new Error("runtime.preview_opencode_handoff_readiness returned invalid preview")
+  return {
+    readiness_id: redactText(value.readiness_id),
+    status: readString(value.status, "unknown"),
+    can_execute_now: false,
+    proposal_id: typeof value.proposal_id === "string" ? redactText(value.proposal_id) : undefined,
+    review_id: typeof value.review_id === "string" ? redactText(value.review_id) : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    handoff_id: typeof value.handoff_id === "string" ? redactText(value.handoff_id) : undefined,
+    authority: {
+      command: preview(readString(value.authority.command, "")),
+      slash_command: preview(readString(value.authority.slash_command, "")),
+      risk: readString(value.authority.risk, "unknown"),
+      gate: readString(value.authority.gate, "unknown"),
+      owner: readString(value.authority.owner, "unknown"),
+      blocked_by_default: readBoolean(value.authority.blocked_by_default),
+    },
+    latest_smoke: isRecord(value.latest_smoke) ? readOpenCodeProcessSmokeRecord(value.latest_smoke) ?? undefined : undefined,
+    handoff_preview_summary: typeof value.handoff_preview_summary === "string" ? preview(readString(value.handoff_preview_summary, "")) : undefined,
+    required_evidence: readOpenCodeHandoffReadinessEvidenceList(value.required_evidence),
+    optional_evidence: readOpenCodeHandoffReadinessEvidenceList(value.optional_evidence),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    recommended_commands: readOpenCodeHandoffReadinessCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readOpenCodeHandoffReadinessSummary(value: unknown): OpenCodeHandoffReadinessSummary {
+  if (!isRecord(value)) throw new Error("runtime.opencode_handoff_readiness_summary returned invalid summary")
+  return {
+    total_considered: readNumber(value.total_considered, 0),
+    ready_count: readNumber(value.ready_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    needs_smoke_count: readNumber(value.needs_smoke_count, 0),
+    needs_review_count: readNumber(value.needs_review_count, 0),
+    latest_smoke_status: typeof value.latest_smoke_status === "string" ? redactText(value.latest_smoke_status) : undefined,
+    latest_handoff_status: typeof value.latest_handoff_status === "string" ? redactText(value.latest_handoff_status) : undefined,
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeHandoffReadinessEvidenceList(value: unknown): OpenCodeHandoffReadinessEvidenceSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.map(readOpenCodeHandoffReadinessEvidence).filter((item): item is OpenCodeHandoffReadinessEvidenceSummary => item !== null).slice(0, 12)
+}
+
+function readOpenCodeHandoffReadinessEvidence(value: unknown): OpenCodeHandoffReadinessEvidenceSummary | null {
+  if (!isRecord(value) || typeof value.evidence_id !== "string" || typeof value.kind !== "string") return null
+  return {
+    evidence_id: redactText(value.evidence_id),
+    kind: readString(value.kind, "unknown"),
+    related_id: typeof value.related_id === "string" ? redactText(value.related_id) : undefined,
+    status: readString(value.status, "unknown"),
+    fresh: readBoolean(value.fresh),
+    completed_at: typeof value.completed_at === "string" ? readString(value.completed_at, "") : undefined,
+    age_ms: typeof value.age_ms === "number" ? value.age_ms : undefined,
+    summary_preview: preview(readString(value.summary_preview, "")),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+  }
+}
+
+function readOpenCodeHandoffReadinessCommands(value: unknown): OpenCodeHandoffReadinessCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
 }
 
 function readOpenCodeHandoffFollowup(value: unknown): OpenCodeHandoffFollowupSummary | null {
@@ -8688,6 +8852,10 @@ function opencodeProcessSmokeState(state: UiState): OpenCodeProcessSmokeState {
   return state.opencodeProcessSmoke ?? { preview: null, latestResult: null, records: [], selected: null }
 }
 
+function opencodeHandoffReadinessState(state: UiState): OpenCodeHandoffReadinessState {
+  return state.opencodeHandoffReadiness ?? { preview: null, summary: null }
+}
+
 function opencodeFollowupState(state: UiState): OpenCodeHandoffFollowupState {
   return state.opencodeFollowup ?? { selected: null, summary: null, queueItems: [] }
 }
@@ -9247,6 +9415,21 @@ function synthesisEffect(type: "preview-research-synthesis" | "execute-research-
 function commanderCycleEffect(type: "preview-commander-cycle" | "execute-commander-cycle", args: string[]): Extract<RuntimeUiEffect, { type: "preview-commander-cycle" | "execute-commander-cycle" }> {
   const parsed = cycleArgs(args)
   return { type, ...parsed }
+}
+
+function handoffReadinessEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-opencode-handoff-readiness" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-handoff-readiness" }> = { type: "preview-opencode-handoff-readiness" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("handoff readiness args must use proposal=<id>, review=<id>, mission=<id>, or handoff=<id>")
+    if (key === "proposal") effect.proposalId = value
+    else if (key === "review") effect.reviewId = value
+    else if (key === "mission") effect.missionId = value
+    else if (key === "handoff") effect.handoffId = value
+    else throw new Error("handoff readiness arg is unsupported")
+  }
+  return effect
 }
 
 function checkpointEffect(type: "preview-runtime-checkpoint" | "create-runtime-checkpoint", args: string[]): Extract<RuntimeUiEffect, { type: "preview-runtime-checkpoint" | "create-runtime-checkpoint" }> {

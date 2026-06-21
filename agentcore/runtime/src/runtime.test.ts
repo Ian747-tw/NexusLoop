@@ -1980,6 +1980,82 @@ describe("RuntimeServer core", () => {
     await server.shutdown()
   })
 
+  test("opencode handoff readiness composes authority smoke and handoff preview without events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const before = await readEventKinds(dir)
+    await expect(server.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      status: "ready",
+      can_execute_now: false,
+      authority: expect.objectContaining({
+        command: "/handoff",
+        risk: "high_impact_write",
+        gate: "handoff_runtime",
+        blocked_by_default: true,
+      }),
+      required_evidence: expect.arrayContaining([
+        expect.objectContaining({ kind: "authority_record", status: "high_impact_write", fresh: true }),
+        expect.objectContaining({ kind: "process_smoke", status: "missing", fresh: false }),
+      ]),
+      warnings: expect.arrayContaining([expect.stringContaining("fake/default adapter does not require real smoke")]),
+    })
+
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "handoff objective" },
+    }) as { proposal_id: string }
+    await expect(server.command("runtime.preview_opencode_handoff_readiness", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      status: "needs_review",
+      proposal_id: proposal.proposal_id,
+      can_execute_now: false,
+      required_evidence: expect.arrayContaining([
+        expect.objectContaining({ kind: "handoff_preview", status: "blocked", blockers: expect.arrayContaining(["proposal requires linked review"]) }),
+      ]),
+    })
+    expect(await readEventKinds(dir)).toEqual(expect.arrayContaining(before))
+    expect((await readEventKinds(dir)).filter((kind) => String(kind).startsWith("opencode_handoff"))).toEqual([])
+    await server.shutdown()
+  })
+
+  test("opencode handoff readiness requires fresh smoke for process mode and remains read-only", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeProcessSmokeEnv: {},
+      opencodeProcessSmokeId: () => "smoke_blocked_for_readiness",
+    })
+
+    await expect(server.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      status: "needs_smoke",
+      blockers: expect.arrayContaining([expect.stringContaining("no OpenCode process smoke record found")]),
+    })
+    const before = await readEventKinds(dir)
+    await server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })
+    const afterSmoke = await readEventKinds(dir)
+    await expect(server.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      status: "blocked",
+      latest_smoke: expect.objectContaining({ smoke_id: "smoke_blocked_for_readiness", status: "blocked" }),
+      blockers: expect.arrayContaining(["latest OpenCode smoke is blocked"]),
+    })
+    await expect(server.command("runtime.opencode_handoff_readiness_summary")).resolves.toMatchObject({
+      total_considered: 1,
+      blocked_count: 1,
+      latest_smoke_status: "blocked",
+    })
+    expect((await readEventKinds(dir)).slice(afterSmoke.length)).toEqual([])
+    expect(before.filter((kind) => String(kind).startsWith("opencode_process_smoke"))).toEqual([])
+    expect(afterSmoke).toContain("opencode_process_smoke_blocked")
+  })
+
   test("opencode handoff execute sends mission through adapter records provenance and is idempotent", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

@@ -310,7 +310,23 @@ describe("TUI keyboard command model", () => {
     }, { type: "submit" })
     expect(result.effects).toEqual([{ type: "send-command", command: "opencode-smoke-show", args: ["smoke-1"] }])
 
-    for (const message of ["/tmp/repro/handoff", "/path/handoff", ".handoff proposal-1", ":handoff-show handoff-1", ".handoff-followup handoff-1", ":handoff-active", "/tmp/repro/opencode-smoke", "/path/opencode-smoke", ".opencode-smoke", ":opencode-smoke"]) {
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/handoff-readiness proposal=proposal-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "handoff-readiness", args: ["proposal=proposal-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/handoff-ready",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "handoff-ready" }])
+
+    for (const message of ["/tmp/repro/handoff", "/path/handoff", ".handoff proposal-1", ":handoff-show handoff-1", ".handoff-followup handoff-1", ":handoff-active", "/tmp/repro/opencode-smoke", "/path/opencode-smoke", ".opencode-smoke", ":opencode-smoke", "/tmp/repro/handoff-readiness", "/path/handoff-ready", ".handoff-readiness", ":opencode-handoff-readiness"]) {
       result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",
