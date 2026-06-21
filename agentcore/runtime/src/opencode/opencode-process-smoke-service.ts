@@ -191,7 +191,7 @@ export class OpenCodeProcessSmokeService {
   private async inspect(input: { timeout_ms?: number } = {}): Promise<OpenCodeProcessSmokeInspection> {
     const timeoutMs = this.readTimeout(input.timeout_ms)
     const command = this.resolveCommand()
-    const binary = command ? await this.detectBinary(command) : { detected: false, path: undefined }
+    const binary = command ? await this.detectBinary(command.command, command.pathEnv) : { detected: false, path: undefined }
     const optIn = this.env.NXL_REAL_OPENCODE_SMOKE === "1"
     const adapterKind = this.adapterConfig?.kind ?? "fake"
     const blockers: string[] = []
@@ -207,7 +207,7 @@ export class OpenCodeProcessSmokeService {
         can_execute: canExecute,
         adapter_kind: adapterKind,
         project_dir: this.safe(this.projectDir),
-        binary_path: binary.path ? this.safe(binary.path) : command ? this.safe(command) : undefined,
+        binary_path: binary.path ? this.safe(binary.path) : command ? this.safe(command.command) : undefined,
         binary_detected: binary.detected,
         opt_in_required: true,
         opt_in_present: optIn,
@@ -221,19 +221,22 @@ export class OpenCodeProcessSmokeService {
     }
   }
 
-  private resolveCommand(): string | undefined {
+  private resolveCommand(): { command: string; pathEnv?: string } | undefined {
     const resolved = this.resolveCommandCandidate()
     const command = resolved?.command
     if (!command) return undefined
-    if (command.includes("/") && !isAbsolute(command)) return join(resolved.cwd, command)
-    return command
+    const resolvedCommand = command.includes("/") && !isAbsolute(command) ? join(resolved.cwd, command) : command
+    return { command: resolvedCommand, pathEnv: resolved.pathEnv }
   }
 
-  private resolveCommandCandidate(): { command: string; cwd: string } | undefined {
+  private resolveCommandCandidate(): { command: string; cwd: string; pathEnv?: string } | undefined {
     const envCommand = this.env.NXL_OPENCODE_BIN?.trim() || this.env.NXL_OPENCODE_COMMAND?.trim()
-    if (envCommand) return { command: envCommand, cwd: this.projectDir }
+    if (envCommand) return { command: envCommand, cwd: this.projectDir, pathEnv: this.env.PATH ?? process.env.PATH }
     const adapterCommand = this.adapterConfig?.kind === "process" ? this.adapterConfig.command?.trim() : undefined
-    if (adapterCommand) return { command: adapterCommand, cwd: this.adapterCwd() }
+    if (adapterCommand) {
+      const adapterPath = this.adapterConfig?.kind === "process" ? this.adapterConfig.env?.PATH : undefined
+      return { command: adapterCommand, cwd: this.adapterCwd(), pathEnv: adapterPath ?? this.env.PATH ?? process.env.PATH }
+    }
     return undefined
   }
 
@@ -241,10 +244,10 @@ export class OpenCodeProcessSmokeService {
     return this.adapterConfig?.kind === "process" && this.adapterConfig.cwd ? this.adapterConfig.cwd : this.projectDir
   }
 
-  private async detectBinary(command: string): Promise<{ detected: boolean; path?: string }> {
+  private async detectBinary(command: string, pathEnv?: string): Promise<{ detected: boolean; path?: string }> {
     const candidates = command.includes("/") || isAbsolute(command)
       ? [command]
-      : (this.env.PATH ?? process.env.PATH ?? "").split(delimiter).filter(Boolean).map((entry) => join(entry, command))
+      : (pathEnv ?? "").split(delimiter).filter(Boolean).map((entry) => join(entry, command))
     for (const candidate of candidates) {
       try {
         const info = await stat(candidate)
