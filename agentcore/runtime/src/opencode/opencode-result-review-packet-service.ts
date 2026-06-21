@@ -307,6 +307,9 @@ function targetConsistencyBlockers(context: BuildContext, input: OpenCodeResultR
   if (selectedProposalId && input.proposal_id && input.proposal_id !== selectedProposalId) {
     out.push("requested proposal does not match selected handoff or follow-up proposal")
   }
+  if (context.proposal && selectedMissionId && context.proposal.mission_id && context.proposal.mission_id !== selectedMissionId) {
+    out.push("requested proposal mission does not match selected mission")
+  }
   if (context.proposal && latestResult && context.proposal.mission_id && context.proposal.mission_id !== latestResult.mission_id) {
     out.push("requested proposal mission does not match selected result mission")
   }

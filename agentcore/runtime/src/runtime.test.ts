@@ -2206,6 +2206,19 @@ describe("RuntimeServer core", () => {
       proposedBy: "commander",
       actionPayload: { objective: "other objective", evidence_ids: ["evidence-2"] },
     }) as { proposal_id: string }
+    const missionLinkedProposal = await server.command("runtime.create_commander_proposal", {
+      missionId: handoff.mission_id,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "mission-linked packet proposal",
+      summary: "mission-linked packet summary",
+      proposedBy: "commander",
+      actionPayload: {
+        mission_id: handoff.mission_id,
+        claim_id: claim.claim_id,
+        message: "progress for original mission",
+      },
+    }) as { proposal_id: string }
     const before = await readEventKinds(dir)
     adapter.packets = []
 
@@ -2270,6 +2283,13 @@ describe("RuntimeServer core", () => {
       proposal_id: mismatchedProposal.proposal_id,
       result_id: result.result_id,
       blockers: expect.arrayContaining([expect.stringContaining("requested proposal is not linked to selected result")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: missionLinkedProposal.proposal_id, missionId: unrelatedMission.missionId })).resolves.toMatchObject({
+      status: "blocked",
+      proposal_id: missionLinkedProposal.proposal_id,
+      mission_id: unrelatedMission.missionId,
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal mission does not match selected mission")]),
     })
     expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.preview_opencode_result_review_packet", { missionId: handoff.mission_id, proposalId: "proposal_typo" })).resolves.toMatchObject({
