@@ -5856,6 +5856,12 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       notes: ["Read-only OpenCode handoff readiness diagnostics; does not launch OpenCode or execute handoff."],
       out: ["OpenCode launch", "handoff execution", "mission mutation", "proposal mutation", "review mutation"],
     }),
+    fakeCommandAuthorityRecord("/handoff-readiness-summary", "runtime.opencode_handoff_readiness_summary", "safe_read", "handoff_runtime", "opencode_handoff", {
+      reads: ["/handoff-readiness", "/authority-show /handoff", "/opencode-smokes"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_handoff_readiness_tui.py"],
+      notes: ["Read-only OpenCode handoff readiness summary; does not launch OpenCode or execute handoff."],
+      out: ["OpenCode launch", "handoff execution", "mission mutation", "proposal mutation", "review mutation"],
+    }),
     fakeCommandAuthorityRecord("/apply-proposal", "runtime.apply_commander_proposal", "high_impact_write", "proposal_review_runtime", "proposal", {
       mutates: true,
       active: true,

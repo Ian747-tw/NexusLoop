@@ -3146,6 +3146,9 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/handoff-readiness"] })
     expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_handoff_readiness_tui.py")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/handoff-readiness-summary"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/handoff-readiness-summary", risk: "safe_read" })
   })
 
   test("opencode handoff follow-up slash commands render summary queues selected and redact secrets", async () => {

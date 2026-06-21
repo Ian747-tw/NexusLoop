@@ -79,13 +79,13 @@ export class OpenCodeHandoffReadinessService {
 
     if (normalized.include_authority !== false) {
       const authorityEvidence = evidence({
-        evidence_id: "authority:/handoff",
+        evidence_id: `authority:${authorityRecord.slash_command}`,
         kind: "authority_record",
         related_id: authorityRecord.slash_command,
         status: authorityRecord.risk,
         fresh: true,
-        summary_preview: `/handoff is ${authorityRecord.risk} through ${authorityRecord.gate}`,
-        warnings: authorityRecord.blocked_by_default ? ["handoff is high-impact and remains explicit; readiness does not execute it"] : [],
+        summary_preview: `${authorityRecord.slash_command} is ${authorityRecord.risk} through ${authorityRecord.gate}`,
+        warnings: authorityRecord.blocked_by_default ? [`${authorityRecord.slash_command} remains explicit; readiness does not execute it`] : [],
       })
       required.push(authorityEvidence)
       warnings.push(...authorityEvidence.warnings)

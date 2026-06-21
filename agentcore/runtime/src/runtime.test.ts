@@ -2002,6 +2002,18 @@ describe("RuntimeServer core", () => {
       ]),
       warnings: expect.arrayContaining([expect.stringContaining("fake/default adapter does not require real smoke")]),
     })
+    const readinessAuthority = await server.command("runtime.preview_opencode_handoff_readiness", { command: "/handoff-readiness" }) as {
+      authority: { command: string; risk: string }
+      required_evidence: Array<{ kind: string; related_id?: string; status: string; summary_preview: string }>
+    }
+    expect(readinessAuthority.authority).toMatchObject({ command: "/handoff-readiness", risk: "safe_read" })
+    expect(readinessAuthority.required_evidence).toContainEqual(expect.objectContaining({
+      kind: "authority_record",
+      related_id: "/handoff-readiness",
+      status: "safe_read",
+      summary_preview: expect.stringContaining("/handoff-readiness is safe_read"),
+    }))
+    expect(readinessAuthority.required_evidence.find((item) => item.kind === "authority_record")?.summary_preview).not.toContain("/handoff is safe_read")
 
     const proposal = await server.command("runtime.create_commander_proposal", {
       actionKind: "opencode_handoff",
