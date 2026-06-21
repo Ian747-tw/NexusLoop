@@ -90,7 +90,9 @@ export class OpenCodeResultReviewPacketService {
     if (context.followup?.blockers?.length) blockers.push(...context.followup.blockers)
     if (context.followup && isFailureStatus(context.followup.followup_status)) blockers.push(`handoff follow-up is ${context.followup.followup_status}`)
     if (context.handoff && !context.handoff.sent) blockers.push("handoff was not sent")
-    const latestResult = context.result ?? context.results.at(-1)
+    const explicitResultMissing = Boolean(normalized.result_id && !context.result)
+    if (explicitResultMissing) blockers.push("requested result was not found")
+    const latestResult = explicitResultMissing ? undefined : context.result ?? context.results.at(-1)
     blockers.push(...targetConsistencyBlockers(context, normalized, latestResult))
     if ((context.handoff || context.followup || context.mission) && !latestResult && !isFailureStatus(context.followup?.followup_status)) {
       const stale = outcomeEvidenceIsStale(context, staleAfterMs, this.now())

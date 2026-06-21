@@ -2240,6 +2240,13 @@ describe("RuntimeServer core", () => {
       blockers: expect.arrayContaining([expect.stringContaining("requested result mission does not match")]),
     })
     expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, resultId: "result_typo" })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: handoff.mission_id,
+      result_id: "result_typo",
+      blockers: expect.arrayContaining([expect.stringContaining("requested result was not found")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
     const unrelatedPacket = await server.command("runtime.preview_opencode_result_review_packet", { resultId: unrelatedResult.result_id }) as {
       status: string
       handoff_id?: string
