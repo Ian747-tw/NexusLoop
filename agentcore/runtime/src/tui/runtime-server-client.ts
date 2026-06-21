@@ -9,6 +9,9 @@ const noStartCommands = new Set([
   "runtime.command_authority_list",
   "runtime.command_authority_get",
   "runtime.command_authority_validation_profile",
+  "runtime.preview_opencode_process_smoke",
+  "runtime.list_opencode_process_smokes",
+  "runtime.get_opencode_process_smoke",
 ])
 
 export interface RuntimeServerClientOptions {
@@ -60,8 +63,8 @@ export class RuntimeServerClient implements RuntimeClient {
 
   command = (async (name: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
     if (this.shutdownRequested) throw new Error("runtime client has been shut down")
-    if (name !== "runtime.shutdown" && !noStartCommands.has(name)) await this.ensureStarted()
     try {
+      if (await this.shouldAutoStart(name, payload)) await this.ensureStarted()
       const result = await this.server.command(name, payload)
       if (name === "runtime.shutdown") {
         this.started = false
@@ -83,9 +86,14 @@ export class RuntimeServerClient implements RuntimeClient {
   }
 
   async *stream(): AsyncIterable<RuntimeEvent> {
-    let iterator: AsyncIterator<RuntimeEvent> | null = null
+    const queue: RuntimeEvent[] = []
+    let wake: (() => void) | null = null
+    const unsubscribe = this.server.eventBus.subscribe((event) => {
+      queue.push(event)
+      wake?.()
+      wake = null
+    })
     try {
-      await this.ensureStarted()
       const status = await this.server.status()
       yield {
         type: "RuntimeReady",
@@ -95,14 +103,14 @@ export class RuntimeServerClient implements RuntimeClient {
       if (status.runtimeStatus === "started" || status.specApproved) {
         yield { type: "ProjectInitialized", projectDir: status.projectDir }
       }
-      iterator = this.server.eventBus.streamFromNow()[Symbol.asyncIterator]()
-      let next = await iterator.next()
-      while (!next.done) {
-        yield next.value
-        next = await iterator.next()
+      while (true) {
+        if (queue.length === 0) await new Promise<void>((resolve) => (wake = resolve))
+        while (queue.length) yield queue.shift()!
       }
     } finally {
-      await iterator?.return?.()
+      unsubscribe()
+      const pendingWake = wake as (() => void) | null
+      if (pendingWake) pendingWake()
     }
   }
 
@@ -122,6 +130,19 @@ export class RuntimeServerClient implements RuntimeClient {
   private async ensureStarted(): Promise<void> {
     if (!this.autoStart) return
     await this.start()
+  }
+
+  private async shouldAutoStart(name: string, payload: Record<string, unknown>): Promise<boolean> {
+    if (name === "runtime.shutdown") return false
+    if (name === "runtime.execute_opencode_process_smoke" && (payload.dryRun === true || payload.dry_run === true)) return false
+    if (name === "runtime.execute_opencode_process_smoke") {
+      const preview = await this.server.command("runtime.preview_opencode_process_smoke", {
+        timeoutMs: payload.timeoutMs,
+        timeout_ms: payload.timeout_ms,
+      }) as { can_execute?: unknown; opt_in_present?: unknown }
+      return preview.opt_in_present === true && preview.can_execute === true
+    }
+    return !noStartCommands.has(name)
   }
 }
 

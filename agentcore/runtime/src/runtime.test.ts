@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
@@ -339,6 +339,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
   stdinWritable: boolean
   stdinDestroyed: boolean
   onStdinWriteBeforeAck: (() => void) | null = null
+  onStdinWriteAfterAck: (() => void) | null = null
   private spawned = false
   private readonly autoClose: boolean
   private readonly spawnListeners: Array<() => void> = []
@@ -366,6 +367,7 @@ class FakeSpawnedProcess implements OpenCodeSpawnedProcess {
         if (!owner.neverAckStdinWrite) {
           queueMicrotask(() => {
             callback?.(owner.stdinAsyncWriteError)
+            if (!owner.stdinAsyncWriteError) owner.onStdinWriteAfterAck?.()
             if (!owner.stdinAsyncWriteError && owner.stdinErrorAfterAck) queueMicrotask(() => owner.emitStdinError(owner.stdinErrorAfterAck!))
           })
         }
@@ -770,6 +772,11 @@ describe("CommandAuthorityService", () => {
       "/handoff-show",
       "/handoff-followup-summary",
       "/handoff-queue",
+      "/opencode-smoke-preview",
+      "/opencode-smoke-dry-run",
+      "/opencode-smoke",
+      "/opencode-smokes",
+      "/opencode-smoke-show",
       "/proposal-review",
       "/request-review",
       "/cancel-review",
@@ -839,6 +846,9 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/handoff-followup-summary")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_handoff_followup_summary", owner: "opencode_handoff" })
     expect(service.get("/handoff-queue")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_handoff_followup_queue", owner: "opencode_handoff" })
     expect(service.get("/handoff")).toMatchObject({ risk: "high_impact_write", gate: "handoff_runtime", creates_external_process: true })
+    expect(service.get("/opencode-smoke-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_process_smoke", mutates_events: false })
+    expect(service.get("/opencode-smoke-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.execute_opencode_process_smoke", creates_external_process: false, mutates_events: false })
+    expect(service.get("/opencode-smoke")).toMatchObject({ risk: "low_risk_write", gate: "opencode_runtime", creates_external_process: true, mutates_events: true, blocked_by_default: true })
     expect(service.get("/api-ingest")).toMatchObject({ risk: "high_impact_write", gate: "external_api_runtime", owner: "research", mutates_events: true })
     expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
     expect(service.get("/api-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "reasoning_provider", mutates_events: false, expected_event_kinds: [] })
@@ -853,6 +863,7 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/scheduler-recovery-dismiss").expected_event_kinds).toEqual(["runtime_wake_scheduler_recovery_recorded"])
     expect(service.get("/continue-step").expected_event_kinds).toEqual(["runtime_continuation_step_started", "runtime_continuation_step_succeeded", "runtime_continuation_step_failed", "runtime_continuation_plan_completed"])
     expect(service.get("/handoff").expected_event_kinds).toEqual(["opencode_handoff_started", "opencode_handoff_created", "opencode_handoff_failed"])
+    expect(service.get("/opencode-smoke").expected_event_kinds).toEqual(["opencode_process_smoke_started", "opencode_process_smoke_succeeded", "opencode_process_smoke_failed", "opencode_process_smoke_blocked"])
     expect(service.get("/synthesize").expected_event_kinds).toEqual(["research_synthesis_created"])
     expect(service.get("/cycle").expected_event_kinds).toEqual(["commander_cycle_completed"])
     expect(service.get("/api-call").expected_event_kinds).toEqual(["external_api_request_executed", "external_api_request_failed"])
@@ -872,6 +883,10 @@ describe("CommandAuthorityService", () => {
     expect(handoff.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_handoff_tui.py")
     expect(handoff.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py")
     expect(handoff.targeted_e2e).not.toContain("tests/e2e_user/scenarios/test_wake_scheduler_navigation_checkpoint_write_tui.py")
+
+    const smoke = service.validationProfile("/opencode-smoke")
+    expect(smoke.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_process_smoke_tui.py"])
+    expect(smoke.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_handoff_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py"])
   })
 
   test("query and unsupported command handling fail closed", () => {
@@ -897,6 +912,360 @@ describe("CommandAuthorityService", () => {
     await expect(server.command("runtime.command_authority_validation_profile", { command: "/handoff token=abc123" })).resolves.toMatchObject({ real_opencode_required: false })
 
     expect(await readJsonlEvents(dir)).toHaveLength(before.length)
+  })
+})
+
+describe("OpenCode process smoke", () => {
+  test("preview and dry-run do not append events or launch a process", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let spawnCalls = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeProcessSmokeEnv: {},
+      opencodeProcessSmokeSpawn: () => {
+        spawnCalls += 1
+        return new FakeSpawnedProcess()
+      },
+    })
+
+    await expect(server.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "ready",
+      can_execute: false,
+      opt_in_present: false,
+      warnings: expect.arrayContaining(["Set NXL_REAL_OPENCODE_SMOKE=1 to allow explicit real process smoke execution."]),
+    })
+    await expect(server.command("runtime.execute_opencode_process_smoke", { dryRun: true })).resolves.toMatchObject({
+      status: "skipped",
+      diagnostics: expect.arrayContaining(["dry-run requested; no process launched and no events appended"]),
+    })
+    expect(spawnCalls).toBe(0)
+    expect((await readJsonlEvents(dir)).map((event) => event.kind).filter((kind) => String(kind).startsWith("opencode_process_smoke"))).toEqual([])
+  })
+
+  test("execute blocks without explicit opt-in and persists bounded blocked metadata", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled", opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "/bin/echo" }, opencodeProcessSmokeId: () => "smoke_blocked" })
+
+    await server.start()
+    await expect(server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).resolves.toMatchObject({
+      smoke_id: "smoke_blocked",
+      status: "blocked",
+      error: "real OpenCode process smoke requires NXL_REAL_OPENCODE_SMOKE=1",
+    })
+    await expect(server.command("runtime.list_opencode_process_smokes")).resolves.toMatchObject([{ smoke_id: "smoke_blocked", status: "blocked" }])
+    await expect(server.command("runtime.get_opencode_process_smoke", { smokeId: "smoke_blocked" })).resolves.toMatchObject({ smoke_id: "smoke_blocked", status: "blocked" })
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toContain("opencode_process_smoke_blocked")
+    await server.shutdown()
+  })
+
+  test("blocked smoke execute requires initialized project before appending metadata", async () => {
+    const dir = await tempProject()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_uninitialized",
+    })
+
+    await expect(server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).rejects.toThrow("approved spec missing")
+    expect(await readJsonlEvents(dir)).toEqual([])
+  })
+
+  test("preview resolves relative path-like smoke commands from project dir", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const binDir = join(dir, "node_modules", ".bin")
+    const binPath = join(binDir, "opencode")
+    await mkdir(binDir, { recursive: true })
+    await writeFile(binPath, "#!/bin/sh\nexit 0\n")
+    await chmod(binPath, 0o755)
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "./node_modules/.bin/opencode" },
+    })
+
+    await expect(server.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "ready",
+      binary_detected: true,
+      binary_path: binPath,
+    })
+  })
+
+  test("preview and execute resolve adapter smoke commands from configured adapter cwd", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapterDir = await tempProject()
+    const binDir = join(adapterDir, "bin")
+    const binPath = join(binDir, "opencode")
+    await mkdir(binDir, { recursive: true })
+    await writeFile(binPath, "#!/bin/sh\nexit 0\n")
+    await chmod(binPath, 0o755)
+
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    const spawnCalls: Array<{ command: string; cwd: string }> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new FakeOpenCodeAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "./bin/opencode", cwd: adapterDir },
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1" },
+      opencodeProcessSmokeId: () => "smoke_adapter_cwd",
+      opencodeProcessSmokeSpawn: (command, _args, options) => {
+        spawnCalls.push({ command, cwd: options.cwd })
+        return process
+      },
+    })
+
+    await expect(server.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "ready",
+      can_execute: true,
+      binary_detected: true,
+      binary_path: binPath,
+    })
+
+    await server.start()
+    await expect(server.command("runtime.execute_opencode_process_smoke", { timeoutMs: 1000 })).resolves.toMatchObject({
+      smoke_id: "smoke_adapter_cwd",
+      status: "succeeded",
+    })
+    expect(spawnCalls).toEqual([{ command: binPath, cwd: adapterDir }])
+    await server.shutdown()
+  })
+
+  test("execute uses the PATH executable resolved during smoke inspection", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const binDir = await tempProject()
+    const binPath = join(binDir, "opencode")
+    await writeFile(binPath, "#!/bin/sh\nexit 0\n")
+    await chmod(binPath, 0o755)
+
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    const spawnCalls: Array<{ command: string; cwd: string }> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new FakeOpenCodeAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "fallback-opencode" },
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "opencode", PATH: binDir },
+      opencodeProcessSmokeId: () => "smoke_path",
+      opencodeProcessSmokeSpawn: (command, _args, options) => {
+        spawnCalls.push({ command, cwd: options.cwd })
+        return process
+      },
+    })
+
+    await expect(server.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "ready",
+      binary_detected: true,
+      binary_path: binPath,
+    })
+
+    await server.start()
+    await expect(server.command("runtime.execute_opencode_process_smoke", { timeoutMs: 1000 })).resolves.toMatchObject({
+      smoke_id: "smoke_path",
+      status: "succeeded",
+    })
+    expect(spawnCalls).toEqual([{ command: binPath, cwd: dir }])
+    await server.shutdown()
+  })
+
+  test("preview and execute use adapter PATH when resolving adapter smoke commands", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const binDir = await tempProject()
+    const binPath = join(binDir, "opencode")
+    await writeFile(binPath, "#!/bin/sh\nexit 0\n")
+    await chmod(binPath, 0o755)
+
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    const spawnCalls: Array<{ command: string; cwd: string }> = []
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new FakeOpenCodeAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: { PATH: binDir } },
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1" },
+      opencodeProcessSmokeId: () => "smoke_adapter_path",
+      opencodeProcessSmokeSpawn: (command, _args, options) => {
+        spawnCalls.push({ command, cwd: options.cwd })
+        return process
+      },
+    })
+
+    await expect(server.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "ready",
+      binary_detected: true,
+      binary_path: binPath,
+    })
+
+    await server.start()
+    await expect(server.command("runtime.execute_opencode_process_smoke", { timeoutMs: 1000 })).resolves.toMatchObject({
+      smoke_id: "smoke_adapter_path",
+      status: "succeeded",
+    })
+    expect(spawnCalls).toEqual([{ command: binPath, cwd: dir }])
+    await server.shutdown()
+  })
+
+  test("preview blocks existing smoke command paths that are not executable files", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const nonExecutable = join(dir, "opencode")
+    await writeFile(nonExecutable, "#!/bin/sh\nexit 0\n")
+    const directoryPath = join(dir, "opencode-dir")
+    await mkdir(directoryPath)
+
+    const fileServer = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "./opencode" },
+    })
+    await expect(fileServer.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      binary_detected: false,
+    })
+
+    const directoryServer = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "./opencode-dir" },
+    })
+    await expect(directoryServer.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      binary_detected: false,
+    })
+  })
+
+  test("opt-in process smoke uses adapter spawn and records redacted success", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    let spawnCalls = 0
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_success",
+      opencodeProcessSmokeNow: () => new Date("2026-06-20T00:00:00.000Z"),
+      opencodeProcessSmokeSpawn: () => {
+        spawnCalls += 1
+        return process
+      },
+    })
+
+    await server.start()
+    const result = await server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", timeoutMs: 1000 }) as { status: string; smoke_id: string; smoke_hash: string }
+    expect(result).toMatchObject({ smoke_id: "smoke_success", status: "succeeded" })
+    expect(result.smoke_hash).toHaveLength(64)
+    expect(spawnCalls).toBe(1)
+    expect(process.stdinWrites.join("\n")).not.toContain("token=")
+    await expect(server.command("runtime.list_opencode_process_smokes")).resolves.toMatchObject([{ smoke_id: "smoke_success", status: "succeeded" }])
+    const events = await readJsonlEvents(dir)
+    expect(events.map((event) => event.kind)).toEqual(expect.arrayContaining(["opencode_process_smoke_started", "opencode_process_smoke_succeeded"]))
+    expect(JSON.stringify(events)).not.toContain("abc123")
+    await server.shutdown()
+  })
+
+  test("opt-in process smoke terminates adapter after session start timeout", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess(4242, { neverAckStdinWrite: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_timeout",
+      opencodeProcessSmokeSpawn: () => process,
+    })
+
+    await server.start()
+    const result = await server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", timeoutMs: 5 }) as { status: string; error?: string; diagnostics?: string[] }
+
+    expect(result.status).toBe("failed")
+    expect(result.error).toBe("OpenCode smoke timed out during session start")
+    expect(process.killedWith).toBe("SIGTERM")
+    expect(result.diagnostics ?? []).toContain("OpenCode process shutdown failed: timed out after 5ms")
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).toEqual(expect.arrayContaining(["opencode_process_smoke_started", "opencode_process_smoke_failed"]))
+    await server.shutdown()
+  })
+
+  test("opt-in process smoke fails when process exits immediately after startup", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    process.onStdinWriteAfterAck = () => {
+      setTimeout(() => process.emitExit(7, null), 0)
+    }
+    const server = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_exit",
+      opencodeProcessSmokeSpawn: () => process,
+    })
+
+    await server.start()
+    const result = await server.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", timeoutMs: 1000 }) as { status: string; error?: string }
+
+    expect(result).toMatchObject({ status: "failed", error: "OpenCode process exited unexpectedly with code 7" })
+    expect((await readJsonlEvents(dir)).map((event) => event.kind)).toEqual(expect.arrayContaining(["opencode_process_smoke_started", "opencode_process_smoke_failed"]))
+    await server.shutdown()
+  })
+
+  test("execute requires active started runtime while preview list and get work in read modes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const notStarted = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled" })
+    await expect(notStarted.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({ opt_in_required: true })
+    await expect(notStarted.command("runtime.list_opencode_process_smokes")).resolves.toEqual([])
+    await expect(notStarted.command("runtime.get_opencode_process_smoke", { smokeId: "missing" })).resolves.toBeNull()
+
+    const blockedDir = await tempProject()
+    await makeProject(blockedDir, { approvedSpec: true })
+    const blockedServer = new RuntimeServer({ projectDir: blockedDir, researchProjectionMode: "disabled", opencodeProcessSmokeId: () => "smoke_no_opt_in" })
+    await expect(blockedServer.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).resolves.toMatchObject({ smoke_id: "smoke_no_opt_in", status: "blocked" })
+    expect((await readJsonlEvents(blockedDir)).map((event) => event.kind)).not.toContain("runtime_started")
+
+    const optInDir = await tempProject()
+    await makeProject(optInDir, { approvedSpec: true })
+    const optInNotStarted = new RuntimeServer({
+      projectDir: optInDir,
+      researchProjectionMode: "disabled",
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+    })
+    await expect(optInNotStarted.command("runtime.execute_opencode_process_smoke")).rejects.toThrow("runtime must be started before opencode process smoke writes")
+
+    const statusDir = await tempProject()
+    await makeProject(statusDir, { approvedSpec: true })
+    const statusServer = new RuntimeServer({ projectDir: statusDir, mode: "status", researchProjectionMode: "disabled" })
+    await expect(statusServer.command("runtime.execute_opencode_process_smoke")).rejects.toThrow("runtime.execute_opencode_process_smoke requires active mode")
+    await expect(statusServer.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({ opt_in_required: true })
   })
 })
 
@@ -12351,6 +12720,51 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("OpenCode process smoke read and dry-run commands do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "/bin/echo" } })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+    const iterator = client.stream()[Symbol.asyncIterator]()
+
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { type: "RuntimeReady" } })
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { type: "ProjectInitialized" } })
+
+    await expect(client.command("runtime.preview_opencode_process_smoke")).resolves.toMatchObject({ opt_in_required: true })
+    await expect(client.command("runtime.execute_opencode_process_smoke", { dryRun: true })).resolves.toMatchObject({ status: "skipped" })
+    await expect(client.command("runtime.execute_opencode_process_smoke", { dry_run: true })).resolves.toMatchObject({ status: "skipped" })
+    await expect(client.command("runtime.list_opencode_process_smokes")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_process_smoke", { smokeId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).resolves.toMatchObject({ status: "blocked" })
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await iterator.return?.()
+    await client.shutdown()
+  })
+
+  test("OpenCode process smoke live execution can auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_autostart",
+      opencodeProcessSmokeSpawn: () => process,
+    })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator" })).resolves.toMatchObject({ smoke_id: "smoke_autostart", status: "succeeded" })
+
+    expect(await readEventKinds(dir)).toEqual(expect.arrayContaining(["runtime_started", "opencode_process_smoke_started", "opencode_process_smoke_succeeded"]))
+    await client.shutdown()
+  })
+
   test("delegates runtime.status", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -12384,8 +12798,9 @@ describe("RuntimeServerClient", () => {
   test("streams runtime events from RuntimeServer", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
     const client = new RuntimeServerClient({
-      server: new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() }),
+      server: new RuntimeServer({ projectDir: dir, adapter }),
       autoStart: true,
       ownsServer: true,
     })
@@ -12405,6 +12820,8 @@ describe("RuntimeServerClient", () => {
     }
 
     expect(events.map((event) => event.type)).toContain("RuntimeReady")
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
     await iterator.return?.()
     await client.shutdown()
   })
@@ -12432,15 +12849,23 @@ describe("RuntimeServerClient", () => {
     }
 
     expect(events.map((event) => event.type)).toEqual(["RuntimeReady", "ProjectInitialized"])
-    const nextEvent = iterator.next()
     await client.command("runtime.resume")
-    const possibleQueuedDuplicate = await Promise.race([
-      nextEvent.then((next) => next.value?.type ?? "done"),
-      timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
-        throw new Error("timed out waiting for client stream post-start event")
-      }),
-    ])
-    expect(possibleQueuedDuplicate).toBe("ResumeSummaryLoaded")
+    expect(await readEventKinds(dir)).toContain("runtime_started")
+
+    const realStartupEvents: RuntimeEvent[] = []
+    for (let index = 0; index < 5; index += 1) {
+      const next = await Promise.race([
+        iterator.next(),
+        timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
+          throw new Error("timed out waiting for real startup stream event")
+        }),
+      ])
+      expect(next.done).toBe(false)
+      realStartupEvents.push(next.value)
+      const types = realStartupEvents.map((event) => event.type)
+      if (types.includes("RuntimeReady") && types.includes("ProjectInitialized")) break
+    }
+    expect(realStartupEvents.map((event) => event.type)).toEqual(expect.arrayContaining(["RuntimeReady", "ProjectInitialized"]))
 
     await iterator.return?.()
     await client.shutdown()

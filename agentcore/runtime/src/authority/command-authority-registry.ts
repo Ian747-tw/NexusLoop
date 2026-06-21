@@ -25,6 +25,7 @@ const profiles = {
   synthesis: profile(["tests/e2e_user/scenarios/test_research_synthesis_tui.py"]),
   cycle: profile(["tests/e2e_user/scenarios/test_commander_cycle_tui.py"]),
   handoff: profile(["tests/e2e_user/scenarios/test_opencode_handoff_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py"]),
+  opencodeSmoke: profile(["tests/e2e_user/scenarios/test_opencode_process_smoke_tui.py"], ["tests/e2e_user/scenarios/test_opencode_handoff_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py"]),
   checkpoint: profile(["tests/e2e_user/scenarios/test_runtime_checkpoint_tui.py"]),
   restore: profile(["tests/e2e_user/scenarios/test_runtime_restore_tui.py"]),
   wake: profile(["tests/e2e_user/scenarios/test_wake_hook_tui.py"]),
@@ -113,6 +114,7 @@ function write(args: {
   aliases?: string[]
   provider?: boolean
   process?: boolean
+  blockedByDefault?: boolean
   notes?: string[]
   out?: string[]
   profile: CommandValidationProfile
@@ -138,7 +140,7 @@ function write(args: {
     validation_profile: args.profile,
     notes: args.notes,
     out_of_scope: args.out,
-    blocked_by_default: args.risk === "high_impact_write" || args.status === "blocked",
+    blocked_by_default: args.blockedByDefault ?? (args.risk === "high_impact_write" || args.status === "blocked"),
   })
 }
 
@@ -280,6 +282,11 @@ export const COMMAND_AUTHORITY_REGISTRY: CommandAuthorityRecord[] = [
   read("/handoff-preview", "runtime.preview_opencode_handoff", "opencode_handoff", "handoff_runtime", profiles.handoff),
   record({ slash_command: "/handoff-dry-run", runtime_command: "runtime.execute_opencode_handoff", risk: "low_risk_write", gate: "handoff_runtime", owner: "opencode_handoff", mutates_events: false, creates_external_process: false, calls_provider: false, requires_active_runtime: true, requires_run_lock: true, requires_approval: false, current_phase_status: "implemented", validation_profile: profiles.handoff, recommended_reads: ["/handoff-preview", "/handoff-followups"], notes: ["Dry-run handoff validates the handoff execution path without launching OpenCode, applying a proposal, sending a mission, or appending handoff events."] }),
   write({ slash: "/handoff", runtime: "runtime.execute_opencode_handoff", risk: "high_impact_write", gate: "handoff_runtime", owner: "opencode_handoff", events: ["opencode_handoff_started", "opencode_handoff_created", "opencode_handoff_failed"], reads: ["/handoff-preview", "/handoff-followups"], process: true, profile: profiles.handoff }),
+  read("/opencode-smoke-preview", "runtime.preview_opencode_process_smoke", "opencode_handoff", "opencode_runtime", profiles.opencodeSmoke),
+  record({ slash_command: "/opencode-smoke-dry-run", runtime_command: "runtime.execute_opencode_process_smoke", risk: "safe_read", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: false, creates_external_process: false, calls_provider: false, requires_active_runtime: false, requires_run_lock: false, requires_approval: false, current_phase_status: "implemented", validation_profile: profiles.opencodeSmoke, recommended_reads: ["/opencode-smoke-preview", "/opencode-smokes"], notes: ["Dry-run OpenCode process smoke returns predicted diagnostics only; it does not append events or launch OpenCode."] }),
+  write({ slash: "/opencode-smoke", runtime: "runtime.execute_opencode_process_smoke", risk: "low_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", events: ["opencode_process_smoke_started", "opencode_process_smoke_succeeded", "opencode_process_smoke_failed", "opencode_process_smoke_blocked"], reads: ["/opencode-smoke-preview", "/opencode-smokes"], aliases: ["/opencode-process-smoke", "/opencode-health-smoke"], process: true, blockedByDefault: true, profile: profiles.opencodeSmoke, notes: ["Real OpenCode smoke is opt-in via NXL_REAL_OPENCODE_SMOKE=1 and records only bounded process diagnostics."] }),
+  read("/opencode-smokes", "runtime.list_opencode_process_smokes", "opencode_handoff", "opencode_runtime", profiles.opencodeSmoke),
+  read("/opencode-smoke-show", "runtime.get_opencode_process_smoke", "opencode_handoff", "opencode_runtime", profiles.opencodeSmoke),
   write({ slash: "/synthesize", runtime: "runtime.execute_research_synthesis", risk: "high_impact_write", gate: "reasoning_provider_runtime", owner: "reasoning_provider", events: ["research_synthesis_created"], provider: true, reads: ["/synthesize-preview", "/syntheses"], profile: profiles.synthesis }),
   write({ slash: "/cycle", runtime: "runtime.execute_commander_cycle", risk: "high_impact_write", gate: "reasoning_provider_runtime", owner: "commander_cycle", events: ["commander_cycle_completed"], provider: true, reads: ["/cycle-preview", "/cycles"], profile: profiles.cycle }),
   read("/api-preview", "runtime.preview_external_api_request", "reasoning_provider", "external_api_runtime", profiles.externalApi),

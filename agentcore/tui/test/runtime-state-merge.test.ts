@@ -430,4 +430,32 @@ describe("interactive runtime effect state merge", () => {
     expect(merged.externalApi?.preview?.url).toBe("https://api.example.test/new")
     expect(merged.externalApi?.connectors).toEqual([])
   })
+
+  test("preserves OpenCode process smoke updates from async runtime effects", () => {
+    const baseline = initialState("/tmp/demo")
+    const current = initialState("/tmp/demo")
+    const effectResult = initialState("/tmp/demo")
+    effectResult.opencodeProcessSmoke = {
+      preview: {
+        status: "not_configured",
+        can_execute: false,
+        project_dir: "/tmp/demo",
+        binary_detected: false,
+        opt_in_required: true,
+        opt_in_present: false,
+        timeout_ms: 10000,
+        blockers: ["OpenCode process command is not configured."],
+        warnings: [],
+        redacted_summary_preview: "OpenCode process command is not configured.",
+      },
+      latestResult: null,
+      records: [],
+      selected: null,
+    }
+
+    const merged = mergeRuntimeEffectState(current, effectResult, 0, baseline)
+
+    expect(merged.opencodeProcessSmoke?.preview?.status).toBe("not_configured")
+    expect(merged.opencodeProcessSmoke?.preview?.blockers).toContain("OpenCode process command is not configured.")
+  })
 })

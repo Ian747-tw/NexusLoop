@@ -2669,6 +2669,50 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.commandError).toContain("not found")
     expect(state.operatorActions?.staged?.command).toBe("/handoff missing-proposal")
 
+    const smokeRuntime: RuntimeClient = {
+      stream: () => runtime.stream(),
+      sendUserMessage: (message: string) => runtime.sendUserMessage(message),
+      sendCommand: (command: string) => runtime.sendCommand(command),
+      command: async (name: string, payload?: Record<string, unknown>) => {
+        if (name === "runtime.execute_opencode_process_smoke") throw new Error("token=smoke-secret denied")
+        return runtime.command(name, payload)
+      },
+    }
+    state = await applyRuntimeUiEffect(state, smokeRuntime, { type: "send-command", command: "stage-command", args: ["/opencode-smoke"] })
+    expect(state.operatorActions?.staged?.command).toBe("/opencode-smoke")
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, smokeRuntime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/opencode-smoke", ok: false })
+    expect(state.operatorActions?.commandError).toContain("[REDACTED]")
+    expect(state.operatorActions?.staged?.command).toBe("/opencode-smoke")
+
+    const blockedSmokeResult = {
+      smoke_id: "smoke-blocked",
+      status: "blocked",
+      project_dir: "/tmp/demo",
+      started_at: "2026-06-20T00:00:00.000Z",
+      completed_at: "2026-06-20T00:00:00.000Z",
+      diagnostics: ["opt-in missing"],
+      error: "real OpenCode process smoke requires NXL_REAL_OPENCODE_SMOKE=1",
+      requested_by: "operator",
+      smoke_hash: "a".repeat(64),
+    }
+    const blockedSmokeRuntime: RuntimeClient = {
+      stream: () => runtime.stream(),
+      sendUserMessage: (message: string) => runtime.sendUserMessage(message),
+      sendCommand: (command: string) => runtime.sendCommand(command),
+      command: async (name: string, payload?: Record<string, unknown>) => {
+        if (name === "runtime.execute_opencode_process_smoke") return blockedSmokeResult
+        if (name === "runtime.list_opencode_process_smokes") return [{ smoke_id: "smoke-blocked", status: "blocked", completed_at: "2026-06-20T00:00:00.000Z", summary_preview: "blocked", smoke_hash: "a".repeat(64) }]
+        return runtime.command(name, payload)
+      },
+    }
+    state = await applyRuntimeUiEffect(state, blockedSmokeRuntime, { type: "send-command", command: "stage-command", args: ["/opencode-smoke"] })
+    state = await applyRuntimeUiEffect(state, blockedSmokeRuntime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/opencode-smoke", ok: false })
+    expect(state.operatorActions?.commandError).toContain("NXL_REAL_OPENCODE_SMOKE")
+    expect(state.operatorActions?.staged?.command).toBe("/opencode-smoke")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/schedule-wake", "resume=missing-resume", "every=60s"] })
     expect(state.operatorActions?.staged?.command).toBe("/schedule-wake resume=missing-resume every=60s")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
@@ -2997,6 +3041,38 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff", args: ["proposal-pending"] })
     expect(state.opencodeHandoff?.commandError).toContain("linked review must be approved")
     expect(JSON.stringify(state)).not.toContain("execute-secret")
+  })
+
+  test("opencode process smoke commands render preview dry-run execute records and authority profile", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smoke-preview" })
+    expect(state.opencodeProcessSmoke?.preview).toMatchObject({ status: "ready", can_execute: true, adapter_kind: "fake" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode process smoke")
+    expect(snapshot).toContain("preview_status=ready")
+    expect(snapshot).toContain("note=real smoke is opt-in and not part of default CI")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smoke-dry-run" })
+    expect(state.opencodeProcessSmoke?.latestResult).toMatchObject({ smoke_id: "fake-smoke-dry-run", status: "skipped" })
+    expect(state.opencodeProcessSmoke?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smoke" })
+    expect(state.opencodeProcessSmoke?.latestResult).toMatchObject({ smoke_id: "fake-smoke-1", status: "succeeded" })
+    expect(state.opencodeProcessSmoke?.records.at(0)).toMatchObject({ smoke_id: "fake-smoke-1", status: "succeeded" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smokes" })
+    expect(state.opencodeProcessSmoke?.records.at(0)).toMatchObject({ smoke_id: "fake-smoke-1" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-smoke-show", args: ["fake-smoke-1"] })
+    expect(state.opencodeProcessSmoke?.selected).toMatchObject({ smoke_id: "fake-smoke-1" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/opencode-smoke"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_process_smoke_tui.py")
+
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("latest=fake-smoke-1 status=succeeded")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
   })
 
   test("opencode handoff follow-up slash commands render summary queues selected and redact secrets", async () => {
@@ -4146,6 +4222,9 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/handoff", "token=abc123"] })
     expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/handoff", risk: "high_impact_write" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-smoke"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/opencode-smoke", risk: "low_risk_write", blocked_by_default: true })
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/tmp/repro"] })
     expect(state.commandAuthority?.selected).toMatchObject({ risk: "unsupported", blocked_by_default: true })

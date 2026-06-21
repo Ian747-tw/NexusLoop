@@ -23,6 +23,8 @@ async function defaultRunOpenTui(runtime: RuntimeClient, projectDir: string): Pr
 
 export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: string, env: Record<string, string | undefined>): Promise<string> {
   let state = initialState(projectDir)
+  const commands = env.NXL_TUI_KEYS ? (JSON.parse(env.NXL_TUI_KEYS) as KeyCommand[]) : []
+  const noStartInspectionScript = isNoStartInspectionScript(commands)
   const iterator = runtime.stream()[Symbol.asyncIterator]()
   let sawEvent = false
   let idleTimedOut = false
@@ -49,9 +51,14 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
     else await close
   }
 
-  state = await refreshRuntimeRecords(state, runtime)
+  if (noStartInspectionScript && state.screen === "resume") {
+    state = { ...state, screen: "main", focus: "message-box" }
+  }
 
-  const commands = env.NXL_TUI_KEYS ? (JSON.parse(env.NXL_TUI_KEYS) as KeyCommand[]) : []
+  if (!noStartInspectionScript) {
+    state = await refreshRuntimeRecords(state, runtime)
+  }
+
   for (const command of commands) {
     const result = applyKeyCommandWithEffects(state, command)
     state = result.state
@@ -61,6 +68,24 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
   }
 
   return layoutSnapshot(state)
+}
+
+function isNoStartInspectionScript(commands: KeyCommand[]): boolean {
+  const inserts = commands.filter((command): command is Extract<KeyCommand, { type: "insert" }> => command.type === "insert")
+  if (inserts.length === 0) return false
+  return inserts.every((command) => isNoStartInspectionText(command.text))
+}
+
+function isNoStartInspectionText(text: string): boolean {
+  const trimmed = text.trim()
+  return (
+    trimmed.startsWith("/opencode-smoke")
+    || trimmed.startsWith("/opencode-process-smoke")
+    || trimmed.startsWith("/opencode-health-smoke")
+    || trimmed.startsWith("/authority")
+    || trimmed.startsWith("/command-authority")
+    || trimmed.startsWith("/command-map")
+  )
 }
 
 export async function runTuiEntrypoint(options: TuiLaunchOptions): Promise<void> {

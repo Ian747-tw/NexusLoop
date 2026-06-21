@@ -79,6 +79,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...researchSynthesisLines(state))
   out.push(...commanderCycleLines(state))
   out.push(...opencodeHandoffLines(state))
+  out.push(...opencodeProcessSmokeLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
@@ -364,6 +365,51 @@ function opencodeHandoffLines(state: UiState): string[] {
   if (handoff.recent.length === 0) out.push("    - empty")
   else out.push(...handoff.recent.slice(0, 10).map((record) => `    - ${record.handoff_id} proposal=${record.proposal_id} mission=${record.mission_id ?? "none"} sent=${record.sent}`))
   if (handoff.commandError) out.push(`  command_error=${redactText(handoff.commandError)}`)
+  return out
+}
+
+function opencodeProcessSmokeLines(state: UiState): string[] {
+  const smoke = state.opencodeProcessSmoke
+  const out = ["OpenCode process smoke"]
+  if (!smoke) {
+    out.push("  records=0")
+    out.push("  note=real smoke is opt-in and not part of default CI")
+    return out
+  }
+  if (smoke.preview) {
+    const previewRecord = smoke.preview
+    out.push(`  preview_status=${previewRecord.status} can_execute=${previewRecord.can_execute} opt_in=${previewRecord.opt_in_present}/${previewRecord.opt_in_required}`)
+    out.push(`  adapter=${previewRecord.adapter_kind ?? "unknown"} binary_detected=${previewRecord.binary_detected} timeout_ms=${previewRecord.timeout_ms}`)
+    if (previewRecord.binary_path) out.push(`  binary=${preview(redactText(previewRecord.binary_path))}`)
+    if (previewRecord.redacted_summary_preview) out.push(`  summary=${preview(redactText(previewRecord.redacted_summary_preview))}`)
+    if (previewRecord.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...previewRecord.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (previewRecord.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...previewRecord.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (smoke.latestResult) {
+    const result = smoke.latestResult
+    out.push(`  latest=${result.smoke_id} status=${result.status} duration_ms=${result.duration_ms ?? "unknown"} exit=${result.exit_code ?? "none"}`)
+    if (result.error) out.push(`  error=${preview(redactText(result.error))}`)
+    if (result.stdout_preview) out.push(`  stdout=${preview(redactText(result.stdout_preview))}`)
+    if (result.stderr_preview) out.push(`  stderr=${preview(redactText(result.stderr_preview))}`)
+    if (result.diagnostics.length > 0) out.push(...result.diagnostics.slice(0, 5).map((diagnostic) => `  diagnostic=${preview(redactText(diagnostic))}`))
+  } else {
+    out.push("  latest=none")
+  }
+  if (smoke.selected && smoke.selected.smoke_id !== smoke.latestResult?.smoke_id) out.push(`  selected=${smoke.selected.smoke_id} status=${smoke.selected.status}`)
+  out.push(`  records=${smoke.records.length}`)
+  out.push("  recent_smokes")
+  if (smoke.records.length === 0) out.push("    - empty")
+  else out.push(...smoke.records.slice(0, 10).map((record) => `    - ${record.smoke_id} status=${record.status} duration_ms=${record.duration_ms ?? "unknown"}: ${preview(redactText(record.summary_preview))}`))
+  if (smoke.commandError) out.push(`  command_error=${redactText(smoke.commandError)}`)
+  out.push("  note=real smoke is opt-in and not part of default CI")
   return out
 }
 
