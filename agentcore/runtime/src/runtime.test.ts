@@ -2186,18 +2186,20 @@ describe("RuntimeServer core", () => {
     const handoff = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { handoff_id: string; mission_id: string }
     const claim = await server.command("runtime.claim_mission", { missionId: handoff.mission_id, executorId: "opencode" }) as { claim_id: string }
     await server.command("runtime.record_mission_progress", { missionId: handoff.mission_id, claimId: claim.claim_id, message: "progress token=progress-secret" })
+    const longResultSummary = `completed executor work token=result-secret ${"bounded-result-summary ".repeat(40)}`
     const result = await server.command("runtime.submit_mission_result", {
       missionId: handoff.mission_id,
       claimId: claim.claim_id,
-      summary: "completed executor work token=result-secret",
+      summary: longResultSummary,
       artifacts: ["artifact token=artifact-secret"],
     }) as { result_id: string }
-    const unrelatedMission = await server.submitUserMessage("unrelated result target token=unrelated-secret") as { missionId: string }
+    const unrelatedMission = await server.submitUserMessage(`unrelated result target token=unrelated-secret ${"bounded-objective ".repeat(40)}`) as { missionId: string }
     const unrelatedClaim = await server.command("runtime.claim_mission", { missionId: unrelatedMission.missionId, executorId: "opencode" }) as { claim_id: string }
+    const longUnrelatedResultSummary = `unrelated result token=unrelated-result-secret ${"bounded-unrelated-result ".repeat(40)}`
     const unrelatedResult = await server.command("runtime.submit_mission_result", {
       missionId: unrelatedMission.missionId,
       claimId: unrelatedClaim.claim_id,
-      summary: "unrelated result token=unrelated-result-secret",
+      summary: longUnrelatedResultSummary,
     }) as { result_id: string }
     const mismatchedProposal = await server.command("runtime.create_commander_proposal", {
       actionKind: "opencode_handoff",
@@ -2227,6 +2229,8 @@ describe("RuntimeServer core", () => {
       handoff_id: string
       mission_id: string
       result_id: string
+      objective_preview?: string
+      executor_summary_preview?: string
       evidence: Array<{ kind: string; status: string; summary_preview: string }>
       result_summary_preview?: string
       artifact_previews: string[]
@@ -2251,6 +2255,9 @@ describe("RuntimeServer core", () => {
     })
     expect(JSON.stringify(packet)).not.toContain("result-secret")
     expect(JSON.stringify(packet)).not.toContain("artifact-secret")
+    expect(packet.objective_preview?.length ?? 0).toBeLessThanOrEqual(240)
+    expect(packet.executor_summary_preview?.length ?? 0).toBeLessThanOrEqual(240)
+    expect(packet.result_summary_preview?.length ?? 0).toBeLessThanOrEqual(240)
     expect(adapter.packets).toEqual([])
     expect(await readEventKinds(dir)).toEqual(before)
     const staleReadyPacket = await server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, staleAfterMs: 1 }) as { status: string; blockers: string[] }
@@ -2378,6 +2385,7 @@ describe("RuntimeServer core", () => {
       handoff_id?: string
       mission_id?: string
       result_id?: string
+      objective_preview?: string
       result_summary_preview?: string
     }
     expect(unrelatedPacket).toMatchObject({
@@ -2387,6 +2395,9 @@ describe("RuntimeServer core", () => {
     })
     expect(unrelatedPacket.handoff_id).toBeUndefined()
     expect(JSON.stringify(unrelatedPacket)).not.toContain("unrelated-result-secret")
+    expect(JSON.stringify(unrelatedPacket)).not.toContain("unrelated-secret")
+    expect(unrelatedPacket.objective_preview?.length ?? 0).toBeLessThanOrEqual(240)
+    expect(unrelatedPacket.result_summary_preview?.length ?? 0).toBeLessThanOrEqual(240)
     expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
       total_considered: 1,

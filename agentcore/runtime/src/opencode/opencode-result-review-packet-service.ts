@@ -125,9 +125,9 @@ export class OpenCodeResultReviewPacketService {
       proposal_id: context.proposal?.proposal_id ?? context.handoff?.proposal_id ?? context.followup?.proposal_id ?? normalized.proposal_id,
       review_id: context.review?.review_id ?? context.handoff?.review_id ?? context.followup?.review_id,
       title: titleFor(status, context),
-      objective_preview: context.handoff?.objective_preview ?? context.mission?.objective ?? context.proposal?.summary,
-      executor_summary_preview: context.followup ? `follow-up ${context.followup.followup_status}; progress=${context.followup.progress_count} results=${context.followup.result_count}` : undefined,
-      result_summary_preview: latestResult?.summary,
+      objective_preview: boundOptional(context.handoff?.objective_preview ?? context.mission?.objective ?? context.proposal?.summary),
+      executor_summary_preview: boundOptional(context.followup ? `follow-up ${context.followup.followup_status}; progress=${context.followup.progress_count} results=${context.followup.result_count}` : undefined),
+      result_summary_preview: boundOptional(latestResult?.summary),
       artifact_previews: (latestResult?.artifacts ?? []).slice(0, MAX_ROWS).map(bound),
       evidence: evidence.slice(0, MAX_ROWS),
       blockers: boundList(hardBlockers),
@@ -551,6 +551,10 @@ function age(now: Date, timestamp?: string): number | undefined {
 
 function boundList(items: string[]): string[] {
   return items.map(bound).filter(Boolean).slice(0, MAX_ROWS)
+}
+
+function boundOptional(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : bound(value)
 }
 
 function bound(value: string): string {
