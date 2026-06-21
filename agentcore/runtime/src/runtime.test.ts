@@ -2445,6 +2445,22 @@ describe("RuntimeServer core", () => {
     await staleInjectedServer.command("runtime.approve_review_request", { reviewId: staleInjectedReview.review_id, decidedBy: "operator", reason: "approved" })
     await staleInjectedServer.command("runtime.execute_opencode_handoff", { proposalId: staleInjectedProposal.proposal_id, requestedBy: "operator" })
     await staleInjectedServer.shutdown()
+    const staleInjectedEventsPath = join(staleInjectedDir, ".nxl", "events.jsonl")
+    const staleInjectedEvents = (await readFile(staleInjectedEventsPath, "utf8")).split(/\r?\n/).filter(Boolean).map((line) => {
+      const event = JSON.parse(line)
+      const makeStale = (value: unknown): unknown => {
+        if (!value || typeof value !== "object") return value
+        if (Array.isArray(value)) return value.map(makeStale)
+        const record = value as Record<string, unknown>
+        for (const [key, item] of Object.entries(record)) {
+          if (key.endsWith("_at") || key === "timestamp") record[key] = "2026-05-28T00:00:00.000Z"
+          else record[key] = makeStale(item)
+        }
+        return record
+      }
+      return JSON.stringify(makeStale(event))
+    }).join("\n") + "\n"
+    await writeFile(staleInjectedEventsPath, staleInjectedEvents)
     const staleReadServer = new RuntimeServer({
       projectDir: staleInjectedDir,
       mode: "status",
@@ -2465,6 +2481,39 @@ describe("RuntimeServer core", () => {
       stale_count: 1,
       blocked_count: 0,
     })
+
+    const freshProgressDir = await tempProject()
+    await makeProject(freshProgressDir, { approvedSpec: true })
+    const freshProgressServer = new RuntimeServer({
+      projectDir: freshProgressDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_old_with_fresh_progress",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await freshProgressServer.start()
+    const freshProgressProposal = await freshProgressServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "fresh progress handoff",
+      summary: "fresh progress summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "fresh progress executor work", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const freshProgressReview = await freshProgressServer.command("runtime.request_proposal_review", { proposalId: freshProgressProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await freshProgressServer.command("runtime.approve_review_request", { reviewId: freshProgressReview.review_id, decidedBy: "operator", reason: "approved" })
+    const freshProgressHandoff = await freshProgressServer.command("runtime.execute_opencode_handoff", { proposalId: freshProgressProposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const freshProgressClaim = await freshProgressServer.command("runtime.claim_mission", { missionId: freshProgressHandoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    await freshProgressServer.command("runtime.record_mission_progress", { missionId: freshProgressHandoff.mission_id, claimId: freshProgressClaim.claim_id, message: "fresh activity after old handoff" })
+    await expect(freshProgressServer.command("runtime.preview_opencode_result_review_packet", { handoffId: "handoff_old_with_fresh_progress", staleAfterMs: 1 })).resolves.toMatchObject({
+      status: "needs_result",
+      warnings: expect.arrayContaining([expect.stringContaining("no submitted mission result")]),
+    })
+    await expect(freshProgressServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
+      total_considered: 1,
+      needs_result_count: 1,
+      stale_count: 0,
+    })
+    await freshProgressServer.shutdown()
 
     const blockedDir = await tempProject()
     await makeProject(blockedDir, { approvedSpec: true })

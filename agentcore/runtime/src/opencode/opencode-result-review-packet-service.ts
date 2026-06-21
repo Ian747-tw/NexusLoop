@@ -269,7 +269,7 @@ function statusFromFollowup(followup: OpenCodeHandoffFollowup, result: MissionRe
   if (result?.status === "rejected") return "blocked"
   if (result && isReviewableResultStatus(result.status)) return "ready_for_commander_review"
   const staleByFollowup = isStale(followup.updated_at, staleAfterMs, now) || followup.blockers.some(isStaleOnlyBlocker)
-  const staleByHandoff = Boolean(handoff?.created_at && isStale(handoff.created_at, staleAfterMs, now))
+  const staleByHandoff = Boolean(!followup.updated_at && handoff?.created_at && isStale(handoff.created_at, staleAfterMs, now))
   if (isBlockedStatus(followup.followup_status)) return "blocked"
   if ((staleByFollowup || staleByHandoff) && hardBlockers.length === 0) return "stale"
   if (followup.blockers.length > 0) return "blocked"
@@ -293,11 +293,8 @@ function isReviewableResultStatus(status: string | undefined): boolean {
 }
 
 function outcomeEvidenceIsStale(context: BuildContext, staleAfterMs: number, now: Date): boolean {
-  return Boolean(
-    (context.handoff?.created_at && isStale(context.handoff.created_at, staleAfterMs, now)) ||
-      (context.followup?.updated_at && isStale(context.followup.updated_at, staleAfterMs, now)) ||
-      (context.mission?.updated_at && isStale(context.mission.updated_at, staleAfterMs, now)),
-  )
+  const outcomeAt = context.followup?.updated_at ?? context.mission?.updated_at ?? context.handoff?.created_at
+  return Boolean(outcomeAt && isStale(outcomeAt, staleAfterMs, now))
 }
 
 function targetConsistencyBlockers(context: BuildContext, input: OpenCodeResultReviewPacketInput, latestResult?: MissionResult): string[] {
