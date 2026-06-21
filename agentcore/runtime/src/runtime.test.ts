@@ -2417,6 +2417,44 @@ describe("RuntimeServer core", () => {
     })
     await blockedServer.shutdown()
 
+    const latestFollowupDir = await tempProject()
+    await makeProject(latestFollowupDir, { approvedSpec: true })
+    const latestFollowupServer = new RuntimeServer({
+      projectDir: latestFollowupDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_older_ready",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await latestFollowupServer.start()
+    const olderProposal = await latestFollowupServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "older handoff",
+      summary: "older summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "older executor work", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const olderReview = await latestFollowupServer.command("runtime.request_proposal_review", { proposalId: olderProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await latestFollowupServer.command("runtime.approve_review_request", { reviewId: olderReview.review_id, decidedBy: "operator", reason: "approved" })
+    const olderHandoff = await latestFollowupServer.command("runtime.execute_opencode_handoff", { proposalId: olderProposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const olderClaim = await latestFollowupServer.command("runtime.claim_mission", { missionId: olderHandoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    await latestFollowupServer.command("runtime.submit_mission_result", { missionId: olderHandoff.mission_id, claimId: olderClaim.claim_id, summary: "older successful result" })
+    await latestFollowupServer.eventStore.append({
+      kind: "opencode_handoff_started",
+      handoff_id: "handoff_newer_blocked",
+      proposal_id: "proposal_newer_missing",
+      objective_preview: "newer blocked handoff",
+      started_at: "2030-05-29T00:00:00.000Z",
+      requested_by: "operator",
+      evidence_ids: [],
+    })
+    await expect(latestFollowupServer.command("runtime.preview_opencode_result_review_packet")).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: "handoff_newer_blocked",
+      blockers: expect.arrayContaining([expect.stringContaining("commander proposal not found")]),
+    })
+    await latestFollowupServer.shutdown()
+
     const failedDir = await tempProject()
     await makeProject(failedDir, { approvedSpec: true })
     const failedServer = new RuntimeServer({
@@ -2470,6 +2508,7 @@ describe("RuntimeServer core", () => {
     await failedResultServer.command("runtime.fail_mission", { missionId: failedResultHandoff.mission_id, reason: "later executor failure" })
     await expect(failedResultServer.command("runtime.preview_opencode_result_review_packet", { resultId: failedResult.result_id })).resolves.toMatchObject({
       status: "blocked",
+      title: "OpenCode executor result review is blocked",
       mission_id: failedResultHandoff.mission_id,
       result_id: failedResult.result_id,
       blockers: expect.arrayContaining([expect.stringContaining("mission is failed")]),
@@ -2526,6 +2565,7 @@ describe("RuntimeServer core", () => {
     const rejectedResultReadServer = new RuntimeServer({ projectDir: rejectedResultDir, mode: "status", researchProjectionMode: "disabled" })
     await expect(rejectedResultReadServer.command("runtime.preview_opencode_result_review_packet", { resultId: "result_rejected_packet" })).resolves.toMatchObject({
       status: "blocked",
+      title: "OpenCode executor result review is blocked",
       result_id: "result_rejected_packet",
       blockers: expect.arrayContaining([expect.stringContaining("mission result is rejected")]),
     })

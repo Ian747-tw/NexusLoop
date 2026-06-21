@@ -179,15 +179,15 @@ export class OpenCodeResultReviewPacketService {
     const proposalHandoff = !requestedHandoffId && input.proposal_id ? await this.options.getHandoffByProposal(input.proposal_id) : null
     const proposalFollowup = !requestedHandoffId && input.proposal_id && !proposalHandoff ? await this.options.getFollowupByProposal(input.proposal_id, { staleAfterMs }) : null
     const handoffId = requestedHandoffId ?? proposalHandoff?.handoff_id ?? proposalFollowup?.handoff_id
-    const latestHandoffRecord = handoffId || hasExplicitNonHandoffTarget ? undefined : (await this.options.listHandoffs(1))[0]
-    const handoff = proposalHandoff ?? (handoffId ? await this.options.getHandoff(handoffId) : latestHandoffRecord ? await this.options.getHandoff(latestHandoffRecord.handoff_id) : null)
-    const followup = handoffId
-      ? await this.options.getFollowup(handoffId)
-      : handoff?.handoff_id
-        ? await this.options.getFollowup(handoff.handoff_id)
-        : hasExplicitNonHandoffTarget
-          ? null
-          : (await this.options.listFollowups({ limit: 1, staleAfterMs }))[0]
+    const latestFollowupRecord = handoffId || hasExplicitNonHandoffTarget ? undefined : (await this.options.listFollowups({ limit: 1, staleAfterMs }))[0]
+    const latestHandoffRecord = handoffId || hasExplicitNonHandoffTarget || latestFollowupRecord ? undefined : (await this.options.listHandoffs(1))[0]
+    const selectedHandoffId = handoffId ?? latestFollowupRecord?.handoff_id ?? latestHandoffRecord?.handoff_id
+    const handoff = proposalHandoff ?? (selectedHandoffId ? await this.options.getHandoff(selectedHandoffId) : null)
+    const followup = selectedHandoffId
+      ? (latestFollowupRecord?.handoff_id === selectedHandoffId ? latestFollowupRecord : await this.options.getFollowup(selectedHandoffId))
+      : hasExplicitNonHandoffTarget
+        ? null
+        : undefined
     const missionId = input.mission_id ?? followup?.mission_id ?? handoff?.mission_id ?? result?.mission_id
     const mission = missionId ? await this.options.getMission(missionId) : null
     const progress = missionId ? await this.options.listMissionProgress(missionId) : []
@@ -490,9 +490,10 @@ function recommendedCommands(context: BuildContext, input: OpenCodeResultReviewP
 }
 
 function titleFor(status: OpenCodeResultReviewPacketStatus, context: BuildContext): string {
-  if (context.result ?? context.results.at(-1)) return "OpenCode executor result is ready for Commander review"
+  if (status === "ready_for_commander_review" && (context.result ?? context.results.at(-1))) return "OpenCode executor result is ready for Commander review"
   if (status === "needs_result") return "OpenCode executor handoff needs a mission result"
   if (status === "failed") return "OpenCode executor handoff failed or was blocked"
+  if (status === "blocked") return "OpenCode executor result review is blocked"
   if (status === "stale") return "OpenCode executor handoff is stale without result evidence"
   return "OpenCode executor result review packet"
 }
