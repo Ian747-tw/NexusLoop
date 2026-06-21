@@ -86,28 +86,31 @@ export class RuntimeServerClient implements RuntimeClient {
   }
 
   async *stream(): AsyncIterable<RuntimeEvent> {
-    let iterator: AsyncIterator<RuntimeEvent> | null = null
+    const queue: RuntimeEvent[] = []
+    let wake: (() => void) | null = null
+    const unsubscribe = this.server.eventBus.subscribe((event) => {
+      queue.push(event)
+      wake?.()
+      wake = null
+    })
     try {
       const status = await this.server.status()
-      const syntheticStartupTypes = new Set<RuntimeEvent["type"]>()
       yield {
         type: "RuntimeReady",
         projectName: status.projectName,
         runtimeStatus: status.runtimeStatus,
       }
-      syntheticStartupTypes.add("RuntimeReady")
       if (status.runtimeStatus === "started" || status.specApproved) {
         yield { type: "ProjectInitialized", projectDir: status.projectDir }
-        syntheticStartupTypes.add("ProjectInitialized")
       }
-      iterator = this.server.eventBus.streamFromNow()[Symbol.asyncIterator]()
-      let next = await iterator.next()
-      while (!next.done) {
-        if (!syntheticStartupTypes.has(next.value.type)) yield next.value
-        next = await iterator.next()
+      while (true) {
+        if (queue.length === 0) await new Promise<void>((resolve) => (wake = resolve))
+        while (queue.length) yield queue.shift()!
       }
     } finally {
-      await iterator?.return?.()
+      unsubscribe()
+      const pendingWake = wake as (() => void) | null
+      if (pendingWake) pendingWake()
     }
   }
 

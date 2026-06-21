@@ -12810,6 +12810,21 @@ describe("RuntimeServerClient", () => {
     await client.command("runtime.resume")
     expect(await readEventKinds(dir)).toContain("runtime_started")
 
+    const realStartupEvents: RuntimeEvent[] = []
+    for (let index = 0; index < 5; index += 1) {
+      const next = await Promise.race([
+        iterator.next(),
+        timeout(NON_BLOCKING_START_TIMEOUT_MS).then(() => {
+          throw new Error("timed out waiting for real startup stream event")
+        }),
+      ])
+      expect(next.done).toBe(false)
+      realStartupEvents.push(next.value)
+      const types = realStartupEvents.map((event) => event.type)
+      if (types.includes("RuntimeReady") && types.includes("ProjectInitialized")) break
+    }
+    expect(realStartupEvents.map((event) => event.type)).toEqual(expect.arrayContaining(["RuntimeReady", "ProjectInitialized"]))
+
     await iterator.return?.()
     await client.shutdown()
   })
