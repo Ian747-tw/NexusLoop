@@ -164,11 +164,17 @@ export class OpenCodeHandoffReadinessService {
       })
     }
     const ageMs = age(this.now(), latest.completed_at)
-    const fresh = latest.status === "succeeded" && ageMs !== undefined && ageMs <= maxAgeMs
+    const adapterKind = latest.adapter_kind ?? "unknown"
+    const requiresProcessSmoke = requireRecentSmoke && this.adapterKind === "process"
+    const adapterMatches = !requiresProcessSmoke || adapterKind === "process"
+    const fresh = latest.status === "succeeded" && ageMs !== undefined && ageMs <= maxAgeMs && adapterMatches
     if (latest.status !== "succeeded") {
       const message = `latest OpenCode smoke is ${latest.status}`
       if (requireRecentSmoke) blockers.push(message)
       else warnings.push(message)
+    } else if (!adapterMatches) {
+      const message = `latest OpenCode smoke was recorded for ${adapterKind} adapter; process adapter smoke is required`
+      blockers.push(message)
     } else if (!fresh) {
       const message = "latest OpenCode smoke is stale"
       if (requireRecentSmoke) blockers.push(message)

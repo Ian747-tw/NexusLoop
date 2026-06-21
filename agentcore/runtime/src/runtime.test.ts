@@ -2075,6 +2075,55 @@ describe("RuntimeServer core", () => {
     expect(afterSmoke).toContain("opencode_process_smoke_blocked")
   })
 
+  test("opencode handoff readiness requires process smoke evidence for process mode", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const process = new FakeSpawnedProcess()
+    process.kill = (signal?: NodeJS.Signals) => {
+      process.killedWith = signal
+      queueMicrotask(() => process.emitExit(0, null))
+    }
+    const fakeSmokeServer = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      opencodeProcessSmokeEnv: { NXL_REAL_OPENCODE_SMOKE: "1", NXL_OPENCODE_BIN: "/bin/echo" },
+      opencodeProcessSmokeId: () => "smoke_fake_adapter",
+      opencodeProcessSmokeNow: () => new Date("2026-06-20T00:00:00.000Z"),
+      opencodeProcessSmokeSpawn: () => process,
+    })
+
+    await fakeSmokeServer.start()
+    await expect(fakeSmokeServer.command("runtime.execute_opencode_process_smoke", { requestedBy: "operator", timeoutMs: 1000 })).resolves.toMatchObject({
+      smoke_id: "smoke_fake_adapter",
+      status: "succeeded",
+      adapter_kind: "fake",
+    })
+    await fakeSmokeServer.shutdown()
+
+    const processModeServer = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeHandoffNow: () => new Date("2026-06-20T00:30:00.000Z"),
+    })
+    const before = await readEventKinds(dir)
+
+    await expect(processModeServer.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      status: "blocked",
+      latest_smoke: expect.objectContaining({ smoke_id: "smoke_fake_adapter", status: "succeeded", adapter_kind: "fake" }),
+      required_evidence: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "process_smoke",
+          status: "succeeded",
+          fresh: false,
+          blockers: expect.arrayContaining([expect.stringContaining("process adapter smoke is required")]),
+        }),
+      ]),
+      blockers: expect.arrayContaining([expect.stringContaining("process adapter smoke is required")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+  })
+
   test("opencode handoff execute sends mission through adapter records provenance and is idempotent", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
