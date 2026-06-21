@@ -267,8 +267,8 @@ function statusFromFollowup(followup: OpenCodeHandoffFollowup, result: MissionRe
   if (result && isReviewableResultStatus(result.status)) return "ready_for_commander_review"
   const staleByFollowup = isStale(followup.updated_at, staleAfterMs, now) || followup.blockers.some(isStaleOnlyBlocker)
   const staleByHandoff = Boolean(handoff?.created_at && isStale(handoff.created_at, staleAfterMs, now))
-  if ((staleByFollowup || staleByHandoff) && hardBlockers.length === 0) return "stale"
   if (isBlockedStatus(followup.followup_status)) return "blocked"
+  if ((staleByFollowup || staleByHandoff) && hardBlockers.length === 0) return "stale"
   if (followup.blockers.length > 0) return "blocked"
   return "needs_result"
 }

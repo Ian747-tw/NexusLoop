@@ -2436,6 +2436,41 @@ describe("RuntimeServer core", () => {
     })
     await blockedServer.shutdown()
 
+    const agedBlockedDir = await tempProject()
+    await makeProject(agedBlockedDir, { approvedSpec: true })
+    const agedBlockedServer = new RuntimeServer({
+      projectDir: agedBlockedDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffNow: () => new Date("2026-05-30T00:00:00.000Z"),
+    })
+    await agedBlockedServer.start()
+    const agedBlockedProposal = await agedBlockedServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "aged started handoff",
+      summary: "aged started summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "aged started executor work", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const agedBlockedReview = await agedBlockedServer.command("runtime.request_proposal_review", { proposalId: agedBlockedProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await agedBlockedServer.command("runtime.approve_review_request", { reviewId: agedBlockedReview.review_id, decidedBy: "operator", reason: "approved" })
+    await agedBlockedServer.eventStore.append({
+      kind: "opencode_handoff_started",
+      handoff_id: "handoff_aged_started_blocked",
+      proposal_id: agedBlockedProposal.proposal_id,
+      review_id: agedBlockedReview.review_id,
+      objective_preview: "aged started handoff",
+      started_at: "2026-05-28T00:00:00.000Z",
+      requested_by: "operator",
+      evidence_ids: [],
+    })
+    await expect(agedBlockedServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
+      total_considered: 1,
+      blocked_count: 1,
+      stale_count: 0,
+    })
+    await agedBlockedServer.shutdown()
+
     const latestFollowupDir = await tempProject()
     await makeProject(latestFollowupDir, { approvedSpec: true })
     const latestFollowupServer = new RuntimeServer({
