@@ -2262,6 +2262,14 @@ describe("RuntimeServer core", () => {
       blockers: expect.arrayContaining([expect.stringContaining("requested result was not found")]),
     })
     expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: "missing_handoff_packet", resultId: result.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: "missing_handoff_packet",
+      mission_id: handoff.mission_id,
+      result_id: result.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested handoff or follow-up was not found")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
     const unrelatedPacket = await server.command("runtime.preview_opencode_result_review_packet", { resultId: unrelatedResult.result_id }) as {
       status: string
       handoff_id?: string
@@ -2447,6 +2455,54 @@ describe("RuntimeServer core", () => {
       ready_count: 0,
     })
     await failedResultServer.shutdown()
+
+    const rejectedResultDir = await tempProject()
+    await makeProject(rejectedResultDir, { approvedSpec: true })
+    const rejectedResultServer = new RuntimeServer({
+      projectDir: rejectedResultDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_rejected_result",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await rejectedResultServer.start()
+    const rejectedResultProposal = await rejectedResultServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "executor work with rejected result", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const rejectedResultReview = await rejectedResultServer.command("runtime.request_proposal_review", { proposalId: rejectedResultProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await rejectedResultServer.command("runtime.approve_review_request", { reviewId: rejectedResultReview.review_id, decidedBy: "operator", reason: "approved" })
+    const rejectedResultHandoff = await rejectedResultServer.command("runtime.execute_opencode_handoff", { proposalId: rejectedResultProposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const rejectedResultClaim = await rejectedResultServer.command("runtime.claim_mission", { missionId: rejectedResultHandoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    await rejectedResultServer.command("runtime.submit_mission_result", { missionId: rejectedResultHandoff.mission_id, claimId: rejectedResultClaim.claim_id, summary: "submitted before rejection" })
+    await rejectedResultServer.eventStore.append({
+      kind: "mission_result_submitted",
+      result: {
+        result_id: "result_rejected_packet",
+        mission_id: rejectedResultHandoff.mission_id,
+        claim_id: rejectedResultClaim.claim_id,
+        summary: "rejected executor result",
+        artifacts: [],
+        research_result_ids: [],
+        created_at: "2026-05-28T00:00:01.000Z",
+        status: "rejected",
+      },
+    })
+    await rejectedResultServer.shutdown()
+    const rejectedResultReadServer = new RuntimeServer({ projectDir: rejectedResultDir, mode: "status", researchProjectionMode: "disabled" })
+    await expect(rejectedResultReadServer.command("runtime.preview_opencode_result_review_packet", { resultId: "result_rejected_packet" })).resolves.toMatchObject({
+      status: "blocked",
+      result_id: "result_rejected_packet",
+      blockers: expect.arrayContaining([expect.stringContaining("mission result is rejected")]),
+    })
+    await expect(rejectedResultReadServer.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+      total_considered: 1,
+      blocked_count: 1,
+      ready_count: 0,
+    })
   })
 
   test("opencode handoff execute sends mission through adapter records provenance and is idempotent", async () => {

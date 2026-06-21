@@ -87,6 +87,7 @@ export class OpenCodeResultReviewPacketService {
     if (context.latestSmoke) evidence.push(smokeEvidence(context.latestSmoke, this.now()))
 
     if (!context.handoff && !context.followup && !context.mission && !context.result && !context.proposal) blockers.push("no OpenCode handoff, mission result, mission, or proposal evidence was found")
+    if ((normalized.handoff_id || normalized.followup_id) && !context.handoff && !context.followup) blockers.push("requested handoff or follow-up was not found")
     if (context.followup?.blockers?.length) blockers.push(...context.followup.blockers)
     if (context.followup && (isFailureStatus(context.followup.followup_status) || isBlockedStatus(context.followup.followup_status))) blockers.push(`handoff follow-up is ${context.followup.followup_status}`)
     if (context.handoff && !context.handoff.sent) blockers.push("handoff was not sent")
@@ -238,6 +239,8 @@ function normalizeInput(input: Record<string, unknown> = {}): OpenCodeResultRevi
 
 function packetStatus(input: { blockers: string[]; warnings: string[]; context: BuildContext; latestResult?: MissionResult; staleAfterMs: number; now: Date }): OpenCodeResultReviewPacketStatus {
   const hardBlockers = input.blockers.filter((blocker) => !isStaleOnlyBlocker(blocker))
+  if (input.context.mission && isBlockedMissionStatus(input.context.mission.status)) return "blocked"
+  if (input.latestResult?.status === "rejected") return "blocked"
   if (input.latestResult && hardBlockers.length === 0) return "ready_for_commander_review"
   if (isFailureStatus(input.context.followup?.followup_status)) return "failed"
   if (!input.context.handoff && !input.context.followup && !input.context.mission && !input.context.result && !input.context.proposal) return input.blockers.length > 0 ? "blocked" : "unknown"
@@ -256,7 +259,8 @@ function statusFromFollowup(followup: OpenCodeHandoffFollowup, result: MissionRe
   if (isFailureStatus(followup.followup_status)) return "failed"
   const hardBlockers = followup.blockers.filter((blocker) => !isStaleOnlyBlocker(blocker))
   if (hardBlockers.length > 0) return "blocked"
-  if (result) return "ready_for_commander_review"
+  if (result?.status === "rejected") return "blocked"
+  if (result && isReviewableResultStatus(result.status)) return "ready_for_commander_review"
   const staleByFollowup = isStale(followup.updated_at, staleAfterMs, now) || followup.blockers.some(isStaleOnlyBlocker)
   const staleByHandoff = Boolean(handoff?.created_at && isStale(handoff.created_at, staleAfterMs, now))
   if ((staleByFollowup || staleByHandoff) && hardBlockers.length === 0) return "stale"
@@ -275,6 +279,10 @@ function isBlockedStatus(status: string | undefined): boolean {
 
 function isBlockedMissionStatus(status: string | undefined): boolean {
   return status === "failed" || status === "cancelled"
+}
+
+function isReviewableResultStatus(status: string | undefined): boolean {
+  return status === "submitted" || status === "accepted"
 }
 
 function outcomeEvidenceIsStale(context: BuildContext, staleAfterMs: number, now: Date): boolean {
