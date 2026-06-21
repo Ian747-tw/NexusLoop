@@ -2240,6 +2240,21 @@ describe("RuntimeServer core", () => {
       blockers: expect.arrayContaining([expect.stringContaining("requested result mission does not match")]),
     })
     expect(await readEventKinds(dir)).toEqual(before)
+    const unrelatedPacket = await server.command("runtime.preview_opencode_result_review_packet", { resultId: unrelatedResult.result_id }) as {
+      status: string
+      handoff_id?: string
+      mission_id?: string
+      result_id?: string
+      result_summary_preview?: string
+    }
+    expect(unrelatedPacket).toMatchObject({
+      status: "ready_for_commander_review",
+      mission_id: unrelatedMission.missionId,
+      result_id: unrelatedResult.result_id,
+    })
+    expect(unrelatedPacket.handoff_id).toBeUndefined()
+    expect(JSON.stringify(unrelatedPacket)).not.toContain("unrelated-result-secret")
+    expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
       total_considered: 1,
       ready_count: 1,
@@ -2340,6 +2355,36 @@ describe("RuntimeServer core", () => {
     })
     expect(await readEventKinds(failedDir)).toEqual(before)
     await failedServer.shutdown()
+
+    const failedResultDir = await tempProject()
+    await makeProject(failedResultDir, { approvedSpec: true })
+    const failedResultServer = new RuntimeServer({
+      projectDir: failedResultDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_failed_after_result",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await failedResultServer.start()
+    const failedResultProposal = await failedResultServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "executor work with later failure", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const failedResultReview = await failedResultServer.command("runtime.request_proposal_review", { proposalId: failedResultProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await failedResultServer.command("runtime.approve_review_request", { reviewId: failedResultReview.review_id, decidedBy: "operator", reason: "approved" })
+    const failedResultHandoff = await failedResultServer.command("runtime.execute_opencode_handoff", { proposalId: failedResultProposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const failedResultClaim = await failedResultServer.command("runtime.claim_mission", { missionId: failedResultHandoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    await failedResultServer.command("runtime.submit_mission_result", { missionId: failedResultHandoff.mission_id, claimId: failedResultClaim.claim_id, summary: "result before later failure" })
+    await failedResultServer.command("runtime.fail_mission", { missionId: failedResultHandoff.mission_id, reason: "later executor failure" })
+    await expect(failedResultServer.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+      total_considered: 1,
+      failed_count: 1,
+      ready_count: 0,
+    })
+    await failedResultServer.shutdown()
   })
 
   test("opencode handoff execute sends mission through adapter records provenance and is idempotent", async () => {

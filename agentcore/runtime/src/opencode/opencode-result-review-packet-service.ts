@@ -163,14 +163,17 @@ export class OpenCodeResultReviewPacketService {
 
   private async context(input: OpenCodeResultReviewPacketInput, staleAfterMs: number): Promise<BuildContext> {
     const handoffId = input.handoff_id ?? input.followup_id
-    const latestHandoffRecord = handoffId ? undefined : (await this.options.listHandoffs(1))[0]
+    const result = input.result_id ? await this.options.getMissionResult(input.result_id) : null
+    const hasExplicitNonHandoffTarget = Boolean(input.mission_id || input.result_id || input.proposal_id)
+    const latestHandoffRecord = handoffId || hasExplicitNonHandoffTarget ? undefined : (await this.options.listHandoffs(1))[0]
     const handoff = handoffId ? await this.options.getHandoff(handoffId) : latestHandoffRecord ? await this.options.getHandoff(latestHandoffRecord.handoff_id) : null
     const followup = handoffId
       ? await this.options.getFollowup(handoffId)
       : handoff?.handoff_id
         ? await this.options.getFollowup(handoff.handoff_id)
-        : (await this.options.listFollowups({ limit: 1, staleAfterMs }))[0]
-    const result = input.result_id ? await this.options.getMissionResult(input.result_id) : null
+        : hasExplicitNonHandoffTarget
+          ? null
+          : (await this.options.listFollowups({ limit: 1, staleAfterMs }))[0]
     const missionId = input.mission_id ?? followup?.mission_id ?? handoff?.mission_id ?? result?.mission_id
     const mission = missionId ? await this.options.getMission(missionId) : null
     const progress = missionId ? await this.options.listMissionProgress(missionId) : []
@@ -238,9 +241,10 @@ function packetStatus(input: { blockers: string[]; warnings: string[]; context: 
 }
 
 function statusFromFollowup(followup: OpenCodeHandoffFollowup, result: MissionResult | undefined, staleAfterMs: number, now: Date, handoff?: OpenCodeHandoffResult | null): OpenCodeResultReviewPacketStatus {
-  if (result) return "ready_for_commander_review"
   if (isFailureStatus(followup.followup_status)) return "failed"
   const hardBlockers = followup.blockers.filter((blocker) => !isStaleOnlyBlocker(blocker))
+  if (hardBlockers.length > 0) return "blocked"
+  if (result) return "ready_for_commander_review"
   const staleByFollowup = isStale(followup.updated_at, staleAfterMs, now) || followup.blockers.some(isStaleOnlyBlocker)
   const staleByHandoff = Boolean(handoff?.created_at && isStale(handoff.created_at, staleAfterMs, now))
   if ((staleByFollowup || staleByHandoff) && hardBlockers.length === 0) return "stale"
