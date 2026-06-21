@@ -106,7 +106,11 @@ export class OpenCodeResultReviewPacketService {
     }
 
     const status = packetStatus({ blockers, warnings, context, latestResult, staleAfterMs, now: this.now() })
-    const hardBlockers = status === "needs_result" || status === "stale" ? [] : blockers
+    const hardBlockers = status === "needs_result" || status === "stale"
+      ? []
+      : status === "ready_for_commander_review"
+        ? blockers.filter((blocker) => !isStaleOnlyBlocker(blocker))
+        : blockers
     const packet: OpenCodeResultReviewPacket = {
       packet_id: packetId(normalized, generatedAt),
       status,
@@ -300,6 +304,21 @@ function targetConsistencyBlockers(context: BuildContext, input: OpenCodeResultR
   const selectedProposalId = context.followup?.proposal_id ?? context.handoff?.proposal_id
   if (selectedProposalId && input.proposal_id && input.proposal_id !== selectedProposalId) {
     out.push("requested proposal does not match selected handoff or follow-up proposal")
+  }
+  if (context.proposal && latestResult && context.proposal.mission_id && context.proposal.mission_id !== latestResult.mission_id) {
+    out.push("requested proposal mission does not match selected result mission")
+  }
+  if (context.proposal && latestResult && context.proposal.result_id && context.proposal.result_id !== latestResult.result_id) {
+    out.push("requested proposal result does not match selected result")
+  }
+  const proposalMatchesResult = Boolean(
+    context.proposal &&
+      latestResult &&
+      ((context.proposal.mission_id && context.proposal.mission_id === latestResult.mission_id) ||
+        (context.proposal.result_id && context.proposal.result_id === latestResult.result_id)),
+  )
+  if (input.proposal_id && input.result_id && latestResult && !selectedProposalId && !proposalMatchesResult) {
+    out.push("requested proposal is not linked to selected result by handoff, follow-up, mission, or result id")
   }
   if (selectedMissionId && input.mission_id && input.mission_id !== selectedMissionId) {
     out.push("requested mission does not match selected handoff or follow-up mission")

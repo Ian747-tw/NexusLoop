@@ -2240,6 +2240,10 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(packet)).not.toContain("artifact-secret")
     expect(adapter.packets).toEqual([])
     expect(await readEventKinds(dir)).toEqual(before)
+    const staleReadyPacket = await server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, staleAfterMs: 1 }) as { status: string; blockers: string[] }
+    expect(staleReadyPacket.status).toBe("ready_for_commander_review")
+    expect(staleReadyPacket.blockers).not.toContain("handoff follow-up is stale")
+    expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
       status: "ready_for_commander_review",
       handoff_id: "handoff_packet_1",
@@ -2259,6 +2263,13 @@ describe("RuntimeServer core", () => {
       handoff_id: handoff.handoff_id,
       proposal_id: mismatchedProposal.proposal_id,
       blockers: expect.arrayContaining([expect.stringContaining("requested proposal does not match")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: mismatchedProposal.proposal_id, resultId: result.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      proposal_id: mismatchedProposal.proposal_id,
+      result_id: result.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal is not linked to selected result")]),
     })
     expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, resultId: unrelatedResult.result_id })).resolves.toMatchObject({
