@@ -649,6 +649,7 @@ class OpenCodeHandoffRuntime implements RuntimeClient {
           can_execute_now: false,
           proposal_id: payload?.proposalId,
           mission_id: payload?.missionId,
+          handoff_id: payload?.handoffId,
           authority: { command: "/handoff", slash_command: "/handoff", risk: "high_impact_write", gate: "handoff_runtime", owner: "opencode_handoff", blocked_by_default: true },
           latest_smoke: { smoke_id: "smoke-1", status: "succeeded", adapter_kind: "fake", completed_at: "1970-01-01T00:00:00.000Z", duration_ms: 1, exit_code: 0, summary_preview: "smoke token=smoke-secret", smoke_hash: "hash" },
           handoff_preview_summary: "handoff readiness token=preview-secret",
@@ -656,7 +657,7 @@ class OpenCodeHandoffRuntime implements RuntimeClient {
             { evidence_id: "process_smoke:smoke-1", kind: "process_smoke", related_id: "smoke-1", status: "succeeded", fresh: true, completed_at: "1970-01-01T00:00:00.000Z", age_ms: 0, summary_preview: "smoke token=evidence-secret", blockers: [], warnings: [] },
             { evidence_id: "authority:/handoff", kind: "authority_record", related_id: "/handoff", status: "high_impact_write", fresh: true, summary_preview: "handoff is high impact", blockers: [], warnings: ["handoff token=authority-secret"] },
           ],
-          optional_evidence: [],
+          optional_evidence: payload?.handoffId ? [{ evidence_id: `handoff:${payload.handoffId}`, kind: "handoff_followup", related_id: payload.handoffId, status: "missing", fresh: false, summary_preview: `handoff ${payload.handoffId} not found token=optional-secret`, blockers: [], warnings: ["handoff target was not found token=optional-warning-secret"] }] : [],
           blockers: payload?.proposalId === "proposal-pending" ? ["linked review must be approved token=readiness-secret"] : [],
           warnings: ["readiness does not execute handoff token=warning-secret"],
           recommended_commands: [{ label: "Show authority", command: "/authority-show /handoff token=command-secret", command_type: "read" }],
@@ -3123,6 +3124,14 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-readiness", args: ["mission=mission_1"] })
     expect(state.opencodeHandoffReadiness?.preview).toMatchObject({ mission_id: "mission_1" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-readiness", args: ["handoff=missing-handoff"] })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("optional_evidence")
+    expect(snapshot).toContain("handoff_followup:missing")
+    expect(snapshot).toContain("missing-handoff not found")
+    expect(snapshot).not.toContain("optional-secret")
+    expect(snapshot).not.toContain("optional-warning-secret")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-readiness-summary" })
     expect(state.opencodeHandoffReadiness?.summary).toMatchObject({ ready_count: 1, latest_smoke_status: "succeeded" })
