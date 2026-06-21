@@ -12818,6 +12818,30 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("OpenCode handoff readiness commands do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo" },
+      opencodeProcessSmokeEnv: { NXL_OPENCODE_BIN: "/bin/echo" },
+    })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_handoff_readiness")).resolves.toMatchObject({
+      can_execute_now: false,
+      authority: expect.objectContaining({ command: "/handoff", risk: "high_impact_write" }),
+    })
+    await expect(client.command("runtime.opencode_handoff_readiness_summary")).resolves.toMatchObject({
+      total_considered: 1,
+      needs_smoke_count: 1,
+    })
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
   test("OpenCode process smoke live execution can auto-start the runtime", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
