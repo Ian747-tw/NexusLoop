@@ -72,6 +72,12 @@ export class OpenCodeHandoffFollowupService {
     return redactValue((await this.all()).find((item) => item.handoff_id === id) ?? null)
   }
 
+  async getByProposal(proposalId: string, options: { staleAfterMs?: number } = {}): Promise<OpenCodeHandoffFollowup | null> {
+    const id = cleanRequiredString(proposalId, "proposal_id")
+    const staleAfterMs = readStaleAfterMs(options.staleAfterMs)
+    return redactValue((await this.all(staleAfterMs)).slice().reverse().find((item) => item.proposal_id === id) ?? null)
+  }
+
   async list(options: { limit?: number; staleAfterMs?: number } = {}): Promise<OpenCodeHandoffFollowup[]> {
     const limit = readLimit(options.limit)
     const staleAfterMs = readStaleAfterMs(options.staleAfterMs)

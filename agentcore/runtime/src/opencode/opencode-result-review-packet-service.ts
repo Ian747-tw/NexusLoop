@@ -27,8 +27,10 @@ export type OpenCodeResultReviewPacketServiceOptions = {
   authorityService?: CommandAuthorityService
   listHandoffs: (limit: number) => Promise<OpenCodeHandoffRecord[]>
   getHandoff: (handoffId: string) => Promise<OpenCodeHandoffResult | null>
+  getHandoffByProposal: (proposalId: string) => Promise<OpenCodeHandoffResult | null>
   listFollowups: (options: { limit?: number; staleAfterMs?: number }) => Promise<OpenCodeHandoffFollowup[]>
   getFollowup: (handoffId: string) => Promise<OpenCodeHandoffFollowup | null>
+  getFollowupByProposal: (proposalId: string, options?: { staleAfterMs?: number }) => Promise<OpenCodeHandoffFollowup | null>
   followupSummary: (options?: { staleAfterMs?: number }) => Promise<OpenCodeHandoffFollowupSummary>
   getMission: (missionId: string) => Promise<MissionRecord | null>
   listMissionProgress: (missionId: string) => Promise<MissionProgress[]>
@@ -170,15 +172,11 @@ export class OpenCodeResultReviewPacketService {
     const requestedHandoffId = input.handoff_id ?? input.followup_id
     const result = input.result_id ? await this.options.getMissionResult(input.result_id) : null
     const hasExplicitNonHandoffTarget = Boolean(input.mission_id || input.result_id || input.proposal_id)
-    const proposalHandoffRecord = !requestedHandoffId && input.proposal_id
-      ? (await this.options.listHandoffs(100)).find((record) => record.proposal_id === input.proposal_id)
-      : undefined
-    const proposalFollowup = !requestedHandoffId && input.proposal_id && !proposalHandoffRecord
-      ? (await this.options.listFollowups({ limit: 100, staleAfterMs })).find((item) => item.proposal_id === input.proposal_id)
-      : undefined
-    const handoffId = requestedHandoffId ?? proposalHandoffRecord?.handoff_id ?? proposalFollowup?.handoff_id
+    const proposalHandoff = !requestedHandoffId && input.proposal_id ? await this.options.getHandoffByProposal(input.proposal_id) : null
+    const proposalFollowup = !requestedHandoffId && input.proposal_id && !proposalHandoff ? await this.options.getFollowupByProposal(input.proposal_id, { staleAfterMs }) : null
+    const handoffId = requestedHandoffId ?? proposalHandoff?.handoff_id ?? proposalFollowup?.handoff_id
     const latestHandoffRecord = handoffId || hasExplicitNonHandoffTarget ? undefined : (await this.options.listHandoffs(1))[0]
-    const handoff = handoffId ? await this.options.getHandoff(handoffId) : latestHandoffRecord ? await this.options.getHandoff(latestHandoffRecord.handoff_id) : null
+    const handoff = proposalHandoff ?? (handoffId ? await this.options.getHandoff(handoffId) : latestHandoffRecord ? await this.options.getHandoff(latestHandoffRecord.handoff_id) : null)
     const followup = handoffId
       ? await this.options.getFollowup(handoffId)
       : handoff?.handoff_id
@@ -295,7 +293,14 @@ function outcomeEvidenceIsStale(context: BuildContext, staleAfterMs: number, now
 
 function targetConsistencyBlockers(context: BuildContext, input: OpenCodeResultReviewPacketInput, latestResult?: MissionResult): string[] {
   const out: string[] = []
+  if (input.handoff_id && input.followup_id && input.handoff_id !== input.followup_id) {
+    out.push("requested handoff and follow-up ids do not match")
+  }
   const selectedMissionId = context.followup?.mission_id ?? context.handoff?.mission_id ?? input.mission_id ?? context.mission?.mission_id
+  const selectedProposalId = context.followup?.proposal_id ?? context.handoff?.proposal_id
+  if (selectedProposalId && input.proposal_id && input.proposal_id !== selectedProposalId) {
+    out.push("requested proposal does not match selected handoff or follow-up proposal")
+  }
   if (selectedMissionId && input.mission_id && input.mission_id !== selectedMissionId) {
     out.push("requested mission does not match selected handoff or follow-up mission")
   }

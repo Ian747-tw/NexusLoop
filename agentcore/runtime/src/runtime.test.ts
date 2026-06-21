@@ -2199,6 +2199,13 @@ describe("RuntimeServer core", () => {
       claimId: unrelatedClaim.claim_id,
       summary: "unrelated result token=unrelated-result-secret",
     }) as { result_id: string }
+    const mismatchedProposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "other handoff",
+      summary: "other summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "other objective", evidence_ids: ["evidence-2"] },
+    }) as { proposal_id: string }
     const before = await readEventKinds(dir)
     adapter.packets = []
 
@@ -2239,6 +2246,19 @@ describe("RuntimeServer core", () => {
       mission_id: handoff.mission_id,
       result_id: result.result_id,
       proposal_id: proposal.proposal_id,
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, followupId: "handoff_other_packet" })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: handoff.handoff_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested handoff and follow-up ids do not match")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, proposalId: mismatchedProposal.proposal_id })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: handoff.handoff_id,
+      proposal_id: mismatchedProposal.proposal_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal does not match")]),
     })
     expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, resultId: unrelatedResult.result_id })).resolves.toMatchObject({
@@ -2502,6 +2522,50 @@ describe("RuntimeServer core", () => {
       total_considered: 1,
       blocked_count: 1,
       ready_count: 0,
+    })
+  })
+
+  test("opencode result review packet resolves proposal handoffs beyond recent list caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await store.append({
+      kind: "opencode_handoff_created",
+      handoff: {
+        handoff_id: "handoff_old_target",
+        proposal_id: "proposal_old_target",
+        objective_preview: "old target objective",
+        sent: true,
+        dry_run: false,
+        created_at: "2026-05-28T00:00:00.000Z",
+        requested_by: "operator",
+        evidence_ids: [],
+      },
+    })
+    for (let index = 0; index < 101; index += 1) {
+      const hour = Math.floor(index / 60)
+      const minute = index % 60
+      await store.append({
+        kind: "opencode_handoff_created",
+        handoff: {
+          handoff_id: `handoff_recent_${index}`,
+          proposal_id: `proposal_recent_${index}`,
+          objective_preview: "recent objective",
+          sent: true,
+          dry_run: false,
+          created_at: `2026-05-28T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00.000Z`,
+          requested_by: "operator",
+          evidence_ids: [],
+        },
+      })
+    }
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: "proposal_old_target" })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: "handoff_old_target",
+      proposal_id: "proposal_old_target",
+      blockers: expect.arrayContaining([expect.stringContaining("commander proposal not found")]),
     })
   })
 
