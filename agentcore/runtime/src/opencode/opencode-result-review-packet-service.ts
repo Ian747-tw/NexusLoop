@@ -88,7 +88,7 @@ export class OpenCodeResultReviewPacketService {
 
     if (!context.handoff && !context.followup && !context.mission && !context.result && !context.proposal) blockers.push("no OpenCode handoff, mission result, mission, or proposal evidence was found")
     if (context.followup?.blockers?.length) blockers.push(...context.followup.blockers)
-    if (context.followup && isFailureStatus(context.followup.followup_status)) blockers.push(`handoff follow-up is ${context.followup.followup_status}`)
+    if (context.followup && (isFailureStatus(context.followup.followup_status) || isBlockedStatus(context.followup.followup_status))) blockers.push(`handoff follow-up is ${context.followup.followup_status}`)
     if (context.handoff && !context.handoff.sent) blockers.push("handoff was not sent")
     const explicitResultMissing = Boolean(normalized.result_id && !context.result)
     if (explicitResultMissing) blockers.push("requested result was not found")
@@ -234,6 +234,7 @@ function packetStatus(input: { blockers: string[]; warnings: string[]; context: 
   if (!input.context.handoff && !input.context.followup && !input.context.mission && !input.context.result && !input.context.proposal) return input.blockers.length > 0 ? "blocked" : "unknown"
   if ((input.context.handoff || input.context.followup || input.context.mission) && !input.latestResult) {
     if (outcomeEvidenceIsStale(input.context, input.staleAfterMs, input.now) && hardBlockers.length === 0) return "stale"
+    if (isBlockedStatus(input.context.followup?.followup_status)) return "blocked"
     if (input.blockers.length > 0) return "blocked"
     return "needs_result"
   }
@@ -250,12 +251,17 @@ function statusFromFollowup(followup: OpenCodeHandoffFollowup, result: MissionRe
   const staleByFollowup = isStale(followup.updated_at, staleAfterMs, now) || followup.blockers.some(isStaleOnlyBlocker)
   const staleByHandoff = Boolean(handoff?.created_at && isStale(handoff.created_at, staleAfterMs, now))
   if ((staleByFollowup || staleByHandoff) && hardBlockers.length === 0) return "stale"
+  if (isBlockedStatus(followup.followup_status)) return "blocked"
   if (followup.blockers.length > 0) return "blocked"
   return "needs_result"
 }
 
 function isFailureStatus(status: string | undefined): boolean {
-  return status === "failed" || status === "blocked" || status === "cancelled" || status === "handoff_failed"
+  return status === "failed" || status === "cancelled" || status === "handoff_failed"
+}
+
+function isBlockedStatus(status: string | undefined): boolean {
+  return status === "blocked"
 }
 
 function outcomeEvidenceIsStale(context: BuildContext, staleAfterMs: number, now: Date): boolean {

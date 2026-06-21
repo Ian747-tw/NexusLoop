@@ -2342,6 +2342,34 @@ describe("RuntimeServer core", () => {
       blocked_count: 0,
     })
 
+    const blockedDir = await tempProject()
+    await makeProject(blockedDir, { approvedSpec: true })
+    const blockedServer = new RuntimeServer({
+      projectDir: blockedDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+    })
+    await blockedServer.start()
+    await blockedServer.eventStore.append({
+      kind: "opencode_handoff_started",
+      handoff_id: "handoff_blocked_packet",
+      proposal_id: "proposal_blocked_packet",
+      objective_preview: "blocked packet",
+      started_at: new Date().toISOString(),
+      requested_by: "operator",
+      evidence_ids: [],
+    })
+    await expect(blockedServer.command("runtime.preview_opencode_result_review_packet", { handoffId: "handoff_blocked_packet", staleAfterMs: 86_400_000 })).resolves.toMatchObject({
+      status: "blocked",
+      blockers: expect.arrayContaining([expect.stringContaining("blocked")]),
+    })
+    await expect(blockedServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 86_400_000 })).resolves.toMatchObject({
+      total_considered: 1,
+      blocked_count: 1,
+      failed_count: 0,
+    })
+    await blockedServer.shutdown()
+
     const failedDir = await tempProject()
     await makeProject(failedDir, { approvedSpec: true })
     const failedServer = new RuntimeServer({
