@@ -331,7 +331,6 @@ function targetEvidence(kind: "proposal" | "review" | "mission", id: string, com
 }
 
 function recommendedCommands(input: OpenCodeHandoffReadinessInput, status: OpenCodeHandoffReadinessStatus): OpenCodeHandoffReadinessCommand[] {
-  const target = input.proposal_id ?? input.review_id ?? input.mission_id ?? input.handoff_id
   const commands: OpenCodeHandoffReadinessCommand[] = [
     { label: "Show handoff authority", command: "/authority-show /handoff", command_type: "read" },
     { label: "Preview OpenCode smoke", command: "/opencode-smoke-preview", command_type: "read" },
@@ -344,7 +343,7 @@ function recommendedCommands(input: OpenCodeHandoffReadinessInput, status: OpenC
   if (input.review_id) commands.push({ label: "Show review", command: `/review ${input.review_id}`, command_type: "read" })
   if (input.mission_id) commands.push({ label: "Show mission", command: `/mission ${input.mission_id}`, command_type: "read" })
   if (input.handoff_id) commands.push({ label: "Show handoff", command: `/handoff-show ${input.handoff_id}`, command_type: "read" })
-  if (status === "ready" && target) commands.push({ label: "Execute handoff explicitly", command: input.proposal_id ? `/handoff ${input.proposal_id}` : "/handoff <proposalId>", command_type: "write", requires_active_runtime: true, notes: "High-impact handoff remains explicit; readiness does not execute it." })
+  if (status === "ready" && input.proposal_id) commands.push({ label: "Execute handoff explicitly", command: `/handoff ${input.proposal_id}`, command_type: "write", requires_active_runtime: true, notes: "High-impact handoff remains explicit; readiness does not execute it." })
   return commands.slice(0, MAX_COMMANDS).map((command) => ({
     label: bound(command.label),
     command: bound(command.command),

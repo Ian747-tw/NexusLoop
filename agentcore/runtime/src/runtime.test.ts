@@ -2030,6 +2030,13 @@ describe("RuntimeServer core", () => {
         expect.objectContaining({ kind: "handoff_preview", status: "blocked", blockers: expect.arrayContaining(["proposal requires linked review"]) }),
       ]),
     })
+    const missionReadiness = await server.command("runtime.preview_opencode_handoff_readiness", { missionId: "mission_1" }) as {
+      status: string
+      recommended_commands: Array<{ command: string; command_type: string }>
+    }
+    expect(missionReadiness.status).toBe("ready")
+    expect(missionReadiness.recommended_commands).not.toContainEqual(expect.objectContaining({ command: "/handoff <proposalId>" }))
+    expect(missionReadiness.recommended_commands.filter((command) => command.command_type === "write")).toEqual([])
     expect(await readEventKinds(dir)).toEqual(expect.arrayContaining(before))
     expect((await readEventKinds(dir)).filter((kind) => String(kind).startsWith("opencode_handoff"))).toEqual([])
     await server.shutdown()
