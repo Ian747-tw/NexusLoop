@@ -2321,6 +2321,14 @@ describe("RuntimeServer core", () => {
       blockers: expect.arrayContaining([expect.stringContaining("requested proposal mission does not match selected mission")]),
     })
     expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: mismatchedProposal.proposal_id, missionId: unrelatedMission.missionId })).resolves.toMatchObject({
+      status: "blocked",
+      proposal_id: mismatchedProposal.proposal_id,
+      mission_id: unrelatedMission.missionId,
+      result_id: unrelatedResult.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal is not linked to selected mission result")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.preview_opencode_result_review_packet", { missionId: handoff.mission_id, proposalId: "proposal_typo" })).resolves.toMatchObject({
       status: "blocked",
       handoff_id: handoff.handoff_id,
