@@ -93,6 +93,8 @@ export class OpenCodeResultReviewPacketService {
     const explicitResultMissing = Boolean(normalized.result_id && !context.result)
     if (explicitResultMissing) blockers.push("requested result was not found")
     const latestResult = explicitResultMissing ? undefined : context.result ?? context.results.at(-1)
+    if (context.mission && isBlockedMissionStatus(context.mission.status)) blockers.push(`mission is ${context.mission.status}`)
+    if (latestResult?.status === "rejected") blockers.push("mission result is rejected")
     blockers.push(...targetConsistencyBlockers(context, normalized, latestResult))
     if ((context.handoff || context.followup || context.mission) && !latestResult && !isFailureStatus(context.followup?.followup_status)) {
       const stale = outcomeEvidenceIsStale(context, staleAfterMs, this.now())
@@ -262,6 +264,10 @@ function isFailureStatus(status: string | undefined): boolean {
 
 function isBlockedStatus(status: string | undefined): boolean {
   return status === "blocked"
+}
+
+function isBlockedMissionStatus(status: string | undefined): boolean {
+  return status === "failed" || status === "cancelled"
 }
 
 function outcomeEvidenceIsStale(context: BuildContext, staleAfterMs: number, now: Date): boolean {

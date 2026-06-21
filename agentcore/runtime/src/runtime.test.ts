@@ -2419,8 +2419,14 @@ describe("RuntimeServer core", () => {
     await failedResultServer.command("runtime.approve_review_request", { reviewId: failedResultReview.review_id, decidedBy: "operator", reason: "approved" })
     const failedResultHandoff = await failedResultServer.command("runtime.execute_opencode_handoff", { proposalId: failedResultProposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
     const failedResultClaim = await failedResultServer.command("runtime.claim_mission", { missionId: failedResultHandoff.mission_id, executorId: "opencode" }) as { claim_id: string }
-    await failedResultServer.command("runtime.submit_mission_result", { missionId: failedResultHandoff.mission_id, claimId: failedResultClaim.claim_id, summary: "result before later failure" })
+    const failedResult = await failedResultServer.command("runtime.submit_mission_result", { missionId: failedResultHandoff.mission_id, claimId: failedResultClaim.claim_id, summary: "result before later failure" }) as { result_id: string }
     await failedResultServer.command("runtime.fail_mission", { missionId: failedResultHandoff.mission_id, reason: "later executor failure" })
+    await expect(failedResultServer.command("runtime.preview_opencode_result_review_packet", { resultId: failedResult.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: failedResultHandoff.mission_id,
+      result_id: failedResult.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("mission is failed")]),
+    })
     await expect(failedResultServer.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
       total_considered: 1,
       failed_count: 1,
