@@ -2233,6 +2233,14 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(packet)).not.toContain("artifact-secret")
     expect(adapter.packets).toEqual([])
     expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      status: "ready_for_commander_review",
+      handoff_id: "handoff_packet_1",
+      mission_id: handoff.mission_id,
+      result_id: result.result_id,
+      proposal_id: proposal.proposal_id,
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, resultId: unrelatedResult.result_id })).resolves.toMatchObject({
       status: "blocked",
       mission_id: handoff.mission_id,
@@ -2422,6 +2430,12 @@ describe("RuntimeServer core", () => {
     const failedResult = await failedResultServer.command("runtime.submit_mission_result", { missionId: failedResultHandoff.mission_id, claimId: failedResultClaim.claim_id, summary: "result before later failure" }) as { result_id: string }
     await failedResultServer.command("runtime.fail_mission", { missionId: failedResultHandoff.mission_id, reason: "later executor failure" })
     await expect(failedResultServer.command("runtime.preview_opencode_result_review_packet", { resultId: failedResult.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: failedResultHandoff.mission_id,
+      result_id: failedResult.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("mission is failed")]),
+    })
+    await expect(failedResultServer.command("runtime.preview_opencode_result_review_packet", { missionId: failedResultHandoff.mission_id, resultId: failedResult.result_id })).resolves.toMatchObject({
       status: "blocked",
       mission_id: failedResultHandoff.mission_id,
       result_id: failedResult.result_id,

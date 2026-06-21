@@ -166,9 +166,16 @@ export class OpenCodeResultReviewPacketService {
   }
 
   private async context(input: OpenCodeResultReviewPacketInput, staleAfterMs: number): Promise<BuildContext> {
-    const handoffId = input.handoff_id ?? input.followup_id
+    const requestedHandoffId = input.handoff_id ?? input.followup_id
     const result = input.result_id ? await this.options.getMissionResult(input.result_id) : null
     const hasExplicitNonHandoffTarget = Boolean(input.mission_id || input.result_id || input.proposal_id)
+    const proposalHandoffRecord = !requestedHandoffId && input.proposal_id
+      ? (await this.options.listHandoffs(100)).find((record) => record.proposal_id === input.proposal_id)
+      : undefined
+    const proposalFollowup = !requestedHandoffId && input.proposal_id && !proposalHandoffRecord
+      ? (await this.options.listFollowups({ limit: 100, staleAfterMs })).find((item) => item.proposal_id === input.proposal_id)
+      : undefined
+    const handoffId = requestedHandoffId ?? proposalHandoffRecord?.handoff_id ?? proposalFollowup?.handoff_id
     const latestHandoffRecord = handoffId || hasExplicitNonHandoffTarget ? undefined : (await this.options.listHandoffs(1))[0]
     const handoff = handoffId ? await this.options.getHandoff(handoffId) : latestHandoffRecord ? await this.options.getHandoff(latestHandoffRecord.handoff_id) : null
     const followup = handoffId

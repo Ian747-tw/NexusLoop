@@ -3211,6 +3211,9 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("evidence")
     expect(snapshot).toContain("recommended_commands")
     expect(snapshot).not.toContain("packet-result-secret")
+    expect(JSON.stringify(state)).not.toContain("packet-objective-secret")
+    expect(JSON.stringify(state)).not.toContain("packet-executor-secret")
+    expect(JSON.stringify(state)).not.toContain("packet-result-secret")
     expect(JSON.stringify(state)).not.toContain("packet-command-secret")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "result-review-packet", args: ["handoff=handoff-needs-result"] })
