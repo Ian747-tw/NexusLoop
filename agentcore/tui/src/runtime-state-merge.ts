@@ -26,6 +26,8 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     baseline === undefined || stableEqual(current.opencodeProcessSmoke, baseline.opencodeProcessSmoke)
   const canUpdateOpenCodeHandoffReadiness =
     baseline === undefined || stableEqual(current.opencodeHandoffReadiness, baseline.opencodeHandoffReadiness)
+  const canUpdateOpenCodeResultReview =
+    baseline === undefined || stableEqual(current.opencodeResultReview, baseline.opencodeResultReview)
   const canUpdateRuntimeCommandError =
     baseline === undefined ||
     (stableEqual(current.runtimeCommandError, baseline.runtimeCommandError) &&
@@ -63,6 +65,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     externalApi: canUpdateExternalApi ? next.externalApi : current.externalApi,
     opencodeProcessSmoke: canUpdateOpenCodeProcessSmoke ? next.opencodeProcessSmoke : current.opencodeProcessSmoke,
     opencodeHandoffReadiness: canUpdateOpenCodeHandoffReadiness ? next.opencodeHandoffReadiness : current.opencodeHandoffReadiness,
+    opencodeResultReview: canUpdateOpenCodeResultReview ? next.opencodeResultReview : current.opencodeResultReview,
     runtimeCommandError: canUpdateRuntimeCommandError ? next.runtimeCommandError : current.runtimeCommandError,
     lastCommand: canUpdateLastCommand ? next.lastCommand : current.lastCommand,
     header: {

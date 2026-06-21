@@ -44,6 +44,19 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "runtime.preview_opencode_process_smoke") return { status: "not_configured", can_execute: false, opt_in_required: true, opt_in_present: false, binary_detected: false, blockers: ["missing"], warnings: [], recommended_commands: [] }
     if (name === "runtime.execute_opencode_process_smoke") return { smoke_id: "smoke_test", status: "blocked", summary_preview: "blocked", diagnostics: [], requested_by: "operator", started_at: "2026-06-20T00:00:00.000Z", completed_at: "2026-06-20T00:00:00.000Z", smoke_hash: "hash" }
     if (name === "runtime.list_opencode_process_smokes") return []
+    if (name === "runtime.preview_opencode_result_review_packet") return {
+      packet_id: "packet_test",
+      status: "blocked",
+      title: "OpenCode result review packet has insufficient evidence",
+      artifact_previews: [],
+      evidence: [{ evidence_id: "authority:/handoff", kind: "authority", related_id: "/handoff", status: "high_impact_write", fresh: true, summary_preview: "/handoff authority", blockers: [], warnings: [] }],
+      blockers: ["no OpenCode handoff evidence"],
+      warnings: [],
+      recommended_commands: [{ label: "Show handoff authority", command: "/authority-show /handoff", command_type: "read" }],
+      generated_at: "2026-06-20T00:00:00.000Z",
+      redacted_summary_preview: "no OpenCode handoff evidence",
+    }
+    if (name === "runtime.opencode_result_review_summary") return { total_considered: 0, ready_count: 0, needs_result_count: 0, failed_count: 0, blocked_count: 0, stale_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
     if (name === "runtime.command_authority_get") {
       return {
         authority_id: "authority_opencode_smoke",
@@ -721,6 +734,37 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("OpenCode handoff readiness")
     expect(runtime.commandNames).toContain("runtime.preview_opencode_handoff_readiness")
     expect(runtime.commandNames).toContain("runtime.opencode_handoff_readiness_summary")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless OpenCode result review scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/result-review-packet" },
+      { type: "submit" },
+      { type: "insert", text: "/result-review-summary" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-result-review" },
+      { type: "submit" },
+      { type: "insert", text: "/authority-show /result-review-packet" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-result-review-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("OpenCode result review packet")
+    expect(runtime.commandNames).toContain("runtime.preview_opencode_result_review_packet")
+    expect(runtime.commandNames).toContain("runtime.opencode_result_review_summary")
+    expect(runtime.commandNames).toContain("runtime.command_authority_get")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })

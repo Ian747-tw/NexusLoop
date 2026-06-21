@@ -666,6 +666,45 @@ class OpenCodeHandoffRuntime implements RuntimeClient {
         }
       case "runtime.opencode_handoff_readiness_summary":
         return { total_considered: 1, ready_count: 1, blocked_count: 0, needs_smoke_count: 0, needs_review_count: 0, latest_smoke_status: "succeeded", latest_handoff_status: "sent", generated_at: "1970-01-01T00:00:00.000Z" }
+      case "runtime.preview_opencode_result_review_packet":
+        return {
+          packet_id: "packet-1",
+          status: payload?.handoffId === "handoff-needs-result" ? "needs_result" : "ready_for_commander_review",
+          handoff_id: payload?.handoffId,
+          mission_id: payload?.missionId ?? "mission-handoff-1",
+          result_id: payload?.resultId ?? "result-handoff-1",
+          proposal_id: payload?.proposalId ?? "proposal-approved",
+          review_id: "review-1",
+          title: "OpenCode executor result is ready for Commander review",
+          objective_preview: "executor objective token=packet-objective-secret",
+          executor_summary_preview: "follow-up result_submitted token=packet-executor-secret",
+          result_summary_preview: "result summary token=packet-result-secret",
+          artifact_previews: ["artifact token=packet-artifact-secret"],
+          evidence: [
+            { evidence_id: "handoff:handoff-1", kind: "handoff", related_id: "handoff-1", status: "sent", fresh: true, completed_at: "1970-01-01T00:00:00.000Z", age_ms: 0, summary_preview: "handoff token=packet-evidence-secret", blockers: [], warnings: [] },
+            { evidence_id: "authority:/handoff", kind: "authority", related_id: "/handoff", status: "high_impact_write", fresh: true, summary_preview: "/handoff authority", blockers: [], warnings: [] },
+          ],
+          blockers: [],
+          warnings: ["packet preview does not call provider token=packet-warning-secret"],
+          recommended_commands: [{ label: "Show handoff authority", command: "/authority-show /handoff token=packet-command-secret", command_type: "read" }],
+          generated_at: "1970-01-01T00:00:00.000Z",
+          redacted_summary_preview: "packet ready token=packet-summary-secret",
+        }
+      case "runtime.opencode_result_review_summary":
+        return { total_considered: 1, ready_count: 1, needs_result_count: 0, failed_count: 0, blocked_count: 0, stale_count: 0, latest_handoff_id: "handoff-1", latest_result_id: "result-handoff-1", generated_at: "1970-01-01T00:00:00.000Z" }
+      case "runtime.command_authority_validation_profile":
+        return {
+          unit_runtime: true,
+          unit_tui: true,
+          typecheck_runtime: true,
+          typecheck_tui: true,
+          integration_cli: true,
+          targeted_e2e: payload?.command === "/result-review-packet" ? ["tests/e2e_user/scenarios/test_opencode_result_review_packet_tui.py"] : [],
+          optional_regression_e2e: [],
+          full_e2e_required_when: [],
+          live_provider_required: false,
+          real_opencode_required: false,
+        }
       case "runtime.opencode_handoff_followup_queue":
         if (payload?.queue === "bad") throw new Error("handoff follow-up queue is invalid token=queue-secret")
         return {
@@ -3158,6 +3197,56 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/handoff-readiness-summary"] })
     expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/handoff-readiness-summary", risk: "safe_read" })
+  })
+
+  test("opencode result review packet slash commands render summary targets and redact secrets", async () => {
+    const runtime = new OpenCodeHandoffRuntime()
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "result-review-packet" })
+    expect(state.opencodeResultReview?.packet).toMatchObject({ status: "ready_for_commander_review", result_id: "result-handoff-1" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode result review packet")
+    expect(snapshot).toContain("note=packet preview does not call Commander/provider or create proposals")
+    expect(snapshot).toContain("evidence")
+    expect(snapshot).toContain("recommended_commands")
+    expect(snapshot).not.toContain("packet-result-secret")
+    expect(JSON.stringify(state)).not.toContain("packet-command-secret")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "result-review-packet", args: ["handoff=handoff-needs-result"] })
+    expect(state.opencodeResultReview?.packet).toMatchObject({ handoff_id: "handoff-needs-result", status: "needs_result" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-review", args: ["mission=mission-handoff-1"] })
+    expect(state.opencodeResultReview?.packet).toMatchObject({ mission_id: "mission-handoff-1" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-result-review", args: ["proposal=proposal-approved"] })
+    expect(state.opencodeResultReview?.packet).toMatchObject({ proposal_id: "proposal-approved" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "result-review-summary" })
+    expect(state.opencodeResultReview?.summary).toMatchObject({ ready_count: 1, latest_result_id: "result-handoff-1" })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("summary total=1 ready=1")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/result-review-packet"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_result_review_packet_tui.py")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "result-review-packet", args: ["token=abc123"] })
+    expect(state.opencodeResultReview?.commandError).toContain("result review packet arg is unsupported")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
+
+  test("opencode result review fake path and authority record are available", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "handoff-result-review" })
+    expect(state.opencodeResultReview?.packet).toMatchObject({ status: expect.any(String) })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "result-review-summary" })
+    expect(state.opencodeResultReview?.summary).toMatchObject({ total_considered: expect.any(Number) })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/result-review-packet"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/result-review-packet", risk: "safe_read" })
   })
 
   test("opencode handoff follow-up slash commands render summary queues selected and redact secrets", async () => {

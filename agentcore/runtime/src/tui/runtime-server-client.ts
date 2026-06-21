@@ -14,6 +14,8 @@ const noStartCommands = new Set([
   "runtime.get_opencode_process_smoke",
   "runtime.preview_opencode_handoff_readiness",
   "runtime.opencode_handoff_readiness_summary",
+  "runtime.preview_opencode_result_review_packet",
+  "runtime.opencode_result_review_summary",
 ])
 
 export interface RuntimeServerClientOptions {
