@@ -2272,6 +2272,20 @@ describe("RuntimeServer core", () => {
       blockers: expect.arrayContaining([expect.stringContaining("requested proposal is not linked to selected result")]),
     })
     expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { missionId: handoff.mission_id, proposalId: "proposal_typo" })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: handoff.mission_id,
+      proposal_id: "proposal_typo",
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal was not found")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { missionId: "mission_typo", proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: handoff.mission_id,
+      proposal_id: proposal.proposal_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested mission was not found")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, resultId: unrelatedResult.result_id })).resolves.toMatchObject({
       status: "blocked",
       mission_id: handoff.mission_id,

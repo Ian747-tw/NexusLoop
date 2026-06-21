@@ -90,6 +90,8 @@ export class OpenCodeResultReviewPacketService {
 
     if (!context.handoff && !context.followup && !context.mission && !context.result && !context.proposal) blockers.push("no OpenCode handoff, mission result, mission, or proposal evidence was found")
     if ((normalized.handoff_id || normalized.followup_id) && !context.handoff && !context.followup) blockers.push("requested handoff or follow-up was not found")
+    if (normalized.mission_id && !context.mission) blockers.push("requested mission was not found")
+    if (normalized.proposal_id && !context.proposal) blockers.push("requested proposal was not found")
     if (context.followup?.blockers?.length) blockers.push(...context.followup.blockers)
     if (context.followup && (isFailureStatus(context.followup.followup_status) || isBlockedStatus(context.followup.followup_status))) blockers.push(`handoff follow-up is ${context.followup.followup_status}`)
     if (context.handoff && !context.handoff.sent) blockers.push("handoff was not sent")
