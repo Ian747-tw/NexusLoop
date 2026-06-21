@@ -2326,7 +2326,7 @@ export class RuntimeServer {
       getHandoff: (handoffId) => this.opencodeHandoffService().get(handoffId),
       getHandoffByProposal: (proposalId) => this.opencodeHandoffService().getByProposal(proposalId),
       listFollowups: (options) => this.opencodeHandoffFollowupService().list(options),
-      getFollowup: (handoffId) => this.opencodeHandoffFollowupService().get(handoffId),
+      getFollowup: (handoffId, options) => this.opencodeHandoffFollowupService().get(handoffId, options),
       getFollowupByProposal: (proposalId, options) => this.opencodeHandoffFollowupService().getByProposal(proposalId, options),
       followupSummary: (options) => this.opencodeHandoffFollowupService().summary(options),
       getMission: (missionId) => this.missionRegistry.getMission(missionId),

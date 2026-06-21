@@ -2383,6 +2383,11 @@ describe("RuntimeServer core", () => {
       status: "stale",
       warnings: expect.arrayContaining([expect.stringContaining("stale")]),
     })
+    await expect(staleReadServer.command("runtime.preview_opencode_result_review_packet", { handoffId: "handoff_stale_injected", staleAfterMs: 30 * 24 * 60 * 60 * 1000 })).resolves.toMatchObject({
+      status: "needs_result",
+      blockers: [],
+      warnings: expect.arrayContaining([expect.stringContaining("no submitted mission result")]),
+    })
     await expect(staleReadServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
       total_considered: 1,
       stale_count: 1,

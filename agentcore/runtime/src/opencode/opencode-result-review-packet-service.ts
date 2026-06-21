@@ -29,7 +29,7 @@ export type OpenCodeResultReviewPacketServiceOptions = {
   getHandoff: (handoffId: string) => Promise<OpenCodeHandoffResult | null>
   getHandoffByProposal: (proposalId: string) => Promise<OpenCodeHandoffResult | null>
   listFollowups: (options: { limit?: number; staleAfterMs?: number }) => Promise<OpenCodeHandoffFollowup[]>
-  getFollowup: (handoffId: string) => Promise<OpenCodeHandoffFollowup | null>
+  getFollowup: (handoffId: string, options?: { staleAfterMs?: number }) => Promise<OpenCodeHandoffFollowup | null>
   getFollowupByProposal: (proposalId: string, options?: { staleAfterMs?: number }) => Promise<OpenCodeHandoffFollowup | null>
   followupSummary: (options?: { staleAfterMs?: number }) => Promise<OpenCodeHandoffFollowupSummary>
   getMission: (missionId: string) => Promise<MissionRecord | null>
@@ -184,7 +184,7 @@ export class OpenCodeResultReviewPacketService {
     const selectedHandoffId = handoffId ?? latestFollowupRecord?.handoff_id ?? latestHandoffRecord?.handoff_id
     const handoff = proposalHandoff ?? (selectedHandoffId ? await this.options.getHandoff(selectedHandoffId) : null)
     const followup = selectedHandoffId
-      ? (latestFollowupRecord?.handoff_id === selectedHandoffId ? latestFollowupRecord : await this.options.getFollowup(selectedHandoffId))
+      ? (latestFollowupRecord?.handoff_id === selectedHandoffId ? latestFollowupRecord : await this.options.getFollowup(selectedHandoffId, { staleAfterMs }))
       : hasExplicitNonHandoffTarget
         ? null
         : undefined
