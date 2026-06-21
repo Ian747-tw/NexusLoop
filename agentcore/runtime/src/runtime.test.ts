@@ -2192,6 +2192,13 @@ describe("RuntimeServer core", () => {
       summary: "completed executor work token=result-secret",
       artifacts: ["artifact token=artifact-secret"],
     }) as { result_id: string }
+    const unrelatedMission = await server.submitUserMessage("unrelated result target token=unrelated-secret") as { missionId: string }
+    const unrelatedClaim = await server.command("runtime.claim_mission", { missionId: unrelatedMission.missionId, executorId: "opencode" }) as { claim_id: string }
+    const unrelatedResult = await server.command("runtime.submit_mission_result", {
+      missionId: unrelatedMission.missionId,
+      claimId: unrelatedClaim.claim_id,
+      summary: "unrelated result token=unrelated-result-secret",
+    }) as { result_id: string }
     const before = await readEventKinds(dir)
     adapter.packets = []
 
@@ -2225,6 +2232,13 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(packet)).not.toContain("result-secret")
     expect(JSON.stringify(packet)).not.toContain("artifact-secret")
     expect(adapter.packets).toEqual([])
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, resultId: unrelatedResult.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: handoff.mission_id,
+      result_id: unrelatedResult.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested result mission does not match")]),
+    })
     expect(await readEventKinds(dir)).toEqual(before)
     await expect(server.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
       total_considered: 1,
@@ -2292,6 +2306,11 @@ describe("RuntimeServer core", () => {
     await expect(staleReadServer.command("runtime.preview_opencode_result_review_packet", { handoffId: "handoff_stale_injected", staleAfterMs: 1 })).resolves.toMatchObject({
       status: "stale",
       warnings: expect.arrayContaining([expect.stringContaining("stale")]),
+    })
+    await expect(staleReadServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
+      total_considered: 1,
+      stale_count: 1,
+      blocked_count: 0,
     })
 
     const failedDir = await tempProject()

@@ -91,6 +91,7 @@ export class OpenCodeResultReviewPacketService {
     if (context.followup && isFailureStatus(context.followup.followup_status)) blockers.push(`handoff follow-up is ${context.followup.followup_status}`)
     if (context.handoff && !context.handoff.sent) blockers.push("handoff was not sent")
     const latestResult = context.result ?? context.results.at(-1)
+    blockers.push(...targetConsistencyBlockers(context, normalized, latestResult))
     if ((context.handoff || context.followup || context.mission) && !latestResult && !isFailureStatus(context.followup?.followup_status)) {
       const stale = outcomeEvidenceIsStale(context, staleAfterMs, this.now())
       if (stale) warnings.push("executor outcome evidence is stale and has no mission result")
@@ -104,7 +105,7 @@ export class OpenCodeResultReviewPacketService {
       status,
       handoff_id: context.handoff?.handoff_id ?? context.followup?.handoff_id ?? normalized.handoff_id ?? normalized.followup_id,
       followup_id: context.followup?.handoff_id ?? normalized.followup_id,
-      mission_id: context.mission?.mission_id ?? latestResult?.mission_id ?? context.followup?.mission_id ?? context.handoff?.mission_id ?? normalized.mission_id,
+      mission_id: context.followup?.mission_id ?? context.handoff?.mission_id ?? context.mission?.mission_id ?? latestResult?.mission_id ?? normalized.mission_id,
       result_id: latestResult?.result_id ?? normalized.result_id,
       claim_id: latestResult?.claim_id ?? context.followup?.active_claim_id,
       proposal_id: context.proposal?.proposal_id ?? context.handoff?.proposal_id ?? context.followup?.proposal_id ?? normalized.proposal_id,
@@ -137,8 +138,9 @@ export class OpenCodeResultReviewPacketService {
     let latestResultId: string | undefined
     for (const followup of followups) {
       const results = followup.mission_id ? await this.options.listMissionResults(followup.mission_id) : []
+      const handoff = followup.handoff_id ? await this.options.getHandoff(followup.handoff_id).catch(() => null) : null
       latestResultId ??= results.at(-1)?.result_id
-      const status = statusFromFollowup(followup, results.at(-1), staleAfterMs, this.now())
+      const status = statusFromFollowup(followup, results.at(-1), staleAfterMs, this.now(), handoff)
       if (status === "ready_for_commander_review") ready += 1
       else if (status === "needs_result") needsResult += 1
       else if (status === "failed") failed += 1
@@ -169,7 +171,7 @@ export class OpenCodeResultReviewPacketService {
         ? await this.options.getFollowup(handoff.handoff_id)
         : (await this.options.listFollowups({ limit: 1, staleAfterMs }))[0]
     const result = input.result_id ? await this.options.getMissionResult(input.result_id) : null
-    const missionId = input.mission_id ?? result?.mission_id ?? followup?.mission_id ?? handoff?.mission_id
+    const missionId = input.mission_id ?? followup?.mission_id ?? handoff?.mission_id ?? result?.mission_id
     const mission = missionId ? await this.options.getMission(missionId) : null
     const progress = missionId ? await this.options.listMissionProgress(missionId) : []
     const results = missionId ? await this.options.listMissionResults(missionId) : []
@@ -221,23 +223,28 @@ function normalizeInput(input: Record<string, unknown> = {}): OpenCodeResultRevi
 }
 
 function packetStatus(input: { blockers: string[]; warnings: string[]; context: BuildContext; latestResult?: MissionResult; staleAfterMs: number; now: Date }): OpenCodeResultReviewPacketStatus {
-  if (input.latestResult && input.blockers.length === 0) return "ready_for_commander_review"
+  const hardBlockers = input.blockers.filter((blocker) => !isStaleOnlyBlocker(blocker))
+  if (input.latestResult && hardBlockers.length === 0) return "ready_for_commander_review"
   if (isFailureStatus(input.context.followup?.followup_status)) return "failed"
-  if (input.blockers.length > 0) return "blocked"
-  if (!input.context.handoff && !input.context.followup && !input.context.mission && !input.context.result && !input.context.proposal) return "unknown"
+  if (!input.context.handoff && !input.context.followup && !input.context.mission && !input.context.result && !input.context.proposal) return input.blockers.length > 0 ? "blocked" : "unknown"
   if ((input.context.handoff || input.context.followup || input.context.mission) && !input.latestResult) {
-    if (outcomeEvidenceIsStale(input.context, input.staleAfterMs, input.now)) return "stale"
+    if (outcomeEvidenceIsStale(input.context, input.staleAfterMs, input.now) && hardBlockers.length === 0) return "stale"
+    if (input.blockers.length > 0) return "blocked"
     return "needs_result"
   }
+  if (input.blockers.length > 0) return "blocked"
   if (input.context.proposal && !input.context.handoff) return "needs_handoff"
   return "unknown"
 }
 
-function statusFromFollowup(followup: OpenCodeHandoffFollowup, result: MissionResult | undefined, staleAfterMs: number, now: Date): OpenCodeResultReviewPacketStatus {
+function statusFromFollowup(followup: OpenCodeHandoffFollowup, result: MissionResult | undefined, staleAfterMs: number, now: Date, handoff?: OpenCodeHandoffResult | null): OpenCodeResultReviewPacketStatus {
   if (result) return "ready_for_commander_review"
   if (isFailureStatus(followup.followup_status)) return "failed"
+  const hardBlockers = followup.blockers.filter((blocker) => !isStaleOnlyBlocker(blocker))
+  const staleByFollowup = isStale(followup.updated_at, staleAfterMs, now) || followup.blockers.some(isStaleOnlyBlocker)
+  const staleByHandoff = Boolean(handoff?.created_at && isStale(handoff.created_at, staleAfterMs, now))
+  if ((staleByFollowup || staleByHandoff) && hardBlockers.length === 0) return "stale"
   if (followup.blockers.length > 0) return "blocked"
-  if (isStale(followup.updated_at, staleAfterMs, now)) return "stale"
   return "needs_result"
 }
 
@@ -251,6 +258,22 @@ function outcomeEvidenceIsStale(context: BuildContext, staleAfterMs: number, now
       (context.followup?.updated_at && isStale(context.followup.updated_at, staleAfterMs, now)) ||
       (context.mission?.updated_at && isStale(context.mission.updated_at, staleAfterMs, now)),
   )
+}
+
+function targetConsistencyBlockers(context: BuildContext, input: OpenCodeResultReviewPacketInput, latestResult?: MissionResult): string[] {
+  const out: string[] = []
+  const selectedMissionId = context.followup?.mission_id ?? context.handoff?.mission_id
+  if (selectedMissionId && input.mission_id && input.mission_id !== selectedMissionId) {
+    out.push("requested mission does not match selected handoff or follow-up mission")
+  }
+  if (selectedMissionId && input.result_id && latestResult?.mission_id && latestResult.mission_id !== selectedMissionId) {
+    out.push("requested result mission does not match selected handoff or follow-up mission")
+  }
+  return out
+}
+
+function isStaleOnlyBlocker(blocker: string): boolean {
+  return blocker === "handoff follow-up is stale"
 }
 
 function handoffEvidence(handoff: OpenCodeHandoffResult, now: Date): OpenCodeResultReviewEvidence {
