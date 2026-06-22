@@ -678,6 +678,48 @@ class InvalidCommanderExecutorReviewProvider implements CommanderExecutorReviewP
   }
 }
 
+class InventingEvidenceExecutorReviewProvider implements CommanderExecutorReviewProvider {
+  readonly provider_id = "inventing-evidence-executor-review"
+
+  async reviewExecutorResult(): Promise<CommanderExecutorReviewProviderResult> {
+    return {
+      decision: "accept_result",
+      confidence: 0.9,
+      summary: "invented evidence should fail",
+      findings: [{
+        finding_id: "finding_invented_evidence",
+        severity: "info",
+        title: "Invented evidence",
+        summary: "This cites an evidence id outside the packet.",
+        evidence_ids: ["not_in_packet"],
+        recommended_commands: [{ label: "Inspect packet", command: "/result-review-packet", command_type: "read" }],
+      }],
+      recommended_commands: [{ label: "Inspect packet", command: "/result-review-packet", command_type: "read" }],
+    }
+  }
+}
+
+class WriteRecommendationExecutorReviewProvider implements CommanderExecutorReviewProvider {
+  readonly provider_id = "write-recommendation-executor-review"
+
+  async reviewExecutorResult(): Promise<CommanderExecutorReviewProviderResult> {
+    return {
+      decision: "needs_followup",
+      confidence: 0.7,
+      summary: "write recommendations should fail",
+      findings: [{
+        finding_id: "finding_write_recommendation",
+        severity: "warning",
+        title: "Write recommendation",
+        summary: "This recommends a write command.",
+        evidence_ids: [],
+        recommended_commands: [{ label: "Apply proposal", command: "/apply-proposal proposal_1", command_type: "write" }],
+      }],
+      recommended_commands: [{ label: "Run handoff", command: "/handoff proposal_1", command_type: "write" }],
+    }
+  }
+}
+
 class FailingProposalRegistry extends ProposalRegistry {
   override async createProposal(_input: CommanderProposalInput): Promise<CommanderProposal> {
     throw new Error("proposal write failed token=proposal-secret")
@@ -743,7 +785,7 @@ function minimaxCyclePayload(evidenceIds: string[] = ["note_cycle"], synthesisId
   }
 }
 
-function minimaxExecutorReviewPayload(evidenceIds: string[] = ["evidence_handoff"]): Record<string, unknown> {
+function minimaxExecutorReviewPayload(evidenceIds: string[] = []): Record<string, unknown> {
   return {
     decision: "accept_result",
     confidence: 0.73,
@@ -759,6 +801,21 @@ function minimaxExecutorReviewPayload(evidenceIds: string[] = ["evidence_handoff
     recommended_commands: [{ label: "List executor reviews", command: "/executor-reviews", command_type: "read" }],
     raw_response_preview: "raw token=minimax-review-secret",
   }
+}
+
+async function seedReadyExecutorReviewResult(server: RuntimeServer): Promise<{ result_id: string }> {
+  const proposal = await server.command("runtime.create_commander_proposal", {
+    actionKind: "opencode_handoff",
+    title: "handoff",
+    summary: "summary",
+    proposedBy: "commander",
+    actionPayload: { objective: "executor work", evidence_ids: [] },
+  }) as { proposal_id: string }
+  const review = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+  await server.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "approved" })
+  const handoff = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+  const claim = await server.command("runtime.claim_mission", { missionId: handoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+  return await server.command("runtime.submit_mission_result", { missionId: handoff.mission_id, claimId: claim.claim_id, summary: "done" }) as { result_id: string }
 }
 
 function seedResearchDb(dir: string): void {
@@ -2564,7 +2621,7 @@ describe("RuntimeServer core", () => {
   test("commander executor review uses configured MiniMax reasoning provider instead of fake fallback", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
-    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxExecutorReviewPayload(["evidence_handoff", "evidence_mission_result"])) }])
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxExecutorReviewPayload()) }])
     const server = new RuntimeServer({
       projectDir: dir,
       mode: "active",
@@ -2730,6 +2787,39 @@ describe("RuntimeServer core", () => {
     const eventText = await readFile(join(failingDir, ".nxl", "events.jsonl"), "utf8")
     expect(eventText).not.toContain("provider-secret")
     await failingServer.shutdown()
+  })
+
+  test("commander executor review rejects provider evidence hallucinations and write recommendations", async () => {
+    for (const [provider, expectedError, forbiddenText] of [
+      [new InventingEvidenceExecutorReviewProvider(), "unknown packet evidence id", "not_in_packet"],
+      [new WriteRecommendationExecutorReviewProvider(), "non-read command", "/handoff proposal_1"],
+    ] as const) {
+      const dir = await tempProject()
+      await makeProject(dir, { approvedSpec: true })
+      const server = new RuntimeServer({
+        projectDir: dir,
+        mode: "active",
+        adapter: new LongLivedAdapter(),
+        researchProjectionMode: "disabled",
+        opencodeHandoffId: () => `handoff_${provider.provider_id}`,
+        commanderExecutorReviewProvider: provider,
+        commanderExecutorReviewId: () => `executor_review_${provider.provider_id}`,
+      })
+      await server.start()
+      const result = await seedReadyExecutorReviewResult(server)
+
+      await expect(server.command("runtime.execute_commander_executor_review", { resultId: result.result_id, requestedBy: "operator" })).resolves.toMatchObject({
+        status: "failed",
+        error: expect.stringContaining(expectedError),
+      })
+      const events = await readJsonlEvents(dir)
+      expect(events.find((event) => event.kind === "commander_executor_review_succeeded")).toBeUndefined()
+      expect(events.find((event) => event.kind === "commander_executor_review_failed")).toMatchObject({
+        provider_kind: provider.provider_id,
+      })
+      expect(JSON.stringify(events)).not.toContain(forbiddenText)
+      await server.shutdown()
+    }
   })
 
   test("commander executor review execute requires active started runtime while reads do not", async () => {

@@ -128,7 +128,7 @@ export class CommanderExecutorReviewService {
         authority_summary: this.authorityService.summary(),
         max_output_chars: MAX_OUTPUT_CHARS,
         instruction_version: INSTRUCTION_VERSION,
-      }))
+      }), packet)
       const result = this.result({
         reviewId,
         packet,
@@ -218,7 +218,7 @@ export class CommanderExecutorReviewService {
       decision: input.decision,
       confidence: clampConfidence(input.confidence),
       summary: bound(input.summary),
-      findings: input.findings.slice(0, MAX_ROWS).map(cleanFinding),
+      findings: input.findings.slice(0, MAX_ROWS).map((finding) => cleanFinding(finding)),
       evidence_ids: input.packet.evidence.map((item) => bound(item.evidence_id)).slice(0, MAX_ROWS),
       recommended_commands: input.recommended.slice(0, MAX_ROWS).map(cleanCommand),
       error: input.error ? bound(input.error) : undefined,
@@ -305,29 +305,41 @@ function boundedPacket(packet: OpenCodeResultReviewPacket): OpenCodeResultReview
   })
 }
 
-function cleanProviderResult(value: CommanderExecutorReviewProviderResult): CommanderExecutorReviewProviderResult {
+function cleanProviderResult(value: CommanderExecutorReviewProviderResult, packet: OpenCodeResultReviewPacket): CommanderExecutorReviewProviderResult {
   const decisions = new Set(["accept_result", "needs_followup", "needs_human_review", "blocked", "inconclusive"])
   if (!decisions.has(value.decision)) throw new Error("provider returned invalid review decision")
+  const allowedEvidenceIds = new Set(packet.evidence.map((item) => item.evidence_id))
   return {
     decision: value.decision,
     confidence: clampConfidence(value.confidence),
     summary: bound(requiredString(value.summary, "summary")),
-    findings: Array.isArray(value.findings) ? value.findings.slice(0, MAX_ROWS).map(cleanFinding) : [],
-    recommended_commands: Array.isArray(value.recommended_commands) ? value.recommended_commands.slice(0, MAX_ROWS).map(cleanCommand) : undefined,
+    findings: Array.isArray(value.findings) ? value.findings.slice(0, MAX_ROWS).map((finding) => cleanFinding(finding, allowedEvidenceIds)) : [],
+    recommended_commands: Array.isArray(value.recommended_commands) ? value.recommended_commands.slice(0, MAX_ROWS).map(cleanProviderCommand) : undefined,
     raw_response_preview: value.raw_response_preview ? bound(value.raw_response_preview) : undefined,
   }
 }
 
-function cleanFinding(value: CommanderExecutorReviewFinding): CommanderExecutorReviewFinding {
+function cleanFinding(value: CommanderExecutorReviewFinding, allowedEvidenceIds?: Set<string>): CommanderExecutorReviewFinding {
   const severities = new Set(["info", "warning", "risk", "blocker"])
+  const evidenceIds = boundList(value.evidence_ids)
+  if (allowedEvidenceIds) {
+    for (const evidenceId of evidenceIds) {
+      if (!allowedEvidenceIds.has(evidenceId)) throw new Error("provider cited unknown packet evidence id")
+    }
+  }
   return {
     finding_id: bound(requiredString(value.finding_id, "finding_id")),
     severity: severities.has(value.severity) ? value.severity : "warning",
     title: bound(requiredString(value.title, "title")),
     summary: bound(requiredString(value.summary, "summary")),
-    evidence_ids: boundList(value.evidence_ids),
-    recommended_commands: Array.isArray(value.recommended_commands) ? value.recommended_commands.slice(0, MAX_ROWS).map(cleanCommand) : [],
+    evidence_ids: evidenceIds,
+    recommended_commands: Array.isArray(value.recommended_commands) ? value.recommended_commands.slice(0, MAX_ROWS).map(cleanProviderCommand) : [],
   }
+}
+
+function cleanProviderCommand(value: CommanderExecutorReviewCommand): CommanderExecutorReviewCommand {
+  if (value.command_type !== "read") throw new Error("provider recommended non-read command")
+  return cleanCommand(value)
 }
 
 function cleanCommand(value: CommanderExecutorReviewCommand): CommanderExecutorReviewCommand {
