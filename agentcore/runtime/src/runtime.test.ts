@@ -713,9 +713,9 @@ class WriteRecommendationExecutorReviewProvider implements CommanderExecutorRevi
         title: "Write recommendation",
         summary: "This recommends a write command.",
         evidence_ids: [],
-        recommended_commands: [{ label: "Apply proposal", command: "/apply-proposal proposal_1", command_type: "write" }],
+        recommended_commands: [{ label: "Apply proposal", command: "/apply-proposal proposal_1", command_type: "read" }],
       }],
-      recommended_commands: [{ label: "Run handoff", command: "/handoff proposal_1", command_type: "write" }],
+      recommended_commands: [{ label: "Run handoff", command: "/handoff proposal_1", command_type: "read" }],
     }
   }
 }
@@ -2717,15 +2717,20 @@ describe("RuntimeServer core", () => {
     const claim = await server.command("runtime.claim_mission", { missionId: handoff.mission_id, executorId: "opencode" }) as { claim_id: string }
     const result = await server.command("runtime.submit_mission_result", { missionId: handoff.mission_id, claimId: claim.claim_id, summary: "done" }) as { result_id: string }
 
+    await expect(server.command("runtime.preview_commander_executor_review", { resultId: result.result_id })).resolves.toMatchObject({
+      can_execute: false,
+      provider_ready: false,
+      blockers: expect.arrayContaining([expect.stringContaining("not enabled for commander_executor_review")]),
+    })
     await expect(server.command("runtime.execute_commander_executor_review", { resultId: result.result_id, requestedBy: "operator" })).resolves.toMatchObject({
       review_id: "executor_review_disabled_1",
       provider_kind: "minimax-research-only",
-      status: "failed",
-      error: expect.stringContaining("not enabled for commander_executor_review"),
+      status: "blocked",
+      decision: "blocked",
     })
     expect(transport.requests).toHaveLength(0)
     const events = await readJsonlEvents(dir)
-    expect(events.find((event) => event.kind === "commander_executor_review_failed")).toMatchObject({
+    expect(events.find((event) => event.kind === "commander_executor_review_blocked")).toMatchObject({
       provider_kind: "minimax-research-only",
     })
     expect(JSON.stringify(events)).not.toContain("fake-commander-executor-review")
@@ -2792,7 +2797,7 @@ describe("RuntimeServer core", () => {
   test("commander executor review rejects provider evidence hallucinations and write recommendations", async () => {
     for (const [provider, expectedError, forbiddenText] of [
       [new InventingEvidenceExecutorReviewProvider(), "unknown packet evidence id", "not_in_packet"],
-      [new WriteRecommendationExecutorReviewProvider(), "non-read command", "/handoff proposal_1"],
+      [new WriteRecommendationExecutorReviewProvider(), "safe read authority", "/handoff proposal_1"],
     ] as const) {
       const dir = await tempProject()
       await makeProject(dir, { approvedSpec: true })

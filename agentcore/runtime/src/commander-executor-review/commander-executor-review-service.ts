@@ -45,9 +45,14 @@ export class CommanderExecutorReviewService {
 
   async preview(input: CommanderExecutorReviewInput = {}): Promise<CommanderExecutorReviewPreview> {
     const packet = await this.packet(input)
-    const blockers = packet.status === "ready_for_commander_review" ? [] : [`result review packet is ${packet.status}; Commander review requires ready_for_commander_review`]
+    const providerReadiness = this.providerReadiness()
+    const blockers = [
+      ...(packet.status === "ready_for_commander_review" ? [] : [`result review packet is ${packet.status}; Commander review requires ready_for_commander_review`]),
+      ...providerReadiness.blockers,
+    ]
     const warnings = [
       ...packet.warnings,
+      ...providerReadiness.warnings,
       "executor review does not create proposals, apply changes, or launch OpenCode",
     ]
     const generatedAt = this.now().toISOString()
@@ -57,7 +62,7 @@ export class CommanderExecutorReviewService {
       packet_status: packet.status,
       can_execute: blockers.length === 0,
       provider_kind: this.provider.provider_id,
-      provider_ready: true,
+      provider_ready: providerReadiness.provider_ready,
       blockers: boundList(blockers),
       warnings: boundList(warnings),
       packet_summary_preview: bound(packet.redacted_summary_preview || packet.title),
@@ -89,6 +94,31 @@ export class CommanderExecutorReviewService {
       })
     }
     const reviewId = this.reviewId()
+    const providerReadiness = this.providerReadiness()
+    if (!providerReadiness.provider_ready) {
+      const blocked = this.result({
+        reviewId,
+        packet,
+        status: "blocked",
+        decision: "blocked",
+        confidence: 0,
+        summary: "Commander executor review blocked because provider is not ready",
+        findings: [{
+          finding_id: "finding_provider_not_ready",
+          severity: "blocker",
+          title: "Provider is not ready",
+          summary: providerReadiness.blockers[0] ?? "Commander executor review provider is not ready.",
+          evidence_ids: packet.evidence.map((item) => item.evidence_id).slice(0, MAX_ROWS),
+          recommended_commands: recommendedCommands(packet).slice(0, 3),
+        }],
+        recommended: recommendedCommands(packet),
+        requestedBy,
+        startedAt,
+        completedAt: this.now().toISOString(),
+      })
+      await this.write("commander_executor_review_blocked", blocked)
+      return blocked
+    }
     if (packet.status !== "ready_for_commander_review") {
       const blocked = this.result({
         reviewId,
@@ -128,7 +158,7 @@ export class CommanderExecutorReviewService {
         authority_summary: this.authorityService.summary(),
         max_output_chars: MAX_OUTPUT_CHARS,
         instruction_version: INSTRUCTION_VERSION,
-      }), packet)
+      }), packet, this.authorityService)
       const result = this.result({
         reviewId,
         packet,
@@ -244,6 +274,10 @@ export class CommanderExecutorReviewService {
       || event.kind === "commander_executor_review_blocked",
     )
   }
+
+  private providerReadiness(): { provider_ready: boolean; blockers: string[]; warnings: string[] } {
+    return this.provider.previewExecutorReviewReadiness?.() ?? { provider_ready: true, blockers: [], warnings: [] }
+  }
 }
 
 export function readCommanderExecutorReviewInput(value: unknown): CommanderExecutorReviewInput {
@@ -305,7 +339,7 @@ function boundedPacket(packet: OpenCodeResultReviewPacket): OpenCodeResultReview
   })
 }
 
-function cleanProviderResult(value: CommanderExecutorReviewProviderResult, packet: OpenCodeResultReviewPacket): CommanderExecutorReviewProviderResult {
+function cleanProviderResult(value: CommanderExecutorReviewProviderResult, packet: OpenCodeResultReviewPacket, authorityService: CommandAuthorityService): CommanderExecutorReviewProviderResult {
   const decisions = new Set(["accept_result", "needs_followup", "needs_human_review", "blocked", "inconclusive"])
   if (!decisions.has(value.decision)) throw new Error("provider returned invalid review decision")
   const allowedEvidenceIds = new Set(packet.evidence.map((item) => item.evidence_id))
@@ -313,13 +347,13 @@ function cleanProviderResult(value: CommanderExecutorReviewProviderResult, packe
     decision: value.decision,
     confidence: clampConfidence(value.confidence),
     summary: bound(requiredString(value.summary, "summary")),
-    findings: Array.isArray(value.findings) ? value.findings.slice(0, MAX_ROWS).map((finding) => cleanFinding(finding, allowedEvidenceIds)) : [],
-    recommended_commands: Array.isArray(value.recommended_commands) ? value.recommended_commands.slice(0, MAX_ROWS).map(cleanProviderCommand) : undefined,
+    findings: Array.isArray(value.findings) ? value.findings.slice(0, MAX_ROWS).map((finding) => cleanFinding(finding, allowedEvidenceIds, authorityService)) : [],
+    recommended_commands: Array.isArray(value.recommended_commands) ? value.recommended_commands.slice(0, MAX_ROWS).map((command) => cleanProviderCommand(command, authorityService)) : undefined,
     raw_response_preview: value.raw_response_preview ? bound(value.raw_response_preview) : undefined,
   }
 }
 
-function cleanFinding(value: CommanderExecutorReviewFinding, allowedEvidenceIds?: Set<string>): CommanderExecutorReviewFinding {
+function cleanFinding(value: CommanderExecutorReviewFinding, allowedEvidenceIds?: Set<string>, authorityService?: CommandAuthorityService): CommanderExecutorReviewFinding {
   const severities = new Set(["info", "warning", "risk", "blocker"])
   const evidenceIds = boundList(value.evidence_ids)
   if (allowedEvidenceIds) {
@@ -333,12 +367,16 @@ function cleanFinding(value: CommanderExecutorReviewFinding, allowedEvidenceIds?
     title: bound(requiredString(value.title, "title")),
     summary: bound(requiredString(value.summary, "summary")),
     evidence_ids: evidenceIds,
-    recommended_commands: Array.isArray(value.recommended_commands) ? value.recommended_commands.slice(0, MAX_ROWS).map(cleanProviderCommand) : [],
+    recommended_commands: Array.isArray(value.recommended_commands) ? value.recommended_commands.slice(0, MAX_ROWS).map((command) => authorityService ? cleanProviderCommand(command, authorityService) : cleanCommand(command)) : [],
   }
 }
 
-function cleanProviderCommand(value: CommanderExecutorReviewCommand): CommanderExecutorReviewCommand {
+function cleanProviderCommand(value: CommanderExecutorReviewCommand, authorityService: CommandAuthorityService): CommanderExecutorReviewCommand {
   if (value.command_type !== "read") throw new Error("provider recommended non-read command")
+  const record = authorityService.get(value.command)
+  if (record.risk !== "safe_read" || record.mutates_events || record.creates_external_process || record.calls_provider || record.blocked_by_default) {
+    throw new Error("provider recommended command without safe read authority")
+  }
   return cleanCommand(value)
 }
 

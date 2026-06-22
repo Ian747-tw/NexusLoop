@@ -2914,6 +2914,10 @@ class UnavailableReasoningProvider implements ResearchSynthesisProvider, Command
   async reviewExecutorResult(): Promise<never> {
     throw new Error(this.reason)
   }
+
+  previewExecutorReviewReadiness(): { provider_ready: boolean; blockers: string[]; warnings: string[] } {
+    return { provider_ready: false, blockers: [this.reason], warnings: [] }
+  }
 }
 
 type ResearchProjectionRuntimeEventType = Extract<RuntimeEvent, { type: `ResearchProjection${string}` }>["type"]

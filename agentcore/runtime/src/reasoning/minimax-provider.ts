@@ -2,7 +2,7 @@ import type { ExternalApiRequestService } from "../external-api/api-request-serv
 import type { ExternalApiConnector } from "../external-api/api-connector-types"
 import { redactText, redactValue } from "../security/redaction"
 import type { CommanderCycleProvider, CommanderCycleProviderInput, CommanderCycleProviderResult } from "../commander-cycle/commander-cycle-provider"
-import type { CommanderExecutorReviewProvider, CommanderExecutorReviewProviderInput, CommanderExecutorReviewProviderResult } from "../commander-executor-review/commander-executor-review-provider"
+import type { CommanderExecutorReviewProvider, CommanderExecutorReviewProviderInput, CommanderExecutorReviewProviderReadiness, CommanderExecutorReviewProviderResult } from "../commander-executor-review/commander-executor-review-provider"
 import type { ResearchSynthesisProvider, ResearchSynthesisProviderInput, ResearchSynthesisProviderResult } from "../research-synthesis/research-synthesis-provider"
 import type { ReasoningProviderConfig } from "./reasoning-provider-config"
 import { validateReasoningProviderConfig } from "./reasoning-provider-config"
@@ -53,6 +53,17 @@ export class MiniMaxReasoningProvider implements ResearchSynthesisProvider, Comm
       input.max_output_chars,
     )
     return readCommanderExecutorReviewResult(payload)
+  }
+
+  previewExecutorReviewReadiness(): CommanderExecutorReviewProviderReadiness {
+    if (!this.config.enabled_for.includes("commander_executor_review")) {
+      return {
+        provider_ready: false,
+        blockers: ["MiniMax reasoning provider is not enabled for commander_executor_review"],
+        warnings: [],
+      }
+    }
+    return { provider_ready: true, blockers: [], warnings: [] }
   }
 
   private async callMiniMax(surface: "research_synthesis" | "commander_cycle" | "commander_executor_review", prompt: Record<string, unknown>, maxOutputBytes: number): Promise<Record<string, unknown>> {

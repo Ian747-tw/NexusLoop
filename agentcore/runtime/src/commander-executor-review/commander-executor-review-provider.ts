@@ -25,11 +25,22 @@ export type CommanderExecutorReviewProviderResult = {
 
 export interface CommanderExecutorReviewProvider {
   readonly provider_id: string
+  previewExecutorReviewReadiness?(): CommanderExecutorReviewProviderReadiness
   reviewExecutorResult(input: CommanderExecutorReviewProviderInput): Promise<CommanderExecutorReviewProviderResult>
+}
+
+export type CommanderExecutorReviewProviderReadiness = {
+  provider_ready: boolean
+  blockers: string[]
+  warnings: string[]
 }
 
 export class FakeCommanderExecutorReviewProvider implements CommanderExecutorReviewProvider {
   readonly provider_id = "fake-commander-executor-review"
+
+  previewExecutorReviewReadiness(): CommanderExecutorReviewProviderReadiness {
+    return { provider_ready: true, blockers: [], warnings: [] }
+  }
 
   async reviewExecutorResult(input: CommanderExecutorReviewProviderInput): Promise<CommanderExecutorReviewProviderResult> {
     const packet = input.packet
