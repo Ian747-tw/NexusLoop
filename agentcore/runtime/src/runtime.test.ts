@@ -14130,12 +14130,28 @@ describe("RuntimeServerClient", () => {
       review_id: "dry-run",
       status: "blocked",
     })
-    await expect(client.command("runtime.execute_commander_executor_review", { requested_by: "operator" })).rejects.toThrow("runtime must be started")
     await expect(client.command("runtime.list_commander_executor_reviews")).resolves.toEqual([])
     await expect(client.command("runtime.get_commander_executor_review", { reviewId: "missing" })).resolves.toBeNull()
 
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
     expect(await readEventKinds(dir)).not.toContain("commander_executor_review_blocked")
+    await client.shutdown()
+  })
+
+  test("commander executor review writes can auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), commanderExecutorReviewId: () => "executor_review_auto_start" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.execute_commander_executor_review", { requested_by: "operator" })).resolves.toMatchObject({
+      review_id: "executor_review_auto_start",
+      status: "blocked",
+    })
+
+    const eventKinds = await readEventKinds(dir)
+    expect(eventKinds).toContain("runtime_started")
+    expect(eventKinds).toContain("commander_executor_review_blocked")
     await client.shutdown()
   })
 
