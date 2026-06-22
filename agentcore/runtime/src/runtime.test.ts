@@ -2741,6 +2741,38 @@ describe("RuntimeServer core", () => {
     })
     expect(JSON.stringify(events)).not.toContain("fake-commander-executor-review")
     await server.shutdown()
+
+    const missingCredentialDir = await tempProject()
+    await makeProject(missingCredentialDir, { approvedSpec: true })
+    const missingCredentialTransport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxExecutorReviewPayload()) }])
+    const missingCredentialServer = new RuntimeServer({
+      projectDir: missingCredentialDir,
+      mode: "active",
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: missingCredentialTransport,
+      externalApiEnv: {},
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-missing-credential",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["commander_executor_review"],
+      },
+      opencodeHandoffId: () => "handoff_executor_review_missing_credential",
+    })
+    await missingCredentialServer.start()
+    const missingCredentialResult = await seedReadyExecutorReviewResult(missingCredentialServer)
+    await expect(missingCredentialServer.command("runtime.preview_commander_executor_review", { resultId: missingCredentialResult.result_id })).resolves.toMatchObject({
+      can_execute: false,
+      provider_ready: false,
+      blockers: expect.arrayContaining([expect.stringContaining("credential env var is missing")]),
+    })
+    expect(missingCredentialTransport.requests).toHaveLength(0)
+    await missingCredentialServer.shutdown()
   })
 
   test("commander executor review blocks unready packets and provider failures without side effects", async () => {
@@ -14098,6 +14130,7 @@ describe("RuntimeServerClient", () => {
       review_id: "dry-run",
       status: "blocked",
     })
+    await expect(client.command("runtime.execute_commander_executor_review", { requested_by: "operator" })).rejects.toThrow("runtime must be started")
     await expect(client.command("runtime.list_commander_executor_reviews")).resolves.toEqual([])
     await expect(client.command("runtime.get_commander_executor_review", { reviewId: "missing" })).resolves.toBeNull()
 

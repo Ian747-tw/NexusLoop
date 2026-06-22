@@ -56,14 +56,28 @@ export class MiniMaxReasoningProvider implements ResearchSynthesisProvider, Comm
   }
 
   previewExecutorReviewReadiness(): CommanderExecutorReviewProviderReadiness {
+    const blockers: string[] = []
     if (!this.config.enabled_for.includes("commander_executor_review")) {
-      return {
-        provider_ready: false,
-        blockers: ["MiniMax reasoning provider is not enabled for commander_executor_review"],
-        warnings: [],
-      }
+      blockers.push("MiniMax reasoning provider is not enabled for commander_executor_review")
     }
-    return { provider_ready: true, blockers: [], warnings: [] }
+    try {
+      const request = messageRequest(this.config, "commander_executor_review", { task: "commander_executor_review_readiness" }, 512)
+      const preview = this.options.requestService.preview({
+        connector_id: this.config.connector_id ?? "",
+        method: "POST",
+        path: this.messagesPath(),
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(request),
+        requested_by: `reasoning-provider-readiness:${this.config.provider_id}`,
+      })
+      if (!preview.allowed) blockers.push(...preview.blockers)
+    } catch (error) {
+      blockers.push(error instanceof Error ? error.message : String(error))
+    }
+    return { provider_ready: blockers.length === 0, blockers: [...new Set(blockers.map(redactText))], warnings: [] }
   }
 
   private async callMiniMax(surface: "research_synthesis" | "commander_cycle" | "commander_executor_review", prompt: Record<string, unknown>, maxOutputBytes: number): Promise<Record<string, unknown>> {
