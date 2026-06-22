@@ -76,14 +76,18 @@ export class CommanderExecutorReviewService {
     const startedAt = this.now().toISOString()
     const packet = await this.packet(input)
     const requestedBy = bound(input.requested_by ?? "operator")
+    const providerReadiness = this.providerReadiness()
     if (input.dry_run === true) {
+      const readinessBlocker = providerReadiness.provider_ready ? null : (providerReadiness.blockers[0] ?? "Commander executor review provider is not ready")
       return this.result({
         reviewId: "dry-run",
         packet,
-        status: packet.status === "ready_for_commander_review" ? "blocked" : "blocked",
-        decision: "inconclusive",
+        status: "blocked",
+        decision: readinessBlocker ? "blocked" : "inconclusive",
         confidence: 0,
-        summary: packet.status === "ready_for_commander_review"
+        summary: readinessBlocker
+          ? `dry-run: provider is not ready: ${readinessBlocker}`
+          : packet.status === "ready_for_commander_review"
           ? "dry-run: Commander executor review would call the provider once"
           : `dry-run: packet is ${packet.status} and would block provider review`,
         findings: [],
@@ -94,7 +98,6 @@ export class CommanderExecutorReviewService {
       })
     }
     const reviewId = this.reviewId()
-    const providerReadiness = this.providerReadiness()
     if (!providerReadiness.provider_ready) {
       const blocked = this.result({
         reviewId,

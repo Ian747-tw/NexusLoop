@@ -2722,6 +2722,12 @@ describe("RuntimeServer core", () => {
       provider_ready: false,
       blockers: expect.arrayContaining([expect.stringContaining("not enabled for commander_executor_review")]),
     })
+    await expect(server.command("runtime.execute_commander_executor_review", { resultId: result.result_id, dryRun: true, requestedBy: "operator" })).resolves.toMatchObject({
+      review_id: "dry-run",
+      status: "blocked",
+      decision: "blocked",
+      summary: expect.stringContaining("provider is not ready"),
+    })
     await expect(server.command("runtime.execute_commander_executor_review", { resultId: result.result_id, requestedBy: "operator" })).resolves.toMatchObject({
       review_id: "executor_review_disabled_1",
       provider_kind: "minimax-research-only",
@@ -6645,6 +6651,40 @@ describe("RuntimeServer core", () => {
     expect(auditEvent?.response_preview).toBe("[internal response preview omitted]")
     expect(events.some((event) => event.kind === "reasoning_provider_smoke_succeeded")).toBe(true)
     await smokeServer.shutdown()
+
+    const executorSmokeTransport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxExecutorReviewPayload(["smoke_evidence"])) }])
+    const executorSmokeDir = await tempProject()
+    await makeProject(executorSmokeDir, { approvedSpec: true })
+    const executorSmokeServer = new RuntimeServer({
+      projectDir: executorSmokeDir,
+      mode: "active",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: executorSmokeTransport,
+      externalApiEnv: {
+        NXL_MINIMAX_API_KEY: "raw-minimax-secret",
+        NXL_REAL_REASONING_PROVIDER_SMOKE: "1",
+      },
+      externalApiRequestId: () => "api_executor_smoke",
+      externalApiNow: () => new Date("2026-01-01T00:00:00.000Z"),
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-m2-7",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["commander_executor_review"],
+      },
+      researchProjectionMode: "disabled",
+    })
+    const executorPreview = await executorSmokeServer.command("runtime.preview_reasoning_provider_smoke", { surface: "commander_executor_review" })
+    expect(executorPreview).toMatchObject({ kind: "minimax", surface: "commander_executor_review", would_call_network: true, blockers: [] })
+    await executorSmokeServer.start()
+    const executorSmokeResult = await executorSmokeServer.command("runtime.execute_reasoning_provider_smoke", { surface: "commander_executor_review", requestedBy: "operator" })
+    expect(executorSmokeResult).toMatchObject({ surface: "commander_executor_review", ok: true, parsed: true, request_id: "api_executor_smoke" })
+    expect(executorSmokeTransport.requests).toHaveLength(1)
+    expect(JSON.stringify(await readJsonlEvents(executorSmokeDir))).not.toContain("raw-minimax-secret")
+    await executorSmokeServer.shutdown()
 
     const blockedTransport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxSynthesisPayload(["smoke_evidence"])) }])
     const blockedDir = await tempProject()
