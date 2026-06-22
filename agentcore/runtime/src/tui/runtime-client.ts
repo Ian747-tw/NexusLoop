@@ -13,6 +13,7 @@ import type { ExternalApiAuditRecord, ExternalApiConnectorSummary, ExternalApiRe
 import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPreview, ExternalApiResearchIngestionRecord, ExternalApiResearchIngestionResult } from "../external-api/api-research-ingestion-types"
 import type { ResearchSynthesisInput, ResearchSynthesisPreview, ResearchSynthesisRecord, ResearchSynthesisResult } from "../research-synthesis/research-synthesis-types"
 import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, CommanderCycleResult } from "../commander-cycle/commander-cycle-types"
+import type { CommanderExecutorReviewInput, CommanderExecutorReviewPreview, CommanderExecutorReviewRecord, CommanderExecutorReviewResult } from "../commander-executor-review/commander-executor-review-types"
 import type { ReasoningProviderStatus } from "../reasoning/reasoning-provider-config"
 import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "../reasoning/reasoning-health-types"
 import type { OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "../opencode/opencode-handoff-types"
@@ -247,6 +248,10 @@ export interface RuntimeClient {
     staleAfterMs?: number
   }): Promise<OpenCodeResultReviewPacket>
   command(name: "runtime.opencode_result_review_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number; limit?: number }): Promise<OpenCodeResultReviewSummary>
+  command(name: "runtime.preview_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewPreview>
+  command(name: "runtime.execute_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewResult>
+  command(name: "runtime.list_commander_executor_reviews", payload?: { limit?: number; packet_id?: string; packetId?: string; mission_id?: string; missionId?: string; handoff_id?: string; handoffId?: string }): Promise<CommanderExecutorReviewRecord[]>
+  command(name: "runtime.get_commander_executor_review", payload: { review_id: string } | { reviewId: string }): Promise<CommanderExecutorReviewResult | null>
   command(name: "runtime.get_opencode_handoff_followup", payload: { handoffId: string } | { handoff_id: string }): Promise<OpenCodeHandoffFollowup | null>
   command(name: "runtime.list_opencode_handoff_followups", payload?: { limit?: number; staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowup[]>
   command(name: "runtime.opencode_handoff_followup_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowupSummary>

@@ -40,6 +40,9 @@ import type { ResearchSynthesisInput, ResearchSynthesisPreview, ResearchSynthesi
 import { CommanderCycleService } from "./commander-cycle/commander-cycle-service"
 import { FakeCommanderCycleProvider, type CommanderCycleProvider } from "./commander-cycle/commander-cycle-provider"
 import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, CommanderCycleResult } from "./commander-cycle/commander-cycle-types"
+import { CommanderExecutorReviewService, readCommanderExecutorReviewInput } from "./commander-executor-review/commander-executor-review-service"
+import { FakeCommanderExecutorReviewProvider, type CommanderExecutorReviewProvider } from "./commander-executor-review/commander-executor-review-provider"
+import type { CommanderExecutorReviewPreview, CommanderExecutorReviewRecord, CommanderExecutorReviewResult } from "./commander-executor-review/commander-executor-review-types"
 import { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
 import { defaultReasoningProviderConfig, reasoningProviderStatus, validateReasoningProviderConfig, type ReasoningProviderConfig, type ReasoningProviderStatus } from "./reasoning/reasoning-provider-config"
 import { ReasoningProviderHealthService } from "./reasoning/reasoning-health-service"
@@ -145,6 +148,9 @@ export interface RuntimeServerOptions {
   commanderCycleProvider?: CommanderCycleProvider
   commanderCycleNow?: () => Date
   commanderCycleId?: () => string
+  commanderExecutorReviewProvider?: CommanderExecutorReviewProvider
+  commanderExecutorReviewNow?: () => Date
+  commanderExecutorReviewId?: () => string
   opencodeHandoffNow?: () => Date
   opencodeHandoffId?: () => string
   opencodeProcessSmokeEnv?: Record<string, string | undefined>
@@ -222,6 +228,9 @@ export class RuntimeServer {
   private readonly commanderCycleProvider: CommanderCycleProvider
   private readonly commanderCycleNow?: () => Date
   private readonly commanderCycleId?: () => string
+  private readonly commanderExecutorReviewProvider: CommanderExecutorReviewProvider
+  private readonly commanderExecutorReviewNow?: () => Date
+  private readonly commanderExecutorReviewId?: () => string
   private readonly opencodeHandoffNow?: () => Date
   private readonly opencodeHandoffId?: () => string
   private readonly opencodeProcessSmokeEnv: Record<string, string | undefined>
@@ -255,6 +264,7 @@ export class RuntimeServer {
   private opencodeProcessSmokeServiceInstance: OpenCodeProcessSmokeService | null = null
   private opencodeHandoffReadinessServiceInstance: OpenCodeHandoffReadinessService | null = null
   private opencodeResultReviewPacketServiceInstance: OpenCodeResultReviewPacketService | null = null
+  private commanderExecutorReviewServiceInstance: CommanderExecutorReviewService | null = null
   private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
   private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
   private wakeAssessmentServiceInstance: WakeAssessmentService | null = null
@@ -315,6 +325,9 @@ export class RuntimeServer {
     this.commanderCycleProvider = options.commanderCycleProvider ?? (minimaxProvider ?? new FakeCommanderCycleProvider())
     this.commanderCycleNow = options.commanderCycleNow
     this.commanderCycleId = options.commanderCycleId
+    this.commanderExecutorReviewProvider = options.commanderExecutorReviewProvider ?? new FakeCommanderExecutorReviewProvider()
+    this.commanderExecutorReviewNow = options.commanderExecutorReviewNow
+    this.commanderExecutorReviewId = options.commanderExecutorReviewId
     this.opencodeHandoffNow = options.opencodeHandoffNow
     this.opencodeHandoffId = options.opencodeHandoffId
     this.opencodeProcessSmokeEnv = options.opencodeProcessSmokeEnv ?? process.env
@@ -751,6 +764,19 @@ export class RuntimeServer {
         return this.previewOpenCodeResultReviewPacket(readOpenCodeResultReviewPacketInput(payload))
       case "runtime.opencode_result_review_summary":
         return this.openCodeResultReviewSummary(readOpenCodeResultReviewPacketInput(payload))
+      case "runtime.preview_commander_executor_review":
+        return this.previewCommanderExecutorReview(readCommanderExecutorReviewInput(payload))
+      case "runtime.execute_commander_executor_review":
+        return this.executeCommanderExecutorReview(readCommanderExecutorReviewInput(payload))
+      case "runtime.list_commander_executor_reviews":
+        return this.listCommanderExecutorReviews({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100) ?? undefined,
+          packet_id: optionalString(payload.packetId ?? payload.packet_id, "packetId"),
+          mission_id: optionalString(payload.missionId ?? payload.mission_id, "missionId"),
+          handoff_id: optionalString(payload.handoffId ?? payload.handoff_id, "handoffId"),
+        })
+      case "runtime.get_commander_executor_review":
+        return this.getCommanderExecutorReview(requiredString(payload.reviewId ?? payload.review_id, "reviewId"))
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
       case "runtime.list_opencode_handoff_followups":
@@ -1462,6 +1488,23 @@ export class RuntimeServer {
 
   async openCodeResultReviewSummary(input: Parameters<OpenCodeResultReviewPacketService["summary"]>[0] = {}): Promise<OpenCodeResultReviewSummary> {
     return this.opencodeResultReviewPacketService().summary(input)
+  }
+
+  async previewCommanderExecutorReview(input: Parameters<CommanderExecutorReviewService["preview"]>[0] = {}): Promise<CommanderExecutorReviewPreview> {
+    return this.commanderExecutorReviewService().preview(input)
+  }
+
+  async executeCommanderExecutorReview(input: Parameters<CommanderExecutorReviewService["execute"]>[0] = {}): Promise<CommanderExecutorReviewResult> {
+    if (input.dry_run !== true) this.requireCommanderExecutorReviewRuntime("runtime.execute_commander_executor_review")
+    return this.commanderExecutorReviewService().execute(input)
+  }
+
+  async listCommanderExecutorReviews(input: Parameters<CommanderExecutorReviewService["list"]>[0] = {}): Promise<CommanderExecutorReviewRecord[]> {
+    return this.commanderExecutorReviewService().list(input)
+  }
+
+  async getCommanderExecutorReview(reviewId: string): Promise<CommanderExecutorReviewResult | null> {
+    return this.commanderExecutorReviewService().get(reviewId)
   }
 
   async getOpenCodeHandoffFollowup(handoffId: string): Promise<OpenCodeHandoffFollowup | null> {
@@ -2218,6 +2261,11 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before commander cycle writes")
   }
 
+  private requireCommanderExecutorReviewRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before commander executor review writes")
+  }
+
   private requireReasoningProviderSmokeRuntime(commandName: string): void {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before reasoning provider smoke")
@@ -2341,6 +2389,17 @@ export class RuntimeServer {
       listSmokes: (limit) => this.opencodeProcessSmokeService().list(limit),
     })
     return this.opencodeResultReviewPacketServiceInstance
+  }
+
+  private commanderExecutorReviewService(): CommanderExecutorReviewService {
+    this.commanderExecutorReviewServiceInstance ??= new CommanderExecutorReviewService({
+      eventStore: this.eventStore,
+      packetService: this.opencodeResultReviewPacketService(),
+      provider: this.commanderExecutorReviewProvider,
+      now: this.commanderExecutorReviewNow ?? this.opencodeHandoffNow,
+      reviewId: this.commanderExecutorReviewId,
+    })
+    return this.commanderExecutorReviewServiceInstance
   }
 
   private opencodeHandoffFollowupService(): OpenCodeHandoffFollowupService {

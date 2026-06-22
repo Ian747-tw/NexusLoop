@@ -30,6 +30,7 @@ import type { ExternalApiConnector } from "./external-api/api-connector-types"
 import { readReasoningProviderConfigFromEnv } from "./reasoning/reasoning-provider-config"
 import type { ResearchSynthesisProvider, ResearchSynthesisProviderInput, ResearchSynthesisProviderResult } from "./research-synthesis/research-synthesis-provider"
 import type { CommanderCycleProvider, CommanderCycleProviderInput, CommanderCycleProviderResult } from "./commander-cycle/commander-cycle-provider"
+import type { CommanderExecutorReviewProvider, CommanderExecutorReviewProviderInput, CommanderExecutorReviewProviderResult } from "./commander-executor-review/commander-executor-review-provider"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
@@ -624,6 +625,55 @@ class InventingCommanderCycleProvider implements CommanderCycleProvider {
         evidence_ids: ["missing-evidence-id"],
       }],
       confidence: "low",
+    }
+  }
+}
+
+class CountingCommanderExecutorReviewProvider implements CommanderExecutorReviewProvider {
+  readonly provider_id = "counting-executor-review"
+  calls = 0
+  lastInput: CommanderExecutorReviewProviderInput | null = null
+
+  async reviewExecutorResult(input: CommanderExecutorReviewProviderInput): Promise<CommanderExecutorReviewProviderResult> {
+    this.calls += 1
+    this.lastInput = input
+    return {
+      decision: "accept_result",
+      confidence: 0.91,
+      summary: "Executor result accepted token=executor-review-secret",
+      findings: [{
+        finding_id: "finding_executor_review_counting",
+        severity: "info",
+        title: "Executor result has bounded evidence token=finding-secret",
+        summary: `Reviewed ${input.packet.evidence.length} evidence records token=finding-summary-secret`,
+        evidence_ids: input.packet.evidence.map((item) => item.evidence_id).slice(0, 3),
+        recommended_commands: [{ label: "Reopen packet", command: "/result-review-packet", command_type: "read" }],
+      }],
+      recommended_commands: [{ label: "List executor reviews", command: "/executor-reviews", command_type: "read" }],
+      raw_response_preview: "raw provider response token=raw-secret",
+    }
+  }
+}
+
+class ThrowingCommanderExecutorReviewProvider implements CommanderExecutorReviewProvider {
+  readonly provider_id = "throwing-executor-review"
+  calls = 0
+
+  async reviewExecutorResult(): Promise<CommanderExecutorReviewProviderResult> {
+    this.calls += 1
+    throw new Error("executor review provider failed token=provider-secret")
+  }
+}
+
+class InvalidCommanderExecutorReviewProvider implements CommanderExecutorReviewProvider {
+  readonly provider_id = "invalid-executor-review"
+
+  async reviewExecutorResult(): Promise<CommanderExecutorReviewProviderResult> {
+    return {
+      decision: "invent_proposal" as CommanderExecutorReviewProviderResult["decision"],
+      confidence: 1,
+      summary: "invalid",
+      findings: [],
     }
   }
 }
@@ -2406,6 +2456,160 @@ describe("RuntimeServer core", () => {
       latest_result_id: result.result_id,
     })
     await server.shutdown()
+  })
+
+  test("commander executor review previews and executes one ready result packet without proposals or OpenCode", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const provider = new CountingCommanderExecutorReviewProvider()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_executor_review_1",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+      commanderExecutorReviewProvider: provider,
+      commanderExecutorReviewNow: () => new Date("2026-05-28T01:00:00.000Z"),
+      commanderExecutorReviewId: () => "executor_review_ready_1",
+    })
+
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff token=proposal-secret",
+      summary: "summary token=proposal-secret",
+      proposedBy: "commander",
+      actionPayload: { objective: "executor work token=objective-secret", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const review = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "approved" })
+    const handoff = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { handoff_id: string; mission_id: string }
+    const claim = await server.command("runtime.claim_mission", { missionId: handoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    const result = await server.command("runtime.submit_mission_result", {
+      missionId: handoff.mission_id,
+      claimId: claim.claim_id,
+      summary: "completed executor work token=result-secret",
+    }) as { result_id: string }
+    const before = await readEventKinds(dir)
+    adapter.packets = []
+
+    await expect(server.command("runtime.preview_commander_executor_review", { resultId: result.result_id })).resolves.toMatchObject({
+      packet_status: "ready_for_commander_review",
+      can_execute: true,
+      provider_kind: "counting-executor-review",
+      prompt_preview: expect.stringContaining("Review packet"),
+      recommended_commands: expect.arrayContaining([
+        expect.objectContaining({ command: `/result-review-packet result=${result.result_id}`, command_type: "read" }),
+      ]),
+    })
+    expect(provider.calls).toBe(0)
+    expect(await readEventKinds(dir)).toEqual(before)
+
+    await expect(server.command("runtime.execute_commander_executor_review", { resultId: result.result_id, dryRun: true, requestedBy: "operator" })).resolves.toMatchObject({
+      review_id: "dry-run",
+      status: "blocked",
+      decision: "inconclusive",
+    })
+    expect(provider.calls).toBe(0)
+    expect(await readEventKinds(dir)).toEqual(before)
+
+    const executed = await server.command("runtime.execute_commander_executor_review", { resultId: result.result_id, requestedBy: "operator" }) as { review_id: string; status: string; decision: string; summary: string }
+    expect(executed).toMatchObject({
+      review_id: "executor_review_ready_1",
+      status: "succeeded",
+      decision: "accept_result",
+    })
+    expect(provider.calls).toBe(1)
+    expect(provider.lastInput?.packet.result_summary_preview).not.toContain("result-secret")
+    expect(adapter.packets).toEqual([])
+    await expect(server.command("runtime.list_commander_executor_reviews")).resolves.toEqual([
+      expect.objectContaining({ review_id: "executor_review_ready_1", status: "succeeded", decision: "accept_result" }),
+    ])
+    await expect(server.command("runtime.get_commander_executor_review", { reviewId: "executor_review_ready_1" })).resolves.toMatchObject({
+      review_id: "executor_review_ready_1",
+      status: "succeeded",
+      findings: expect.arrayContaining([expect.objectContaining({ severity: "info" })]),
+    })
+    const eventKinds = await readEventKinds(dir)
+    expect(eventKinds.slice(before.length)).toEqual([
+      "commander_executor_review_started",
+      "commander_executor_review_succeeded",
+    ])
+    expect(eventKinds.slice(before.length)).not.toContain("commander_proposal_created")
+    const eventText = await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")
+    expect(eventText).not.toContain("executor-review-secret")
+    expect(eventText).not.toContain("result-secret")
+    await server.shutdown()
+  })
+
+  test("commander executor review blocks unready packets and provider failures without side effects", async () => {
+    const blockedDir = await tempProject()
+    await makeProject(blockedDir, { approvedSpec: true })
+    const provider = new CountingCommanderExecutorReviewProvider()
+    const blockedServer = new RuntimeServer({
+      projectDir: blockedDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderExecutorReviewProvider: provider,
+      commanderExecutorReviewId: () => "executor_review_blocked_1",
+    })
+    await blockedServer.start()
+    await expect(blockedServer.command("runtime.preview_commander_executor_review")).resolves.toMatchObject({
+      packet_status: "blocked",
+      can_execute: false,
+      blockers: expect.arrayContaining([expect.stringContaining("ready_for_commander_review")]),
+    })
+    const blocked = await blockedServer.command("runtime.execute_commander_executor_review", { requestedBy: "operator" }) as { status: string; decision: string }
+    expect(blocked).toMatchObject({ status: "blocked", decision: "blocked" })
+    expect(provider.calls).toBe(0)
+    expect(await readEventKinds(blockedDir)).toContain("commander_executor_review_blocked")
+    await blockedServer.shutdown()
+
+    const failingDir = await tempProject()
+    await makeProject(failingDir, { approvedSpec: true })
+    const throwing = new ThrowingCommanderExecutorReviewProvider()
+    const failingServer = new RuntimeServer({
+      projectDir: failingDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_executor_review_fail",
+      commanderExecutorReviewProvider: throwing,
+      commanderExecutorReviewId: () => "executor_review_failed_1",
+    })
+    await failingServer.start()
+    const proposal = await failingServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "executor work", evidence_ids: [] },
+    }) as { proposal_id: string }
+    const review = await failingServer.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await failingServer.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "approved" })
+    const handoff = await failingServer.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const claim = await failingServer.command("runtime.claim_mission", { missionId: handoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    const result = await failingServer.command("runtime.submit_mission_result", { missionId: handoff.mission_id, claimId: claim.claim_id, summary: "done" }) as { result_id: string }
+    await expect(failingServer.command("runtime.execute_commander_executor_review", { resultId: result.result_id })).resolves.toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("provider failed"),
+    })
+    expect(throwing.calls).toBe(1)
+    const eventText = await readFile(join(failingDir, ".nxl", "events.jsonl"), "utf8")
+    expect(eventText).not.toContain("provider-secret")
+    await failingServer.shutdown()
+  })
+
+  test("commander executor review execute requires active started runtime while reads do not", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+    await expect(statusServer.command("runtime.preview_commander_executor_review")).resolves.toMatchObject({ can_execute: false })
+    await expect(statusServer.command("runtime.list_commander_executor_reviews")).resolves.toEqual([])
+    await expect(statusServer.command("runtime.execute_commander_executor_review")).rejects.toThrow("requires active mode")
+
+    const activeServer = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled" })
+    await expect(activeServer.command("runtime.execute_commander_executor_review")).rejects.toThrow("runtime must be started before commander executor review writes")
   })
 
   test("opencode result review packet reports stale needs-result and failed handoff states", async () => {
