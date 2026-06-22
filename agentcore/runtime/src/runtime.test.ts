@@ -743,6 +743,24 @@ function minimaxCyclePayload(evidenceIds: string[] = ["note_cycle"], synthesisId
   }
 }
 
+function minimaxExecutorReviewPayload(evidenceIds: string[] = ["evidence_handoff"]): Record<string, unknown> {
+  return {
+    decision: "accept_result",
+    confidence: 0.73,
+    summary: "MiniMax executor review accepted the bounded packet token=minimax-review-secret",
+    findings: [{
+      finding_id: "finding_minimax_executor_review",
+      severity: "info",
+      title: "MiniMax executor packet review",
+      summary: "Bounded result evidence supports manual acceptance.",
+      evidence_ids: evidenceIds,
+      recommended_commands: [{ label: "Inspect packet", command: "/result-review-packet", command_type: "read" }],
+    }],
+    recommended_commands: [{ label: "List executor reviews", command: "/executor-reviews", command_type: "read" }],
+    raw_response_preview: "raw token=minimax-review-secret",
+  }
+}
+
 function seedResearchDb(dir: string): void {
   const db = ResearchDb.open(dir, {
     now: (() => {
@@ -2540,6 +2558,120 @@ describe("RuntimeServer core", () => {
     const eventText = await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")
     expect(eventText).not.toContain("executor-review-secret")
     expect(eventText).not.toContain("result-secret")
+    await server.shutdown()
+  })
+
+  test("commander executor review uses configured MiniMax reasoning provider instead of fake fallback", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxExecutorReviewPayload(["evidence_handoff", "evidence_mission_result"])) }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-executor-review",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["commander_executor_review"],
+      },
+      opencodeHandoffId: () => "handoff_executor_review_minimax",
+      commanderExecutorReviewId: () => "executor_review_minimax_1",
+    })
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "executor work", evidence_ids: [] },
+    }) as { proposal_id: string }
+    const review = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "approved" })
+    const handoff = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const claim = await server.command("runtime.claim_mission", { missionId: handoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    const result = await server.command("runtime.submit_mission_result", { missionId: handoff.mission_id, claimId: claim.claim_id, summary: "done" }) as { result_id: string }
+
+    await expect(server.command("runtime.preview_commander_executor_review", { resultId: result.result_id })).resolves.toMatchObject({
+      provider_kind: "minimax-executor-review",
+      can_execute: true,
+    })
+    const executed = await server.command("runtime.execute_commander_executor_review", { resultId: result.result_id, requestedBy: "operator" }) as { provider_kind: string; decision: string; summary: string }
+    expect(executed).toMatchObject({
+      provider_kind: "minimax-executor-review",
+      decision: "accept_result",
+    })
+    expect(executed.summary).not.toContain("minimax-review-secret")
+    expect(transport.requests).toHaveLength(1)
+    const requestBody = JSON.parse(transport.requests[0].body ?? "{}") as { messages: Array<{ content: string }> }
+    expect(requestBody.messages[0]?.content).toContain("commander_executor_review")
+    expect(requestBody.messages[0]?.content).not.toContain("fake-commander-executor-review")
+    const events = await readJsonlEvents(dir)
+    expect(events.find((event) => event.kind === "commander_executor_review_succeeded")).toMatchObject({
+      provider_kind: "minimax-executor-review",
+    })
+    expect(JSON.stringify(events)).not.toContain("raw-minimax-secret")
+    expect(JSON.stringify(events)).not.toContain("minimax-review-secret")
+    await server.shutdown()
+  })
+
+  test("commander executor review with configured MiniMax fails closed when surface is disabled", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxExecutorReviewPayload()) }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      mode: "active",
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_MINIMAX_API_KEY: "raw-minimax-secret" },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-research-only",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["research_synthesis"],
+      },
+      opencodeHandoffId: () => "handoff_executor_review_disabled",
+      commanderExecutorReviewId: () => "executor_review_disabled_1",
+    })
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "executor work", evidence_ids: [] },
+    }) as { proposal_id: string }
+    const review = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "approved" })
+    const handoff = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const claim = await server.command("runtime.claim_mission", { missionId: handoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    const result = await server.command("runtime.submit_mission_result", { missionId: handoff.mission_id, claimId: claim.claim_id, summary: "done" }) as { result_id: string }
+
+    await expect(server.command("runtime.execute_commander_executor_review", { resultId: result.result_id, requestedBy: "operator" })).resolves.toMatchObject({
+      review_id: "executor_review_disabled_1",
+      provider_kind: "minimax-research-only",
+      status: "failed",
+      error: expect.stringContaining("not enabled for commander_executor_review"),
+    })
+    expect(transport.requests).toHaveLength(0)
+    const events = await readJsonlEvents(dir)
+    expect(events.find((event) => event.kind === "commander_executor_review_failed")).toMatchObject({
+      provider_kind: "minimax-research-only",
+    })
+    expect(JSON.stringify(events)).not.toContain("fake-commander-executor-review")
     await server.shutdown()
   })
 
@@ -6277,6 +6409,12 @@ describe("RuntimeServer core", () => {
       NXL_REASONING_MODEL: "MiniMax-M2.7",
       NXL_REASONING_MAX_INPUT_BYTES: String(96 * 1024),
     })?.max_input_bytes).toBe(64 * 1024)
+    expect(readReasoningProviderConfigFromEnv({
+      NXL_REASONING_PROVIDER_KIND: "minimax",
+      NXL_REASONING_CONNECTOR_ID: "minimax-anthropic",
+      NXL_REASONING_MODEL: "MiniMax-M2.7",
+      NXL_REASONING_ENABLE_COMMANDER_EXECUTOR_REVIEW: "1",
+    })?.enabled_for).toEqual(["commander_executor_review"])
     expect(JSON.stringify(config)).not.toContain("NXL_MINIMAX_API_KEY")
   })
 
@@ -13798,6 +13936,32 @@ describe("RuntimeServerClient", () => {
     })
 
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
+  test("commander executor review read and dry-run commands do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), commanderExecutorReviewId: () => "executor_review_no_start" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_commander_executor_review")).resolves.toMatchObject({
+      can_execute: false,
+      provider_kind: "fake-commander-executor-review",
+    })
+    await expect(client.command("runtime.execute_commander_executor_review", { dry_run: true, requested_by: "operator" })).resolves.toMatchObject({
+      review_id: "dry-run",
+      status: "blocked",
+    })
+    await expect((client.command as (name: string, payload?: Record<string, unknown>) => Promise<unknown>)("runtime.execute_commander_executor_review", { dryRun: true, requestedBy: "operator" })).resolves.toMatchObject({
+      review_id: "dry-run",
+      status: "blocked",
+    })
+    await expect(client.command("runtime.list_commander_executor_reviews")).resolves.toEqual([])
+    await expect(client.command("runtime.get_commander_executor_review", { reviewId: "missing" })).resolves.toBeNull()
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(await readEventKinds(dir)).not.toContain("commander_executor_review_blocked")
     await client.shutdown()
   })
 

@@ -325,7 +325,7 @@ export class RuntimeServer {
     this.commanderCycleProvider = options.commanderCycleProvider ?? (minimaxProvider ?? new FakeCommanderCycleProvider())
     this.commanderCycleNow = options.commanderCycleNow
     this.commanderCycleId = options.commanderCycleId
-    this.commanderExecutorReviewProvider = options.commanderExecutorReviewProvider ?? new FakeCommanderExecutorReviewProvider()
+    this.commanderExecutorReviewProvider = options.commanderExecutorReviewProvider ?? (minimaxProvider ?? new FakeCommanderExecutorReviewProvider())
     this.commanderExecutorReviewNow = options.commanderExecutorReviewNow
     this.commanderExecutorReviewId = options.commanderExecutorReviewId
     this.opencodeHandoffNow = options.opencodeHandoffNow
@@ -2840,7 +2840,7 @@ export class RuntimeServer {
     })
   }
 
-  private createMiniMaxReasoningProvider(): ResearchSynthesisProvider & CommanderCycleProvider {
+  private createMiniMaxReasoningProvider(): ResearchSynthesisProvider & CommanderCycleProvider & CommanderExecutorReviewProvider {
     const connectorId = this.reasoningProviderConfig.connector_id
     const connector = connectorId ? this.externalApiConnectorRegistry.get(connectorId) : null
     if (!connectorId || !connector) {
@@ -2900,7 +2900,7 @@ export class RuntimeServer {
   }
 }
 
-class UnavailableReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider {
+class UnavailableReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider, CommanderExecutorReviewProvider {
   constructor(readonly provider_id: string, private readonly reason: string) {}
 
   async synthesize(): Promise<never> {
@@ -2908,6 +2908,10 @@ class UnavailableReasoningProvider implements ResearchSynthesisProvider, Command
   }
 
   async run(): Promise<never> {
+    throw new Error(this.reason)
+  }
+
+  async reviewExecutorResult(): Promise<never> {
     throw new Error(this.reason)
   }
 }

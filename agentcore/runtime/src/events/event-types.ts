@@ -126,7 +126,7 @@ export interface RuntimeStatus {
     max_output_bytes: number
     timeout_ms?: number
     system_prompt_version?: string
-    enabled_for: Array<"research_synthesis" | "commander_cycle">
+    enabled_for: Array<"research_synthesis" | "commander_cycle" | "commander_executor_review">
   }
   researchProjection: RuntimeResearchProjectionHealth
   wakeScheduler?: {
