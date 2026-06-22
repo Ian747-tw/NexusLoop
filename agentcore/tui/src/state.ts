@@ -998,6 +998,80 @@ export type OpenCodeHandoffReadinessState = {
   commandError?: string
 }
 
+export type OpenCodeResultReviewCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeResultReviewEvidenceSummary = {
+  evidence_id: string
+  kind: string
+  related_id?: string
+  status: string
+  fresh: boolean
+  completed_at?: string
+  age_ms?: number
+  summary_preview: string
+  blockers: string[]
+  warnings: string[]
+}
+
+export type OpenCodeResultReviewPacketSummary = {
+  packet_id: string
+  status: string
+  handoff_id?: string
+  followup_id?: string
+  mission_id?: string
+  result_id?: string
+  claim_id?: string
+  proposal_id?: string
+  review_id?: string
+  title: string
+  objective_preview?: string
+  executor_summary_preview?: string
+  result_summary_preview?: string
+  artifact_previews: string[]
+  evidence: OpenCodeResultReviewEvidenceSummary[]
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeResultReviewCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+}
+
+export type OpenCodeResultReviewPacketRecordSummary = {
+  packet_id: string
+  status: string
+  handoff_id?: string
+  mission_id?: string
+  result_id?: string
+  proposal_id?: string
+  generated_at: string
+  summary_preview: string
+}
+
+export type OpenCodeResultReviewSummary = {
+  total_considered: number
+  ready_count: number
+  needs_result_count: number
+  failed_count: number
+  blocked_count: number
+  stale_count: number
+  latest_handoff_id?: string
+  latest_result_id?: string
+  generated_at: string
+}
+
+export type OpenCodeResultReviewState = {
+  packet?: OpenCodeResultReviewPacketSummary | null
+  summary?: OpenCodeResultReviewSummary | null
+  records: OpenCodeResultReviewPacketRecordSummary[]
+  commandError?: string
+}
+
 export type OpenCodeHandoffFollowupStatus =
   | "sent"
   | "claimed"
@@ -2749,6 +2823,7 @@ export type UiState = {
   opencodeHandoff?: OpenCodeHandoffState
   opencodeProcessSmoke?: OpenCodeProcessSmokeState
   opencodeHandoffReadiness?: OpenCodeHandoffReadinessState
+  opencodeResultReview?: OpenCodeResultReviewState
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState
   runtimeRestore?: RuntimeRestoreState
@@ -2895,6 +2970,11 @@ export function initialState(projectDir: string): UiState {
     opencodeHandoffReadiness: {
       preview: null,
       summary: null,
+    },
+    opencodeResultReview: {
+      packet: null,
+      summary: null,
+      records: [],
     },
   }
 }

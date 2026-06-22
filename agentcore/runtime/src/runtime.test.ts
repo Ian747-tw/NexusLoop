@@ -849,6 +849,8 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/opencode-smoke-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_process_smoke", mutates_events: false })
     expect(service.get("/opencode-smoke-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.execute_opencode_process_smoke", creates_external_process: false, mutates_events: false })
     expect(service.get("/opencode-smoke")).toMatchObject({ risk: "low_risk_write", gate: "opencode_runtime", creates_external_process: true, mutates_events: true, blocked_by_default: true })
+    expect(service.get("/result-review-packet")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_result_review_packet", owner: "opencode_handoff", mutates_events: false })
+    expect(service.get("/result-review-summary")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_result_review_summary", owner: "opencode_handoff", mutates_events: false })
     expect(service.get("/api-ingest")).toMatchObject({ risk: "high_impact_write", gate: "external_api_runtime", owner: "research", mutates_events: true })
     expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
     expect(service.get("/api-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "reasoning_provider", mutates_events: false, expected_event_kinds: [] })
@@ -887,6 +889,10 @@ describe("CommandAuthorityService", () => {
     const smoke = service.validationProfile("/opencode-smoke")
     expect(smoke.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_process_smoke_tui.py"])
     expect(smoke.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_handoff_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py"])
+
+    const packet = service.validationProfile("/result-review-packet")
+    expect(packet.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_result_review_packet_tui.py"])
+    expect(packet.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_handoff_readiness_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py"])
   })
 
   test("query and unsupported command handling fail closed", () => {
@@ -2122,6 +2128,668 @@ describe("RuntimeServer core", () => {
       blockers: expect.arrayContaining([expect.stringContaining("process adapter smoke is required")]),
     })
     expect(await readEventKinds(dir)).toEqual(before)
+  })
+
+  test("opencode result review packet is read-only and reports no target evidence", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const before = await readEventKinds(dir)
+    await expect(server.command("runtime.preview_opencode_result_review_packet")).resolves.toMatchObject({
+      status: "blocked",
+      blockers: expect.arrayContaining([expect.stringContaining("no OpenCode handoff")]),
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ kind: "authority", related_id: "/handoff", status: "high_impact_write" }),
+        expect.objectContaining({ kind: "handoff_readiness" }),
+      ]),
+      recommended_commands: expect.arrayContaining([
+        expect.objectContaining({ command: "/handoff-followups", command_type: "read" }),
+        expect.objectContaining({ command: "/authority-show /handoff", command_type: "read" }),
+      ]),
+    })
+    await expect(server.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+      total_considered: 0,
+      ready_count: 0,
+      needs_result_count: 0,
+      failed_count: 0,
+      blocked_count: 0,
+      stale_count: 0,
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await server.shutdown()
+  })
+
+  test("opencode result review packet summarizes submitted mission result without mutating", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_packet_1",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+
+    await server.start()
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff token=proposal-secret",
+      summary: "summary token=proposal-secret",
+      proposedBy: "commander",
+      actionPayload: { objective: "executor work token=objective-secret", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const review = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: review.review_id, decidedBy: "operator", reason: "approved" })
+    const handoff = await server.command("runtime.execute_opencode_handoff", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { handoff_id: string; mission_id: string }
+    const claim = await server.command("runtime.claim_mission", { missionId: handoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    await server.command("runtime.record_mission_progress", { missionId: handoff.mission_id, claimId: claim.claim_id, message: "progress token=progress-secret" })
+    const longResultSummary = `completed executor work token=result-secret ${"bounded-result-summary ".repeat(40)}`
+    const result = await server.command("runtime.submit_mission_result", {
+      missionId: handoff.mission_id,
+      claimId: claim.claim_id,
+      summary: longResultSummary,
+      artifacts: ["artifact token=artifact-secret"],
+    }) as { result_id: string }
+    const unrelatedMission = await server.submitUserMessage(`unrelated result target token=unrelated-secret ${"bounded-objective ".repeat(40)}`) as { missionId: string }
+    const unrelatedClaim = await server.command("runtime.claim_mission", { missionId: unrelatedMission.missionId, executorId: "opencode" }) as { claim_id: string }
+    const longUnrelatedResultSummary = `unrelated result token=unrelated-result-secret ${"bounded-unrelated-result ".repeat(40)}`
+    const unrelatedResult = await server.command("runtime.submit_mission_result", {
+      missionId: unrelatedMission.missionId,
+      claimId: unrelatedClaim.claim_id,
+      summary: longUnrelatedResultSummary,
+    }) as { result_id: string }
+    const mismatchedProposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "other handoff",
+      summary: "other summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "other objective", evidence_ids: ["evidence-2"] },
+    }) as { proposal_id: string }
+    const missionLinkedProposal = await server.command("runtime.create_commander_proposal", {
+      missionId: handoff.mission_id,
+      claimId: claim.claim_id,
+      actionKind: "record_progress",
+      title: "mission-linked packet proposal",
+      summary: "mission-linked packet summary",
+      proposedBy: "commander",
+      actionPayload: {
+        mission_id: handoff.mission_id,
+        claim_id: claim.claim_id,
+        message: "progress for original mission",
+      },
+    }) as { proposal_id: string }
+    const before = await readEventKinds(dir)
+    adapter.packets = []
+
+    const packet = await server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id }) as {
+      status: string
+      handoff_id: string
+      mission_id: string
+      result_id: string
+      objective_preview?: string
+      executor_summary_preview?: string
+      evidence: Array<{ kind: string; status: string; summary_preview: string }>
+      result_summary_preview?: string
+      artifact_previews: string[]
+      recommended_commands: Array<{ command: string; command_type: string }>
+    }
+    expect(packet).toMatchObject({
+      status: "ready_for_commander_review",
+      handoff_id: "handoff_packet_1",
+      mission_id: handoff.mission_id,
+      result_id: result.result_id,
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ kind: "handoff", status: "sent" }),
+        expect.objectContaining({ kind: "handoff_followup", status: "result_submitted" }),
+        expect.objectContaining({ kind: "mission_result", status: "submitted" }),
+        expect.objectContaining({ kind: "proposal", status: "applied" }),
+        expect.objectContaining({ kind: "review", status: "approved" }),
+      ]),
+      recommended_commands: expect.arrayContaining([
+        expect.objectContaining({ command: `/handoff-followup ${handoff.handoff_id}`, command_type: "read" }),
+        expect.objectContaining({ command: `/results ${handoff.mission_id}`, command_type: "read" }),
+      ]),
+    })
+    expect(JSON.stringify(packet)).not.toContain("result-secret")
+    expect(JSON.stringify(packet)).not.toContain("artifact-secret")
+    expect(packet.objective_preview?.length ?? 0).toBeLessThanOrEqual(240)
+    expect(packet.executor_summary_preview?.length ?? 0).toBeLessThanOrEqual(240)
+    expect(packet.result_summary_preview?.length ?? 0).toBeLessThanOrEqual(240)
+    expect(adapter.packets).toEqual([])
+    expect(await readEventKinds(dir)).toEqual(before)
+    const staleReadyPacket = await server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, staleAfterMs: 1 }) as { status: string; blockers: string[] }
+    expect(staleReadyPacket.status).toBe("ready_for_commander_review")
+    expect(staleReadyPacket.blockers).not.toContain("handoff follow-up is stale")
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      status: "ready_for_commander_review",
+      handoff_id: "handoff_packet_1",
+      mission_id: handoff.mission_id,
+      result_id: result.result_id,
+      proposal_id: proposal.proposal_id,
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { missionId: handoff.mission_id })).resolves.toMatchObject({
+      status: "ready_for_commander_review",
+      handoff_id: "handoff_packet_1",
+      mission_id: handoff.mission_id,
+      result_id: result.result_id,
+      proposal_id: proposal.proposal_id,
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ kind: "handoff", status: "sent" }),
+        expect.objectContaining({ kind: "handoff_followup", status: "result_submitted" }),
+        expect.objectContaining({ kind: "proposal", status: "applied" }),
+        expect.objectContaining({ kind: "review", status: "approved" }),
+      ]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { resultId: result.result_id })).resolves.toMatchObject({
+      status: "ready_for_commander_review",
+      handoff_id: "handoff_packet_1",
+      mission_id: handoff.mission_id,
+      result_id: result.result_id,
+      proposal_id: proposal.proposal_id,
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ kind: "handoff", status: "sent" }),
+        expect.objectContaining({ kind: "handoff_followup", status: "result_submitted" }),
+        expect.objectContaining({ kind: "proposal", status: "applied" }),
+        expect.objectContaining({ kind: "review", status: "approved" }),
+      ]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, followupId: "handoff_other_packet" })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: handoff.handoff_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested handoff and follow-up ids do not match")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, proposalId: mismatchedProposal.proposal_id })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: handoff.handoff_id,
+      proposal_id: mismatchedProposal.proposal_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal does not match")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: mismatchedProposal.proposal_id, resultId: result.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: handoff.handoff_id,
+      proposal_id: mismatchedProposal.proposal_id,
+      result_id: result.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal does not match selected handoff or follow-up proposal")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: missionLinkedProposal.proposal_id, missionId: unrelatedMission.missionId })).resolves.toMatchObject({
+      status: "blocked",
+      proposal_id: missionLinkedProposal.proposal_id,
+      mission_id: unrelatedMission.missionId,
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal mission does not match selected mission")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: mismatchedProposal.proposal_id, missionId: unrelatedMission.missionId })).resolves.toMatchObject({
+      status: "blocked",
+      proposal_id: mismatchedProposal.proposal_id,
+      mission_id: unrelatedMission.missionId,
+      result_id: unrelatedResult.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal is not linked to selected mission result")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { missionId: handoff.mission_id, proposalId: "proposal_typo" })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: handoff.handoff_id,
+      mission_id: handoff.mission_id,
+      proposal_id: proposal.proposal_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested proposal was not found")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { missionId: "mission_typo", proposalId: proposal.proposal_id })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: handoff.mission_id,
+      proposal_id: proposal.proposal_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested mission was not found")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, resultId: unrelatedResult.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: handoff.mission_id,
+      result_id: unrelatedResult.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested result mission does not match")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { missionId: handoff.mission_id, resultId: unrelatedResult.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: handoff.mission_id,
+      result_id: unrelatedResult.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested result mission does not match")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: handoff.handoff_id, resultId: "result_typo" })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: handoff.mission_id,
+      result_id: "result_typo",
+      blockers: expect.arrayContaining([expect.stringContaining("requested result was not found")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { handoffId: "missing_handoff_packet", resultId: result.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: "missing_handoff_packet",
+      mission_id: handoff.mission_id,
+      result_id: result.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("requested handoff or follow-up was not found")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    const unrelatedPacket = await server.command("runtime.preview_opencode_result_review_packet", { resultId: unrelatedResult.result_id }) as {
+      status: string
+      handoff_id?: string
+      mission_id?: string
+      result_id?: string
+      objective_preview?: string
+      result_summary_preview?: string
+    }
+    expect(unrelatedPacket).toMatchObject({
+      status: "ready_for_commander_review",
+      mission_id: unrelatedMission.missionId,
+      result_id: unrelatedResult.result_id,
+    })
+    expect(unrelatedPacket.handoff_id).toBeUndefined()
+    expect(JSON.stringify(unrelatedPacket)).not.toContain("unrelated-result-secret")
+    expect(JSON.stringify(unrelatedPacket)).not.toContain("unrelated-secret")
+    expect(unrelatedPacket.objective_preview?.length ?? 0).toBeLessThanOrEqual(240)
+    expect(unrelatedPacket.result_summary_preview?.length ?? 0).toBeLessThanOrEqual(240)
+    expect(await readEventKinds(dir)).toEqual(before)
+    await expect(server.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+      total_considered: 1,
+      ready_count: 1,
+      latest_handoff_id: "handoff_packet_1",
+      latest_result_id: result.result_id,
+    })
+    await server.shutdown()
+  })
+
+  test("opencode result review packet reports stale needs-result and failed handoff states", async () => {
+    const staleDir = await tempProject()
+    await makeProject(staleDir, { approvedSpec: true })
+    const staleServer = new RuntimeServer({
+      projectDir: staleDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_stale_packet",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await staleServer.start()
+    const staleProposal = await staleServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "stale executor work", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const staleReview = await staleServer.command("runtime.request_proposal_review", { proposalId: staleProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await staleServer.command("runtime.approve_review_request", { reviewId: staleReview.review_id, decidedBy: "operator", reason: "approved" })
+    await staleServer.command("runtime.execute_opencode_handoff", { proposalId: staleProposal.proposal_id, requestedBy: "operator" })
+    await expect(staleServer.command("runtime.preview_opencode_result_review_packet")).resolves.toMatchObject({
+      status: "needs_result",
+      warnings: expect.arrayContaining([expect.stringContaining("no submitted mission result")]),
+    })
+    await staleServer.shutdown()
+
+    const staleInjectedDir = await tempProject()
+    await makeProject(staleInjectedDir, { approvedSpec: true })
+    const staleInjectedServer = new RuntimeServer({
+      projectDir: staleInjectedDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_stale_injected",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await staleInjectedServer.start()
+    const staleInjectedProposal = await staleInjectedServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "stale executor work", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const staleInjectedReview = await staleInjectedServer.command("runtime.request_proposal_review", { proposalId: staleInjectedProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await staleInjectedServer.command("runtime.approve_review_request", { reviewId: staleInjectedReview.review_id, decidedBy: "operator", reason: "approved" })
+    await staleInjectedServer.command("runtime.execute_opencode_handoff", { proposalId: staleInjectedProposal.proposal_id, requestedBy: "operator" })
+    await staleInjectedServer.shutdown()
+    const staleInjectedEventsPath = join(staleInjectedDir, ".nxl", "events.jsonl")
+    const staleInjectedEvents = (await readFile(staleInjectedEventsPath, "utf8")).split(/\r?\n/).filter(Boolean).map((line) => {
+      const event = JSON.parse(line)
+      const makeStale = (value: unknown): unknown => {
+        if (!value || typeof value !== "object") return value
+        if (Array.isArray(value)) return value.map(makeStale)
+        const record = value as Record<string, unknown>
+        for (const [key, item] of Object.entries(record)) {
+          if (key.endsWith("_at") || key === "timestamp") record[key] = "2026-05-28T00:00:00.000Z"
+          else record[key] = makeStale(item)
+        }
+        return record
+      }
+      return JSON.stringify(makeStale(event))
+    }).join("\n") + "\n"
+    await writeFile(staleInjectedEventsPath, staleInjectedEvents)
+    const staleReadServer = new RuntimeServer({
+      projectDir: staleInjectedDir,
+      mode: "status",
+      researchProjectionMode: "disabled",
+      opencodeHandoffNow: () => new Date("2026-05-30T00:00:00.000Z"),
+    })
+    await expect(staleReadServer.command("runtime.preview_opencode_result_review_packet", { handoffId: "handoff_stale_injected", staleAfterMs: 1 })).resolves.toMatchObject({
+      status: "stale",
+      warnings: expect.arrayContaining([expect.stringContaining("stale")]),
+    })
+    await expect(staleReadServer.command("runtime.preview_opencode_result_review_packet", { handoffId: "handoff_stale_injected", staleAfterMs: 30 * 24 * 60 * 60 * 1000 })).resolves.toMatchObject({
+      status: "needs_result",
+      blockers: [],
+      warnings: expect.arrayContaining([expect.stringContaining("no submitted mission result")]),
+    })
+    await expect(staleReadServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
+      total_considered: 1,
+      stale_count: 1,
+      blocked_count: 0,
+    })
+
+    const freshProgressDir = await tempProject()
+    await makeProject(freshProgressDir, { approvedSpec: true })
+    const freshProgressServer = new RuntimeServer({
+      projectDir: freshProgressDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_old_with_fresh_progress",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await freshProgressServer.start()
+    const freshProgressProposal = await freshProgressServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "fresh progress handoff",
+      summary: "fresh progress summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "fresh progress executor work", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const freshProgressReview = await freshProgressServer.command("runtime.request_proposal_review", { proposalId: freshProgressProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await freshProgressServer.command("runtime.approve_review_request", { reviewId: freshProgressReview.review_id, decidedBy: "operator", reason: "approved" })
+    const freshProgressHandoff = await freshProgressServer.command("runtime.execute_opencode_handoff", { proposalId: freshProgressProposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const freshProgressClaim = await freshProgressServer.command("runtime.claim_mission", { missionId: freshProgressHandoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    await freshProgressServer.command("runtime.record_mission_progress", { missionId: freshProgressHandoff.mission_id, claimId: freshProgressClaim.claim_id, message: "fresh activity after old handoff" })
+    await expect(freshProgressServer.command("runtime.preview_opencode_result_review_packet", { handoffId: "handoff_old_with_fresh_progress", staleAfterMs: 1 })).resolves.toMatchObject({
+      status: "needs_result",
+      warnings: expect.arrayContaining([expect.stringContaining("no submitted mission result")]),
+    })
+    await expect(freshProgressServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
+      total_considered: 1,
+      needs_result_count: 1,
+      stale_count: 0,
+    })
+    await freshProgressServer.shutdown()
+
+    const blockedDir = await tempProject()
+    await makeProject(blockedDir, { approvedSpec: true })
+    const blockedServer = new RuntimeServer({
+      projectDir: blockedDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+    })
+    await blockedServer.start()
+    await blockedServer.eventStore.append({
+      kind: "opencode_handoff_started",
+      handoff_id: "handoff_blocked_packet",
+      proposal_id: "proposal_blocked_packet",
+      objective_preview: "blocked packet",
+      started_at: new Date().toISOString(),
+      requested_by: "operator",
+      evidence_ids: [],
+    })
+    await expect(blockedServer.command("runtime.preview_opencode_result_review_packet", { handoffId: "handoff_blocked_packet", staleAfterMs: 86_400_000 })).resolves.toMatchObject({
+      status: "blocked",
+      blockers: expect.arrayContaining([expect.stringContaining("blocked")]),
+    })
+    await expect(blockedServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 86_400_000 })).resolves.toMatchObject({
+      total_considered: 1,
+      blocked_count: 1,
+      failed_count: 0,
+    })
+    await blockedServer.shutdown()
+
+    const agedBlockedDir = await tempProject()
+    await makeProject(agedBlockedDir, { approvedSpec: true })
+    const agedBlockedServer = new RuntimeServer({
+      projectDir: agedBlockedDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffNow: () => new Date("2026-05-30T00:00:00.000Z"),
+    })
+    await agedBlockedServer.start()
+    const agedBlockedProposal = await agedBlockedServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "aged started handoff",
+      summary: "aged started summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "aged started executor work", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const agedBlockedReview = await agedBlockedServer.command("runtime.request_proposal_review", { proposalId: agedBlockedProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await agedBlockedServer.command("runtime.approve_review_request", { reviewId: agedBlockedReview.review_id, decidedBy: "operator", reason: "approved" })
+    await agedBlockedServer.eventStore.append({
+      kind: "opencode_handoff_started",
+      handoff_id: "handoff_aged_started_blocked",
+      proposal_id: agedBlockedProposal.proposal_id,
+      review_id: agedBlockedReview.review_id,
+      objective_preview: "aged started handoff",
+      started_at: "2026-05-28T00:00:00.000Z",
+      requested_by: "operator",
+      evidence_ids: [],
+    })
+    await expect(agedBlockedServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
+      total_considered: 1,
+      blocked_count: 1,
+      stale_count: 0,
+    })
+    await agedBlockedServer.shutdown()
+
+    const latestFollowupDir = await tempProject()
+    await makeProject(latestFollowupDir, { approvedSpec: true })
+    const latestFollowupServer = new RuntimeServer({
+      projectDir: latestFollowupDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_older_ready",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await latestFollowupServer.start()
+    const olderProposal = await latestFollowupServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "older handoff",
+      summary: "older summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "older executor work", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const olderReview = await latestFollowupServer.command("runtime.request_proposal_review", { proposalId: olderProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await latestFollowupServer.command("runtime.approve_review_request", { reviewId: olderReview.review_id, decidedBy: "operator", reason: "approved" })
+    const olderHandoff = await latestFollowupServer.command("runtime.execute_opencode_handoff", { proposalId: olderProposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const olderClaim = await latestFollowupServer.command("runtime.claim_mission", { missionId: olderHandoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    await latestFollowupServer.command("runtime.submit_mission_result", { missionId: olderHandoff.mission_id, claimId: olderClaim.claim_id, summary: "older successful result" })
+    await latestFollowupServer.eventStore.append({
+      kind: "opencode_handoff_started",
+      handoff_id: "handoff_newer_blocked",
+      proposal_id: "proposal_newer_missing",
+      objective_preview: "newer blocked handoff",
+      started_at: "2030-05-29T00:00:00.000Z",
+      requested_by: "operator",
+      evidence_ids: [],
+    })
+    await expect(latestFollowupServer.command("runtime.preview_opencode_result_review_packet")).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: "handoff_newer_blocked",
+      blockers: expect.arrayContaining([expect.stringContaining("commander proposal not found")]),
+    })
+    await latestFollowupServer.shutdown()
+
+    const failedDir = await tempProject()
+    await makeProject(failedDir, { approvedSpec: true })
+    const failedServer = new RuntimeServer({
+      projectDir: failedDir,
+      adapter: new ThrowingMissionAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_failed_packet",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await failedServer.start()
+    const failedProposal = await failedServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "failing executor work", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const failedReview = await failedServer.command("runtime.request_proposal_review", { proposalId: failedProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await failedServer.command("runtime.approve_review_request", { reviewId: failedReview.review_id, decidedBy: "operator", reason: "approved" })
+    await expect(failedServer.command("runtime.execute_opencode_handoff", { proposalId: failedProposal.proposal_id, requestedBy: "operator" })).rejects.toThrow("adapter send failed")
+    const before = await readEventKinds(failedDir)
+    await expect(failedServer.command("runtime.preview_opencode_result_review_packet", { handoffId: "handoff_failed_packet" })).resolves.toMatchObject({
+      status: "failed",
+      blockers: expect.arrayContaining([expect.stringContaining("handoff follow-up is handoff_failed")]),
+    })
+    expect(await readEventKinds(failedDir)).toEqual(before)
+    await failedServer.shutdown()
+
+    const failedResultDir = await tempProject()
+    await makeProject(failedResultDir, { approvedSpec: true })
+    const failedResultServer = new RuntimeServer({
+      projectDir: failedResultDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_failed_after_result",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await failedResultServer.start()
+    const failedResultProposal = await failedResultServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "executor work with later failure", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const failedResultReview = await failedResultServer.command("runtime.request_proposal_review", { proposalId: failedResultProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await failedResultServer.command("runtime.approve_review_request", { reviewId: failedResultReview.review_id, decidedBy: "operator", reason: "approved" })
+    const failedResultHandoff = await failedResultServer.command("runtime.execute_opencode_handoff", { proposalId: failedResultProposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const failedResultClaim = await failedResultServer.command("runtime.claim_mission", { missionId: failedResultHandoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    const failedResult = await failedResultServer.command("runtime.submit_mission_result", { missionId: failedResultHandoff.mission_id, claimId: failedResultClaim.claim_id, summary: "result before later failure" }) as { result_id: string }
+    await failedResultServer.command("runtime.fail_mission", { missionId: failedResultHandoff.mission_id, reason: "later executor failure" })
+    await expect(failedResultServer.command("runtime.preview_opencode_result_review_packet", { resultId: failedResult.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      title: "OpenCode executor result review is blocked",
+      mission_id: failedResultHandoff.mission_id,
+      result_id: failedResult.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("mission is failed")]),
+    })
+    await expect(failedResultServer.command("runtime.preview_opencode_result_review_packet", { missionId: failedResultHandoff.mission_id, resultId: failedResult.result_id })).resolves.toMatchObject({
+      status: "blocked",
+      mission_id: failedResultHandoff.mission_id,
+      result_id: failedResult.result_id,
+      blockers: expect.arrayContaining([expect.stringContaining("mission is failed")]),
+    })
+    await expect(failedResultServer.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+      total_considered: 1,
+      failed_count: 1,
+      ready_count: 0,
+    })
+    await failedResultServer.shutdown()
+
+    const rejectedResultDir = await tempProject()
+    await makeProject(rejectedResultDir, { approvedSpec: true })
+    const rejectedResultServer = new RuntimeServer({
+      projectDir: rejectedResultDir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      opencodeHandoffId: () => "handoff_rejected_result",
+      opencodeHandoffNow: () => new Date("2026-05-28T00:00:00.000Z"),
+    })
+    await rejectedResultServer.start()
+    const rejectedResultProposal = await rejectedResultServer.command("runtime.create_commander_proposal", {
+      actionKind: "opencode_handoff",
+      title: "handoff",
+      summary: "summary",
+      proposedBy: "commander",
+      actionPayload: { objective: "executor work with rejected result", evidence_ids: ["evidence-1"] },
+    }) as { proposal_id: string }
+    const rejectedResultReview = await rejectedResultServer.command("runtime.request_proposal_review", { proposalId: rejectedResultProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await rejectedResultServer.command("runtime.approve_review_request", { reviewId: rejectedResultReview.review_id, decidedBy: "operator", reason: "approved" })
+    const rejectedResultHandoff = await rejectedResultServer.command("runtime.execute_opencode_handoff", { proposalId: rejectedResultProposal.proposal_id, requestedBy: "operator" }) as { mission_id: string }
+    const rejectedResultClaim = await rejectedResultServer.command("runtime.claim_mission", { missionId: rejectedResultHandoff.mission_id, executorId: "opencode" }) as { claim_id: string }
+    await rejectedResultServer.command("runtime.submit_mission_result", { missionId: rejectedResultHandoff.mission_id, claimId: rejectedResultClaim.claim_id, summary: "submitted before rejection" })
+    await rejectedResultServer.eventStore.append({
+      kind: "mission_result_submitted",
+      result: {
+        result_id: "result_rejected_packet",
+        mission_id: rejectedResultHandoff.mission_id,
+        claim_id: rejectedResultClaim.claim_id,
+        summary: "rejected executor result",
+        artifacts: [],
+        research_result_ids: [],
+        created_at: "2026-05-28T00:00:01.000Z",
+        status: "rejected",
+      },
+    })
+    await rejectedResultServer.shutdown()
+    const rejectedResultReadServer = new RuntimeServer({ projectDir: rejectedResultDir, mode: "status", researchProjectionMode: "disabled" })
+    await expect(rejectedResultReadServer.command("runtime.preview_opencode_result_review_packet", { resultId: "result_rejected_packet" })).resolves.toMatchObject({
+      status: "blocked",
+      title: "OpenCode executor result review is blocked",
+      result_id: "result_rejected_packet",
+      blockers: expect.arrayContaining([expect.stringContaining("mission result is rejected")]),
+    })
+    await expect(rejectedResultReadServer.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+      total_considered: 1,
+      blocked_count: 1,
+      ready_count: 0,
+    })
+  })
+
+  test("opencode result review packet resolves proposal handoffs beyond recent list caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await store.append({
+      kind: "opencode_handoff_created",
+      handoff: {
+        handoff_id: "handoff_old_target",
+        proposal_id: "proposal_old_target",
+        objective_preview: "old target objective",
+        sent: true,
+        dry_run: false,
+        created_at: "2026-05-28T00:00:00.000Z",
+        requested_by: "operator",
+        evidence_ids: [],
+      },
+    })
+    for (let index = 0; index < 101; index += 1) {
+      const hour = Math.floor(index / 60)
+      const minute = index % 60
+      await store.append({
+        kind: "opencode_handoff_created",
+        handoff: {
+          handoff_id: `handoff_recent_${index}`,
+          proposal_id: `proposal_recent_${index}`,
+          objective_preview: "recent objective",
+          sent: true,
+          dry_run: false,
+          created_at: `2026-05-28T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00.000Z`,
+          requested_by: "operator",
+          evidence_ids: [],
+        },
+      })
+    }
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
+
+    await expect(server.command("runtime.preview_opencode_result_review_packet", { proposalId: "proposal_old_target" })).resolves.toMatchObject({
+      status: "blocked",
+      handoff_id: "handoff_old_target",
+      proposal_id: "proposal_old_target",
+      blockers: expect.arrayContaining([expect.stringContaining("commander proposal not found")]),
+    })
   })
 
   test("opencode handoff execute sends mission through adapter records provenance and is idempotent", async () => {
@@ -12904,6 +13572,25 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.opencode_handoff_readiness_summary")).resolves.toMatchObject({
       total_considered: 1,
       needs_smoke_count: 1,
+    })
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
+  test("OpenCode result review packet commands do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_result_review_packet")).resolves.toMatchObject({
+      status: "blocked",
+      blockers: expect.arrayContaining([expect.stringContaining("no OpenCode handoff")]),
+    })
+    await expect(client.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+      total_considered: 0,
+      ready_count: 0,
     })
 
     expect(await readEventKinds(dir)).not.toContain("runtime_started")

@@ -492,4 +492,32 @@ describe("interactive runtime effect state merge", () => {
     expect(merged.opencodeHandoffReadiness?.preview?.status).toBe("needs_smoke")
     expect(merged.opencodeHandoffReadiness?.preview?.blockers).toContain("no OpenCode process smoke record found")
   })
+
+  test("preserves OpenCode result review packet updates from async runtime effects", () => {
+    const baseline = initialState("/tmp/demo")
+    const current = initialState("/tmp/demo")
+    const effectResult = initialState("/tmp/demo")
+    effectResult.opencodeResultReview = {
+      packet: {
+        packet_id: "packet-1",
+        status: "needs_result",
+        handoff_id: "handoff-1",
+        title: "OpenCode executor handoff needs a mission result",
+        artifact_previews: [],
+        evidence: [],
+        blockers: [],
+        warnings: ["executor outcome has no submitted mission result yet"],
+        recommended_commands: [],
+        generated_at: "1970-01-01T00:00:00.000Z",
+        redacted_summary_preview: "executor outcome has no submitted mission result yet",
+      },
+      summary: null,
+      records: [],
+    }
+
+    const merged = mergeRuntimeEffectState(current, effectResult, 0, baseline)
+
+    expect(merged.opencodeResultReview?.packet?.status).toBe("needs_result")
+    expect(merged.opencodeResultReview?.packet?.warnings).toContain("executor outcome has no submitted mission result yet")
+  })
 })

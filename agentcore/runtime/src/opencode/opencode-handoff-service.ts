@@ -214,6 +214,11 @@ export class OpenCodeHandoffService {
     return redactValue((await this.results()).find((item) => item.handoff_id === id) ?? null)
   }
 
+  async getByProposal(proposalId: string): Promise<OpenCodeHandoffResult | null> {
+    const id = cleanRequiredString(proposalId, "proposal_id")
+    return redactValue((await this.results()).slice().reverse().find((item) => item.proposal_id === id) ?? null)
+  }
+
   async list(limit = 20): Promise<OpenCodeHandoffRecord[]> {
     if (!Number.isInteger(limit) || limit < 1) throw new Error("handoff list limit must be a positive integer")
     return redactValue((await this.results()).slice().reverse().slice(0, Math.min(limit, 100)).map(recordFromResult))

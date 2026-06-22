@@ -67,9 +67,22 @@ export class OpenCodeHandoffFollowupService {
     this.now = options.now ?? (() => new Date())
   }
 
-  async get(handoffId: string): Promise<OpenCodeHandoffFollowup | null> {
+  async get(handoffId: string, options: { staleAfterMs?: number } = {}): Promise<OpenCodeHandoffFollowup | null> {
     const id = cleanRequiredString(handoffId, "handoff_id")
-    return redactValue((await this.all()).find((item) => item.handoff_id === id) ?? null)
+    const staleAfterMs = readStaleAfterMs(options.staleAfterMs)
+    return redactValue((await this.all(staleAfterMs)).find((item) => item.handoff_id === id) ?? null)
+  }
+
+  async getByProposal(proposalId: string, options: { staleAfterMs?: number } = {}): Promise<OpenCodeHandoffFollowup | null> {
+    const id = cleanRequiredString(proposalId, "proposal_id")
+    const staleAfterMs = readStaleAfterMs(options.staleAfterMs)
+    return redactValue((await this.all(staleAfterMs)).slice().reverse().find((item) => item.proposal_id === id) ?? null)
+  }
+
+  async getByMission(missionId: string, options: { staleAfterMs?: number } = {}): Promise<OpenCodeHandoffFollowup | null> {
+    const id = cleanRequiredString(missionId, "mission_id")
+    const staleAfterMs = readStaleAfterMs(options.staleAfterMs)
+    return redactValue((await this.all(staleAfterMs)).slice().reverse().find((item) => item.mission_id === id) ?? null)
   }
 
   async list(options: { limit?: number; staleAfterMs?: number } = {}): Promise<OpenCodeHandoffFollowup[]> {

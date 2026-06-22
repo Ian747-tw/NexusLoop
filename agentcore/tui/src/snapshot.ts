@@ -81,6 +81,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeHandoffLines(state))
   out.push(...opencodeProcessSmokeLines(state))
   out.push(...opencodeHandoffReadinessLines(state))
+  out.push(...opencodeResultReviewLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
@@ -459,6 +460,61 @@ function opencodeHandoffReadinessLines(state: UiState): string[] {
   }
   if (readiness.commandError) out.push(`  command_error=${redactText(readiness.commandError)}`)
   out.push("  note=readiness preview does not execute handoff or launch OpenCode")
+  return out
+}
+
+function opencodeResultReviewLines(state: UiState): string[] {
+  const review = state.opencodeResultReview
+  const out = ["OpenCode result review packet"]
+  if (!review) {
+    out.push("  packet=none")
+    out.push("  note=packet preview does not call Commander/provider or create proposals")
+    return out
+  }
+  if (review.summary) {
+    const summary = review.summary
+    out.push(`  summary total=${summary.total_considered} ready=${summary.ready_count} needs_result=${summary.needs_result_count} failed=${summary.failed_count} blocked=${summary.blocked_count} stale=${summary.stale_count}`)
+    out.push(`  latest_handoff=${summary.latest_handoff_id ?? "none"} latest_result=${summary.latest_result_id ?? "none"}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (review.packet) {
+    const packet = review.packet
+    out.push(`  packet=${packet.packet_id} status=${packet.status}`)
+    out.push(`  targets handoff=${packet.handoff_id ?? "none"} followup=${packet.followup_id ?? "none"} mission=${packet.mission_id ?? "none"} result=${packet.result_id ?? "none"} proposal=${packet.proposal_id ?? "none"} review=${packet.review_id ?? "none"}`)
+    out.push(`  title=${preview(redactText(packet.title))}`)
+    if (packet.objective_preview) out.push(`  objective=${preview(redactText(packet.objective_preview))}`)
+    if (packet.executor_summary_preview) out.push(`  executor=${preview(redactText(packet.executor_summary_preview))}`)
+    if (packet.result_summary_preview) out.push(`  result=${preview(redactText(packet.result_summary_preview))}`)
+    if (packet.redacted_summary_preview) out.push(`  summary_preview=${preview(redactText(packet.redacted_summary_preview))}`)
+    if (packet.artifact_previews.length > 0) {
+      out.push("  artifacts")
+      out.push(...packet.artifact_previews.slice(0, 10).map((artifact) => `    - ${preview(redactText(artifact))}`))
+    }
+    if (packet.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...packet.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (packet.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...packet.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  evidence")
+    if (packet.evidence.length === 0) out.push("    - empty")
+    else out.push(...packet.evidence.slice(0, 10).map((item) => `    - ${item.kind}:${item.status} fresh=${item.fresh} ${preview(redactText(item.summary_preview))}`))
+    out.push("  recommended_commands")
+    if (packet.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...packet.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  packet=none")
+  }
+  out.push(`  records=${review.records.length}`)
+  if (review.records.length > 0) {
+    out.push("  recent_packets")
+    out.push(...review.records.slice(0, 10).map((record) => `    - ${record.packet_id} status=${record.status} handoff=${record.handoff_id ?? "none"} mission=${record.mission_id ?? "none"}: ${preview(redactText(record.summary_preview))}`))
+  }
+  if (review.commandError) out.push(`  command_error=${redactText(review.commandError)}`)
+  out.push("  note=packet preview does not call Commander/provider or create proposals")
   return out
 }
 
