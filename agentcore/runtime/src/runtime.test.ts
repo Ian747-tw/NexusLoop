@@ -14112,10 +14112,17 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
-  test("commander executor review read and dry-run commands do not auto-start the runtime", async () => {
+  test("commander executor review commands do not auto-start the runtime", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
-    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), commanderExecutorReviewId: () => "executor_review_no_start" })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, commanderExecutorReviewId: () => "executor_review_no_start" })
+    const originalStart = server.start.bind(server)
+    let serverStartCalls = 0
+    server.start = async (...args: Parameters<typeof server.start>) => {
+      serverStartCalls += 1
+      return originalStart(...args)
+    }
     const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
 
     await expect(client.command("runtime.preview_commander_executor_review")).resolves.toMatchObject({
@@ -14132,18 +14139,22 @@ describe("RuntimeServerClient", () => {
     })
     await expect(client.command("runtime.list_commander_executor_reviews")).resolves.toEqual([])
     await expect(client.command("runtime.get_commander_executor_review", { reviewId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.execute_commander_executor_review", { requested_by: "operator" })).rejects.toThrow("runtime must be started before commander executor review writes")
 
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
     expect(await readEventKinds(dir)).not.toContain("commander_executor_review_blocked")
+    expect(serverStartCalls).toBe(0)
+    expect(adapter.startCalls).toBe(0)
     await client.shutdown()
   })
 
-  test("commander executor review writes can auto-start the runtime", async () => {
+  test("commander executor review writes work after explicit runtime start", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), commanderExecutorReviewId: () => "executor_review_auto_start" })
     const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
 
+    await client.start()
     await expect(client.command("runtime.execute_commander_executor_review", { requested_by: "operator" })).resolves.toMatchObject({
       review_id: "executor_review_auto_start",
       status: "blocked",

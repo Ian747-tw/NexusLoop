@@ -17,6 +17,7 @@ const noStartCommands = new Set([
   "runtime.preview_opencode_result_review_packet",
   "runtime.opencode_result_review_summary",
   "runtime.preview_commander_executor_review",
+  "runtime.execute_commander_executor_review",
   "runtime.list_commander_executor_reviews",
   "runtime.get_commander_executor_review",
 ])
@@ -142,7 +143,6 @@ export class RuntimeServerClient implements RuntimeClient {
   private async shouldAutoStart(name: string, payload: Record<string, unknown>): Promise<boolean> {
     if (name === "runtime.shutdown") return false
     if (name === "runtime.execute_opencode_process_smoke" && (payload.dryRun === true || payload.dry_run === true)) return false
-    if (name === "runtime.execute_commander_executor_review" && (payload.dryRun === true || payload.dry_run === true)) return false
     if (name === "runtime.execute_opencode_process_smoke") {
       const preview = await this.server.command("runtime.preview_opencode_process_smoke", {
         timeoutMs: payload.timeoutMs,

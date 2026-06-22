@@ -68,6 +68,7 @@ def test_user_runs_commander_executor_review_without_live_execution(sandbox) -> 
     assert "screen=main" in result.stdout
     assert "Commander executor review" in result.stdout
     assert "note=executor review does not create proposals or apply changes" in result.stdout
+    assert "runtime must be started before commander executor review writes" in result.stdout
     assert "Command authority" in result.stdout
     assert "selected=/executor-review risk=high_impact_write" in result.stdout
     assert "OpenCode result review packet" in result.stdout
@@ -116,9 +117,9 @@ def test_user_runs_commander_executor_review_without_live_execution(sandbox) -> 
         "runtime_wake_scheduler_recovery_workflow_step_recorded",
     }
     assert forbidden.isdisjoint(event_kinds)
-    allowed_metadata = {"runtime_started", "runtime_shutdown"}
-    assert any(kind.startswith("commander_executor_review_") for kind in event_kinds)
-    assert all(kind.startswith("commander_executor_review_") or kind in allowed_metadata for kind in event_kinds)
+    assert "runtime_started" not in event_kinds
+    assert not any(kind.startswith("commander_executor_review_") for kind in event_kinds)
+    assert all(kind == "runtime_shutdown" for kind in event_kinds)
     serialized_events = json.dumps(events)
     assert "executor-review-secret" not in serialized_events
     assert "executor-review-secret-abc123" not in serialized_events
