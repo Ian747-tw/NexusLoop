@@ -5236,10 +5236,11 @@ function readStringFields(value: unknown): Record<string, string> {
   return out
 }
 
-function readReasoningSurface(value: unknown): "research_synthesis" | "commander_cycle" {
+function readReasoningSurface(value: unknown): "research_synthesis" | "commander_cycle" | "commander_executor_review" {
   if (value === undefined || value === "research" || value === "research_synthesis") return "research_synthesis"
   if (value === "cycle" || value === "commander_cycle") return "commander_cycle"
-  throw new Error("reasoning smoke surface must be research_synthesis or commander_cycle")
+  if (value === "executor_review" || value === "commander_executor_review") return "commander_executor_review"
+  throw new Error("reasoning smoke surface must be research_synthesis, commander_cycle, or commander_executor_review")
 }
 
 function continuationRecord(plan: ContinuationPlanSummary): ContinuationPlanRecordSummary {

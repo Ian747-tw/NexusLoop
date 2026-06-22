@@ -2832,10 +2832,12 @@ describe("RuntimeServer core", () => {
     await makeProject(dir, { approvedSpec: true })
     const statusServer = new RuntimeServer({ projectDir: dir, mode: "status", researchProjectionMode: "disabled" })
     await expect(statusServer.command("runtime.preview_commander_executor_review")).resolves.toMatchObject({ can_execute: false })
+    await expect(statusServer.command("runtime.preview_commander_executor_review", { packetId: "packet-1" })).rejects.toThrow("packet_id is not supported")
     await expect(statusServer.command("runtime.list_commander_executor_reviews")).resolves.toEqual([])
     await expect(statusServer.command("runtime.execute_commander_executor_review")).rejects.toThrow("requires active mode")
 
     const activeServer = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled" })
+    await expect(activeServer.command("runtime.execute_commander_executor_review", { packet_id: "packet-1" })).rejects.toThrow("packet_id is not supported")
     await expect(activeServer.command("runtime.execute_commander_executor_review")).rejects.toThrow("runtime must be started before commander executor review writes")
   })
 
@@ -6570,6 +6572,8 @@ describe("RuntimeServer core", () => {
     expect(fakeHealth).toMatchObject({ kind: "fake", status: "ok" })
     const fakePreview = await fakeServer.command("runtime.preview_reasoning_provider_smoke", { surface: "research" })
     expect(fakePreview).toMatchObject({ kind: "fake", surface: "research_synthesis", would_call_network: false })
+    const fakeExecutorPreview = await fakeServer.command("runtime.preview_reasoning_provider_smoke", { surface: "commander_executor_review" })
+    expect(fakeExecutorPreview).toMatchObject({ kind: "fake", surface: "commander_executor_review", would_call_network: false })
     await fakeServer.shutdown()
 
     const dir = await tempProject()
@@ -6628,6 +6632,8 @@ describe("RuntimeServer core", () => {
     await smokeServer.start()
     const dryRun = await smokeServer.command("runtime.execute_reasoning_provider_smoke", { surface: "cycle", dryRun: true, requestedBy: "operator" })
     expect(dryRun).toMatchObject({ ok: true, dry_run: true, parsed: false })
+    const executorReviewDryRun = await smokeServer.command("runtime.execute_reasoning_provider_smoke", { surface: "commander_executor_review", dryRun: true, requestedBy: "operator" })
+    expect(executorReviewDryRun).toMatchObject({ surface: "commander_executor_review", ok: false, dry_run: true, parsed: false, error: expect.stringContaining("not enabled") })
     expect(smokeTransport.requests).toHaveLength(0)
     const result = await smokeServer.command("runtime.execute_reasoning_provider_smoke", { surface: "research", requestedBy: "operator" })
     expect(result).toMatchObject({ ok: true, parsed: true, request_id: "api_smoke" })

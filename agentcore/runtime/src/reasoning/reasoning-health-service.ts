@@ -400,6 +400,7 @@ function previewConnector(config: ReasoningProviderConfig, registry: ExternalApi
 }
 
 function minimaxSmokeRequest(config: ReasoningProviderConfig, surface: ReasoningProviderSurface): Record<string, unknown> {
+  const schema = surface === "research_synthesis" ? researchSmokeSchema() : cycleSmokeSchema()
   return {
     model: config.model ?? "",
     max_tokens: Math.max(1, Math.floor(Math.min(1024, config.max_output_bytes) / 4)),
@@ -409,7 +410,7 @@ function minimaxSmokeRequest(config: ReasoningProviderConfig, surface: Reasoning
       content: JSON.stringify({
         task: "reasoning_provider_smoke",
         surface,
-        schema: surface === "research_synthesis" ? researchSmokeSchema() : cycleSmokeSchema(),
+        schema,
         evidence_ids: ["smoke_evidence"],
         synthesis_ids: ["smoke_synthesis"],
       }),
@@ -519,7 +520,8 @@ function requiredString(value: unknown, field: string): string {
 function readSurface(value: unknown): ReasoningProviderSurface {
   if (value === undefined || value === "research" || value === "research_synthesis") return "research_synthesis"
   if (value === "cycle" || value === "commander_cycle") return "commander_cycle"
-  throw new Error("reasoning smoke surface must be research_synthesis or commander_cycle")
+  if (value === "executor_review" || value === "commander_executor_review") return "commander_executor_review"
+  throw new Error("reasoning smoke surface must be research_synthesis, commander_cycle, or commander_executor_review")
 }
 
 function isAuthBearingHeader(key: string): boolean {

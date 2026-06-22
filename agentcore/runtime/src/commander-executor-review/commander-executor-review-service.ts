@@ -282,13 +282,15 @@ export class CommanderExecutorReviewService {
 
 export function readCommanderExecutorReviewInput(value: unknown): CommanderExecutorReviewInput {
   if (!isRecord(value)) return {}
+  if (value.packet_id !== undefined || value.packetId !== undefined) {
+    throw new Error("executor review packet_id is not supported; pass handoff_id, followup_id, mission_id, result_id, or proposal_id")
+  }
   return {
     handoff_id: optional(value.handoff_id ?? value.handoffId),
     followup_id: optional(value.followup_id ?? value.followupId),
     mission_id: optional(value.mission_id ?? value.missionId),
     result_id: optional(value.result_id ?? value.resultId),
     proposal_id: optional(value.proposal_id ?? value.proposalId),
-    packet_id: optional(value.packet_id ?? value.packetId),
     requested_by: optional(value.requested_by ?? value.requestedBy),
     dry_run: value.dry_run === true || value.dryRun === true,
     max_packet_age_ms: optionalNumber(value.max_packet_age_ms ?? value.maxPacketAgeMs),

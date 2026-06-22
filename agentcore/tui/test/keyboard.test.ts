@@ -245,6 +245,14 @@ describe("TUI keyboard command model", () => {
       { type: "send-command", command: "reasoning-smoke-preview", args: ["research"] },
     ])
 
+    result = applyKeyCommandWithEffects({
+      ...state,
+      messageDraft: "/reasoning-smoke-preview commander_executor_review",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "reasoning-smoke-preview", args: ["commander_executor_review"] },
+    ])
+
     for (const message of ["/tmp/repro/reasoning", "/path/reasoning", ".reasoning", ":reasoning-smoke"]) {
       result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),

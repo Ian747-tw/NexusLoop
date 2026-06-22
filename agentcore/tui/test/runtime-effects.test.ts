@@ -2682,6 +2682,11 @@ describe("runtime UI effects", () => {
     snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("smoke_result=commander_cycle ok dry_run=true parsed=false")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "reasoning-smoke-preview", args: ["commander_executor_review"] })
+    expect(state.reasoningProvider?.smokePreview).toMatchObject({ surface: "commander_executor_review", would_call_network: false })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("smoke_preview=commander_executor_review network=no")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "reasoning-smoke", args: ["research"] })
     expect(state.reasoningProvider?.lastSmoke).toMatchObject({ surface: "research_synthesis", ok: true, dry_run: false, parsed: true })
     expect(JSON.stringify(state)).not.toContain("raw-secret")

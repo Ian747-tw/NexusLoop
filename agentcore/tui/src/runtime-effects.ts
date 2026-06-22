@@ -10097,8 +10097,8 @@ function optionalSurfaceArg(args: string[]): string | undefined {
   if (args.length === 0) return undefined
   if (args.length > 1) throw new Error("reasoning smoke accepts one optional surface")
   const value = args[0]
-  if (value === "research" || value === "research_synthesis" || value === "cycle" || value === "commander_cycle") return value
-  throw new Error("reasoning smoke surface must be research_synthesis or commander_cycle")
+  if (value === "research" || value === "research_synthesis" || value === "cycle" || value === "commander_cycle" || value === "executor_review" || value === "commander_executor_review") return value
+  throw new Error("reasoning smoke surface must be research_synthesis, commander_cycle, or commander_executor_review")
 }
 
 function optionalRest(args: string[], index: number): string | undefined {
