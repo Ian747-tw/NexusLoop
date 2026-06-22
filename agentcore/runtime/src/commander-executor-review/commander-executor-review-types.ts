@@ -86,7 +86,6 @@ export type CommanderExecutorReviewInput = {
   mission_id?: string
   result_id?: string
   proposal_id?: string
-  packet_id?: string
   requested_by?: string
   dry_run?: boolean
   max_packet_age_ms?: number
