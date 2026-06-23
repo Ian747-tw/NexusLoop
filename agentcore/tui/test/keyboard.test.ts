@@ -245,6 +245,14 @@ describe("TUI keyboard command model", () => {
       { type: "send-command", command: "reasoning-smoke-preview", args: ["research"] },
     ])
 
+    result = applyKeyCommandWithEffects({
+      ...state,
+      messageDraft: "/reasoning-smoke-preview commander_executor_review",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "reasoning-smoke-preview", args: ["commander_executor_review"] },
+    ])
+
     for (const message of ["/tmp/repro/reasoning", "/path/reasoning", ".reasoning", ":reasoning-smoke"]) {
       result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
@@ -782,6 +790,14 @@ describe("TUI keyboard command model", () => {
       ["/opencode-result-review mission=mission-1", "opencode-result-review", ["mission=mission-1"]],
       ["/executor-result-review result=result-1", "executor-result-review", ["result=result-1"]],
       ["/handoff-result-review proposal=proposal-1", "handoff-result-review", ["proposal=proposal-1"]],
+      ["/executor-review-preview result=result-1", "executor-review-preview", ["result=result-1"]],
+      ["/executor-review result=result-1", "executor-review", ["result=result-1"]],
+      ["/executor-review-dry-run result=result-1", "executor-review-dry-run", ["result=result-1"]],
+      ["/executor-reviews", "executor-reviews", []],
+      ["/executor-review-show review-1", "executor-review-show", ["review-1"]],
+      ["/commander-executor-review-preview mission=mission-1", "commander-executor-review-preview", ["mission=mission-1"]],
+      ["/commander-executor-review result=result-1", "commander-executor-review", ["result=result-1"]],
+      ["/commander-executor-reviews", "commander-executor-reviews", []],
       ["/scheduler-stop e2e stop", "scheduler-stop", ["e2e", "stop"]],
       ["/scheduler-events", "scheduler-events", []],
       ["/wake-scheduler-preview every=60s", "wake-scheduler-preview", ["every=60s"]],
@@ -804,7 +820,7 @@ describe("TUI keyboard command model", () => {
       expect(result.effects).toEqual([{ type: "send-command", command, ...(args.length > 0 ? { args: [...args] } : {}) }])
     }
 
-    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap", "/tmp/repro/scheduler-recovery", "/path/scheduler-recovery-ack", ".scheduler-recovery", ":scheduler-recovery", "/tmp/repro/scheduler-recovery-workflow", "/path/scheduler-recovery-step-done", ".scheduler-recovery-workflow", ":scheduler-recovery-step-done", "/tmp/repro/scheduler-audit", "/path/scheduler-audit-chain", ".scheduler-audit", ":scheduler-audit", "/tmp/repro/scheduler-nav", "/path/scheduler-nav-target", ".scheduler-nav", ":scheduler-nav", "/tmp/repro/scheduler-nav-stage", "/path/scheduler-nav-stage-preview", ".scheduler-nav-stage", ":scheduler-nav-stage", "/tmp/repro/scheduler-nav-run", "/path/scheduler-nav-run-preview", ".scheduler-nav-run", ":scheduler-nav-run", "/tmp/repro/scheduler-nav-read-history", "/path/scheduler-nav-read-compare", ".scheduler-nav-read-history", ":scheduler-nav-read-compare", "/tmp/repro/scheduler-nav-write-preview", "/path/scheduler-nav-write-board", ".scheduler-nav-write-preview", ":scheduler-write-board", "/tmp/repro/scheduler-nav-write-stage", "/path/scheduler-nav-write-stage-preview", ".scheduler-nav-write-stage", ":scheduler-write-stage", "/tmp/repro/scheduler-nav-write-run", "/path/scheduler-nav-write-run-preview", ".scheduler-nav-write-run", ":scheduler-write-run", "/tmp/repro/scheduler-nav-write-run-history", "/path/scheduler-nav-write-run-compare", ".scheduler-nav-write-run-history", ":scheduler-write-run-compare", "/tmp/repro/scheduler-nav-write-approve", "/path/scheduler-nav-write-readiness", ".scheduler-nav-write-approve", ":scheduler-write-readiness", "/tmp/repro/scheduler-nav-checkpoint-run", "/path/scheduler-nav-checkpoint-run-preview", ".scheduler-nav-checkpoint-run", ":scheduler-checkpoint-run", "/tmp/repro/scheduler-nav-checkpoint-history", "/path/scheduler-nav-checkpoint-compare", ".scheduler-nav-checkpoint-history", ":scheduler-checkpoint-compare", "/tmp/repro/authority", "/path/authority-show", ".authority", ":authority", "/tmp/repro/result-review-packet", "/path/result-review-summary", ".result-review-packet", ":result-review-packet"]) {
+    for (const message of ["/tmp/repro/wake-tick", "/path/wake-schedule", ".wake-tick", ":wake-schedule schedule-1", "/tmp/repro/scheduler-start", "/path/scheduler-events", ".scheduler-start", ":scheduler-start", "/tmp/repro/scheduler-bootstrap", "/path/scheduler-bootstrap-preview", ".scheduler-bootstrap", ":scheduler-bootstrap", "/tmp/repro/scheduler-recovery", "/path/scheduler-recovery-ack", ".scheduler-recovery", ":scheduler-recovery", "/tmp/repro/scheduler-recovery-workflow", "/path/scheduler-recovery-step-done", ".scheduler-recovery-workflow", ":scheduler-recovery-step-done", "/tmp/repro/scheduler-audit", "/path/scheduler-audit-chain", ".scheduler-audit", ":scheduler-audit", "/tmp/repro/scheduler-nav", "/path/scheduler-nav-target", ".scheduler-nav", ":scheduler-nav", "/tmp/repro/scheduler-nav-stage", "/path/scheduler-nav-stage-preview", ".scheduler-nav-stage", ":scheduler-nav-stage", "/tmp/repro/scheduler-nav-run", "/path/scheduler-nav-run-preview", ".scheduler-nav-run", ":scheduler-nav-run", "/tmp/repro/scheduler-nav-read-history", "/path/scheduler-nav-read-compare", ".scheduler-nav-read-history", ":scheduler-nav-read-compare", "/tmp/repro/scheduler-nav-write-preview", "/path/scheduler-nav-write-board", ".scheduler-nav-write-preview", ":scheduler-write-board", "/tmp/repro/scheduler-nav-write-stage", "/path/scheduler-nav-write-stage-preview", ".scheduler-nav-write-stage", ":scheduler-write-stage", "/tmp/repro/scheduler-nav-write-run", "/path/scheduler-nav-write-run-preview", ".scheduler-nav-write-run", ":scheduler-write-run", "/tmp/repro/scheduler-nav-write-run-history", "/path/scheduler-nav-write-run-compare", ".scheduler-nav-write-run-history", ":scheduler-write-run-compare", "/tmp/repro/scheduler-nav-write-approve", "/path/scheduler-nav-write-readiness", ".scheduler-nav-write-approve", ":scheduler-write-readiness", "/tmp/repro/scheduler-nav-checkpoint-run", "/path/scheduler-nav-checkpoint-run-preview", ".scheduler-nav-checkpoint-run", ":scheduler-checkpoint-run", "/tmp/repro/scheduler-nav-checkpoint-history", "/path/scheduler-nav-checkpoint-compare", ".scheduler-nav-checkpoint-history", ":scheduler-checkpoint-compare", "/tmp/repro/authority", "/path/authority-show", ".authority", ":authority", "/tmp/repro/result-review-packet", "/path/result-review-summary", ".result-review-packet", ":result-review-packet", "/tmp/repro/executor-review", "/path/executor-review-preview", ".executor-review", ":executor-review"]) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",

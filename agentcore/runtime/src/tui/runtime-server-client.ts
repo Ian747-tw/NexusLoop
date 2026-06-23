@@ -16,6 +16,10 @@ const noStartCommands = new Set([
   "runtime.opencode_handoff_readiness_summary",
   "runtime.preview_opencode_result_review_packet",
   "runtime.opencode_result_review_summary",
+  "runtime.preview_commander_executor_review",
+  "runtime.execute_commander_executor_review",
+  "runtime.list_commander_executor_reviews",
+  "runtime.get_commander_executor_review",
 ])
 
 export interface RuntimeServerClientOptions {

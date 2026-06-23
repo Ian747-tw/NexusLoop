@@ -32,6 +32,12 @@ import type {
   OpenCodeResultReviewPacketSummary,
   OpenCodeResultReviewState,
   OpenCodeResultReviewSummary,
+  CommanderExecutorReviewCommandSummary,
+  CommanderExecutorReviewFindingSummary,
+  CommanderExecutorReviewPreviewSummary,
+  CommanderExecutorReviewRecordSummary,
+  CommanderExecutorReviewResultSummary,
+  CommanderExecutorReviewState,
   OpenCodeHandoffRecordSummary,
   OpenCodeHandoffResultSummary,
   OpenCodeHandoffState,
@@ -313,6 +319,10 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-handoff-readiness-summary"; maxSmokeAgeMs?: number }
   | { type: "preview-opencode-result-review-packet"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; staleAfterMs?: number }
   | { type: "load-opencode-result-review-summary"; staleAfterMs?: number; limit?: number }
+  | { type: "preview-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string }
+  | { type: "execute-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; dryRun?: boolean }
+  | { type: "load-commander-executor-reviews"; limit?: number }
+  | { type: "load-commander-executor-review"; reviewId: string }
   | { type: "load-opencode-handoff-followup"; handoffId: string }
   | { type: "load-opencode-handoff-followups"; limit?: number }
   | { type: "load-opencode-handoff-followup-summary" }
@@ -981,6 +991,41 @@ export async function applyRuntimeUiEffect(
           state,
           await runtime.command("runtime.opencode_result_review_summary", { staleAfterMs: effect.staleAfterMs, limit: effect.limit }),
         )
+      case "preview-commander-executor-review":
+        return applyCommanderExecutorReviewPreview(
+          state,
+          await runtime.command("runtime.preview_commander_executor_review", {
+            handoff_id: effect.handoffId,
+            followup_id: effect.followupId,
+            mission_id: effect.missionId,
+            result_id: effect.resultId,
+            proposal_id: effect.proposalId,
+          }),
+        )
+      case "execute-commander-executor-review":
+        return applyCommanderExecutorReviewResult(
+          state,
+          await runtime.command("runtime.execute_commander_executor_review", {
+            handoff_id: effect.handoffId,
+            followup_id: effect.followupId,
+            mission_id: effect.missionId,
+            result_id: effect.resultId,
+            proposal_id: effect.proposalId,
+            dry_run: effect.dryRun,
+            requested_by: "tui",
+          }),
+        )
+      case "load-commander-executor-reviews":
+        return applyCommanderExecutorReviewRecords(
+          state,
+          await runtime.command("runtime.list_commander_executor_reviews", { limit: effect.limit ?? HANDOFF_LIMIT }),
+        )
+      case "load-commander-executor-review":
+        return applyCommanderExecutorReviewSelected(
+          state,
+          await runtime.command("runtime.get_commander_executor_review", { reviewId: effect.reviewId }),
+          effect.reviewId,
+        )
       case "load-opencode-handoff-followup":
         return applyOpenCodeHandoffFollowup(
           state,
@@ -1388,6 +1433,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeProcessSmokeEffect(effect)) return recordOpenCodeProcessSmokeCommandError(state, error)
     if (isOpenCodeHandoffReadinessEffect(effect)) return recordOpenCodeHandoffReadinessCommandError(state, error)
     if (isOpenCodeResultReviewEffect(effect)) return recordOpenCodeResultReviewCommandError(state, error)
+    if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
     if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
     if (isRuntimeRestoreEffect(effect)) return recordRuntimeRestoreCommandError(state, error)
@@ -2030,6 +2076,63 @@ function applyOpenCodeResultReviewSummary(state: UiState, value: unknown): UiSta
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "opencode result review summary", detail: `ready=${summary.ready_count} needs_result=${summary.needs_result_count} failed=${summary.failed_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyCommanderExecutorReviewPreview(state: UiState, value: unknown): UiState {
+  const previewResult = readCommanderExecutorReviewPreview(value)
+  return {
+    ...state,
+    commanderExecutorReview: {
+      ...commanderExecutorReviewState(state),
+      preview: previewResult,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander executor review preview", detail: `can_execute=${previewResult.can_execute}`, status: previewResult.can_execute ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyCommanderExecutorReviewResult(state: UiState, value: unknown): UiState {
+  const result = readCommanderExecutorReviewResult(value)
+  const current = commanderExecutorReviewState(state)
+  return {
+    ...state,
+    commanderExecutorReview: {
+      ...current,
+      latestResult: result,
+      selected: result,
+      records: result.review_id === "dry-run"
+        ? current.records
+        : [recordFromCommanderExecutorReviewResult(result), ...current.records.filter((item) => item.review_id !== result.review_id)].slice(0, HANDOFF_LIMIT),
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander executor review", detail: `decision=${result.decision}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyCommanderExecutorReviewRecords(state: UiState, value: unknown): UiState {
+  const records = readCommanderExecutorReviewRecords(value)
+  return {
+    ...state,
+    commanderExecutorReview: {
+      ...commanderExecutorReviewState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander executor reviews", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyCommanderExecutorReviewSelected(state: UiState, value: unknown, reviewId: string): UiState {
+  const result = value === null ? null : readCommanderExecutorReviewResult(value)
+  return {
+    ...state,
+    commanderExecutorReview: {
+      ...commanderExecutorReviewState(state),
+      selected: result,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander executor review selected", detail: `review_id=${redactText(reviewId)}`, status: result ? result.status : "missing" }].slice(-12),
   }
 }
 
@@ -3239,6 +3342,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeProcessSmokeCommands.has(command)) return state.opencodeProcessSmoke?.commandError
   if (opencodeHandoffReadinessCommands.has(command)) return state.opencodeHandoffReadiness?.commandError
   if (opencodeResultReviewCommands.has(command)) return state.opencodeResultReview?.commandError
+  if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
   if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
   if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError
@@ -3270,6 +3374,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeProcessSmokeCommands.has(command)) return { ...state, opencodeProcessSmoke: { ...opencodeProcessSmokeState(state), commandError: undefined } }
   if (opencodeHandoffReadinessCommands.has(command)) return { ...state, opencodeHandoffReadiness: { ...opencodeHandoffReadinessState(state), commandError: undefined } }
   if (opencodeResultReviewCommands.has(command)) return { ...state, opencodeResultReview: { ...opencodeResultReviewState(state), commandError: undefined } }
+  if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (opencodeFollowupCommands.has(command)) return { ...state, opencodeFollowup: { ...opencodeFollowupState(state), commandError: undefined } }
   if (runtimeCheckpointCommands.has(command)) return { ...state, runtimeCheckpoints: { ...runtimeCheckpointsState(state), commandError: undefined } }
   if (runtimeRestoreCommands.has(command)) return { ...state, runtimeRestore: { ...runtimeRestoreState(state), commandError: undefined } }
@@ -3398,6 +3503,21 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, resultReviewPacketEffect(args))
     case "result-review-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-result-review-summary" })
+    case "executor-review-preview":
+    case "commander-executor-review-preview":
+      return applyRuntimeUiEffect(commandState, runtime, commanderExecutorReviewEffect("preview-commander-executor-review", args))
+    case "executor-review":
+    case "commander-executor-review":
+      return applyRuntimeUiEffect(commandState, runtime, commanderExecutorReviewEffect("execute-commander-executor-review", args))
+    case "executor-review-dry-run": {
+      const effect = commanderExecutorReviewEffect("execute-commander-executor-review", args) as Extract<RuntimeUiEffect, { type: "execute-commander-executor-review" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "executor-reviews":
+    case "commander-executor-reviews":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-executor-reviews", limit: HANDOFF_LIMIT })
+    case "executor-review-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-executor-review", reviewId: requiredArg(args, 0, "reviewId") })
     case "handoff-followup":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup", handoffId: requiredArg(args, 0, "handoffId") })
     case "handoff-followups":
@@ -4167,6 +4287,11 @@ function isOpenCodeResultReviewEffect(effect: RuntimeUiEffect): boolean {
   return opencodeResultReviewCommands.has(effect.command)
 }
 
+function isCommanderExecutorReviewEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return commanderExecutorReviewEffectTypes.has(effect.type)
+  return commanderExecutorReviewCommands.has(effect.command)
+}
+
 function isOpenCodeFollowupEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return opencodeFollowupEffectTypes.has(effect.type)
   return opencodeFollowupCommands.has(effect.command)
@@ -4352,6 +4477,17 @@ const opencodeResultReviewCommands = new Set([
   "opencode-result-review",
   "executor-result-review",
   "handoff-result-review",
+])
+
+const commanderExecutorReviewCommands = new Set([
+  "executor-review-preview",
+  "executor-review",
+  "executor-review-dry-run",
+  "executor-reviews",
+  "executor-review-show",
+  "commander-executor-review-preview",
+  "commander-executor-review",
+  "commander-executor-reviews",
 ])
 
 const opencodeFollowupCommands = new Set([
@@ -4580,6 +4716,13 @@ const opencodeHandoffReadinessEffectTypes = new Set<RuntimeUiEffect["type"]>([
 const opencodeResultReviewEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "preview-opencode-result-review-packet",
   "load-opencode-result-review-summary",
+])
+
+const commanderExecutorReviewEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-commander-executor-review",
+  "execute-commander-executor-review",
+  "load-commander-executor-reviews",
+  "load-commander-executor-review",
 ])
 
 const opencodeFollowupEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -5582,6 +5725,18 @@ function recordOpenCodeResultReviewCommandError(state: UiState, error: unknown):
   }
 }
 
+function recordCommanderExecutorReviewCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderExecutorReview: {
+      ...commanderExecutorReviewState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "commander executor review command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function recordOpenCodeFollowupCommandError(state: UiState, error: unknown): UiState {
   const message = redactText(error instanceof Error ? error.message : String(error))
   return {
@@ -6327,6 +6482,106 @@ function recordFromOpenCodeResultReviewPacket(packet: OpenCodeResultReviewPacket
     proposal_id: packet.proposal_id,
     generated_at: packet.generated_at,
     summary_preview: packet.redacted_summary_preview,
+  }
+}
+
+function readCommanderExecutorReviewPreview(value: unknown): CommanderExecutorReviewPreviewSummary {
+  if (!isRecord(value)) throw new Error("runtime.preview_commander_executor_review returned invalid preview")
+  return {
+    review_id: typeof value.review_id === "string" ? redactText(value.review_id) : undefined,
+    packet_id: typeof value.packet_id === "string" ? redactText(value.packet_id) : undefined,
+    packet_status: typeof value.packet_status === "string" ? readString(value.packet_status, "") : undefined,
+    can_execute: readBoolean(value.can_execute),
+    provider_kind: readString(value.provider_kind, ""),
+    provider_ready: readBoolean(value.provider_ready),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    packet_summary_preview: typeof value.packet_summary_preview === "string" ? preview(readString(value.packet_summary_preview, "")) : undefined,
+    prompt_preview: typeof value.prompt_preview === "string" ? preview(readString(value.prompt_preview, "")) : undefined,
+    recommended_commands: readCommanderExecutorReviewCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readCommanderExecutorReviewResult(value: unknown): CommanderExecutorReviewResultSummary {
+  if (!isRecord(value) || typeof value.review_id !== "string") throw new Error("runtime.execute_commander_executor_review returned invalid result")
+  return {
+    review_id: redactText(value.review_id),
+    packet_id: readString(value.packet_id, ""),
+    packet_status: readString(value.packet_status, ""),
+    status: readString(value.status, ""),
+    provider_kind: readString(value.provider_kind, ""),
+    decision: readString(value.decision, ""),
+    confidence: readNumber(value.confidence, 0),
+    summary: preview(readString(value.summary, "")),
+    findings: readCommanderExecutorReviewFindings(value.findings),
+    evidence_ids: readStringList(value.evidence_ids, 12).map(redactText),
+    recommended_commands: readCommanderExecutorReviewCommands(value.recommended_commands),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    started_at: readString(value.started_at, ""),
+    completed_at: readString(value.completed_at, ""),
+    requested_by: readString(value.requested_by, ""),
+    review_hash: readString(value.review_hash, ""),
+    handoff_id: typeof value.handoff_id === "string" ? redactText(value.handoff_id) : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    result_id: typeof value.result_id === "string" ? redactText(value.result_id) : undefined,
+    proposal_id: typeof value.proposal_id === "string" ? redactText(value.proposal_id) : undefined,
+  }
+}
+
+function readCommanderExecutorReviewRecords(value: unknown): CommanderExecutorReviewRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, HANDOFF_LIMIT).map((item) => ({
+    review_id: readString(item.review_id, ""),
+    packet_id: readString(item.packet_id, ""),
+    status: readString(item.status, ""),
+    decision: readString(item.decision, ""),
+    confidence: readNumber(item.confidence, 0),
+    completed_at: readString(item.completed_at, ""),
+    summary_preview: preview(readString(item.summary_preview, "")),
+    review_hash: readString(item.review_hash, ""),
+    handoff_id: typeof item.handoff_id === "string" ? redactText(item.handoff_id) : undefined,
+    mission_id: typeof item.mission_id === "string" ? redactText(item.mission_id) : undefined,
+    result_id: typeof item.result_id === "string" ? redactText(item.result_id) : undefined,
+  }))
+}
+
+function readCommanderExecutorReviewFindings(value: unknown): CommanderExecutorReviewFindingSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((item) => ({
+    finding_id: readString(item.finding_id, ""),
+    severity: readString(item.severity, ""),
+    title: preview(readString(item.title, "")),
+    summary: preview(readString(item.summary, "")),
+    evidence_ids: readStringList(item.evidence_ids, 12).map(redactText),
+    recommended_commands: readCommanderExecutorReviewCommands(item.recommended_commands),
+  }))
+}
+
+function readCommanderExecutorReviewCommands(value: unknown): CommanderExecutorReviewCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function recordFromCommanderExecutorReviewResult(result: CommanderExecutorReviewResultSummary): CommanderExecutorReviewRecordSummary {
+  return {
+    review_id: result.review_id,
+    packet_id: result.packet_id,
+    status: result.status,
+    decision: result.decision,
+    confidence: result.confidence,
+    completed_at: result.completed_at,
+    summary_preview: result.summary,
+    review_hash: result.review_hash,
+    handoff_id: result.handoff_id,
+    mission_id: result.mission_id,
+    result_id: result.result_id,
   }
 }
 
@@ -9039,6 +9294,10 @@ function opencodeResultReviewState(state: UiState): OpenCodeResultReviewState {
   return state.opencodeResultReview ?? { packet: null, summary: null, records: [] }
 }
 
+function commanderExecutorReviewState(state: UiState): CommanderExecutorReviewState {
+  return state.commanderExecutorReview ?? { preview: null, latestResult: null, records: [], selected: null }
+}
+
 function opencodeFollowupState(state: UiState): OpenCodeHandoffFollowupState {
   return state.opencodeFollowup ?? { selected: null, summary: null, queueItems: [] }
 }
@@ -9631,6 +9890,25 @@ function resultReviewPacketEffect(args: string[]): Extract<RuntimeUiEffect, { ty
   return effect
 }
 
+function commanderExecutorReviewEffect(
+  type: "preview-commander-executor-review" | "execute-commander-executor-review",
+  args: string[],
+): Extract<RuntimeUiEffect, { type: "preview-commander-executor-review" | "execute-commander-executor-review" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-commander-executor-review" | "execute-commander-executor-review" }> = { type }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("executor review args must use handoff=<id>, followup=<id>, mission=<id>, result=<id>, or proposal=<id>")
+    if (key === "handoff") effect.handoffId = value
+    else if (key === "followup") effect.followupId = value
+    else if (key === "mission") effect.missionId = value
+    else if (key === "result") effect.resultId = value
+    else if (key === "proposal") effect.proposalId = value
+    else throw new Error("executor review arg is unsupported")
+  }
+  return effect
+}
+
 function checkpointEffect(type: "preview-runtime-checkpoint" | "create-runtime-checkpoint", args: string[]): Extract<RuntimeUiEffect, { type: "preview-runtime-checkpoint" | "create-runtime-checkpoint" }> {
   let scope: RuntimeCheckpointScope = "full"
   let reasonStart = 0
@@ -9819,8 +10097,8 @@ function optionalSurfaceArg(args: string[]): string | undefined {
   if (args.length === 0) return undefined
   if (args.length > 1) throw new Error("reasoning smoke accepts one optional surface")
   const value = args[0]
-  if (value === "research" || value === "research_synthesis" || value === "cycle" || value === "commander_cycle") return value
-  throw new Error("reasoning smoke surface must be research_synthesis or commander_cycle")
+  if (value === "research" || value === "research_synthesis" || value === "cycle" || value === "commander_cycle" || value === "executor_review" || value === "commander_executor_review") return value
+  throw new Error("reasoning smoke surface must be research_synthesis, commander_cycle, or commander_executor_review")
 }
 
 function optionalRest(args: string[], index: number): string | undefined {

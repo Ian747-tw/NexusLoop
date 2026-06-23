@@ -1,7 +1,7 @@
 import { redactValue } from "../security/redaction"
 
 export type ReasoningProviderKind = "fake" | "minimax"
-export type ReasoningProviderSurface = "research_synthesis" | "commander_cycle"
+export type ReasoningProviderSurface = "research_synthesis" | "commander_cycle" | "commander_executor_review"
 
 export interface ReasoningProviderConfig {
   kind: ReasoningProviderKind
@@ -91,6 +91,7 @@ function readEnabledSurfaces(env: Record<string, string | undefined>): Reasoning
   const enabled: ReasoningProviderSurface[] = []
   if (env.NXL_REASONING_ENABLE_RESEARCH_SYNTHESIS === "1") enabled.push("research_synthesis")
   if (env.NXL_REASONING_ENABLE_COMMANDER_CYCLE === "1") enabled.push("commander_cycle")
+  if (env.NXL_REASONING_ENABLE_COMMANDER_EXECUTOR_REVIEW === "1") enabled.push("commander_executor_review")
   return enabled.length > 0 ? enabled : ["research_synthesis", "commander_cycle"]
 }
 
@@ -100,8 +101,8 @@ function readKind(value: unknown): ReasoningProviderKind {
 }
 
 function readSurface(value: unknown): ReasoningProviderSurface {
-  if (value === "research_synthesis" || value === "commander_cycle") return value
-  throw new Error("reasoning provider enabled_for supports research_synthesis and commander_cycle only")
+  if (value === "research_synthesis" || value === "commander_cycle" || value === "commander_executor_review") return value
+  throw new Error("reasoning provider enabled_for supports research_synthesis, commander_cycle, and commander_executor_review only")
 }
 
 function readString(value: unknown, field: string, fallback?: string): string {

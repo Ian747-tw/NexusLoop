@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, mkdir, rm, writeFile } from "fs/promises"
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises"
 import { tmpdir } from "os"
 import { join } from "path"
+import { FakeOpenCodeAdapter, RuntimeServer } from "../../runtime/src/index"
 import type { RuntimeEvent } from "../src/events"
 import { runTuiEntrypoint } from "../src/launch"
 import type { RuntimeClient } from "../src/runtime"
+import { createTuiRuntimeClient } from "../src/runtime-client-factory"
 
 class TestRuntimeClient implements RuntimeClient {
   constructor(private readonly firstEventDelayMs = 0) {}
@@ -117,6 +119,15 @@ class TestRuntimeClient implements RuntimeClient {
   }
 }
 
+class SpyOpenCodeAdapter extends FakeOpenCodeAdapter {
+  startCalls = 0
+
+  override async startSession(...args: Parameters<FakeOpenCodeAdapter["startSession"]>): Promise<void> {
+    this.startCalls += 1
+    return await super.startSession(...args)
+  }
+}
+
 class ErroringRuntimeClient extends TestRuntimeClient {
   async command(name: string): Promise<unknown> {
     if (name === "runtime.status") throw new Error("runtime failed token=launch-secret")
@@ -188,6 +199,18 @@ async function makeApprovedProject(dir: string): Promise<void> {
       2,
     ),
   )
+}
+
+async function readEventKinds(dir: string): Promise<string[]> {
+  try {
+    return (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8"))
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line).kind)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    throw error
+  }
 }
 
 describe("TUI launch boundary", () => {
@@ -767,6 +790,33 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.command_authority_get")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless executor review on stopped real runtime does not start OpenCode", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const adapter = new SpyOpenCodeAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+    const runtime = createTuiRuntimeClient({ projectDir: dir, server, env: {} })
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/executor-review" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Commander executor review")
+    expect(snapshot).toContain("runtime must be started before commander executor review writes")
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(adapter.startCalls).toBe(0)
   })
 
   test("shutdown command does not report a false post-shutdown refresh error", async () => {

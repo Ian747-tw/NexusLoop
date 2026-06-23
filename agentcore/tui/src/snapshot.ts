@@ -82,6 +82,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeProcessSmokeLines(state))
   out.push(...opencodeHandoffReadinessLines(state))
   out.push(...opencodeResultReviewLines(state))
+  out.push(...commanderExecutorReviewLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
@@ -515,6 +516,60 @@ function opencodeResultReviewLines(state: UiState): string[] {
   }
   if (review.commandError) out.push(`  command_error=${redactText(review.commandError)}`)
   out.push("  note=packet preview does not call Commander/provider or create proposals")
+  return out
+}
+
+function commanderExecutorReviewLines(state: UiState): string[] {
+  const review = state.commanderExecutorReview
+  const out = ["Commander executor review"]
+  if (!review) {
+    out.push("  preview=none")
+    out.push("  note=executor review does not create proposals or apply changes")
+    return out
+  }
+  if (review.preview) {
+    const item = review.preview
+    out.push(`  preview packet=${item.packet_id ?? "none"} status=${item.packet_status ?? "unknown"} can_execute=${item.can_execute}`)
+    out.push(`  provider=${item.provider_kind} ready=${item.provider_ready}`)
+    if (item.packet_summary_preview) out.push(`  packet_summary=${preview(redactText(item.packet_summary_preview))}`)
+    if (item.prompt_preview) out.push(`  prompt_preview=${preview(redactText(item.prompt_preview))}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (review.latestResult) {
+    const result = review.latestResult
+    out.push(`  latest=${result.review_id} status=${result.status} decision=${result.decision} confidence=${result.confidence}`)
+    out.push(`  packet=${result.packet_id} packet_status=${result.packet_status}`)
+    out.push(`  summary=${preview(redactText(result.summary))}`)
+    if (result.error) out.push(`  error=${preview(redactText(result.error))}`)
+    if (result.findings.length > 0) {
+      out.push("  findings")
+      out.push(...result.findings.slice(0, 10).map((finding) => `    - ${finding.severity}:${preview(redactText(finding.title))}: ${preview(redactText(finding.summary))}`))
+    }
+  } else {
+    out.push("  latest=none")
+  }
+  if (review.selected && review.selected.review_id !== review.latestResult?.review_id) {
+    out.push(`  selected=${review.selected.review_id} status=${review.selected.status} decision=${review.selected.decision}`)
+  }
+  out.push(`  records=${review.records.length}`)
+  if (review.records.length > 0) {
+    out.push("  recent_reviews")
+    out.push(...review.records.slice(0, 10).map((record) => `    - ${record.review_id} status=${record.status} decision=${record.decision}: ${preview(redactText(record.summary_preview))}`))
+  }
+  if (review.commandError) out.push(`  command_error=${redactText(review.commandError)}`)
+  out.push("  note=executor review does not create proposals or apply changes")
   return out
 }
 

@@ -2,6 +2,7 @@ import type { ExternalApiRequestService } from "../external-api/api-request-serv
 import type { ExternalApiConnector } from "../external-api/api-connector-types"
 import { redactText, redactValue } from "../security/redaction"
 import type { CommanderCycleProvider, CommanderCycleProviderInput, CommanderCycleProviderResult } from "../commander-cycle/commander-cycle-provider"
+import type { CommanderExecutorReviewProvider, CommanderExecutorReviewProviderInput, CommanderExecutorReviewProviderReadiness, CommanderExecutorReviewProviderResult } from "../commander-executor-review/commander-executor-review-provider"
 import type { ResearchSynthesisProvider, ResearchSynthesisProviderInput, ResearchSynthesisProviderResult } from "../research-synthesis/research-synthesis-provider"
 import type { ReasoningProviderConfig } from "./reasoning-provider-config"
 import { validateReasoningProviderConfig } from "./reasoning-provider-config"
@@ -17,7 +18,7 @@ export interface MiniMaxReasoningProviderOptions {
   connector?: ExternalApiConnector
 }
 
-export class MiniMaxReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider {
+export class MiniMaxReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider, CommanderExecutorReviewProvider {
   readonly provider_id: string
   private readonly config: ReasoningProviderConfig
 
@@ -45,7 +46,41 @@ export class MiniMaxReasoningProvider implements ResearchSynthesisProvider, Comm
     return readCommanderCycleResult(payload)
   }
 
-  private async callMiniMax(surface: "research_synthesis" | "commander_cycle", prompt: Record<string, unknown>, maxOutputBytes: number): Promise<Record<string, unknown>> {
+  async reviewExecutorResult(input: CommanderExecutorReviewProviderInput): Promise<CommanderExecutorReviewProviderResult> {
+    const payload = await this.callMiniMax(
+      "commander_executor_review",
+      commanderExecutorReviewPrompt(input),
+      input.max_output_chars,
+    )
+    return readCommanderExecutorReviewResult(payload)
+  }
+
+  previewExecutorReviewReadiness(): CommanderExecutorReviewProviderReadiness {
+    const blockers: string[] = []
+    if (!this.config.enabled_for.includes("commander_executor_review")) {
+      blockers.push("MiniMax reasoning provider is not enabled for commander_executor_review")
+    }
+    try {
+      const request = messageRequest(this.config, "commander_executor_review", { task: "commander_executor_review_readiness" }, 512)
+      const preview = this.options.requestService.preview({
+        connector_id: this.config.connector_id ?? "",
+        method: "POST",
+        path: this.messagesPath(),
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(request),
+        requested_by: `reasoning-provider-readiness:${this.config.provider_id}`,
+      })
+      if (!preview.allowed) blockers.push(...preview.blockers)
+    } catch (error) {
+      blockers.push(error instanceof Error ? error.message : String(error))
+    }
+    return { provider_ready: blockers.length === 0, blockers: [...new Set(blockers.map(redactText))], warnings: [] }
+  }
+
+  private async callMiniMax(surface: "research_synthesis" | "commander_cycle" | "commander_executor_review", prompt: Record<string, unknown>, maxOutputBytes: number): Promise<Record<string, unknown>> {
     if (!this.config.enabled_for.includes(surface)) throw new Error(`MiniMax reasoning provider is not enabled for ${surface}`)
     const body = JSON.stringify(messageRequest(this.config, surface, prompt, maxOutputBytes))
     if (byteLength(body) > this.config.max_input_bytes) {
@@ -184,6 +219,42 @@ function commanderCyclePrompt(input: CommanderCycleProviderInput): Record<string
   })
 }
 
+function commanderExecutorReviewPrompt(input: CommanderExecutorReviewProviderInput): Record<string, unknown> {
+  const evidenceIds = input.packet.evidence.map((item) => item.evidence_id)
+  return redactValue({
+    task: "commander_executor_review",
+    schema: {
+      decision: "accept_result|needs_followup|needs_human_review|blocked|inconclusive",
+      confidence: "number 0..1",
+      summary: "string",
+      findings: [{
+        finding_id: "string",
+        severity: "info|warning|risk|blocker",
+        title: "string",
+        summary: "string",
+        evidence_ids: ["allowed evidence id only"],
+        recommended_commands: [{
+          label: "string",
+          command: "read-only manual command",
+          command_type: "read",
+          notes: "string optional",
+        }],
+      }],
+      recommended_commands: [{
+        label: "string",
+        command: "read-only manual command",
+        command_type: "read",
+        notes: "string optional",
+      }],
+    },
+    instruction_version: input.instruction_version,
+    allowed_evidence_ids: evidenceIds,
+    packet: input.packet,
+    authority_summary: input.authority_summary,
+    max_output_chars: input.max_output_chars,
+  })
+}
+
 function textFromAnthropicResponse(value: string): string {
   let parsed: MiniMaxMessageResponse
   try {
@@ -255,6 +326,24 @@ function readCommanderCycleResult(value: Record<string, unknown>): CommanderCycl
   }
 }
 
+function readCommanderExecutorReviewResult(value: Record<string, unknown>): CommanderExecutorReviewProviderResult {
+  return {
+    decision: readExecutorReviewDecision(value.decision),
+    confidence: readNumber(value.confidence, "confidence", 0, 1),
+    summary: requiredString(value.summary, "summary"),
+    findings: arrayOfRecords(value.findings ?? [], "findings").map((finding, index) => ({
+      finding_id: requiredString(finding.finding_id, `findings[${index}].finding_id`),
+      severity: readFindingSeverity(finding.severity),
+      title: requiredString(finding.title, `findings[${index}].title`),
+      summary: requiredString(finding.summary, `findings[${index}].summary`),
+      evidence_ids: stringArray(finding.evidence_ids ?? [], `findings[${index}].evidence_ids`),
+      recommended_commands: readReviewCommands(finding.recommended_commands ?? [], `findings[${index}].recommended_commands`),
+    })),
+    recommended_commands: readReviewCommands(value.recommended_commands ?? [], "recommended_commands"),
+    raw_response_preview: optionalString(value.raw_response_preview, "raw_response_preview"),
+  }
+}
+
 function arrayOfRecords(value: unknown, field: string): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) throw new Error(`${field} must be an array`)
   return value.map((item, index) => {
@@ -278,9 +367,34 @@ function optionalString(value: unknown, field: string): string | undefined {
   return requiredString(value, field)
 }
 
+function readNumber(value: unknown, field: string, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${field} must be a finite number`)
+  return Math.max(min, Math.min(max, value))
+}
+
 function readConfidence(value: unknown): "low" | "medium" | "high" {
   if (value === "low" || value === "medium" || value === "high") return value
   return "low"
+}
+
+function readExecutorReviewDecision(value: unknown): CommanderExecutorReviewProviderResult["decision"] {
+  if (value === "accept_result" || value === "needs_followup" || value === "needs_human_review" || value === "blocked" || value === "inconclusive") return value
+  throw new Error("decision must be accept_result, needs_followup, needs_human_review, blocked, or inconclusive")
+}
+
+function readFindingSeverity(value: unknown): "info" | "warning" | "risk" | "blocker" {
+  if (value === "info" || value === "warning" || value === "risk" || value === "blocker") return value
+  throw new Error("finding severity must be info, warning, risk, or blocker")
+}
+
+function readReviewCommands(value: unknown, field: string): NonNullable<CommanderExecutorReviewProviderResult["recommended_commands"]> {
+  return arrayOfRecords(value, field).map((command, index) => ({
+    label: requiredString(command.label, `${field}[${index}].label`),
+    command: requiredString(command.command, `${field}[${index}].command`),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: optionalString(command.notes, `${field}[${index}].notes`),
+  }))
 }
 
 function boundedError(error: unknown): string {

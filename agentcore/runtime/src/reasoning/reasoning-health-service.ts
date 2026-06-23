@@ -400,6 +400,7 @@ function previewConnector(config: ReasoningProviderConfig, registry: ExternalApi
 }
 
 function minimaxSmokeRequest(config: ReasoningProviderConfig, surface: ReasoningProviderSurface): Record<string, unknown> {
+  const schema = smokeSchema(surface)
   return {
     model: config.model ?? "",
     max_tokens: Math.max(1, Math.floor(Math.min(1024, config.max_output_bytes) / 4)),
@@ -409,12 +410,18 @@ function minimaxSmokeRequest(config: ReasoningProviderConfig, surface: Reasoning
       content: JSON.stringify({
         task: "reasoning_provider_smoke",
         surface,
-        schema: surface === "research_synthesis" ? researchSmokeSchema() : cycleSmokeSchema(),
+        schema,
         evidence_ids: ["smoke_evidence"],
         synthesis_ids: ["smoke_synthesis"],
       }),
     }],
   }
+}
+
+function smokeSchema(surface: ReasoningProviderSurface): Record<string, unknown> {
+  if (surface === "research_synthesis") return researchSmokeSchema()
+  if (surface === "commander_executor_review") return executorReviewSmokeSchema()
+  return cycleSmokeSchema()
 }
 
 function redactedRequestPreview(request: Record<string, unknown>): Record<string, unknown> {
@@ -447,6 +454,23 @@ function cycleSmokeSchema(): Record<string, unknown> {
     recommended_actions: [{ title: "string", summary: "string", action_kind: "operator_checkpoint|other", rationale: "string", evidence_ids: ["smoke_evidence"], synthesis_ids: ["smoke_synthesis"] }],
     should_create_proposals: false,
     confidence: "low|medium|high",
+  }
+}
+
+function executorReviewSmokeSchema(): Record<string, unknown> {
+  return {
+    decision: "accept_result|needs_followup|needs_human_review|blocked|inconclusive",
+    confidence: "number 0..1",
+    summary: "string",
+    findings: [{
+      finding_id: "string",
+      severity: "info|warning|risk|blocker",
+      title: "string",
+      summary: "string",
+      evidence_ids: ["smoke_evidence"],
+      recommended_commands: [{ label: "string", command: "safe read slash command", command_type: "read" }],
+    }],
+    recommended_commands: [{ label: "string", command: "safe read slash command", command_type: "read" }],
   }
 }
 
@@ -484,6 +508,14 @@ function stripCodeFence(value: string): string {
 }
 
 function validateSmokePayload(value: Record<string, unknown>, surface: ReasoningProviderSurface): void {
+  if (surface === "commander_executor_review") {
+    if (!["accept_result", "needs_followup", "needs_human_review", "blocked", "inconclusive"].includes(String(value.decision))) throw new Error("decision must be a valid executor review decision")
+    if (typeof value.confidence !== "number" || value.confidence < 0 || value.confidence > 1) throw new Error("confidence must be a number between 0 and 1")
+    requiredString(value.summary, "summary")
+    arrayOfRecords(value.findings, "findings")
+    if (value.recommended_commands !== undefined) arrayOfRecords(value.recommended_commands, "recommended_commands")
+    return
+  }
   requiredString(value.title, "title")
   requiredString(value.summary, "summary")
   stringArray(value.findings, "findings")
@@ -519,7 +551,8 @@ function requiredString(value: unknown, field: string): string {
 function readSurface(value: unknown): ReasoningProviderSurface {
   if (value === undefined || value === "research" || value === "research_synthesis") return "research_synthesis"
   if (value === "cycle" || value === "commander_cycle") return "commander_cycle"
-  throw new Error("reasoning smoke surface must be research_synthesis or commander_cycle")
+  if (value === "executor_review" || value === "commander_executor_review") return "commander_executor_review"
+  throw new Error("reasoning smoke surface must be research_synthesis, commander_cycle, or commander_executor_review")
 }
 
 function isAuthBearingHeader(key: string): boolean {

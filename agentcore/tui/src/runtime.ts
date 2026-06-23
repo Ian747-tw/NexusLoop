@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary } from "./state"
 
 export interface SubmitUserMessageResult {
@@ -51,6 +51,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly commanderCycles: CommanderCycleResultSummary[] = []
   private readonly opencodeHandoffs: OpenCodeHandoffResultSummary[] = []
   private readonly opencodeProcessSmokes: OpenCodeProcessSmokeResultSummary[] = []
+  private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
   private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
   private readonly wakeAssessments: WakeAssessmentSummary[] = []
@@ -401,6 +402,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.previewOpenCodeResultReviewPacket(payload)
       case "runtime.opencode_result_review_summary":
         return this.openCodeResultReviewSummary()
+      case "runtime.preview_commander_executor_review":
+        return this.previewCommanderExecutorReview(payload)
+      case "runtime.execute_commander_executor_review":
+        return this.executeCommanderExecutorReview(payload)
+      case "runtime.list_commander_executor_reviews":
+        return this.commanderExecutorReviews.slice(0, readLimit(payload.limit, 20)).map(recordFromCommanderExecutorReview)
+      case "runtime.get_commander_executor_review":
+        return this.commanderExecutorReviews.find((item) => item.review_id === String(payload.reviewId ?? payload.review_id ?? "")) ?? null
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(String(payload.handoffId ?? payload.handoff_id ?? ""))
       case "runtime.list_opencode_handoff_followups":
@@ -1303,7 +1312,15 @@ export class FakeRuntimeClient implements RuntimeClient {
       : this.opencodeHandoffs[0]
     const followup = handoff ? this.buildOpenCodeHandoffFollowups().find((item) => item.handoff_id === handoff.handoff_id) : undefined
     const result = resultIdInput
-      ? this.results.find((item) => item.result_id === resultIdInput)
+      ? (this.results.find((item) => item.result_id === resultIdInput)
+        ?? (resultIdInput === "result-handoff-1" ? {
+          result_id: "result-handoff-1",
+          mission_id: "mission-handoff-1",
+          claim_id: "claim-handoff-1",
+          summary: "fake executor result summary",
+          status: "submitted",
+          created_at: new Date(0).toISOString(),
+        } : undefined))
       : this.results.find((item) => item.mission_id === (missionIdInput ?? followup?.mission_id ?? handoff?.mission_id))
     const missionId = missionIdInput ?? result?.mission_id ?? followup?.mission_id ?? handoff?.mission_id
     const mission = missionId ? this.missions.find((item) => item.mission_id === missionId) : undefined
@@ -1467,6 +1484,69 @@ export class FakeRuntimeClient implements RuntimeClient {
       latest_result_id: this.results[0]?.result_id,
       generated_at: new Date(0).toISOString(),
     }
+  }
+
+  private previewCommanderExecutorReview(payload: Record<string, unknown>): CommanderExecutorReviewPreviewSummary {
+    const packet = this.previewOpenCodeResultReviewPacket(payload)
+    const ready = packet.status === "ready_for_commander_review"
+    return {
+      review_id: ready ? "fake-executor-review-preview" : undefined,
+      packet_id: packet.packet_id,
+      packet_status: packet.status,
+      can_execute: ready,
+      provider_kind: "fake-commander-executor-review",
+      provider_ready: true,
+      blockers: ready ? [] : [`result review packet is ${packet.status}; Commander review requires ready_for_commander_review`],
+      warnings: ["executor review does not create proposals, apply changes, or launch OpenCode"],
+      packet_summary_preview: packet.redacted_summary_preview,
+      prompt_preview: `Review bounded packet ${packet.packet_id}; do not create proposals or run commands.`,
+      recommended_commands: [
+        { label: "Inspect result packet", command: packet.result_id ? `/result-review-packet result=${packet.result_id}` : "/result-review-packet", command_type: "read" },
+        { label: "Show executor review records", command: "/executor-reviews", command_type: "read" },
+        { label: "Show handoff authority", command: "/authority-show /handoff", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private executeCommanderExecutorReview(payload: Record<string, unknown>): CommanderExecutorReviewResultSummary {
+    const preview = this.previewCommanderExecutorReview(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const reviewId = dryRun ? "dry-run" : `fake-executor-review-${++this.sequence}`
+    const status = preview.can_execute && !dryRun ? "succeeded" : "blocked"
+    const result: CommanderExecutorReviewResultSummary = {
+      review_id: reviewId,
+      packet_id: preview.packet_id ?? "fake-result-review-latest",
+      packet_status: preview.packet_status ?? "unknown",
+      status,
+      provider_kind: preview.provider_kind,
+      decision: preview.can_execute ? "accept_result" : "blocked",
+      confidence: preview.can_execute ? 0.82 : 0,
+      summary: dryRun
+        ? "dry-run: Commander executor review would call fake provider once"
+        : preview.can_execute
+          ? "Fake Commander review accepted the executor result packet for manual follow-up."
+          : "Fake Commander review blocked because the packet is not ready.",
+      findings: preview.can_execute ? [{
+        finding_id: "finding_executor_packet_readiness",
+        severity: "info",
+        title: "Executor packet readiness",
+        summary: "Bounded packet evidence is sufficient for Commander review.",
+        evidence_ids: ["handoff:fake-handoff-1", "mission_result:result-handoff-1"],
+        recommended_commands: preview.recommended_commands.slice(0, 2),
+      }] : [],
+      evidence_ids: ["handoff:fake-handoff-1", "mission_result:result-handoff-1"],
+      recommended_commands: preview.recommended_commands,
+      started_at: new Date(0).toISOString(),
+      completed_at: new Date(0).toISOString(),
+      requested_by: "tui",
+      review_hash: `fake-review-hash-${reviewId}`,
+      result_id: "result-handoff-1",
+      mission_id: "mission-handoff-1",
+      handoff_id: "handoff-1",
+    }
+    if (!dryRun) this.commanderExecutorReviews.unshift(result)
+    return result
   }
 
   private getOpenCodeHandoffFollowup(handoffId: string): OpenCodeHandoffFollowupSummary | null {
@@ -5156,10 +5236,11 @@ function readStringFields(value: unknown): Record<string, string> {
   return out
 }
 
-function readReasoningSurface(value: unknown): "research_synthesis" | "commander_cycle" {
+function readReasoningSurface(value: unknown): "research_synthesis" | "commander_cycle" | "commander_executor_review" {
   if (value === undefined || value === "research" || value === "research_synthesis") return "research_synthesis"
   if (value === "cycle" || value === "commander_cycle") return "commander_cycle"
-  throw new Error("reasoning smoke surface must be research_synthesis or commander_cycle")
+  if (value === "executor_review" || value === "commander_executor_review") return "commander_executor_review"
+  throw new Error("reasoning smoke surface must be research_synthesis, commander_cycle, or commander_executor_review")
 }
 
 function continuationRecord(plan: ContinuationPlanSummary): ContinuationPlanRecordSummary {
@@ -5983,6 +6064,22 @@ function fakeCommandAuthoritySummary(): CommandAuthoritySummaryState {
   }
 }
 
+function recordFromCommanderExecutorReview(result: CommanderExecutorReviewResultSummary): CommanderExecutorReviewRecordSummary {
+  return {
+    review_id: result.review_id,
+    packet_id: result.packet_id,
+    status: result.status,
+    decision: result.decision,
+    confidence: result.confidence,
+    completed_at: result.completed_at,
+    summary_preview: result.summary,
+    review_hash: result.review_hash,
+    handoff_id: result.handoff_id,
+    mission_id: result.mission_id,
+    result_id: result.result_id,
+  }
+}
+
 function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
   return [
     fakeCommandAuthorityRecord("/authority", "runtime.command_authority_summary", "safe_read", "none", "runtime_status", { targeted: ["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"] }),
@@ -6055,6 +6152,39 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_packet_tui.py"],
       notes: ["Read-only OpenCode result review summary; does not mutate executor or commander state."],
       out: ["OpenCode launch", "handoff execution", "provider calls", "mission mutation", "proposal mutation", "review mutation"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-preview", "runtime.preview_commander_executor_review", "safe_read", "reasoning_provider_runtime", "commander_cycle", {
+      reads: ["/result-review-packet", "/authority-show /executor-review"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_executor_review_tui.py"],
+      aliases: ["/commander-executor-review-preview"],
+      notes: ["Read-only Commander executor review preview; does not call provider."],
+      out: ["proposal creation", "proposal apply", "OpenCode launch", "handoff execution"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-dry-run", "runtime.execute_commander_executor_review", "safe_read", "reasoning_provider_runtime", "commander_cycle", {
+      reads: ["/executor-review-preview", "/result-review-packet"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_executor_review_tui.py"],
+      notes: ["Dry-run does not call provider and appends no review events."],
+      out: ["provider calls", "proposal creation", "OpenCode launch"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review", "runtime.execute_commander_executor_review", "high_impact_write", "reasoning_provider_runtime", "commander_cycle", {
+      mutates: true,
+      active: true,
+      lock: true,
+      events: ["commander_executor_review_started", "commander_executor_review_succeeded", "commander_executor_review_failed", "commander_executor_review_blocked"],
+      reads: ["/executor-review-preview", "/executor-reviews", "/result-review-packet"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_executor_review_tui.py"],
+      aliases: ["/commander-executor-review"],
+      notes: ["Calls Commander executor review provider once and writes bounded review artifacts only; does not create proposals."],
+      out: ["proposal creation", "proposal apply", "OpenCode launch", "handoff execution", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/executor-reviews", "runtime.list_commander_executor_reviews", "safe_read", "none", "commander_cycle", {
+      reads: ["/executor-review-show"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_executor_review_tui.py"],
+      aliases: ["/commander-executor-reviews"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-show", "runtime.get_commander_executor_review", "safe_read", "none", "commander_cycle", {
+      reads: ["/executor-reviews"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_executor_review_tui.py"],
     }),
     fakeCommandAuthorityRecord("/apply-proposal", "runtime.apply_commander_proposal", "high_impact_write", "proposal_review_runtime", "proposal", {
       mutates: true,

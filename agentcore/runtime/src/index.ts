@@ -43,6 +43,8 @@ export { FakeResearchSynthesisProvider } from "./research-synthesis/research-syn
 export { ResearchSynthesisService } from "./research-synthesis/research-synthesis-service"
 export { FakeCommanderCycleProvider } from "./commander-cycle/commander-cycle-provider"
 export { CommanderCycleService } from "./commander-cycle/commander-cycle-service"
+export { FakeCommanderExecutorReviewProvider } from "./commander-executor-review/commander-executor-review-provider"
+export { CommanderExecutorReviewService } from "./commander-executor-review/commander-executor-review-service"
 export { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"
@@ -161,6 +163,21 @@ export type {
   CommanderCycleResult,
   CommanderCycleRecord,
 } from "./commander-cycle/commander-cycle-types"
+export type {
+  CommanderExecutorReviewProvider,
+  CommanderExecutorReviewProviderInput,
+  CommanderExecutorReviewProviderResult,
+} from "./commander-executor-review/commander-executor-review-provider"
+export type {
+  CommanderExecutorReviewCommand,
+  CommanderExecutorReviewDecision,
+  CommanderExecutorReviewFinding,
+  CommanderExecutorReviewInput,
+  CommanderExecutorReviewPreview,
+  CommanderExecutorReviewRecord,
+  CommanderExecutorReviewResult,
+  CommanderExecutorReviewStatus,
+} from "./commander-executor-review/commander-executor-review-types"
 export type {
   ResearchSynthesisProvider,
   ResearchSynthesisProviderEvidence,

@@ -2682,6 +2682,11 @@ describe("runtime UI effects", () => {
     snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("smoke_result=commander_cycle ok dry_run=true parsed=false")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "reasoning-smoke-preview", args: ["commander_executor_review"] })
+    expect(state.reasoningProvider?.smokePreview).toMatchObject({ surface: "commander_executor_review", would_call_network: false })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("smoke_preview=commander_executor_review network=no")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "reasoning-smoke", args: ["research"] })
     expect(state.reasoningProvider?.lastSmoke).toMatchObject({ surface: "research_synthesis", ok: true, dry_run: false, parsed: true })
     expect(JSON.stringify(state)).not.toContain("raw-secret")
@@ -3250,6 +3255,42 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/result-review-packet"] })
     expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/result-review-packet", risk: "safe_read" })
+  })
+
+  test("commander executor review slash commands render fake review results and redact secrets", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-preview", args: ["result=result-handoff-1"] })
+    expect(state.commanderExecutorReview?.preview).toMatchObject({ can_execute: true, packet_status: "ready_for_commander_review" })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Commander executor review")
+    expect(snapshot).toContain("note=executor review does not create proposals or apply changes")
+    expect(snapshot).toContain("recommended_commands")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-dry-run", args: ["result=result-handoff-1"] })
+    expect(state.commanderExecutorReview?.latestResult).toMatchObject({ review_id: "dry-run", status: "blocked", decision: "accept_result" })
+    expect(state.commanderExecutorReview?.records).toHaveLength(0)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review", args: ["result=result-handoff-1"] })
+    expect(state.commanderExecutorReview?.latestResult).toMatchObject({ status: "succeeded", decision: "accept_result" })
+    const reviewId = state.commanderExecutorReview?.latestResult?.review_id
+    expect(reviewId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-reviews" })
+    expect(state.commanderExecutorReview?.records.length).toBeGreaterThanOrEqual(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-show", args: [reviewId!] })
+    expect(state.commanderExecutorReview?.selected).toMatchObject({ review_id: reviewId, status: "succeeded" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/executor-review"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_commander_executor_review_tui.py")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-preview", args: ["token=abc123"] })
+    expect(state.commanderExecutorReview?.commandError).toContain("executor review arg is unsupported")
+    snapshot = layoutSnapshot(state)
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(snapshot).not.toContain("abc123")
   })
 
   test("opencode handoff follow-up slash commands render summary queues selected and redact secrets", async () => {

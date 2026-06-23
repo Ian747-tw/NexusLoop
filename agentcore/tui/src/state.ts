@@ -1072,6 +1072,83 @@ export type OpenCodeResultReviewState = {
   commandError?: string
 }
 
+export type CommanderExecutorReviewCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type CommanderExecutorReviewFindingSummary = {
+  finding_id: string
+  severity: string
+  title: string
+  summary: string
+  evidence_ids: string[]
+  recommended_commands: CommanderExecutorReviewCommandSummary[]
+}
+
+export type CommanderExecutorReviewPreviewSummary = {
+  review_id?: string
+  packet_id?: string
+  packet_status?: string
+  can_execute: boolean
+  provider_kind: string
+  provider_ready: boolean
+  blockers: string[]
+  warnings: string[]
+  packet_summary_preview?: string
+  prompt_preview?: string
+  recommended_commands: CommanderExecutorReviewCommandSummary[]
+  generated_at: string
+}
+
+export type CommanderExecutorReviewResultSummary = {
+  review_id: string
+  packet_id: string
+  packet_status: string
+  status: string
+  provider_kind: string
+  decision: string
+  confidence: number
+  summary: string
+  findings: CommanderExecutorReviewFindingSummary[]
+  evidence_ids: string[]
+  recommended_commands: CommanderExecutorReviewCommandSummary[]
+  error?: string
+  started_at: string
+  completed_at: string
+  requested_by: string
+  review_hash: string
+  handoff_id?: string
+  mission_id?: string
+  result_id?: string
+  proposal_id?: string
+}
+
+export type CommanderExecutorReviewRecordSummary = {
+  review_id: string
+  packet_id: string
+  status: string
+  decision: string
+  confidence: number
+  completed_at: string
+  summary_preview: string
+  review_hash: string
+  handoff_id?: string
+  mission_id?: string
+  result_id?: string
+}
+
+export type CommanderExecutorReviewState = {
+  preview?: CommanderExecutorReviewPreviewSummary | null
+  latestResult?: CommanderExecutorReviewResultSummary | null
+  records: CommanderExecutorReviewRecordSummary[]
+  selected?: CommanderExecutorReviewResultSummary | null
+  commandError?: string
+}
+
 export type OpenCodeHandoffFollowupStatus =
   | "sent"
   | "claimed"
@@ -2824,6 +2901,7 @@ export type UiState = {
   opencodeProcessSmoke?: OpenCodeProcessSmokeState
   opencodeHandoffReadiness?: OpenCodeHandoffReadinessState
   opencodeResultReview?: OpenCodeResultReviewState
+  commanderExecutorReview?: CommanderExecutorReviewState
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState
   runtimeRestore?: RuntimeRestoreState
@@ -2975,6 +3053,12 @@ export function initialState(projectDir: string): UiState {
       packet: null,
       summary: null,
       records: [],
+    },
+    commanderExecutorReview: {
+      preview: null,
+      latestResult: null,
+      records: [],
+      selected: null,
     },
   }
 }
