@@ -593,15 +593,15 @@ function executorReviewProposalDraftLines(state: UiState): string[] {
     }
     if (item.blockers.length > 0) {
       out.push("  blockers")
-      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(String(blocker ?? "")))}`))
     }
     if (item.warnings.length > 0) {
       out.push("  warnings")
-      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(String(warning ?? "")))}`))
     }
     out.push("  recommended_commands")
     if (item.recommended_commands.length === 0) out.push("    - empty")
-    else out.push(...item.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+    else out.push(...item.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(String(command.label ?? "")))}: ${preview(redactText(String(command.command ?? "")))} [${command.command_type}]`))
   } else {
     out.push("  preview=none")
   }

@@ -1556,11 +1556,24 @@ export class FakeRuntimeClient implements RuntimeClient {
   private previewExecutorReviewProposalDrafts(payload: Record<string, unknown>): ExecutorReviewProposalDraftPreviewSummary {
     const reviewId = String(payload.reviewId ?? payload.review_id ?? "")
     const resultId = String(payload.resultId ?? payload.result_id ?? "")
+    const packetId = String(payload.packetId ?? payload.packet_id ?? "")
+    const missionId = String(payload.missionId ?? payload.mission_id ?? "")
+    const handoffId = String(payload.handoffId ?? payload.handoff_id ?? "")
+    const proposalId = String(payload.proposalId ?? payload.proposal_id ?? "")
+    const hasExplicitTarget = Boolean(reviewId || resultId || packetId || missionId || handoffId || proposalId)
     const review = this.commanderExecutorReviews.find((item) =>
       (reviewId ? item.review_id === reviewId : true)
-      && (resultId ? item.result_id === resultId : true),
-    ) ?? this.commanderExecutorReviews[0]
-    const blockers = review ? [] : ["no Commander executor review records were found"]
+      && (resultId ? item.result_id === resultId : true)
+      && (packetId ? item.packet_id === packetId : true)
+      && (missionId ? item.mission_id === missionId : true)
+      && (handoffId ? item.handoff_id === handoffId : true)
+      && (proposalId ? item.proposal_id === proposalId : true),
+    ) ?? (hasExplicitTarget ? undefined : this.commanderExecutorReviews[0])
+    const blockers = review ? [] : [
+      hasExplicitTarget
+        ? "no Commander executor review matched the requested draft target"
+        : "no Commander executor review records were found",
+    ]
     const candidates: ExecutorReviewProposalDraftCandidateSummary[] = review && review.status === "succeeded" && review.decision === "accept_result"
       ? [{
         draft_id: `fake-draft-${review.review_id}`,

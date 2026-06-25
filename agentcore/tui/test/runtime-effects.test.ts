@@ -3293,6 +3293,19 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("Executor review proposal drafts")
     expect(snapshot).toContain("note=draft preview does not create proposals, request reviews, or apply changes")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-draft-preview", args: ["review=missing-review"] })
+    expect(state.executorReviewProposalDrafts?.preview).toMatchObject({
+      status: "unknown",
+      candidates: [],
+      blockers: [expect.stringContaining("no Commander executor review matched")],
+    })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-draft-preview", args: ["result=missing-result"] })
+    expect(state.executorReviewProposalDrafts?.preview).toMatchObject({
+      status: "unknown",
+      candidates: [],
+      blockers: [expect.stringContaining("no Commander executor review matched")],
+    })
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-draft-summary" })
     expect(state.executorReviewProposalDrafts?.summary).toMatchObject({ draftable_review_count: 1, candidate_count: 1 })
 
