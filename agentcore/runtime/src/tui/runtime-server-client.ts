@@ -20,6 +20,8 @@ const noStartCommands = new Set([
   "runtime.execute_commander_executor_review",
   "runtime.list_commander_executor_reviews",
   "runtime.get_commander_executor_review",
+  "runtime.preview_executor_review_proposal_drafts",
+  "runtime.executor_review_proposal_draft_summary",
 ])
 
 export interface RuntimeServerClientOptions {

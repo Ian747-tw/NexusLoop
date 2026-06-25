@@ -3283,11 +3283,28 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-show", args: [reviewId!] })
     expect(state.commanderExecutorReview?.selected).toMatchObject({ review_id: reviewId, status: "succeeded" })
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-draft-preview", args: [`review=${reviewId}`] })
+    expect(state.executorReviewProposalDrafts?.preview).toMatchObject({
+      status: "ready",
+      can_create_proposals_now: false,
+      candidates: [expect.objectContaining({ draft_kind: "mission_result", would_create_proposal: false })],
+    })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Executor review proposal drafts")
+    expect(snapshot).toContain("note=draft preview does not create proposals, request reviews, or apply changes")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-draft-summary" })
+    expect(state.executorReviewProposalDrafts?.summary).toMatchObject({ draftable_review_count: 1, candidate_count: 1 })
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/executor-review"] })
     expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_commander_executor_review_tui.py")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/executor-review-draft-preview"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_draft_tui.py")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-preview", args: ["token=abc123"] })
     expect(state.commanderExecutorReview?.commandError).toContain("executor review arg is unsupported")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-draft-preview", args: ["token=abc123"] })
+    expect(state.executorReviewProposalDrafts?.commandError).toContain("executor review draft arg is unsupported")
     snapshot = layoutSnapshot(state)
     expect(JSON.stringify(state)).not.toContain("abc123")
     expect(snapshot).not.toContain("abc123")

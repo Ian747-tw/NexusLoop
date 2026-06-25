@@ -14166,6 +14166,148 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("executor review proposal draft preview is read-only and derives candidates from accepted reviews", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled" })
+    await server.eventStore.append({
+      kind: "commander_executor_review_succeeded",
+      review_id: "executor_review_accept_1",
+      packet_id: "packet_accept_1",
+      packet_status: "ready_for_commander_review",
+      status: "succeeded",
+      provider_kind: "fake-provider",
+      decision: "accept_result",
+      confidence: 0.82,
+      summary: "accepted result",
+      findings: [{
+        finding_id: "finding_accept_1",
+        severity: "info",
+        title: "Accepted",
+        summary: "Result evidence is usable.",
+        evidence_ids: ["mission_result:result_1"],
+        recommended_commands: [{ label: "Inspect result", command: "/result-review-packet result=result_1", command_type: "read" }],
+      }],
+      evidence_ids: ["mission_result:result_1"],
+      recommended_commands: [{ label: "Inspect result", command: "/result-review-packet result=result_1", command_type: "read" }],
+      started_at: "2026-06-26T00:00:00.000Z",
+      completed_at: "2026-06-26T00:00:01.000Z",
+      requested_by: "operator",
+      review_hash: "review_hash_accept_1",
+      mission_id: "mission_1",
+      result_id: "result_1",
+      handoff_id: "handoff_1",
+    })
+    const before = await readEventKinds(dir)
+
+    await expect(server.command("runtime.preview_executor_review_proposal_drafts", { reviewId: "executor_review_accept_1" })).resolves.toMatchObject({
+      status: "ready",
+      review_id: "executor_review_accept_1",
+      can_create_proposals_now: false,
+      candidates: [expect.objectContaining({
+        draft_kind: "mission_result",
+        source_review_id: "executor_review_accept_1",
+        source_packet_id: "packet_accept_1",
+        result_id: "result_1",
+        would_create_proposal: false,
+        would_mutate_mission: false,
+      })],
+    })
+    await expect(server.command("runtime.preview_executor_review_proposal_drafts", { resultId: "result_1" })).resolves.toMatchObject({
+      status: "ready",
+      review_id: "executor_review_accept_1",
+    })
+    await expect(server.command("runtime.executor_review_proposal_draft_summary")).resolves.toMatchObject({
+      total_reviews_considered: 1,
+      draftable_review_count: 1,
+      candidate_count: 1,
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+  })
+
+  test("executor review proposal draft preview fails closed for non-draftable reviews", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled" })
+    await server.eventStore.append({
+      kind: "commander_executor_review_succeeded",
+      review_id: "executor_review_blocker_1",
+      packet_id: "packet_blocker_1",
+      packet_status: "ready_for_commander_review",
+      status: "succeeded",
+      provider_kind: "fake-provider",
+      decision: "accept_result",
+      confidence: 0.4,
+      summary: "low confidence",
+      findings: [{ finding_id: "finding_blocker_1", severity: "blocker", title: "Blocked", summary: "Do not accept.", evidence_ids: [], recommended_commands: [] }],
+      evidence_ids: [],
+      recommended_commands: [],
+      completed_at: "2026-06-26T00:00:01.000Z",
+      review_hash: "review_hash_blocker_1",
+    })
+    await server.eventStore.append({
+      kind: "commander_executor_review_blocked",
+      review_id: "executor_review_blocked_1",
+      packet_id: "packet_blocked_1",
+      status: "blocked",
+      decision: "blocked",
+      confidence: 0,
+      summary: "blocked",
+      findings: [],
+      evidence_ids: [],
+      recommended_commands: [],
+      completed_at: "2026-06-26T00:00:02.000Z",
+      review_hash: "review_hash_blocked_1",
+    })
+    const before = await readEventKinds(dir)
+
+    await expect(server.command("runtime.preview_executor_review_proposal_drafts", { reviewId: "executor_review_blocker_1" })).resolves.toMatchObject({
+      status: "inconclusive",
+      candidates: [],
+      blockers: expect.arrayContaining([expect.stringContaining("confidence")]),
+    })
+    await expect(server.command("runtime.preview_executor_review_proposal_drafts", { reviewId: "executor_review_blocked_1" })).resolves.toMatchObject({
+      status: "blocked",
+      candidates: [],
+      blockers: expect.arrayContaining([expect.stringContaining("status is blocked")]),
+    })
+    await expect(server.command("runtime.preview_executor_review_proposal_drafts", { reviewId: "missing" })).resolves.toMatchObject({
+      status: "unknown",
+      candidates: [],
+      blockers: expect.arrayContaining([expect.stringContaining("not found")]),
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+  })
+
+  test("executor review proposal draft runtime client commands do not auto-start", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_executor_review_proposal_drafts")).resolves.toMatchObject({
+      status: "unknown",
+      candidates: [],
+    })
+    await expect(client.command("runtime.executor_review_proposal_draft_summary")).resolves.toMatchObject({
+      total_reviews_considered: 0,
+    })
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(adapter.startCalls).toBe(0)
+    await client.shutdown()
+  })
+
+  test("authority registry includes executor review proposal draft commands", () => {
+    const authority = new CommandAuthorityService()
+    expect(authority.get("/executor-review-draft-preview")).toMatchObject({
+      risk: "safe_read",
+      mutates_events: false,
+      runtime_command: "runtime.preview_executor_review_proposal_drafts",
+    })
+    expect(authority.validationProfile("/executor-review-draft-preview").targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_draft_tui.py")
+  })
+
   test("OpenCode process smoke live execution can auto-start the runtime", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

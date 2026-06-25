@@ -45,6 +45,7 @@ export { FakeCommanderCycleProvider } from "./commander-cycle/commander-cycle-pr
 export { CommanderCycleService } from "./commander-cycle/commander-cycle-service"
 export { FakeCommanderExecutorReviewProvider } from "./commander-executor-review/commander-executor-review-provider"
 export { CommanderExecutorReviewService } from "./commander-executor-review/commander-executor-review-service"
+export { ExecutorReviewProposalDraftService } from "./commander-executor-review/executor-review-proposal-draft-service"
 export { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"
@@ -178,6 +179,15 @@ export type {
   CommanderExecutorReviewResult,
   CommanderExecutorReviewStatus,
 } from "./commander-executor-review/commander-executor-review-types"
+export type {
+  ExecutorReviewProposalDraftCandidate,
+  ExecutorReviewProposalDraftCommand,
+  ExecutorReviewProposalDraftKind,
+  ExecutorReviewProposalDraftPreview,
+  ExecutorReviewProposalDraftPreviewInput,
+  ExecutorReviewProposalDraftPreviewStatus,
+  ExecutorReviewProposalDraftSummary,
+} from "./commander-executor-review/executor-review-proposal-draft-types"
 export type {
   ResearchSynthesisProvider,
   ResearchSynthesisProviderEvidence,
