@@ -14702,6 +14702,126 @@ describe("RuntimeServerClient", () => {
     await server.shutdown()
   })
 
+  test("executor review proposal review request creates one review request for an 8H proposal", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.eventStore.append({
+      kind: "work_intent_created",
+      intent: { intent_id: "intent_review_request_1", kind: "user_message", message: "executor review proposal review request fixture", created_at: "2026-06-26T00:00:00.000Z", status: "created" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "mission_created",
+      mission: { mission_id: "mission_review_request_1", intent_id: "intent_review_request_1", project_dir: dir, objective: "novel executor review proposal review request fixture", status: "sent", created_at: "2026-06-26T00:00:00.000Z", updated_at: "2026-06-26T00:00:00.000Z", sent_at: "2026-06-26T00:00:00.000Z" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "mission_claimed",
+      claim: { claim_id: "claim_review_request_1", mission_id: "mission_review_request_1", executor_id: "executor", claimed_at: "2026-06-26T00:00:00.000Z", status: "active" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "mission_result_submitted",
+      result: { result_id: "result_review_request_1", mission_id: "mission_review_request_1", claim_id: "claim_review_request_1", summary: "novel executor result", created_at: "2026-06-26T00:00:00.000Z", status: "submitted" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "commander_executor_review_succeeded",
+      review_id: "executor_review_request_1",
+      packet_id: "packet_review_request_1",
+      packet_status: "ready_for_commander_review",
+      status: "succeeded",
+      provider_kind: "fake-provider",
+      decision: "accept_result",
+      confidence: 0.88,
+      summary: "Accepted novel result token=abc123",
+      findings: [{ finding_id: "finding_review_request_1", severity: "info", title: "Accepted", summary: "Novel executor evidence is usable.", evidence_ids: ["mission_result:result_review_request_1"], recommended_commands: [] }],
+      evidence_ids: ["mission_result:result_review_request_1"],
+      recommended_commands: [],
+      started_at: "2026-06-26T00:00:00.000Z",
+      completed_at: "2026-06-26T00:00:01.000Z",
+      requested_by: "operator",
+      review_hash: "review_hash_review_request_1",
+      mission_id: "mission_review_request_1",
+      result_id: "result_review_request_1",
+    } as JsonlEvent)
+    const draftPreview = await server.command("runtime.preview_executor_review_proposal_drafts", { reviewId: "executor_review_request_1" }) as { candidates: Array<{ draft_id: string }> }
+    const draftId = draftPreview.candidates[0]?.draft_id
+    expect(typeof draftId).toBe("string")
+    await server.start()
+    const created = await server.command("runtime.create_executor_review_proposal", { reviewId: "executor_review_request_1", draftId, requestedBy: "alice" }) as { status: string; proposal_id: string; create_id: string }
+    expect(created.status).toBe("created")
+    const proposalId = created.proposal_id
+    const before = await readEventKinds(dir)
+
+    await expect(server.command("runtime.preview_executor_review_proposal_review_request", { proposalId })).resolves.toMatchObject({
+      status: "ready",
+      can_request: true,
+      proposal_id: proposalId,
+      create_id: created.create_id,
+      review_id: "executor_review_request_1",
+      draft_id: draftId,
+    })
+    await expect(server.command("runtime.preview_executor_review_proposal_review_request", { proposalId, createId: "wrong-create" })).resolves.toMatchObject({
+      status: "blocked",
+      can_request: false,
+      blockers: expect.arrayContaining(["create_id does not match the proposal source create record"]),
+    })
+    await expect(server.command("runtime.request_executor_review_proposal_review", { proposalId, dryRun: true, requestedBy: "bob" })).resolves.toMatchObject({
+      status: "dry_run",
+      review_request_id: undefined,
+    })
+    expect(await readEventKinds(dir)).toEqual(before)
+    const requested = await server.command("runtime.request_executor_review_proposal_review", { proposalId, requestedBy: "bob" }) as { status: string; review_request_id: string; request_gate_id: string }
+    expect(requested.status).toBe("requested")
+    expect(requested.review_request_id).toMatch(/^review_/)
+    const duplicate = await server.command("runtime.request_executor_review_proposal_review", { proposalId, requestedBy: "bob" }) as { status: string; review_request_id: string; request_gate_id: string; requested_by?: string; requested_at?: string }
+    expect(duplicate).toMatchObject({
+      status: "requested",
+      review_request_id: requested.review_request_id,
+      request_gate_id: requested.request_gate_id,
+    })
+    const linkedReview = await server.command("runtime.get_review_request", { reviewId: requested.review_request_id }) as { created_at: string; requested_by: string }
+    expect(duplicate.requested_by).toBe(linkedReview.requested_by)
+    expect(duplicate.requested_at).toBe(linkedReview.created_at)
+    await expect(server.command("runtime.list_executor_review_proposal_review_requests", { proposalId })).resolves.toEqual([
+      expect.objectContaining({ status: "requested", proposal_id: proposalId, review_request_id: requested.review_request_id }),
+    ])
+    await expect(server.command("runtime.get_executor_review_proposal_review_request", { requestGateId: requested.request_gate_id })).resolves.toMatchObject({
+      status: "requested",
+      proposal_id: proposalId,
+      review_request_id: requested.review_request_id,
+      requested_by: "bob",
+    })
+    await expect(server.command("runtime.preview_executor_review_proposal_review_request", { proposalId })).resolves.toMatchObject({
+      status: "blocked",
+      existing_review_request_id: requested.review_request_id,
+      blockers: expect.arrayContaining(["review request already exists for this executor-review proposal"]),
+    })
+    const blockedWrongCreate = await server.command("runtime.request_executor_review_proposal_review", { proposalId, createId: "wrong-create", requestedBy: "mallory" }) as { status: string; request_gate_id: string; error?: string }
+    expect(blockedWrongCreate).toMatchObject({
+      status: "blocked",
+      error: "create_id does not match the proposal source create record",
+    })
+    expect(blockedWrongCreate.request_gate_id).not.toBe(requested.request_gate_id)
+    await expect(server.command("runtime.get_executor_review_proposal_review_request", { requestGateId: requested.request_gate_id })).resolves.toMatchObject({
+      status: "requested",
+      review_request_id: requested.review_request_id,
+    })
+    const kinds = await readEventKinds(dir)
+    expect(kinds.filter((kind) => kind === "review_request_created")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "commander_proposal_review_requested")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_review_requested")).toHaveLength(1)
+    const addedKinds = kinds.slice(before.length)
+    expect(addedKinds).not.toContain("review_request_approved")
+    expect(addedKinds).not.toContain("review_request_rejected")
+    expect(addedKinds).not.toContain("commander_proposal_applied")
+    expect(addedKinds).not.toContain("mission_progress_recorded")
+    expect(addedKinds).not.toContain("mission_result_submitted")
+    expect(addedKinds).not.toContain("external_api_request_executed")
+    expect(addedKinds).not.toContain("opencode_handoff_started")
+    expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("abc123")
+    await server.shutdown()
+  })
+
   test("executor review proposal create recovers records when gate metadata append fails", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -14792,6 +14912,17 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.list_executor_review_proposal_creates")).resolves.toEqual([])
     await expect(client.command("runtime.get_executor_review_proposal_create", { create_id: "missing-create" })).resolves.toBeNull()
     await expect(client.command("runtime.create_executor_review_proposal", { review_id: "missing-review", draft_id: "missing-draft", requested_by: "operator" })).rejects.toThrow("runtime must be started before proposal writes")
+    await expect(client.command("runtime.preview_executor_review_proposal_review_request", { proposal_id: "missing-proposal" })).resolves.toMatchObject({
+      status: "blocked",
+      can_request: false,
+    })
+    await expect(client.command("runtime.request_executor_review_proposal_review", { proposal_id: "missing-proposal", dry_run: true })).resolves.toMatchObject({
+      status: "blocked",
+      error: expect.stringContaining("proposal_id was not found"),
+    })
+    await expect(client.command("runtime.list_executor_review_proposal_review_requests")).resolves.toEqual([])
+    await expect(client.command("runtime.get_executor_review_proposal_review_request", { request_gate_id: "missing-request-gate" })).resolves.toBeNull()
+    await expect(client.command("runtime.request_executor_review_proposal_review", { proposal_id: "missing-proposal", requested_by: "operator" })).rejects.toThrow("runtime must be started before proposal writes")
     expect(adapter.startCalls).toBe(0)
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
     await client.shutdown()
@@ -14862,6 +14993,21 @@ describe("RuntimeServerClient", () => {
       mutates_events: false,
     })
     expect(authority.validationProfile("/executor-review-proposal-create").targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_create_tui.py")
+  })
+
+  test("authority registry includes executor review proposal review request commands", () => {
+    const authority = new CommandAuthorityService()
+    expect(authority.get("/executor-review-proposal-review-request")).toMatchObject({
+      risk: "high_impact_write",
+      mutates_events: true,
+      runtime_command: "runtime.request_executor_review_proposal_review",
+      gate: "proposal_review_runtime",
+    })
+    expect(authority.get("/executor-review-proposal-review-dry-run")).toMatchObject({
+      risk: "safe_read",
+      mutates_events: false,
+    })
+    expect(authority.validationProfile("/executor-review-proposal-review-request").targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_review_request_tui.py")
   })
 
   test("authority registry includes MiniMax live validation commands", () => {

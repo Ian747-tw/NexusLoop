@@ -86,6 +86,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
   out.push(...executorReviewProposalCreateLines(state))
+  out.push(...executorReviewProposalReviewRequestLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
@@ -702,6 +703,54 @@ function executorReviewProposalCreateLines(state: UiState): string[] {
   }
   if (create.commandError) out.push(`  command_error=${redactText(create.commandError)}`)
   out.push("  note=proposal creation does not request review, apply changes, mutate mission, call provider, or launch OpenCode")
+  return out
+}
+
+function executorReviewProposalReviewRequestLines(state: UiState): string[] {
+  const request = state.executorReviewProposalReviewRequest
+  const out = ["Executor review proposal review request"]
+  if (!request) {
+    out.push("  preview=none")
+    out.push("  latest=none")
+    out.push("  records=0")
+    out.push("  note=review request does not approve, reject, apply, mutate mission, call provider, or launch OpenCode")
+    return out
+  }
+  if (request.preview) {
+    const item = request.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_request=${item.can_request}`)
+    out.push(`  proposal=${item.proposal_id} create=${item.create_id ?? "none"} review=${item.review_id ?? "none"} draft=${item.draft_id ?? "none"}`)
+    out.push(`  proposal_status=${item.proposal_status ?? "none"} action=${item.action_kind ?? "none"} title=${preview(redactText(item.proposal_title_preview))}`)
+    out.push(`  summary=${preview(redactText(item.redacted_summary_preview))}`)
+    if (item.existing_review_request_id) out.push(`  existing_review_request=${item.existing_review_request_id} status=${item.existing_review_request_status ?? "unknown"}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(String(blocker ?? "")))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(String(warning ?? "")))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (request.latestResult) {
+    const result = request.latestResult
+    out.push(`  latest=${result.request_gate_id} status=${result.status} review_request=${result.review_request_id ?? "none"} proposal=${result.proposal_id}`)
+    if (result.error) out.push(`  latest_error=${preview(redactText(result.error))}`)
+  } else {
+    out.push("  latest=none")
+  }
+  out.push(`  records=${request.records.length}`)
+  if (request.records.length > 0) {
+    out.push("  recent_review_requests")
+    out.push(...request.records.slice(0, 10).map((record) => `    - ${record.request_gate_id} status=${record.status} review_request=${record.review_request_id ?? "none"} proposal=${record.proposal_id}: ${preview(redactText(record.summary_preview))}`))
+  }
+  if (request.selected && request.selected.request_gate_id !== request.latestResult?.request_gate_id) {
+    out.push(`  selected=${request.selected.request_gate_id} status=${request.selected.status} review_request=${request.selected.review_request_id ?? "none"}`)
+  }
+  if (request.commandError) out.push(`  command_error=${redactText(request.commandError)}`)
+  out.push("  note=review request does not approve, reject, apply, mutate mission, call provider, or launch OpenCode")
   return out
 }
 

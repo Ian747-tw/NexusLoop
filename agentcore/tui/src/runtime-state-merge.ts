@@ -34,6 +34,8 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     baseline === undefined || stableEqual(current.executorReviewProposalDrafts, baseline.executorReviewProposalDrafts)
   const canUpdateExecutorReviewProposalCreate =
     baseline === undefined || stableEqual(current.executorReviewProposalCreate, baseline.executorReviewProposalCreate)
+  const canUpdateExecutorReviewProposalReviewRequest =
+    baseline === undefined || stableEqual(current.executorReviewProposalReviewRequest, baseline.executorReviewProposalReviewRequest)
   const canUpdateMiniMaxLiveValidation =
     baseline === undefined || stableEqual(current.minimaxLiveValidation, baseline.minimaxLiveValidation)
   const canUpdateRuntimeCommandError =
@@ -77,6 +79,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     commanderExecutorReview: canUpdateCommanderExecutorReview ? next.commanderExecutorReview : current.commanderExecutorReview,
     executorReviewProposalDrafts: canUpdateExecutorReviewProposalDrafts ? next.executorReviewProposalDrafts : current.executorReviewProposalDrafts,
     executorReviewProposalCreate: canUpdateExecutorReviewProposalCreate ? next.executorReviewProposalCreate : current.executorReviewProposalCreate,
+    executorReviewProposalReviewRequest: canUpdateExecutorReviewProposalReviewRequest ? next.executorReviewProposalReviewRequest : current.executorReviewProposalReviewRequest,
     minimaxLiveValidation: canUpdateMiniMaxLiveValidation ? next.minimaxLiveValidation : current.minimaxLiveValidation,
     runtimeCommandError: canUpdateRuntimeCommandError ? next.runtimeCommandError : current.runtimeCommandError,
     lastCommand: canUpdateLastCommand ? next.lastCommand : current.lastCommand,

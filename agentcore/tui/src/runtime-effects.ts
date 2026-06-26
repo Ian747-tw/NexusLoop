@@ -48,6 +48,11 @@ import type {
   ExecutorReviewProposalCreateRecordSummary,
   ExecutorReviewProposalCreateResultSummary,
   ExecutorReviewProposalCreateState,
+  ExecutorReviewProposalReviewRequestCommandSummary,
+  ExecutorReviewProposalReviewRequestPreviewSummary,
+  ExecutorReviewProposalReviewRequestRecordSummary,
+  ExecutorReviewProposalReviewRequestResultSummary,
+  ExecutorReviewProposalReviewRequestState,
   OpenCodeHandoffRecordSummary,
   OpenCodeHandoffResultSummary,
   OpenCodeHandoffState,
@@ -349,6 +354,10 @@ export type RuntimeUiEffect =
   | { type: "create-executor-review-proposal"; reviewId: string; draftId: string; dryRun?: boolean }
   | { type: "load-executor-review-proposal-creates"; limit?: number }
   | { type: "load-executor-review-proposal-create"; createId: string }
+  | { type: "preview-executor-review-proposal-review-request"; proposalId: string; createId?: string }
+  | { type: "request-executor-review-proposal-review"; proposalId: string; createId?: string; dryRun?: boolean }
+  | { type: "load-executor-review-proposal-review-requests"; limit?: number }
+  | { type: "load-executor-review-proposal-review-request"; requestGateId: string }
   | { type: "load-opencode-handoff-followup"; handoffId: string }
   | { type: "load-opencode-handoff-followups"; limit?: number }
   | { type: "load-opencode-handoff-followup-summary" }
@@ -1111,6 +1120,43 @@ export async function applyRuntimeUiEffect(
         return applyExecutorReviewProposalCreateRecords(state, await runtime.command("runtime.list_executor_review_proposal_creates", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-executor-review-proposal-create":
         return applyExecutorReviewProposalCreateSelected(state, await runtime.command("runtime.get_executor_review_proposal_create", { createId: effect.createId }), effect.createId)
+      case "preview-executor-review-proposal-review-request":
+        return applyExecutorReviewProposalReviewRequestPreview(state, await runtime.command("runtime.preview_executor_review_proposal_review_request", {
+          proposalId: effect.proposalId,
+          createId: effect.createId,
+        }))
+      case "request-executor-review-proposal-review": {
+        const next = applyExecutorReviewProposalReviewRequestResult(state, await runtime.command("runtime.request_executor_review_proposal_review", {
+          proposalId: effect.proposalId,
+          createId: effect.createId,
+          dry_run: effect.dryRun,
+          requested_by: "tui",
+        }))
+        if (effect.dryRun === true) {
+          return {
+            ...next,
+            executorReviewProposalReviewRequest: {
+              ...executorReviewProposalReviewRequestState(next),
+              records: executorReviewProposalReviewRequestState(state).records,
+            },
+          }
+        }
+        const refreshed = applyExecutorReviewProposalReviewRequestRecords(next, await runtime.command("runtime.list_executor_review_proposal_review_requests", { limit: HANDOFF_LIMIT }))
+        const requestError = next.executorReviewProposalReviewRequest?.commandError
+        return requestError
+          ? {
+            ...refreshed,
+            executorReviewProposalReviewRequest: {
+              ...executorReviewProposalReviewRequestState(refreshed),
+              commandError: requestError,
+            },
+          }
+          : refreshed
+      }
+      case "load-executor-review-proposal-review-requests":
+        return applyExecutorReviewProposalReviewRequestRecords(state, await runtime.command("runtime.list_executor_review_proposal_review_requests", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "load-executor-review-proposal-review-request":
+        return applyExecutorReviewProposalReviewRequestSelected(state, await runtime.command("runtime.get_executor_review_proposal_review_request", { requestGateId: effect.requestGateId }), effect.requestGateId)
       case "load-opencode-handoff-followup":
         return applyOpenCodeHandoffFollowup(
           state,
@@ -1521,6 +1567,7 @@ export async function applyRuntimeUiEffect(
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
     if (isExecutorReviewProposalCreateEffect(effect)) return recordExecutorReviewProposalCreateCommandError(state, error)
+    if (isExecutorReviewProposalReviewRequestEffect(effect)) return recordExecutorReviewProposalReviewRequestCommandError(state, error)
     if (isMiniMaxLiveValidationEffect(effect)) return recordMiniMaxLiveValidationCommandError(state, error)
     if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
     if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
@@ -2307,6 +2354,66 @@ function applyExecutorReviewProposalCreateSelected(state: UiState, value: unknow
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "executor review proposal create selected", detail: `create_id=${redactText(createId)}`, status: result ? result.status : "missing" }].slice(-12),
+  }
+}
+
+function applyExecutorReviewProposalReviewRequestPreview(state: UiState, value: unknown): UiState {
+  const previewResult = readExecutorReviewProposalReviewRequestPreview(value)
+  return {
+    ...state,
+    executorReviewProposalReviewRequest: {
+      ...executorReviewProposalReviewRequestState(state),
+      preview: previewResult,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal review request preview", detail: `status=${previewResult.status} can_request=${previewResult.can_request}`, status: previewResult.can_request ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyExecutorReviewProposalReviewRequestResult(state: UiState, value: unknown): UiState {
+  const result = readExecutorReviewProposalReviewRequestResult(value)
+  const current = executorReviewProposalReviewRequestState(state)
+  const commandError = result.status === "blocked" || result.status === "failed"
+    ? result.error ?? `executor review proposal review request ${result.status}`
+    : undefined
+  return {
+    ...state,
+    executorReviewProposalReviewRequest: {
+      ...current,
+      latestResult: result,
+      selected: result,
+      records: result.status === "dry_run"
+        ? current.records
+        : [recordFromExecutorReviewProposalReviewRequestResult(result), ...current.records.filter((item) => item.request_gate_id !== result.request_gate_id)].slice(0, HANDOFF_LIMIT),
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal review request", detail: `status=${result.status} review_request=${result.review_request_id ?? "none"}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyExecutorReviewProposalReviewRequestRecords(state: UiState, value: unknown): UiState {
+  const records = readExecutorReviewProposalReviewRequestRecords(value)
+  return {
+    ...state,
+    executorReviewProposalReviewRequest: {
+      ...executorReviewProposalReviewRequestState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal review requests", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyExecutorReviewProposalReviewRequestSelected(state: UiState, value: unknown, requestGateId: string): UiState {
+  const result = value === null ? null : readExecutorReviewProposalReviewRequestResult(value)
+  return {
+    ...state,
+    executorReviewProposalReviewRequest: {
+      ...executorReviewProposalReviewRequestState(state),
+      selected: result,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal review request selected", detail: `request_gate_id=${redactText(requestGateId)}`, status: result ? result.status : "missing" }].slice(-12),
   }
 }
 
@@ -3519,6 +3626,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
   if (executorReviewProposalCreateCommands.has(command)) return state.executorReviewProposalCreate?.commandError
+  if (executorReviewProposalReviewRequestCommands.has(command)) return state.executorReviewProposalReviewRequest?.commandError
   if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
   if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
   if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError
@@ -3553,6 +3661,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
   if (executorReviewProposalCreateCommands.has(command)) return { ...state, executorReviewProposalCreate: { ...executorReviewProposalCreateState(state), commandError: undefined } }
+  if (executorReviewProposalReviewRequestCommands.has(command)) return { ...state, executorReviewProposalReviewRequest: { ...executorReviewProposalReviewRequestState(state), commandError: undefined } }
   if (opencodeFollowupCommands.has(command)) return { ...state, opencodeFollowup: { ...opencodeFollowupState(state), commandError: undefined } }
   if (runtimeCheckpointCommands.has(command)) return { ...state, runtimeCheckpoints: { ...runtimeCheckpointsState(state), commandError: undefined } }
   if (runtimeRestoreCommands.has(command)) return { ...state, runtimeRestore: { ...runtimeRestoreState(state), commandError: undefined } }
@@ -3718,6 +3827,21 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-executor-review-proposal-creates", limit: HANDOFF_LIMIT })
     case "executor-review-proposal-create-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-executor-review-proposal-create", createId: requiredArg(args, 0, "createId") })
+    case "executor-review-proposal-review-preview":
+    case "executor-draft-review-preview":
+      return applyRuntimeUiEffect(commandState, runtime, executorReviewProposalReviewRequestEffect("preview-executor-review-proposal-review-request", args))
+    case "executor-review-proposal-review-request":
+    case "executor-draft-review-request":
+    case "commander-executor-proposal-review-request":
+      return applyRuntimeUiEffect(commandState, runtime, executorReviewProposalReviewRequestEffect("request-executor-review-proposal-review", args))
+    case "executor-review-proposal-review-dry-run": {
+      const effect = executorReviewProposalReviewRequestEffect("request-executor-review-proposal-review", args) as Extract<RuntimeUiEffect, { type: "request-executor-review-proposal-review" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "executor-review-proposal-review-requests":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-executor-review-proposal-review-requests", limit: HANDOFF_LIMIT })
+    case "executor-review-proposal-review-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-executor-review-proposal-review-request", requestGateId: requiredArg(args, 0, "requestGateId") })
     case "handoff-followup":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup", handoffId: requiredArg(args, 0, "handoffId") })
     case "handoff-followups":
@@ -4521,6 +4645,11 @@ function isExecutorReviewProposalCreateEffect(effect: RuntimeUiEffect): boolean 
   return executorReviewProposalCreateCommands.has(effect.command)
 }
 
+function isExecutorReviewProposalReviewRequestEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return executorReviewProposalReviewRequestEffectTypes.has(effect.type)
+  return executorReviewProposalReviewRequestCommands.has(effect.command)
+}
+
 function isOpenCodeFollowupEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return opencodeFollowupEffectTypes.has(effect.type)
   return opencodeFollowupCommands.has(effect.command)
@@ -4741,6 +4870,17 @@ const executorReviewProposalCreateCommands = new Set([
   "executor-draft-create-preview",
   "executor-draft-create",
   "commander-executor-proposal-create",
+])
+
+const executorReviewProposalReviewRequestCommands = new Set([
+  "executor-review-proposal-review-preview",
+  "executor-review-proposal-review-request",
+  "executor-review-proposal-review-dry-run",
+  "executor-review-proposal-review-requests",
+  "executor-review-proposal-review-show",
+  "executor-draft-review-preview",
+  "executor-draft-review-request",
+  "commander-executor-proposal-review-request",
 ])
 
 const opencodeFollowupCommands = new Set([
@@ -4999,6 +5139,13 @@ const executorReviewProposalCreateEffectTypes = new Set<RuntimeUiEffect["type"]>
   "create-executor-review-proposal",
   "load-executor-review-proposal-creates",
   "load-executor-review-proposal-create",
+])
+
+const executorReviewProposalReviewRequestEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-executor-review-proposal-review-request",
+  "request-executor-review-proposal-review",
+  "load-executor-review-proposal-review-requests",
+  "load-executor-review-proposal-review-request",
 ])
 
 const opencodeFollowupEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -6104,6 +6251,18 @@ function recordExecutorReviewProposalCreateCommandError(state: UiState, error: u
   }
 }
 
+function recordExecutorReviewProposalReviewRequestCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    executorReviewProposalReviewRequest: {
+      ...executorReviewProposalReviewRequestState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal review request command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function recordOpenCodeFollowupCommandError(state: UiState, error: unknown): UiState {
   const message = redactText(error instanceof Error ? error.message : String(error))
   return {
@@ -7079,6 +7238,100 @@ function readExecutorReviewProposalCreateCommands(value: unknown): ExecutorRevie
     requires_active_runtime: command.requires_active_runtime === true,
     notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
   }))
+}
+
+function readExecutorReviewProposalReviewRequestPreview(value: unknown): ExecutorReviewProposalReviewRequestPreviewSummary {
+  if (!isRecord(value)) throw new Error("runtime.preview_executor_review_proposal_review_request returned invalid preview")
+  return {
+    preview_id: readString(value.preview_id, ""),
+    status: readString(value.status, "blocked"),
+    can_request: readBoolean(value.can_request),
+    proposal_id: readString(value.proposal_id, ""),
+    create_id: typeof value.create_id === "string" ? redactText(value.create_id) : undefined,
+    review_id: typeof value.review_id === "string" ? redactText(value.review_id) : undefined,
+    draft_id: typeof value.draft_id === "string" ? redactText(value.draft_id) : undefined,
+    source_packet_id: typeof value.source_packet_id === "string" ? redactText(value.source_packet_id) : undefined,
+    proposal_status: typeof value.proposal_status === "string" ? readString(value.proposal_status, "") : undefined,
+    proposal_title_preview: preview(readString(value.proposal_title_preview, "")),
+    proposal_summary_preview: preview(readString(value.proposal_summary_preview, "")),
+    action_kind: typeof value.action_kind === "string" ? readString(value.action_kind, "") : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    result_id: typeof value.result_id === "string" ? redactText(value.result_id) : undefined,
+    source_evidence_ids: readStringList(value.source_evidence_ids, 12).map(redactText),
+    source_finding_ids: readStringList(value.source_finding_ids, 12).map(redactText),
+    source_confidence: typeof value.source_confidence === "number" ? value.source_confidence : undefined,
+    risk: typeof value.risk === "string" ? readString(value.risk, "") : undefined,
+    existing_review_request_id: typeof value.existing_review_request_id === "string" ? redactText(value.existing_review_request_id) : undefined,
+    existing_review_request_status: typeof value.existing_review_request_status === "string" ? readString(value.existing_review_request_status, "") : undefined,
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    recommended_commands: readExecutorReviewProposalReviewRequestCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readExecutorReviewProposalReviewRequestResult(value: unknown): ExecutorReviewProposalReviewRequestResultSummary {
+  if (!isRecord(value) || typeof value.request_gate_id !== "string") throw new Error("runtime.request_executor_review_proposal_review returned invalid result")
+  return {
+    request_gate_id: readString(value.request_gate_id, ""),
+    status: readString(value.status, "blocked"),
+    review_request_id: typeof value.review_request_id === "string" ? redactText(value.review_request_id) : undefined,
+    proposal_id: readString(value.proposal_id, ""),
+    create_id: typeof value.create_id === "string" ? redactText(value.create_id) : undefined,
+    review_id: typeof value.review_id === "string" ? redactText(value.review_id) : undefined,
+    draft_id: typeof value.draft_id === "string" ? redactText(value.draft_id) : undefined,
+    source_packet_id: typeof value.source_packet_id === "string" ? redactText(value.source_packet_id) : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    result_id: typeof value.result_id === "string" ? redactText(value.result_id) : undefined,
+    requested_at: readString(value.requested_at, ""),
+    requested_by: preview(readString(value.requested_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    request_hash: readString(value.request_hash, ""),
+    recommended_commands: readExecutorReviewProposalReviewRequestCommands(value.recommended_commands),
+  }
+}
+
+function readExecutorReviewProposalReviewRequestRecords(value: unknown): ExecutorReviewProposalReviewRequestRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((item) => ({
+    request_gate_id: readString(item.request_gate_id, ""),
+    status: readString(item.status, "blocked"),
+    review_request_id: typeof item.review_request_id === "string" ? redactText(item.review_request_id) : undefined,
+    proposal_id: readString(item.proposal_id, ""),
+    create_id: typeof item.create_id === "string" ? redactText(item.create_id) : undefined,
+    review_id: typeof item.review_id === "string" ? redactText(item.review_id) : undefined,
+    draft_id: typeof item.draft_id === "string" ? redactText(item.draft_id) : undefined,
+    requested_at: readString(item.requested_at, ""),
+    summary_preview: preview(readString(item.summary_preview, "")),
+    request_hash: readString(item.request_hash, ""),
+  }))
+}
+
+function readExecutorReviewProposalReviewRequestCommands(value: unknown): ExecutorReviewProposalReviewRequestCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function recordFromExecutorReviewProposalReviewRequestResult(result: ExecutorReviewProposalReviewRequestResultSummary): ExecutorReviewProposalReviewRequestRecordSummary {
+  return {
+    request_gate_id: result.request_gate_id,
+    status: result.status,
+    review_request_id: result.review_request_id,
+    proposal_id: result.proposal_id,
+    create_id: result.create_id,
+    review_id: result.review_id,
+    draft_id: result.draft_id,
+    requested_at: result.requested_at,
+    summary_preview: result.error ?? result.proposal_id,
+    request_hash: result.request_hash,
+  }
 }
 
 function recordFromExecutorReviewProposalCreateResult(result: ExecutorReviewProposalCreateResultSummary): ExecutorReviewProposalCreateRecordSummary {
@@ -9940,6 +10193,10 @@ function executorReviewProposalCreateState(state: UiState): ExecutorReviewPropos
   return state.executorReviewProposalCreate ?? { preview: null, latestResult: null, records: [], selected: null }
 }
 
+function executorReviewProposalReviewRequestState(state: UiState): ExecutorReviewProposalReviewRequestState {
+  return state.executorReviewProposalReviewRequest ?? { preview: null, latestResult: null, records: [], selected: null }
+}
+
 function opencodeFollowupState(state: UiState): OpenCodeHandoffFollowupState {
   return state.opencodeFollowup ?? { selected: null, summary: null, queueItems: [] }
 }
@@ -10587,6 +10844,23 @@ function executorReviewProposalCreateEffect(
     else throw new Error("executor review proposal create arg is unsupported")
   }
   if (!effect.reviewId || !effect.draftId) throw new Error("executor review proposal create requires review=<id> and draft=<id>")
+  return effect
+}
+
+function executorReviewProposalReviewRequestEffect(
+  type: "preview-executor-review-proposal-review-request" | "request-executor-review-proposal-review",
+  args: string[],
+): Extract<RuntimeUiEffect, { type: "preview-executor-review-proposal-review-request" | "request-executor-review-proposal-review" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-executor-review-proposal-review-request" | "request-executor-review-proposal-review" }> = { type, proposalId: "" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("executor review proposal review request args must use proposal=<id> and optional create=<id>")
+    if (key === "proposal") effect.proposalId = value
+    else if (key === "create") effect.createId = value
+    else throw new Error("executor review proposal review request arg is unsupported")
+  }
+  if (!effect.proposalId) throw new Error("executor review proposal review request requires proposal=<id>")
   return effect
 }
 

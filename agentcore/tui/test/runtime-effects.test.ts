@@ -3385,6 +3385,60 @@ describe("runtime UI effects", () => {
     expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "created", proposal_id: "fake-proposal-1" })
     expect(state.executorReviewProposalCreate?.records).toHaveLength(1)
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-preview", args: ["proposal=fake-proposal-1"] })
+    expect(state.executorReviewProposalReviewRequest?.preview).toMatchObject({ status: "ready", can_request: true, proposal_id: "fake-proposal-1", review_id: reviewId, draft_id: draftId })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Executor review proposal review request")
+    expect(snapshot).toContain("note=review request does not approve, reject, apply, mutate mission, call provider, or launch OpenCode")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-dry-run", args: ["proposal=fake-proposal-1"] })
+    expect(state.executorReviewProposalReviewRequest?.latestResult).toMatchObject({ status: "dry_run", review_request_id: undefined })
+    expect(state.executorReviewProposalReviewRequest?.records).toHaveLength(0)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-request", args: ["proposal=fake-proposal-1"] })
+    expect(state.executorReviewProposalReviewRequest?.latestResult).toMatchObject({ status: "requested", review_request_id: "fake-review-request-1" })
+    expect(state.executorReviewProposalReviewRequest?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-request", args: ["proposal=fake-proposal-1"] })
+    expect(state.executorReviewProposalReviewRequest?.latestResult).toMatchObject({ status: "requested", review_request_id: "fake-review-request-1" })
+    expect(state.executorReviewProposalReviewRequest?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-request", args: ["proposal=fake-proposal-1", "create=wrong-create"] })
+    expect(state.executorReviewProposalReviewRequest?.latestResult).toMatchObject({ status: "blocked", error: "create_id does not match the proposal source create record" })
+    expect(state.executorReviewProposalReviewRequest?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-requests" })
+    expect(state.executorReviewProposalReviewRequest?.records).toEqual([expect.objectContaining({ status: "requested", review_request_id: "fake-review-request-1", proposal_id: "fake-proposal-1" })])
+    const requestGateId = state.executorReviewProposalReviewRequest?.records[0]?.request_gate_id
+    expect(requestGateId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-show", args: [requestGateId!] })
+    expect(state.executorReviewProposalReviewRequest?.selected).toMatchObject({ request_gate_id: requestGateId, status: "requested", review_request_id: "fake-review-request-1" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/executor-review-proposal-review-request"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_review_request_tui.py")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-preview", args: ["proposal=fake-proposal-1", "create=wrong-create"] })
+    expect(state.executorReviewProposalReviewRequest?.preview).toMatchObject({ status: "blocked", can_request: false })
+    expect(state.executorReviewProposalReviewRequest?.preview?.blockers).toContain("create_id does not match the proposal source create record")
+
+    const ordinaryProposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "Ordinary proposal",
+      summary: "Manual proposal not created by executor review proposal gate.",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-preview", args: [`proposal=${ordinaryProposal.proposal_id}`] })
+    expect(state.executorReviewProposalReviewRequest?.preview).toMatchObject({ status: "blocked", can_request: false })
+    expect(state.executorReviewProposalReviewRequest?.preview?.proposal_id).toBe(ordinaryProposal.proposal_id)
+    expect(state.executorReviewProposalReviewRequest?.preview?.blockers).toContain("proposal was not created by executor-review proposal creation gate")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/executor-review-proposal-review-request proposal=missing-proposal"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged", args: [] })
+    expect(state.operatorActions?.lastResult).toMatchObject({ ok: false })
+    expect(state.executorReviewProposalReviewRequest?.commandError).toContain("proposal_id was not found")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel-proposal", args: ["fake-proposal-1", "operator", "cancelled"] })
     expect(state.proposals?.selectedProposal?.status).toBe("cancelled")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create", args: [`review=${reviewId}`, `draft=${draftId}`] })
@@ -3434,6 +3488,8 @@ describe("runtime UI effects", () => {
     expect(state.executorReviewProposalDrafts?.commandError).toContain("executor review draft arg is unsupported")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create-preview", args: ["review=missing-review", "token=abc123"] })
     expect(state.executorReviewProposalCreate?.commandError).toContain("executor review proposal create arg is unsupported")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-preview", args: ["proposal=missing-proposal", "token=abc123"] })
+    expect(state.executorReviewProposalReviewRequest?.commandError).toContain("executor review proposal review request arg is unsupported")
     snapshot = layoutSnapshot(state)
     expect(JSON.stringify(state)).not.toContain("abc123")
     expect(snapshot).not.toContain("abc123")
