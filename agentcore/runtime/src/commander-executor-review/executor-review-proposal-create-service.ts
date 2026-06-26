@@ -255,21 +255,18 @@ export class ExecutorReviewProposalCreateService {
   }
 
   private async createResults(): Promise<ExecutorReviewProposalCreateResult[]> {
-    const results = (await this.createEvents()).map(resultFromEvent)
+    let results = (await this.createEvents()).map(resultFromEvent)
     const proposals = await this.options.proposalRegistry.listAllProposals()
     for (const proposal of proposals) {
       const recovered = resultFromProposal(proposal)
       if (!recovered) continue
-      const existingIndex = results.findIndex((result) =>
+      const matchingResult = (result: ExecutorReviewProposalCreateResult) =>
         result.create_id === recovered.create_id
         || (result.proposal_id === recovered.proposal_id
           && result.review_id === recovered.review_id
-          && result.draft_id === recovered.draft_id))
-      if (existingIndex < 0) {
-        results.push(recovered)
-      } else if (results[existingIndex]?.status !== "created") {
-        results[existingIndex] = recovered
-      }
+          && result.draft_id === recovered.draft_id)
+      results = results.filter((result) => !matchingResult(result))
+      results.push(recovered)
     }
     return results
   }
