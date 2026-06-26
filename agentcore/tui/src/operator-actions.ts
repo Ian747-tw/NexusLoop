@@ -60,6 +60,9 @@ const WRITE_COMMANDS = new Set([
   "opencode-smoke",
   "opencode-process-smoke",
   "opencode-health-smoke",
+  "executor-review-proposal-create",
+  "executor-draft-create",
+  "commander-executor-proposal-create",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"
