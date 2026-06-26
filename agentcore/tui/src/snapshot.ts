@@ -76,6 +76,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...navigationLines(state))
   out.push(...operatorActionLines(state))
   out.push(...externalApiLines(state))
+  out.push(...minimaxLiveValidationLines(state))
   out.push(...researchSynthesisLines(state))
   out.push(...commanderCycleLines(state))
   out.push(...opencodeHandoffLines(state))
@@ -210,6 +211,44 @@ function reasoningProviderLines(state: UiState): string[] {
     if (smoke.error) out.push(`  smoke_error=${smoke.error}`)
   }
   if (provider.commandError) out.push(`  command_error=${redactText(provider.commandError)}`)
+  return out
+}
+
+function minimaxLiveValidationLines(state: UiState): string[] {
+  const validation = state.minimaxLiveValidation
+  const out = ["MiniMax live validation"]
+  if (!validation) {
+    out.push("  status=not_configured")
+    out.push("  note=live validation does not create proposals, run Commander cycle, launch OpenCode, or mutate missions")
+    return out
+  }
+  if (validation.preview) {
+    const previewRecord = validation.preview
+    out.push(`  preview=${previewRecord.status} can_execute=${previewRecord.can_execute} opt_in=${previewRecord.opt_in_present ? "yes" : "no"} timeout_ms=${previewRecord.timeout_ms}`)
+    out.push(`  provider=${previewRecord.provider_kind}:${previewRecord.provider_id}`)
+    if (previewRecord.connector_id) out.push(`  connector=${previewRecord.connector_id}`)
+    if (previewRecord.model) out.push(`  model=${previewRecord.model}`)
+    out.push(`  requested=${previewRecord.requested_surfaces.join(",") || "none"} enabled=${previewRecord.enabled_surfaces.join(",") || "none"}`)
+    if (previewRecord.blockers.length > 0) out.push(`  blockers=${previewRecord.blockers.map((item) => preview(redactText(item))).join("; ")}`)
+    if (previewRecord.warnings.length > 0) out.push(`  warnings=${previewRecord.warnings.map((item) => preview(redactText(item))).join("; ")}`)
+  }
+  if (validation.latestResult) {
+    const result = validation.latestResult
+    out.push(`  latest=${result.validation_id} status=${result.status} surfaces=${result.surfaces.length} duration_ms=${result.duration_ms ?? "unknown"}`)
+    for (const surface of result.surfaces.slice(0, 10)) {
+      out.push(`  surface=${surface.surface} ${surface.status} parsed=${surface.parsed} ok=${surface.ok}`)
+      if (surface.summary_preview) out.push(`    summary=${preview(redactText(surface.summary_preview))}`)
+      if (surface.error) out.push(`    error=${preview(redactText(surface.error))}`)
+    }
+    if (result.error) out.push(`  error=${preview(redactText(result.error))}`)
+  }
+  if (validation.selected && validation.selected.validation_id !== validation.latestResult?.validation_id) out.push(`  selected=${validation.selected.validation_id} status=${validation.selected.status}`)
+  out.push(`  records=${validation.records.length}`)
+  out.push("  recent_validations")
+  if (validation.records.length === 0) out.push("    - empty")
+  else out.push(...validation.records.slice(0, 10).map((record) => `    - ${record.validation_id} status=${record.status} surfaces=${record.surface_count} ok=${record.succeeded_count} failed=${record.failed_count}: ${preview(redactText(record.summary_preview))}`))
+  if (validation.commandError) out.push(`  command_error=${redactText(validation.commandError)}`)
+  out.push("  note=live validation does not create proposals, run Commander cycle, launch OpenCode, or mutate missions")
   return out
 }
 

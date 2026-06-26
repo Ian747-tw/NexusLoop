@@ -200,6 +200,12 @@ import type {
   CommandAuthorityValidationProfileSummary,
   ReasoningProviderHealthCheckSummary,
   ReasoningProviderHealthSummary,
+  MiniMaxLiveValidationCommandSummary,
+  MiniMaxLiveValidationPreviewSummary,
+  MiniMaxLiveValidationRecordSummary,
+  MiniMaxLiveValidationResultSummary,
+  MiniMaxLiveValidationState,
+  MiniMaxLiveValidationSurfaceResultSummary,
   ReasoningProviderSmokePreviewSummary,
   ReasoningProviderSmokeResultSummary,
   ReviewRequestSummary,
@@ -240,6 +246,10 @@ export type RuntimeUiEffect =
   | { type: "load-reasoning-provider-health" }
   | { type: "preview-reasoning-provider-smoke"; surface?: string }
   | { type: "execute-reasoning-provider-smoke"; surface?: string; dryRun?: boolean }
+  | { type: "preview-minimax-live-validation"; surfaces?: string[]; timeoutMs?: number }
+  | { type: "execute-minimax-live-validation"; surfaces?: string[]; dryRun?: boolean; timeoutMs?: number }
+  | { type: "load-minimax-live-validations"; limit?: number }
+  | { type: "load-minimax-live-validation"; validationId: string }
   | { type: "load-recent-missions"; limit?: number }
   | { type: "refresh-runtime-records" }
   | { type: "load-research-topics"; query?: string; limit?: number }
@@ -470,6 +480,16 @@ export async function applyRuntimeUiEffect(
         return applyReasoningProviderSmokePreview(state, await runtime.command("runtime.preview_reasoning_provider_smoke", { surface: effect.surface, requestedBy: "tui" }))
       case "execute-reasoning-provider-smoke":
         return applyReasoningProviderSmokeResult(state, await runtime.command("runtime.execute_reasoning_provider_smoke", { surface: effect.surface, dryRun: effect.dryRun === true, requestedBy: "tui" }))
+      case "preview-minimax-live-validation":
+        return applyMiniMaxLiveValidationPreview(state, await runtime.command("runtime.preview_minimax_live_validation", { surfaces: effect.surfaces, timeout_ms: effect.timeoutMs }))
+      case "execute-minimax-live-validation": {
+        const next = applyMiniMaxLiveValidationResult(state, await runtime.command("runtime.execute_minimax_live_validation", { surfaces: effect.surfaces, dry_run: effect.dryRun === true, timeout_ms: effect.timeoutMs, requested_by: "tui" }))
+        return effect.dryRun === true ? next : applyMiniMaxLiveValidationRecords(next, await runtime.command("runtime.list_minimax_live_validations", { limit: HANDOFF_LIMIT }), HANDOFF_LIMIT, { preserveCommandError: true })
+      }
+      case "load-minimax-live-validations":
+        return applyMiniMaxLiveValidationRecords(state, await runtime.command("runtime.list_minimax_live_validations", { limit: effect.limit ?? HANDOFF_LIMIT }), effect.limit ?? HANDOFF_LIMIT)
+      case "load-minimax-live-validation":
+        return applyMiniMaxLiveValidationResult(state, await runtime.command("runtime.get_minimax_live_validation", { validationId: effect.validationId }), effect.validationId)
       case "load-recent-missions":
         return applyRecentMissions(state, await runtime.command("runtime.list_recent_missions", { limit: effect.limit ?? 5 }))
       case "refresh-runtime-records":
@@ -1454,6 +1474,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeResultReviewEffect(effect)) return recordOpenCodeResultReviewCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
+    if (isMiniMaxLiveValidationEffect(effect)) return recordMiniMaxLiveValidationCommandError(state, error)
     if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
     if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
     if (isRuntimeRestoreEffect(effect)) return recordRuntimeRestoreCommandError(state, error)
@@ -3896,6 +3917,25 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "execute-reasoning-provider-smoke", surface: optionalSurfaceArg(args) })
     case "reasoning-smoke-dry-run":
       return applyRuntimeUiEffect(commandState, runtime, { type: "execute-reasoning-provider-smoke", surface: optionalSurfaceArg(args), dryRun: true })
+    case "minimax-live-preview":
+    case "reasoning-live-preview": {
+      const query = minimaxLiveValidationArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "preview-minimax-live-validation", ...query })
+    }
+    case "minimax-live-validate":
+    case "reasoning-live-validate":
+    case "minimax-provider-validate": {
+      const query = minimaxLiveValidationArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-minimax-live-validation", ...query })
+    }
+    case "minimax-live-dry-run": {
+      const query = minimaxLiveValidationArgs(args)
+      return applyRuntimeUiEffect(commandState, runtime, { type: "execute-minimax-live-validation", ...query, dryRun: true })
+    }
+    case "minimax-live-validations":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-minimax-live-validations", limit: HANDOFF_LIMIT })
+    case "minimax-live-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-minimax-live-validation", validationId: requiredArg(args, 0, "validationId") })
     case "status":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-runtime-status" })
     case "missions":
@@ -4392,6 +4432,11 @@ function isReasoningProviderEffect(effect: RuntimeUiEffect): boolean {
   return reasoningProviderCommands.has(effect.command)
 }
 
+function isMiniMaxLiveValidationEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return minimaxLiveValidationEffectTypes.has(effect.type)
+  return minimaxLiveValidationCommands.has(effect.command)
+}
+
 const playbookCommands = new Set([
   "playbooks",
   "playbook",
@@ -4737,6 +4782,17 @@ const reasoningProviderCommands = new Set([
   "reasoning-smoke-dry-run",
 ])
 
+const minimaxLiveValidationCommands = new Set([
+  "minimax-live-preview",
+  "minimax-live-validate",
+  "minimax-live-dry-run",
+  "minimax-live-validations",
+  "minimax-live-show",
+  "reasoning-live-preview",
+  "reasoning-live-validate",
+  "minimax-provider-validate",
+])
+
 const externalApiEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-external-api-connectors",
   "load-external-api-connector",
@@ -4935,6 +4991,13 @@ const reasoningProviderEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "execute-reasoning-provider-smoke",
 ])
 
+const minimaxLiveValidationEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-minimax-live-validation",
+  "execute-minimax-live-validation",
+  "load-minimax-live-validations",
+  "load-minimax-live-validation",
+])
+
 function applyRuntimeStatus(state: UiState, value: unknown): UiState {
   if (!isRecord(value)) throw new Error("runtime.status returned non-object result")
   const runtimeStatus: RuntimeStatusSummary = {
@@ -5058,6 +5121,54 @@ function applyReasoningProviderSmokeResult(state: UiState, value: unknown): UiSt
       commandError: undefined,
     },
     runtimeCommandError: undefined,
+  }
+}
+
+function applyMiniMaxLiveValidationPreview(state: UiState, value: unknown): UiState {
+  const preview = readMiniMaxLiveValidationPreview(value)
+  if (!preview) throw new Error("runtime.preview_minimax_live_validation returned invalid result")
+  return {
+    ...state,
+    minimaxLiveValidation: {
+      ...minimaxLiveValidationState(state),
+      preview,
+      commandError: undefined,
+    },
+    runtimeCommandError: undefined,
+    systemActions: [...state.systemActions, { title: "minimax live validation preview", detail: `status=${preview.status}`, status: preview.can_execute ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyMiniMaxLiveValidationResult(state: UiState, value: unknown, validationId?: string): UiState {
+  const result = readMiniMaxLiveValidationResult(value)
+  if (!result && value !== null) throw new Error("runtime.get_minimax_live_validation returned invalid result")
+  const current = minimaxLiveValidationState(state)
+  return {
+    ...state,
+    minimaxLiveValidation: {
+      ...current,
+      latestResult: result ?? current.latestResult ?? null,
+      selected: result ?? (validationId ? null : current.selected ?? null),
+      records: result && result.status !== "skipped" ? [recordFromMiniMaxLiveValidationResult(result), ...current.records.filter((item) => item.validation_id !== result.validation_id)].slice(0, HANDOFF_LIMIT) : current.records,
+      commandError: result?.error ?? undefined,
+    },
+    runtimeCommandError: undefined,
+    systemActions: [...state.systemActions, { title: "minimax live validation result", detail: `validation_id=${result?.validation_id ?? validationId ?? "none"}`, status: result?.status ?? "missing" }].slice(-12),
+  }
+}
+
+function applyMiniMaxLiveValidationRecords(state: UiState, value: unknown, limit: number, options: { preserveCommandError?: boolean } = {}): UiState {
+  const records = readMiniMaxLiveValidationRecordList(value, "runtime.list_minimax_live_validations", limit)
+  const current = minimaxLiveValidationState(state)
+  return {
+    ...state,
+    minimaxLiveValidation: {
+      ...current,
+      records,
+      commandError: options.preserveCommandError ? current.commandError : undefined,
+    },
+    runtimeCommandError: undefined,
+    systemActions: [...state.systemActions, { title: "minimax live validation records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
   }
 }
 
@@ -5579,6 +5690,18 @@ function recordReasoningProviderCommandError(state: UiState, error: unknown): Ui
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "reasoning provider command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordMiniMaxLiveValidationCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    minimaxLiveValidation: {
+      ...minimaxLiveValidationState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "minimax live validation command error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
@@ -8765,6 +8888,114 @@ function readReasoningProviderSmokeResult(value: unknown): ReasoningProviderSmok
   }
 }
 
+function readMiniMaxLiveValidationPreview(value: unknown): MiniMaxLiveValidationPreviewSummary | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    validation_id: typeof value.validation_id === "string" ? redactText(value.validation_id) : undefined,
+    status: readString(value.status, "blocked"),
+    can_execute: readBoolean(value.can_execute),
+    provider_kind: readString(value.provider_kind, "unknown"),
+    provider_id: readString(value.provider_id, "unknown"),
+    connector_id: typeof value.connector_id === "string" ? redactText(value.connector_id) : undefined,
+    model: typeof value.model === "string" ? redactText(value.model) : undefined,
+    enabled_surfaces: readStringList(value.enabled_surfaces, 10),
+    requested_surfaces: readStringList(value.requested_surfaces, 10),
+    opt_in_required: readBoolean(value.opt_in_required),
+    opt_in_present: readBoolean(value.opt_in_present),
+    timeout_ms: readNumber(value.timeout_ms, 0),
+    blockers: readStringList(value.blockers, 20),
+    warnings: readStringList(value.warnings, 20),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    recommended_commands: readMiniMaxLiveValidationCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readMiniMaxLiveValidationResult(value: unknown): MiniMaxLiveValidationResultSummary | null {
+  if (!isRecord(value) || typeof value.validation_id !== "string") return null
+  return {
+    validation_id: redactText(value.validation_id),
+    status: readString(value.status, "blocked"),
+    provider_kind: readString(value.provider_kind, "unknown"),
+    provider_id: readString(value.provider_id, "unknown"),
+    connector_id: typeof value.connector_id === "string" ? redactText(value.connector_id) : undefined,
+    model: typeof value.model === "string" ? redactText(value.model) : undefined,
+    surfaces: Array.isArray(value.surfaces) ? value.surfaces.map(readMiniMaxLiveValidationSurfaceResult).filter((item): item is MiniMaxLiveValidationSurfaceResultSummary => item !== null).slice(0, 10) : [],
+    started_at: readString(value.started_at, ""),
+    completed_at: readString(value.completed_at, ""),
+    duration_ms: typeof value.duration_ms === "number" ? value.duration_ms : undefined,
+    requested_by: readString(value.requested_by, "unknown"),
+    validation_hash: readString(value.validation_hash, ""),
+    diagnostics: readStringList(value.diagnostics, 12),
+    error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
+  }
+}
+
+function readMiniMaxLiveValidationSurfaceResult(value: unknown): MiniMaxLiveValidationSurfaceResultSummary | null {
+  if (!isRecord(value)) return null
+  return {
+    surface: readString(value.surface, "unknown"),
+    status: readString(value.status, "blocked"),
+    ok: readBoolean(value.ok),
+    parsed: readBoolean(value.parsed),
+    request_id: typeof value.request_id === "string" ? redactText(value.request_id) : undefined,
+    summary_preview: typeof value.summary_preview === "string" ? preview(redactText(value.summary_preview)) : undefined,
+    error: typeof value.error === "string" ? preview(redactText(value.error)) : undefined,
+    duration_ms: typeof value.duration_ms === "number" ? value.duration_ms : undefined,
+    schema_version: typeof value.schema_version === "string" ? redactText(value.schema_version) : undefined,
+  }
+}
+
+function readMiniMaxLiveValidationRecordList(value: unknown, commandName: string, limit: number): MiniMaxLiveValidationRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error(`${commandName} returned non-array result`)
+  return value.map(readMiniMaxLiveValidationRecord).filter((record): record is MiniMaxLiveValidationRecordSummary => record !== null).slice(0, limit)
+}
+
+function readMiniMaxLiveValidationRecord(value: unknown): MiniMaxLiveValidationRecordSummary | null {
+  if (!isRecord(value) || typeof value.validation_id !== "string") return null
+  return {
+    validation_id: redactText(value.validation_id),
+    status: readString(value.status, "blocked"),
+    provider_id: readString(value.provider_id, "unknown"),
+    model: typeof value.model === "string" ? redactText(value.model) : undefined,
+    completed_at: readString(value.completed_at, ""),
+    surface_count: readNumber(value.surface_count, 0),
+    succeeded_count: readNumber(value.succeeded_count, 0),
+    failed_count: readNumber(value.failed_count, 0),
+    summary_preview: preview(readString(value.summary_preview, "")),
+    validation_hash: readString(value.validation_hash, ""),
+  }
+}
+
+function readMiniMaxLiveValidationCommands(value: unknown): MiniMaxLiveValidationCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.map((item): MiniMaxLiveValidationCommandSummary | null => {
+    if (!isRecord(item)) return null
+    return {
+      label: readString(item.label, "command"),
+      command: readString(item.command, ""),
+      command_type: readString(item.command_type, "read"),
+      requires_active_runtime: typeof item.requires_active_runtime === "boolean" ? item.requires_active_runtime : undefined,
+      notes: typeof item.notes === "string" ? preview(redactText(item.notes)) : undefined,
+    }
+  }).filter((item): item is MiniMaxLiveValidationCommandSummary => item !== null).slice(0, 10)
+}
+
+function recordFromMiniMaxLiveValidationResult(result: MiniMaxLiveValidationResultSummary): MiniMaxLiveValidationRecordSummary {
+  return {
+    validation_id: result.validation_id,
+    status: result.status,
+    provider_id: result.provider_id,
+    model: result.model,
+    completed_at: result.completed_at,
+    surface_count: result.surfaces.length,
+    succeeded_count: result.surfaces.filter((surface) => surface.status === "succeeded").length,
+    failed_count: result.surfaces.filter((surface) => surface.status === "failed" || surface.status === "blocked").length,
+    summary_preview: result.error ?? result.diagnostics[0] ?? result.status,
+    validation_hash: result.validation_hash,
+  }
+}
+
 function readReviewSummary(value: unknown): ReviewStatusSummary | undefined {
   if (!isRecord(value)) return undefined
   return {
@@ -9546,6 +9777,10 @@ function reasoningProviderState(state: UiState) {
   }
 }
 
+function minimaxLiveValidationState(state: UiState): MiniMaxLiveValidationState {
+  return state.minimaxLiveValidation ?? { records: [] }
+}
+
 function missionExecutionState(state: UiState): MissionExecutionState {
   return state.missionExecution ?? { claims: [], progress: [], results: [] }
 }
@@ -10272,6 +10507,38 @@ function optionalSurfaceArg(args: string[]): string | undefined {
   const value = args[0]
   if (value === "research" || value === "research_synthesis" || value === "cycle" || value === "commander_cycle" || value === "executor_review" || value === "commander_executor_review") return value
   throw new Error("reasoning smoke surface must be research_synthesis, commander_cycle, or commander_executor_review")
+}
+
+function minimaxLiveValidationArgs(args: string[]): { surfaces?: string[]; timeoutMs?: number } {
+  const surfaces: string[] = []
+  let timeoutMs: number | undefined
+  for (const arg of args) {
+    if (arg.startsWith("surface=")) {
+      surfaces.push(readMiniMaxLiveValidationSurfaceArg(arg.slice("surface=".length).trim()))
+    } else if (arg.startsWith("timeout=")) {
+      timeoutMs = parseLiveValidationTimeout(arg.slice("timeout=".length).trim())
+    } else if (arg.startsWith("timeout_ms=")) {
+      timeoutMs = parseLiveValidationTimeout(arg.slice("timeout_ms=".length).trim())
+    } else if (arg === "research" || arg === "research_synthesis" || arg === "cycle" || arg === "commander_cycle" || arg === "executor_review" || arg === "commander_executor_review") {
+      surfaces.push(readMiniMaxLiveValidationSurfaceArg(arg))
+    } else {
+      throw new Error("MiniMax live validation args must be surface=<surface>, timeout=<ms>, or a supported surface")
+    }
+  }
+  return { surfaces: surfaces.length > 0 ? [...new Set(surfaces)] : undefined, timeoutMs }
+}
+
+function readMiniMaxLiveValidationSurfaceArg(value: string): string {
+  if (value === "research" || value === "research_synthesis") return "research_synthesis"
+  if (value === "cycle" || value === "commander_cycle") return "commander_cycle"
+  if (value === "executor_review" || value === "commander_executor_review") return "commander_executor_review"
+  throw new Error("MiniMax live validation surface must be research_synthesis, commander_cycle, or commander_executor_review")
+}
+
+function parseLiveValidationTimeout(value: string): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 60_000) throw new Error("MiniMax live validation timeout must be 1..60000 milliseconds")
+  return parsed
 }
 
 function optionalRest(args: string[], index: number): string | undefined {

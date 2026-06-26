@@ -38,6 +38,7 @@ export { ExternalApiRequestService } from "./external-api/api-request-service"
 export { ExternalApiResearchIngestionService } from "./external-api/api-research-ingestion-service"
 export { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
 export { ReasoningProviderHealthService } from "./reasoning/reasoning-health-service"
+export { MiniMaxLiveValidationService } from "./reasoning/minimax-live-validation-service"
 export { defaultReasoningProviderConfig, readReasoningProviderConfigFromEnv, reasoningProviderStatus, validateReasoningProviderConfig } from "./reasoning/reasoning-provider-config"
 export { FakeResearchSynthesisProvider } from "./research-synthesis/research-synthesis-provider"
 export { ResearchSynthesisService } from "./research-synthesis/research-synthesis-service"
@@ -215,6 +216,16 @@ export type {
   ReasoningProviderSmokePreview,
   ReasoningProviderSmokeResult,
 } from "./reasoning/reasoning-health-types"
+export type {
+  MiniMaxLiveValidationCommand,
+  MiniMaxLiveValidationInput,
+  MiniMaxLiveValidationPreview,
+  MiniMaxLiveValidationRecord,
+  MiniMaxLiveValidationResult,
+  MiniMaxLiveValidationStatus,
+  MiniMaxLiveValidationSurface,
+  MiniMaxLiveValidationSurfaceResult,
+} from "./reasoning/minimax-live-validation-types"
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"

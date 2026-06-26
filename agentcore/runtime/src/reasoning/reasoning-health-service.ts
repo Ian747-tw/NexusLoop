@@ -57,17 +57,18 @@ export class ReasoningProviderHealthService {
   preview(input: ReasoningProviderSmokeInput = {}): ReasoningProviderSmokePreview {
     const surface = readSurface(input.surface)
     if (this.options.config.kind === "fake") return this.fakePreview(surface)
-    return this.minimaxPreview(surface, { includeGateBlocker: true })
+    return this.minimaxPreview(surface, { includeGateBlocker: input.require_real_smoke_gate !== false })
   }
 
   async execute(input: ReasoningProviderSmokeInput = {}): Promise<ReasoningProviderSmokeResult> {
     const surface = readSurface(input.surface)
     const dryRun = input.dry_run === true
+    const persistEvent = input.persist_event !== false
     if (dryRun) return this.dryRunResult(surface, input.requested_by)
-    if (this.options.config.kind === "fake") return this.fakeResult(surface, input.requested_by)
+    if (this.options.config.kind === "fake") return this.fakeResult(surface, input.requested_by, persistEvent)
 
     const createdAt = this.now().toISOString()
-    const preview = this.minimaxPreview(surface, { includeGateBlocker: true })
+    const preview = this.minimaxPreview(surface, { includeGateBlocker: input.require_real_smoke_gate !== false })
     if (preview.blockers.length > 0) {
       const result = this.result({
         surface,
@@ -78,7 +79,7 @@ export class ReasoningProviderHealthService {
         error: preview.blockers.join("; "),
         createdAt,
       })
-      await this.writeSmokeEvent("reasoning_provider_smoke_failed", result, input.requested_by)
+      if (persistEvent) await this.writeSmokeEvent("reasoning_provider_smoke_failed", result, input.requested_by)
       return result
     }
 
@@ -95,9 +96,10 @@ export class ReasoningProviderHealthService {
         body: JSON.stringify(request),
         requested_by: `reasoning-smoke:${redactText(input.requested_by ?? "operator")}`,
       }, {
-        timeout_ms: this.options.config.timeout_ms,
+        timeout_ms: input.timeout_ms ?? this.options.config.timeout_ms,
         redact_response_body: false,
         omit_response_preview_from_audit: true,
+        persist_audit: input.persist_external_api_audit !== false,
       })
       if (!apiResult.ok) throw new Error(apiResult.error ?? "MiniMax smoke request failed")
       const text = textFromAnthropicResponse(apiResult.response_body_for_internal_use ?? apiResult.response_preview ?? "")
@@ -112,7 +114,7 @@ export class ReasoningProviderHealthService {
         summary: smokeSummary(parsed),
         createdAt,
       })
-      await this.writeSmokeEvent("reasoning_provider_smoke_succeeded", result, input.requested_by)
+      if (persistEvent) await this.writeSmokeEvent("reasoning_provider_smoke_succeeded", result, input.requested_by)
       return result
     } catch (error) {
       const result = this.result({
@@ -124,7 +126,7 @@ export class ReasoningProviderHealthService {
         error: boundedText(error instanceof Error ? error.message : String(error), ERROR_PREVIEW_BYTES),
         createdAt,
       })
-      await this.writeSmokeEvent("reasoning_provider_smoke_failed", result, input.requested_by)
+      if (persistEvent) await this.writeSmokeEvent("reasoning_provider_smoke_failed", result, input.requested_by)
       return result
     }
   }
@@ -330,7 +332,7 @@ export class ReasoningProviderHealthService {
     })
   }
 
-  private async fakeResult(surface: ReasoningProviderSurface, requestedBy: string | undefined): Promise<ReasoningProviderSmokeResult> {
+  private async fakeResult(surface: ReasoningProviderSurface, requestedBy: string | undefined, persistEvent = true): Promise<ReasoningProviderSmokeResult> {
     const result = this.result({
       surface,
       ok: true,
@@ -339,7 +341,7 @@ export class ReasoningProviderHealthService {
       summary: `fake ${surface} smoke parsed deterministic provider output`,
       createdAt: this.now().toISOString(),
     })
-    await this.writeSmokeEvent("reasoning_provider_smoke_succeeded", result, requestedBy)
+    if (persistEvent) await this.writeSmokeEvent("reasoning_provider_smoke_succeeded", result, requestedBy)
     return result
   }
 

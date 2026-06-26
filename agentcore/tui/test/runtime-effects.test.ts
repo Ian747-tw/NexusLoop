@@ -2701,6 +2701,45 @@ describe("runtime UI effects", () => {
     expect(layoutSnapshot(state)).not.toContain("raw-secret")
   })
 
+  test("MiniMax live validation slash commands render gated fake/default surface", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "minimax-live-preview" })
+    expect(state.minimaxLiveValidation?.preview).toMatchObject({ status: "not_configured", can_execute: false, opt_in_present: false })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("MiniMax live validation")
+    expect(snapshot).toContain("preview=not_configured can_execute=false opt_in=no")
+    expect(snapshot).toContain("note=live validation does not create proposals, run Commander cycle, launch OpenCode, or mutate missions")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "minimax-live-preview", args: ["surface=commander_executor_review"] })
+    expect(state.minimaxLiveValidation?.preview?.requested_surfaces).toEqual(["commander_executor_review"])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "minimax-live-dry-run" })
+    expect(state.minimaxLiveValidation?.latestResult).toMatchObject({ status: "skipped" })
+    expect(state.minimaxLiveValidation?.records).toHaveLength(0)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "minimax-live-validate" })
+    expect(state.minimaxLiveValidation?.latestResult).toMatchObject({ status: "blocked" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "minimax-live-validations" })
+    expect(state.minimaxLiveValidation?.records.length).toBeGreaterThanOrEqual(1)
+    const validationId = state.minimaxLiveValidation?.records[0]?.validation_id
+    expect(validationId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "minimax-live-show", args: [validationId!] })
+    expect(state.minimaxLiveValidation?.selected).toMatchObject({ validation_id: validationId, status: "blocked" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/minimax-live-validate"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_minimax_live_validation_tui.py")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "minimax-live-preview", args: ["token=raw-secret"] })
+    expect(state.minimaxLiveValidation?.commandError).toContain("MiniMax live validation args must be")
+    snapshot = layoutSnapshot(state)
+    expect(JSON.stringify(state)).not.toContain("raw-secret")
+    expect(snapshot).not.toContain("raw-secret")
+  })
+
   test("operator action staging fails closed for missing context bad indexes unsupported commands and write authority errors", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "stage", args: ["1"] })
