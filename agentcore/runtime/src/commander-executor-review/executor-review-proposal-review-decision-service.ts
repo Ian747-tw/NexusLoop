@@ -69,8 +69,23 @@ export class ExecutorReviewProposalReviewDecisionService {
       && preview.blockers.length === 1
       && preview.blockers[0] === `review request already ${preview.existing_decision}`
     if (duplicateOnly) {
-      const recovered = await this.resultFromReviewRequest(preview.review_request_id, normalized.decision)
-      if (recovered) return redactValue(recovered)
+      try {
+        await this.options.proposalRegistry.syncReviewDecision(preview.review_request_id)
+        const recovered = await this.resultFromReviewRequest(preview.review_request_id, normalized.decision)
+        if (recovered) return redactValue(recovered)
+      } catch (error) {
+        const result = resultFromPreview(preview, {
+          decision_gate_id: gateId,
+          status: "failed",
+          decided_at: decidedAt,
+          decided_by: normalized.decided_by ?? "operator",
+          reason_preview: normalized.reason,
+          error: bound(error instanceof Error ? error.message : String(error)),
+          decision_hash: decisionHash,
+        })
+        await this.append("commander_executor_review_proposal_review_decision_failed", result)
+        return redactValue(result)
+      }
       return redactValue(resultFromPreview(preview, {
         decision_gate_id: gateId,
         status: "blocked",
