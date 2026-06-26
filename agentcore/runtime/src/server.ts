@@ -49,6 +49,8 @@ import { ExecutorReviewProposalCreateService, readExecutorReviewProposalCreateIn
 import type { ExecutorReviewProposalCreatePreview, ExecutorReviewProposalCreateRecord, ExecutorReviewProposalCreateResult } from "./commander-executor-review/executor-review-proposal-create-types"
 import { ExecutorReviewProposalReviewRequestService, readExecutorReviewProposalReviewRequestInput, readExecutorReviewProposalReviewRequestPreviewInput } from "./commander-executor-review/executor-review-proposal-review-request-service"
 import type { ExecutorReviewProposalReviewRequestPreview, ExecutorReviewProposalReviewRequestRecord, ExecutorReviewProposalReviewRequestResult } from "./commander-executor-review/executor-review-proposal-review-request-types"
+import { ExecutorReviewProposalReviewDecisionService, readExecutorReviewProposalReviewDecisionInput, readExecutorReviewProposalReviewDecisionPreviewInput } from "./commander-executor-review/executor-review-proposal-review-decision-service"
+import type { ExecutorReviewProposalReviewDecisionPreview, ExecutorReviewProposalReviewDecisionRecord, ExecutorReviewProposalReviewDecisionResult } from "./commander-executor-review/executor-review-proposal-review-decision-types"
 import { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
 import { defaultReasoningProviderConfig, reasoningProviderStatus, validateReasoningProviderConfig, type ReasoningProviderConfig, type ReasoningProviderStatus } from "./reasoning/reasoning-provider-config"
 import { ReasoningProviderHealthService } from "./reasoning/reasoning-health-service"
@@ -276,6 +278,7 @@ export class RuntimeServer {
   private executorReviewProposalDraftServiceInstance: ExecutorReviewProposalDraftService | null = null
   private executorReviewProposalCreateServiceInstance: ExecutorReviewProposalCreateService | null = null
   private executorReviewProposalReviewRequestServiceInstance: ExecutorReviewProposalReviewRequestService | null = null
+  private executorReviewProposalReviewDecisionServiceInstance: ExecutorReviewProposalReviewDecisionService | null = null
   private minimaxLiveValidationServiceInstance: MiniMaxLiveValidationService | null = null
   private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
   private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
@@ -826,6 +829,20 @@ export class RuntimeServer {
         })
       case "runtime.get_executor_review_proposal_review_request":
         return this.getExecutorReviewProposalReviewRequest(requiredString(payload.requestGateId ?? payload.request_gate_id, "requestGateId"))
+      case "runtime.preview_executor_review_proposal_review_decision":
+        return this.previewExecutorReviewProposalReviewDecision(readExecutorReviewProposalReviewDecisionPreviewInput(payload))
+      case "runtime.decide_executor_review_proposal_review":
+        return this.decideExecutorReviewProposalReview(readExecutorReviewProposalReviewDecisionInput(payload))
+      case "runtime.list_executor_review_proposal_review_decisions":
+        return this.listExecutorReviewProposalReviewDecisions({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          review_request_id: optionalString(payload.reviewRequestId ?? payload.review_request_id ?? payload.reviewId ?? payload.review_id, "reviewRequestId"),
+          proposal_id: optionalString(payload.proposalId ?? payload.proposal_id, "proposalId"),
+          request_gate_id: optionalString(payload.requestGateId ?? payload.request_gate_id, "requestGateId"),
+          decision: optionalString(payload.decision, "decision") as "approve" | "reject" | undefined,
+        })
+      case "runtime.get_executor_review_proposal_review_decision":
+        return this.getExecutorReviewProposalReviewDecision(requiredString(payload.decisionGateId ?? payload.decision_gate_id, "decisionGateId"))
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
       case "runtime.list_opencode_handoff_followups":
@@ -1614,6 +1631,23 @@ export class RuntimeServer {
 
   async getExecutorReviewProposalReviewRequest(requestGateId: string): Promise<ExecutorReviewProposalReviewRequestResult | null> {
     return this.executorReviewProposalReviewRequestService().get(requestGateId)
+  }
+
+  async previewExecutorReviewProposalReviewDecision(input: Parameters<ExecutorReviewProposalReviewDecisionService["preview"]>[0]): Promise<ExecutorReviewProposalReviewDecisionPreview> {
+    return this.executorReviewProposalReviewDecisionService().preview(input)
+  }
+
+  async decideExecutorReviewProposalReview(input: Parameters<ExecutorReviewProposalReviewDecisionService["decide"]>[0]): Promise<ExecutorReviewProposalReviewDecisionResult> {
+    if (input.dry_run !== true) this.requireReviewWriteRuntime("runtime.decide_executor_review_proposal_review")
+    return this.executorReviewProposalReviewDecisionService().decide(input)
+  }
+
+  async listExecutorReviewProposalReviewDecisions(input: Parameters<ExecutorReviewProposalReviewDecisionService["list"]>[0] = {}): Promise<ExecutorReviewProposalReviewDecisionRecord[]> {
+    return this.executorReviewProposalReviewDecisionService().list(input)
+  }
+
+  async getExecutorReviewProposalReviewDecision(decisionGateId: string): Promise<ExecutorReviewProposalReviewDecisionResult | null> {
+    return this.executorReviewProposalReviewDecisionService().get(decisionGateId)
   }
 
   async getOpenCodeHandoffFollowup(handoffId: string): Promise<OpenCodeHandoffFollowup | null> {
@@ -2556,6 +2590,17 @@ export class RuntimeServer {
       now: this.commanderExecutorReviewNow ?? this.opencodeHandoffNow,
     })
     return this.executorReviewProposalReviewRequestServiceInstance
+  }
+
+  private executorReviewProposalReviewDecisionService(): ExecutorReviewProposalReviewDecisionService {
+    this.executorReviewProposalReviewDecisionServiceInstance ??= new ExecutorReviewProposalReviewDecisionService({
+      eventStore: this.eventStore,
+      proposalRegistry: this.proposalRegistry,
+      reviewRegistry: this.reviewRegistry,
+      requestService: this.executorReviewProposalReviewRequestService(),
+      now: this.commanderExecutorReviewNow ?? this.opencodeHandoffNow,
+    })
+    return this.executorReviewProposalReviewDecisionServiceInstance
   }
 
   private opencodeHandoffFollowupService(): OpenCodeHandoffFollowupService {

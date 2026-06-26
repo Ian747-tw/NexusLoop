@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary } from "./state"
 
 export interface SubmitUserMessageResult {
@@ -54,6 +54,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly executorReviewProposalCreates: ExecutorReviewProposalCreateResultSummary[] = []
   private readonly executorReviewProposalReviewRequests: ExecutorReviewProposalReviewRequestResultSummary[] = []
+  private readonly executorReviewProposalReviewDecisions: ExecutorReviewProposalReviewDecisionResultSummary[] = []
   private readonly minimaxLiveValidations: MiniMaxLiveValidationResultSummary[] = []
   private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
   private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
@@ -441,6 +442,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.executorReviewProposalReviewRequests.slice(0, readLimit(payload.limit, 20)).map(recordFromExecutorReviewProposalReviewRequest)
       case "runtime.get_executor_review_proposal_review_request":
         return this.executorReviewProposalReviewRequests.find((item) => item.request_gate_id === String(payload.requestGateId ?? payload.request_gate_id ?? "")) ?? null
+      case "runtime.preview_executor_review_proposal_review_decision":
+        return this.previewExecutorReviewProposalReviewDecision(payload)
+      case "runtime.decide_executor_review_proposal_review":
+        return this.decideExecutorReviewProposalReview(payload)
+      case "runtime.list_executor_review_proposal_review_decisions":
+        return this.executorReviewProposalReviewDecisions.slice(0, readLimit(payload.limit, 20)).map(recordFromExecutorReviewProposalReviewDecision)
+      case "runtime.get_executor_review_proposal_review_decision":
+        return this.executorReviewProposalReviewDecisions.find((item) => item.decision_gate_id === String(payload.decisionGateId ?? payload.decision_gate_id ?? "")) ?? null
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(String(payload.handoffId ?? payload.handoff_id ?? ""))
       case "runtime.list_opencode_handoff_followups":
@@ -1934,6 +1943,118 @@ export class FakeRuntimeClient implements RuntimeClient {
         proposal.updated_at = new Date(0).toISOString()
       }
       this.executorReviewProposalReviewRequests.unshift(result)
+    }
+    return result
+  }
+
+  private previewExecutorReviewProposalReviewDecision(payload: Record<string, unknown>): ExecutorReviewProposalReviewDecisionPreviewSummary {
+    const reviewRequestId = requiredString(String(payload.reviewRequestId ?? payload.review_request_id ?? payload.reviewId ?? payload.review_id ?? ""), "review")
+    const decision = readReviewDecision(String(payload.decision ?? ""))
+    const reason = optionalString(payload.reason)
+    const requestGateId = optionalString(payload.requestGateId ?? payload.request_gate_id ?? payload.request)
+    const review = this.reviews.find((item) => item.review_id === reviewRequestId)
+    const requestRecord = this.executorReviewProposalReviewRequests.find((item) => item.review_request_id === reviewRequestId && item.status === "requested")
+    const proposal = requestRecord?.proposal_id ? this.proposals.find((item) => item.proposal_id === requestRecord.proposal_id) : undefined
+    const source = proposal?.action_payload
+    const blockers = [
+      ...(review ? [] : ["review_request_id was not found"]),
+      ...(requestRecord ? [] : ["review request was not created by executor-review proposal review-request gate"]),
+      ...(requestGateId && requestRecord && requestGateId !== requestRecord.request_gate_id ? ["request_gate_id does not match the review-request gate record"] : []),
+      ...(proposal ? [] : ["linked proposal was not found"]),
+      ...(proposal && !requestRecord && source?.source !== "executor_review_proposal_create" ? ["proposal was not created by executor-review proposal creation gate"] : []),
+      ...(proposal && ["cancelled", "applied"].includes(proposal.status) ? [`proposal status ${proposal.status} cannot be review-decided`] : []),
+      ...(review && review.status !== "pending" ? [`review request already ${review.status}`] : []),
+      ...(decision === "reject" && !reason ? ["reject decision requires reason"] : []),
+    ]
+    return {
+      preview_id: `fake-review-decision-preview-${reviewRequestId}-${decision}`,
+      status: blockers.length === 0 ? "ready" : "blocked",
+      can_decide: blockers.length === 0,
+      decision,
+      review_request_id: reviewRequestId,
+      proposal_id: proposal?.proposal_id ?? requestRecord?.proposal_id,
+      request_gate_id: requestRecord?.request_gate_id,
+      create_id: requestRecord?.create_id,
+      source_executor_review_id: requestRecord?.review_id ?? (typeof source?.review_id === "string" ? source.review_id : undefined),
+      source_draft_id: requestRecord?.draft_id ?? (typeof source?.draft_id === "string" ? source.draft_id : undefined),
+      source_packet_id: requestRecord?.source_packet_id ?? (typeof source?.source_packet_id === "string" ? source.source_packet_id : undefined),
+      review_request_status: review?.status,
+      proposal_status: proposal?.status,
+      proposal_title_preview: proposal?.title ?? review?.title ?? "Executor review proposal",
+      proposal_summary_preview: proposal?.summary ?? review?.summary ?? "No executor-review proposal review request is available.",
+      action_kind: proposal?.action_kind,
+      mission_id: proposal?.mission_id ?? review?.mission_id,
+      result_id: proposal?.result_id ?? review?.result_id,
+      source_evidence_ids: Array.isArray(source?.evidence_ids) ? source.evidence_ids.map(String) : [],
+      source_finding_ids: Array.isArray(source?.finding_ids) ? source.finding_ids.map(String) : [],
+      source_confidence: typeof source?.source_confidence === "number" ? source.source_confidence : undefined,
+      risk: typeof source?.risk === "string" ? source.risk : undefined,
+      existing_decision: review && review.status !== "pending" ? review.status : undefined,
+      existing_decision_at: review?.decision_at,
+      blockers,
+      warnings: ["review decision does not apply proposals, mutate missions, call providers, or launch OpenCode"],
+      recommended_commands: [
+        { label: "Show review", command: `/review ${reviewRequestId}`, command_type: "read" },
+        { label: "List decisions", command: "/executor-review-proposal-review-decisions", command_type: "read" },
+        { label: "Show authority", command: decision === "approve" ? "/authority-show /executor-review-proposal-review-approve" : "/authority-show /executor-review-proposal-review-reject", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers.length === 0 ? `Review request ${reviewRequestId} can be ${decision === "approve" ? "approved" : "rejected"}.` : blockers[0] ?? "Review decision is blocked.",
+    }
+  }
+
+  private decideExecutorReviewProposalReview(payload: Record<string, unknown>): ExecutorReviewProposalReviewDecisionResultSummary {
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const preview = this.previewExecutorReviewProposalReviewDecision(payload)
+    const reason = optionalString(payload.reason)
+    const existing = this.executorReviewProposalReviewDecisions.find((item) => item.review_request_id === preview.review_request_id)
+    const duplicateOnly = preview.existing_decision
+      && preview.blockers.length === 1
+      && preview.blockers[0] === `review request already ${preview.existing_decision}`
+    if (!dryRun && existing && duplicateOnly && existing.decision === preview.decision) return existing
+    if (!dryRun && existing && duplicateOnly && existing.decision !== preview.decision) {
+      return {
+        ...existing,
+        status: "blocked",
+        decision: preview.decision,
+        error: `review request already ${preview.existing_decision}`,
+      }
+    }
+    const result: ExecutorReviewProposalReviewDecisionResultSummary = {
+      decision_gate_id: `fake-review-decision-gate-${preview.review_request_id}-${preview.decision}`,
+      status: dryRun && preview.can_decide ? "dry_run" : preview.can_decide ? preview.decision === "approve" ? "approved" : "rejected" : "blocked",
+      decision: preview.decision,
+      review_request_id: preview.review_request_id,
+      proposal_id: preview.proposal_id,
+      request_gate_id: preview.request_gate_id,
+      create_id: preview.create_id,
+      source_executor_review_id: preview.source_executor_review_id,
+      source_draft_id: preview.source_draft_id,
+      source_packet_id: preview.source_packet_id,
+      mission_id: preview.mission_id,
+      result_id: preview.result_id,
+      decided_at: new Date(0).toISOString(),
+      decided_by: "tui",
+      reason_preview: reason,
+      error: preview.can_decide ? undefined : preview.blockers[0],
+      decision_hash: `fake-review-decision-hash-${preview.review_request_id}-${preview.decision}`,
+      recommended_commands: preview.recommended_commands,
+    }
+    if (!dryRun && (result.status === "approved" || result.status === "rejected")) {
+      const review = this.reviews.find((item) => item.review_id === result.review_request_id)
+      if (review) {
+        review.status = result.status
+        review.decision_at = result.decided_at
+        review.decision_by = result.decided_by
+        review.decision_reason = reason
+        review.updated_at = result.decided_at
+      }
+      const proposal = result.proposal_id ? this.proposals.find((item) => item.proposal_id === result.proposal_id) : undefined
+      if (proposal) {
+        proposal.status = result.status
+        proposal.updated_at = result.decided_at
+      }
+      this.executorReviewProposalReviewDecisions.unshift(result)
     }
     return result
   }
@@ -5525,6 +5646,11 @@ function reviewTypeForProposal(actionKind: string): string {
   }
 }
 
+function readReviewDecision(value: string): "approve" | "reject" {
+  if (value === "approve" || value === "reject") return value
+  throw new Error("executor review proposal review decision must be approve or reject")
+}
+
 function fakeCommanderPlaybooks(): CommanderPlaybookSummary[] {
   return [
     {
@@ -6517,6 +6643,21 @@ function recordFromExecutorReviewProposalReviewRequest(result: ExecutorReviewPro
   }
 }
 
+function recordFromExecutorReviewProposalReviewDecision(result: ExecutorReviewProposalReviewDecisionResultSummary): ExecutorReviewProposalReviewDecisionRecordSummary {
+  return {
+    decision_gate_id: result.decision_gate_id,
+    status: result.status,
+    decision: result.decision,
+    review_request_id: result.review_request_id,
+    proposal_id: result.proposal_id,
+    request_gate_id: result.request_gate_id,
+    create_id: result.create_id,
+    decided_at: result.decided_at,
+    summary_preview: result.error ?? result.proposal_id ?? result.review_request_id,
+    decision_hash: result.decision_hash,
+  }
+}
+
 function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
   return [
     fakeCommandAuthorityRecord("/authority", "runtime.command_authority_summary", "safe_read", "none", "runtime_status", { targeted: ["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"] }),
@@ -6698,6 +6839,48 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
     fakeCommandAuthorityRecord("/executor-review-proposal-review-show", "runtime.get_executor_review_proposal_review_request", "safe_read", "none", "review", {
       reads: ["/executor-review-proposal-review-requests"],
       targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_review_request_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-proposal-review-decision-preview", "runtime.preview_executor_review_proposal_review_decision", "safe_read", "none", "review", {
+      reads: ["/executor-review-proposal-review-requests", "/reviews"],
+      targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_review_decision_tui.py"],
+      notes: ["Read-only preview for approving or rejecting one 8I-created review request."],
+      out: ["review approval", "review rejection", "proposal apply", "provider calls", "OpenCode launch", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-proposal-review-approve", "runtime.decide_executor_review_proposal_review", "high_impact_write", "proposal_review_runtime", "review", {
+      mutates: true,
+      active: true,
+      lock: true,
+      events: ["review_request_approved", "commander_proposal_approved", "commander_executor_review_proposal_review_approved"],
+      reads: ["/executor-review-proposal-review-decision-preview", "/executor-review-proposal-review-decisions", "/reviews"],
+      targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_review_decision_tui.py"],
+      aliases: ["/executor-draft-review-approve", "/commander-executor-proposal-review-approve"],
+      notes: ["Approves exactly one 8I-created review request. It does not apply proposals, mutate missions, call providers, or launch OpenCode."],
+      out: ["proposal apply", "mission mutation", "provider calls", "OpenCode launch"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-proposal-review-reject", "runtime.decide_executor_review_proposal_review", "high_impact_write", "proposal_review_runtime", "review", {
+      mutates: true,
+      active: true,
+      lock: true,
+      events: ["review_request_rejected", "commander_proposal_rejected", "commander_executor_review_proposal_review_rejected"],
+      reads: ["/executor-review-proposal-review-decision-preview", "/executor-review-proposal-review-decisions", "/reviews"],
+      targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_review_decision_tui.py"],
+      aliases: ["/executor-draft-review-reject", "/commander-executor-proposal-review-reject"],
+      notes: ["Rejects exactly one 8I-created review request. It does not apply proposals, mutate missions, call providers, or launch OpenCode."],
+      out: ["proposal apply", "mission mutation", "provider calls", "OpenCode launch"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-proposal-review-decision-dry-run", "runtime.decide_executor_review_proposal_review", "safe_read", "proposal_review_runtime", "review", {
+      reads: ["/executor-review-proposal-review-decision-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_review_decision_tui.py"],
+      notes: ["Dry-run review decision appends no events and does not approve or reject."],
+      out: ["review approval", "review rejection", "proposal apply", "provider calls", "OpenCode launch", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-proposal-review-decisions", "runtime.list_executor_review_proposal_review_decisions", "safe_read", "none", "review", {
+      reads: ["/executor-review-proposal-review-decision-show"],
+      targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_review_decision_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-proposal-review-decision-show", "runtime.get_executor_review_proposal_review_decision", "safe_read", "none", "review", {
+      reads: ["/executor-review-proposal-review-decisions"],
+      targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_review_decision_tui.py"],
     }),
     fakeCommandAuthorityRecord("/minimax-live-preview", "runtime.preview_minimax_live_validation", "safe_read", "reasoning_provider_runtime", "reasoning_provider", {
       reads: ["/reasoning", "/reasoning-smoke-preview commander_executor_review"],

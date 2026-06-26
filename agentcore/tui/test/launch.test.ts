@@ -50,6 +50,35 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "runtime.execute_minimax_live_validation") return minimaxLiveValidationResult(payload?.dry_run === true ? "skipped" : "blocked")
     if (name === "runtime.list_minimax_live_validations") return []
     if (name === "runtime.get_minimax_live_validation") return null
+    if (name === "runtime.preview_executor_review_proposal_review_decision") return {
+      preview_id: "decision_preview_test",
+      status: "blocked",
+      can_decide: false,
+      decision: payload?.decision ?? "approve",
+      review_request_id: payload?.review_request_id ?? "review_test",
+      proposal_title_preview: "Decision preview",
+      proposal_summary_preview: "Decision preview",
+      source_evidence_ids: [],
+      source_finding_ids: [],
+      blockers: ["review_request_id was not found"],
+      warnings: [],
+      recommended_commands: [],
+      generated_at: "2026-06-20T00:00:00.000Z",
+      redacted_summary_preview: "review_request_id was not found",
+    }
+    if (name === "runtime.decide_executor_review_proposal_review") return {
+      decision_gate_id: "decision_gate_test",
+      status: "blocked",
+      decision: payload?.decision ?? "approve",
+      review_request_id: payload?.review_request_id ?? "review_test",
+      decided_at: "2026-06-20T00:00:00.000Z",
+      decided_by: "operator",
+      error: "review_request_id was not found",
+      decision_hash: "hash",
+      recommended_commands: [],
+    }
+    if (name === "runtime.list_executor_review_proposal_review_decisions") return []
+    if (name === "runtime.get_executor_review_proposal_review_decision") return null
     if (name === "runtime.preview_opencode_result_review_packet") {
       return {
         packet_id: "packet_test",
@@ -860,6 +889,40 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.preview_minimax_live_validation")
     expect(runtime.commandNames).toContain("runtime.execute_minimax_live_validation")
     expect(runtime.commandNames).toContain("runtime.list_minimax_live_validations")
+    expect(runtime.commandNames).toContain("runtime.command_authority_get")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless executor review proposal decision scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-review-decision-preview review=review-test decision=approve" },
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-review-decision-dry-run review=review-test decision=approve" },
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-review-approve review=review-test" },
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-review-decisions" },
+      { type: "submit" },
+      { type: "insert", text: "/authority-show /executor-review-proposal-review-approve" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-executor-review-decision-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Executor review proposal review decision")
+    expect(runtime.commandNames).toContain("runtime.preview_executor_review_proposal_review_decision")
+    expect(runtime.commandNames).toContain("runtime.decide_executor_review_proposal_review")
+    expect(runtime.commandNames).toContain("runtime.list_executor_review_proposal_review_decisions")
     expect(runtime.commandNames).toContain("runtime.command_authority_get")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")

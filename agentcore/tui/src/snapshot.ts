@@ -87,6 +87,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...executorReviewProposalDraftLines(state))
   out.push(...executorReviewProposalCreateLines(state))
   out.push(...executorReviewProposalReviewRequestLines(state))
+  out.push(...executorReviewProposalReviewDecisionLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
@@ -751,6 +752,56 @@ function executorReviewProposalReviewRequestLines(state: UiState): string[] {
   }
   if (request.commandError) out.push(`  command_error=${redactText(request.commandError)}`)
   out.push("  note=review request does not approve, reject, apply, mutate mission, call provider, or launch OpenCode")
+  return out
+}
+
+function executorReviewProposalReviewDecisionLines(state: UiState): string[] {
+  const decision = state.executorReviewProposalReviewDecision
+  const out = ["Executor review proposal review decision"]
+  if (!decision) {
+    out.push("  preview=none")
+    out.push("  latest=none")
+    out.push("  records=0")
+    out.push("  note=review decision does not apply proposals, mutate missions, call provider, or launch OpenCode")
+    return out
+  }
+  if (decision.preview) {
+    const item = decision.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_decide=${item.can_decide} decision=${item.decision}`)
+    out.push(`  review_request=${item.review_request_id} proposal=${item.proposal_id ?? "none"} request_gate=${item.request_gate_id ?? "none"}`)
+    out.push(`  create=${item.create_id ?? "none"} source_review=${item.source_executor_review_id ?? "none"} draft=${item.source_draft_id ?? "none"}`)
+    out.push(`  review_status=${item.review_request_status ?? "none"} proposal_status=${item.proposal_status ?? "none"} action=${item.action_kind ?? "none"} title=${preview(redactText(item.proposal_title_preview))}`)
+    out.push(`  summary=${preview(redactText(item.redacted_summary_preview))}`)
+    if (item.existing_decision) out.push(`  existing_decision=${item.existing_decision} at=${item.existing_decision_at ?? "unknown"}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(String(blocker ?? "")))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(String(warning ?? "")))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (decision.latestResult) {
+    const result = decision.latestResult
+    out.push(`  latest=${result.decision_gate_id} status=${result.status} decision=${result.decision} review_request=${result.review_request_id}`)
+    if (result.reason_preview) out.push(`  reason=${preview(redactText(result.reason_preview))}`)
+    if (result.error) out.push(`  latest_error=${preview(redactText(result.error))}`)
+  } else {
+    out.push("  latest=none")
+  }
+  out.push(`  records=${decision.records.length}`)
+  if (decision.records.length > 0) {
+    out.push("  recent_decisions")
+    out.push(...decision.records.slice(0, 10).map((record) => `    - ${record.decision_gate_id} status=${record.status} decision=${record.decision} review_request=${record.review_request_id}: ${preview(redactText(record.summary_preview))}`))
+  }
+  if (decision.selected && decision.selected.decision_gate_id !== decision.latestResult?.decision_gate_id) {
+    out.push(`  selected=${decision.selected.decision_gate_id} status=${decision.selected.status} review_request=${decision.selected.review_request_id}`)
+  }
+  if (decision.commandError) out.push(`  command_error=${redactText(decision.commandError)}`)
+  out.push("  note=review decision does not apply proposals, mutate missions, call provider, or launch OpenCode")
   return out
 }
 
