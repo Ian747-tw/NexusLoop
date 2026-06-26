@@ -1891,7 +1891,10 @@ export class FakeRuntimeClient implements RuntimeClient {
     const dryRun = payload.dryRun === true || payload.dry_run === true
     const preview = this.previewExecutorReviewProposalReviewRequest(payload)
     const existing = this.executorReviewProposalReviewRequests.find((item) => item.proposal_id === preview.proposal_id && item.status === "requested")
-    if (!dryRun && existing) return existing
+    const duplicateOnly = preview.existing_review_request_id
+      && preview.blockers.length === 1
+      && preview.blockers[0] === "review request already exists for this executor-review proposal"
+    if (!dryRun && existing && duplicateOnly) return existing
     const requestGateId = `fake-review-request-gate-${preview.proposal_id}`
     const result: ExecutorReviewProposalReviewRequestResultSummary = {
       request_gate_id: requestGateId,

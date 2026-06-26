@@ -3403,6 +3403,10 @@ describe("runtime UI effects", () => {
     expect(state.executorReviewProposalReviewRequest?.latestResult).toMatchObject({ status: "requested", review_request_id: "fake-review-request-1" })
     expect(state.executorReviewProposalReviewRequest?.records).toHaveLength(1)
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-request", args: ["proposal=fake-proposal-1", "create=wrong-create"] })
+    expect(state.executorReviewProposalReviewRequest?.latestResult).toMatchObject({ status: "blocked", error: "create_id does not match the proposal source create record" })
+    expect(state.executorReviewProposalReviewRequest?.records).toHaveLength(1)
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-requests" })
     expect(state.executorReviewProposalReviewRequest?.records).toEqual([expect.objectContaining({ status: "requested", review_request_id: "fake-review-request-1", proposal_id: "fake-proposal-1" })])
     const requestGateId = state.executorReviewProposalReviewRequest?.records[0]?.request_gate_id
