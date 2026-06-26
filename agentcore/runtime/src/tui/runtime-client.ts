@@ -16,6 +16,7 @@ import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, 
 import type { CommanderExecutorReviewInput, CommanderExecutorReviewPreview, CommanderExecutorReviewRecord, CommanderExecutorReviewResult } from "../commander-executor-review/commander-executor-review-types"
 import type { ExecutorReviewProposalDraftPreview, ExecutorReviewProposalDraftPreviewInput, ExecutorReviewProposalDraftSummary } from "../commander-executor-review/executor-review-proposal-draft-types"
 import type { ExecutorReviewProposalCreateInput, ExecutorReviewProposalCreatePreview, ExecutorReviewProposalCreatePreviewInput, ExecutorReviewProposalCreateRecord, ExecutorReviewProposalCreateResult } from "../commander-executor-review/executor-review-proposal-create-types"
+import type { ExecutorReviewProposalReviewRequestInput, ExecutorReviewProposalReviewRequestPreview, ExecutorReviewProposalReviewRequestPreviewInput, ExecutorReviewProposalReviewRequestRecord, ExecutorReviewProposalReviewRequestResult } from "../commander-executor-review/executor-review-proposal-review-request-types"
 import type { ReasoningProviderStatus } from "../reasoning/reasoning-provider-config"
 import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "../reasoning/reasoning-health-types"
 import type { MiniMaxLiveValidationInput, MiniMaxLiveValidationPreview, MiniMaxLiveValidationRecord, MiniMaxLiveValidationResult } from "../reasoning/minimax-live-validation-types"
@@ -265,6 +266,10 @@ export interface RuntimeClient {
   command(name: "runtime.create_executor_review_proposal", payload: ExecutorReviewProposalCreateInput): Promise<ExecutorReviewProposalCreateResult>
   command(name: "runtime.list_executor_review_proposal_creates", payload?: { limit?: number; review_id?: string; reviewId?: string; proposal_id?: string; proposalId?: string }): Promise<ExecutorReviewProposalCreateRecord[]>
   command(name: "runtime.get_executor_review_proposal_create", payload: { create_id: string } | { createId: string }): Promise<ExecutorReviewProposalCreateResult | null>
+  command(name: "runtime.preview_executor_review_proposal_review_request", payload: ExecutorReviewProposalReviewRequestPreviewInput): Promise<ExecutorReviewProposalReviewRequestPreview>
+  command(name: "runtime.request_executor_review_proposal_review", payload: ExecutorReviewProposalReviewRequestInput): Promise<ExecutorReviewProposalReviewRequestResult>
+  command(name: "runtime.list_executor_review_proposal_review_requests", payload?: { limit?: number; proposal_id?: string; proposalId?: string; review_request_id?: string; reviewRequestId?: string; create_id?: string; createId?: string }): Promise<ExecutorReviewProposalReviewRequestRecord[]>
+  command(name: "runtime.get_executor_review_proposal_review_request", payload: { request_gate_id: string } | { requestGateId: string }): Promise<ExecutorReviewProposalReviewRequestResult | null>
   command(name: "runtime.get_opencode_handoff_followup", payload: { handoffId: string } | { handoff_id: string }): Promise<OpenCodeHandoffFollowup | null>
   command(name: "runtime.list_opencode_handoff_followups", payload?: { limit?: number; staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowup[]>
   command(name: "runtime.opencode_handoff_followup_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowupSummary>
@@ -482,6 +487,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.create_executor_review_proposal"
     | "runtime.list_executor_review_proposal_creates"
     | "runtime.get_executor_review_proposal_create"
+    | "runtime.preview_executor_review_proposal_review_request"
+    | "runtime.request_executor_review_proposal_review"
+    | "runtime.list_executor_review_proposal_review_requests"
+    | "runtime.get_executor_review_proposal_review_request"
     | "runtime.get_opencode_handoff_followup"
     | "runtime.list_opencode_handoff_followups"
     | "runtime.opencode_handoff_followup_summary"
