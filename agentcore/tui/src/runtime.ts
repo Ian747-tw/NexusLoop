@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary } from "./state"
 
 export interface SubmitUserMessageResult {
@@ -52,6 +52,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly opencodeHandoffs: OpenCodeHandoffResultSummary[] = []
   private readonly opencodeProcessSmokes: OpenCodeProcessSmokeResultSummary[] = []
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
+  private readonly minimaxLiveValidations: MiniMaxLiveValidationResultSummary[] = []
   private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
   private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
   private readonly wakeAssessments: WakeAssessmentSummary[] = []
@@ -220,6 +221,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.previewReasoningProviderSmoke(payload)
       case "runtime.execute_reasoning_provider_smoke":
         return this.executeReasoningProviderSmoke(payload)
+      case "runtime.preview_minimax_live_validation":
+        return this.previewMiniMaxLiveValidation(payload)
+      case "runtime.execute_minimax_live_validation":
+        return this.executeMiniMaxLiveValidation(payload)
+      case "runtime.list_minimax_live_validations":
+        return this.listMiniMaxLiveValidations(readLimit(payload.limit, 20))
+      case "runtime.get_minimax_live_validation":
+        return this.getMiniMaxLiveValidation(String(payload.validationId ?? payload.validation_id ?? ""))
       case "runtime.list_recent_missions":
         return this.missions.slice(0, readLimit(payload.limit, 5))
       case "runtime.get_mission":
@@ -710,6 +719,79 @@ export class FakeRuntimeClient implements RuntimeClient {
       summary: payload.dryRun === true || payload.dry_run === true ? "fake reasoning smoke dry-run passed" : `fake ${surface} smoke parsed deterministic provider output`,
       created_at: "1970-01-01T00:00:00.000Z",
     }
+  }
+
+  private previewMiniMaxLiveValidation(payload: Record<string, unknown>): MiniMaxLiveValidationPreviewSummary {
+    const surfaces = readMiniMaxLiveValidationSurfaces(payload.surfaces ?? payload.surface)
+    return {
+      status: "not_configured",
+      can_execute: false,
+      provider_kind: "fake",
+      provider_id: "fake-reasoning",
+      enabled_surfaces: ["research_synthesis", "commander_cycle"],
+      requested_surfaces: surfaces,
+      opt_in_required: true,
+      opt_in_present: false,
+      timeout_ms: readValidationTimeout(payload.timeoutMs ?? payload.timeout_ms),
+      blockers: ["MiniMax reasoning provider is not configured", "NXL_MINIMAX_LIVE_VALIDATION=1 is required for MiniMax live validation"],
+      warnings: ["fake runtime does not call MiniMax or live providers"],
+      redacted_summary_preview: "MiniMax live validation is blocked in fake/default runtime",
+      recommended_commands: [
+        { label: "Preview validation", command: `/minimax-live-preview surface=${surfaces[0] ?? "commander_executor_review"}`, command_type: "read" },
+        { label: "Reasoning smoke preview", command: `/reasoning-smoke-preview ${surfaces[0] ?? "commander_executor_review"}`, command_type: "read" },
+        { label: "Show authority", command: "/authority-show /minimax-live-validate", command_type: "read" },
+      ],
+      generated_at: "1970-01-01T00:00:00.000Z",
+    }
+  }
+
+  private executeMiniMaxLiveValidation(payload: Record<string, unknown>): MiniMaxLiveValidationResultSummary {
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const surfaces = readMiniMaxLiveValidationSurfaces(payload.surfaces ?? payload.surface)
+    const result: MiniMaxLiveValidationResultSummary = {
+      validation_id: dryRun ? "fake-minimax-live-dry-run" : `fake-minimax-live-${this.minimaxLiveValidations.length + 1}`,
+      status: dryRun ? "skipped" : "blocked",
+      provider_kind: "fake",
+      provider_id: "fake-reasoning",
+      surfaces: surfaces.map((surface): MiniMaxLiveValidationSurfaceResultSummary => ({
+        surface,
+        status: dryRun ? "skipped" : "blocked",
+        ok: false,
+        parsed: false,
+        summary_preview: dryRun ? "dry-run requested; no provider call or events appended" : undefined,
+        error: dryRun ? undefined : "MiniMax live validation requires minimax provider config and live opt-in",
+        schema_version: "reasoning-smoke-v1",
+      })),
+      started_at: "1970-01-01T00:00:00.000Z",
+      completed_at: "1970-01-01T00:00:00.000Z",
+      duration_ms: 0,
+      requested_by: "tui",
+      validation_hash: fakeNavigationStageHash(`minimax-live:${dryRun ? "dry-run" : this.minimaxLiveValidations.length + 1}`),
+      diagnostics: [dryRun ? "fake dry-run did not call MiniMax or append events" : "fake runtime blocked MiniMax live validation without provider calls"],
+      error: dryRun ? undefined : "MiniMax live validation requires explicit live configuration",
+    }
+    if (!dryRun) this.minimaxLiveValidations.unshift(result)
+    return result
+  }
+
+  private listMiniMaxLiveValidations(limit: number): MiniMaxLiveValidationRecordSummary[] {
+    return this.minimaxLiveValidations.slice(0, limit).map((item) => ({
+      validation_id: item.validation_id,
+      status: item.status,
+      provider_id: item.provider_id,
+      model: item.model,
+      completed_at: item.completed_at,
+      surface_count: item.surfaces.length,
+      succeeded_count: item.surfaces.filter((surface) => surface.status === "succeeded").length,
+      failed_count: item.surfaces.filter((surface) => surface.status === "failed" || surface.status === "blocked").length,
+      summary_preview: item.error ?? item.diagnostics[0] ?? item.status,
+      validation_hash: item.validation_hash,
+    }))
+  }
+
+  private getMiniMaxLiveValidation(validationId: string): MiniMaxLiveValidationResultSummary | null {
+    const id = requiredString(validationId, "validationId")
+    return this.minimaxLiveValidations.find((item) => item.validation_id === id) ?? null
   }
 
   private previewExternalApiRequest(payload: Record<string, unknown>): ExternalApiRequestPreviewSummary {
@@ -5325,6 +5407,25 @@ function readReasoningSurface(value: unknown): "research_synthesis" | "commander
   throw new Error("reasoning smoke surface must be research_synthesis, commander_cycle, or commander_executor_review")
 }
 
+function readMiniMaxLiveValidationSurfaces(value: unknown): Array<"research_synthesis" | "commander_cycle" | "commander_executor_review"> {
+  const raw = Array.isArray(value) ? value : value === undefined ? ["commander_executor_review"] : [value]
+  return [...new Set(raw.map(readMiniMaxLiveValidationSurface))]
+}
+
+function readMiniMaxLiveValidationSurface(value: unknown): "research_synthesis" | "commander_cycle" | "commander_executor_review" {
+  if (value === "research" || value === "research_synthesis") return "research_synthesis"
+  if (value === "cycle" || value === "commander_cycle") return "commander_cycle"
+  if (value === "executor_review" || value === "commander_executor_review") return "commander_executor_review"
+  throw new Error("MiniMax live validation surface must be research_synthesis, commander_cycle, or commander_executor_review")
+}
+
+function readValidationTimeout(value: unknown): number {
+  if (value === undefined) return 20_000
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 60_000) throw new Error("MiniMax live validation timeout must be 1..60000 milliseconds")
+  return parsed
+}
+
 function continuationRecord(plan: ContinuationPlanSummary): ContinuationPlanRecordSummary {
   return {
     plan_id: plan.plan_id,
@@ -6280,6 +6381,36 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_draft_tui.py"],
       notes: ["Read-only executor-review proposal draft summary; no proposal registry writes."],
       out: ["proposal creation", "review request", "proposal apply", "provider calls", "OpenCode launch", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/minimax-live-preview", "runtime.preview_minimax_live_validation", "safe_read", "reasoning_provider_runtime", "reasoning_provider", {
+      reads: ["/reasoning", "/reasoning-smoke-preview commander_executor_review"],
+      targeted: ["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"],
+      aliases: ["/reasoning-live-preview"],
+      notes: ["Read-only MiniMax live validation preview; does not call provider."],
+      out: ["provider calls", "proposal creation", "OpenCode launch", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/minimax-live-dry-run", "runtime.execute_minimax_live_validation", "safe_read", "reasoning_provider_runtime", "reasoning_provider", {
+      reads: ["/minimax-live-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"],
+      notes: ["Dry-run does not call MiniMax and appends no events."],
+      out: ["provider calls", "proposal creation", "OpenCode launch", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/minimax-live-validate", "runtime.execute_minimax_live_validation", "high_impact_write", "reasoning_provider_runtime", "reasoning_provider", {
+      mutates: true,
+      events: ["minimax_live_validation_started", "minimax_live_validation_succeeded", "minimax_live_validation_failed"],
+      reads: ["/minimax-live-preview", "/minimax-live-validations"],
+      targeted: ["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"],
+      aliases: ["/reasoning-live-validate", "/minimax-provider-validate"],
+      notes: ["Explicit opt-in live MiniMax provider validation only; writes bounded validation metadata and does not create proposals or product mutations."],
+      out: ["proposal creation", "proposal apply", "Commander cycle product execution", "research synthesis product execution", "OpenCode launch", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/minimax-live-validations", "runtime.list_minimax_live_validations", "safe_read", "reasoning_provider_runtime", "reasoning_provider", {
+      reads: ["/minimax-live-show"],
+      targeted: ["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/minimax-live-show", "runtime.get_minimax_live_validation", "safe_read", "reasoning_provider_runtime", "reasoning_provider", {
+      reads: ["/minimax-live-validations"],
+      targeted: ["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"],
     }),
     fakeCommandAuthorityRecord("/apply-proposal", "runtime.apply_commander_proposal", "high_impact_write", "proposal_review_runtime", "proposal", {
       mutates: true,

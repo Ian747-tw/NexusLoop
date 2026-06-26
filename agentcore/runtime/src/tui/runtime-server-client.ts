@@ -22,6 +22,10 @@ const noStartCommands = new Set([
   "runtime.get_commander_executor_review",
   "runtime.preview_executor_review_proposal_drafts",
   "runtime.executor_review_proposal_draft_summary",
+  "runtime.preview_minimax_live_validation",
+  "runtime.execute_minimax_live_validation",
+  "runtime.list_minimax_live_validations",
+  "runtime.get_minimax_live_validation",
 ])
 
 export interface RuntimeServerClientOptions {

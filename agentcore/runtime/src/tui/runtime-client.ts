@@ -17,6 +17,7 @@ import type { CommanderExecutorReviewInput, CommanderExecutorReviewPreview, Comm
 import type { ExecutorReviewProposalDraftPreview, ExecutorReviewProposalDraftPreviewInput, ExecutorReviewProposalDraftSummary } from "../commander-executor-review/executor-review-proposal-draft-types"
 import type { ReasoningProviderStatus } from "../reasoning/reasoning-provider-config"
 import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "../reasoning/reasoning-health-types"
+import type { MiniMaxLiveValidationInput, MiniMaxLiveValidationPreview, MiniMaxLiveValidationRecord, MiniMaxLiveValidationResult } from "../reasoning/minimax-live-validation-types"
 import type { OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "../opencode/opencode-handoff-types"
 import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary } from "../opencode/opencode-handoff-followup-types"
 import type { OpenCodeProcessSmokePreview, OpenCodeProcessSmokeRecord, OpenCodeProcessSmokeResult } from "../opencode/opencode-process-smoke-types"
@@ -62,6 +63,10 @@ export interface RuntimeClient {
   command(name: "runtime.reasoning_provider_health"): Promise<ReasoningProviderHealth>
   command(name: "runtime.preview_reasoning_provider_smoke", payload?: { surface?: string; requestedBy?: string; requested_by?: string }): Promise<ReasoningProviderSmokePreview>
   command(name: "runtime.execute_reasoning_provider_smoke", payload?: { surface?: string; dryRun?: boolean; dry_run?: boolean; requestedBy?: string; requested_by?: string }): Promise<ReasoningProviderSmokeResult>
+  command(name: "runtime.preview_minimax_live_validation", payload?: MiniMaxLiveValidationInput): Promise<MiniMaxLiveValidationPreview>
+  command(name: "runtime.execute_minimax_live_validation", payload?: MiniMaxLiveValidationInput): Promise<MiniMaxLiveValidationResult>
+  command(name: "runtime.list_minimax_live_validations", payload?: { limit?: number }): Promise<MiniMaxLiveValidationRecord[]>
+  command(name: "runtime.get_minimax_live_validation", payload: { validationId: string } | { validation_id: string }): Promise<MiniMaxLiveValidationResult | null>
   command(name: "runtime.resume" | "runtime.start_new_session" | "runtime.view_records"): Promise<unknown>
   command(name: "runtime.shutdown", payload?: { reason?: string }): Promise<unknown>
   command(name: "runtime.get_mission", payload: { missionId: string }): Promise<MissionRecord | null>
@@ -376,6 +381,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.reasoning_provider_health"
     | "runtime.preview_reasoning_provider_smoke"
     | "runtime.execute_reasoning_provider_smoke"
+    | "runtime.preview_minimax_live_validation"
+    | "runtime.execute_minimax_live_validation"
+    | "runtime.list_minimax_live_validations"
+    | "runtime.get_minimax_live_validation"
     | "runtime.resume"
     | "runtime.start_new_session"
     | "runtime.view_records"

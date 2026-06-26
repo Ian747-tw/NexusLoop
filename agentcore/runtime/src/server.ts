@@ -49,6 +49,8 @@ import { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
 import { defaultReasoningProviderConfig, reasoningProviderStatus, validateReasoningProviderConfig, type ReasoningProviderConfig, type ReasoningProviderStatus } from "./reasoning/reasoning-provider-config"
 import { ReasoningProviderHealthService } from "./reasoning/reasoning-health-service"
 import type { ReasoningProviderHealth, ReasoningProviderSmokeInput, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "./reasoning/reasoning-health-types"
+import { MiniMaxLiveValidationService } from "./reasoning/minimax-live-validation-service"
+import type { MiniMaxLiveValidationInput, MiniMaxLiveValidationPreview, MiniMaxLiveValidationRecord, MiniMaxLiveValidationResult, MiniMaxLiveValidationSurface } from "./reasoning/minimax-live-validation-types"
 import { OpenCodeHandoffService } from "./opencode/opencode-handoff-service"
 import type { OpenCodeHandoffInput, OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "./opencode/opencode-handoff-types"
 import { OpenCodeHandoffFollowupService, readOpenCodeHandoffFollowupQueueKind } from "./opencode/opencode-handoff-followup-service"
@@ -268,6 +270,7 @@ export class RuntimeServer {
   private opencodeResultReviewPacketServiceInstance: OpenCodeResultReviewPacketService | null = null
   private commanderExecutorReviewServiceInstance: CommanderExecutorReviewService | null = null
   private executorReviewProposalDraftServiceInstance: ExecutorReviewProposalDraftService | null = null
+  private minimaxLiveValidationServiceInstance: MiniMaxLiveValidationService | null = null
   private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
   private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
   private wakeAssessmentServiceInstance: WakeAssessmentService | null = null
@@ -513,6 +516,14 @@ export class RuntimeServer {
         return this.previewReasoningProviderSmoke(readReasoningProviderSmokeInput(payload))
       case "runtime.execute_reasoning_provider_smoke":
         return this.executeReasoningProviderSmoke(readReasoningProviderSmokeInput(payload))
+      case "runtime.preview_minimax_live_validation":
+        return this.previewMiniMaxLiveValidation(readMiniMaxLiveValidationInput(payload))
+      case "runtime.execute_minimax_live_validation":
+        return this.executeMiniMaxLiveValidation(readMiniMaxLiveValidationInput(payload))
+      case "runtime.list_minimax_live_validations":
+        return this.listMiniMaxLiveValidations(optionalPositiveInteger(payload.limit, "limit", 100) ?? 20)
+      case "runtime.get_minimax_live_validation":
+        return this.getMiniMaxLiveValidation(requiredString(payload.validationId ?? payload.validation_id, "validationId"))
       case "runtime.resume":
         return this.resume()
       case "runtime.start_new_session":
@@ -1384,6 +1395,22 @@ export class RuntimeServer {
   async executeReasoningProviderSmoke(input: ReasoningProviderSmokeInput = {}): Promise<ReasoningProviderSmokeResult> {
     this.requireReasoningProviderSmokeRuntime("runtime.execute_reasoning_provider_smoke")
     return this.reasoningProviderHealthService().execute(input)
+  }
+
+  previewMiniMaxLiveValidation(input: MiniMaxLiveValidationInput = {}): MiniMaxLiveValidationPreview {
+    return this.minimaxLiveValidationService().preview(input)
+  }
+
+  async executeMiniMaxLiveValidation(input: MiniMaxLiveValidationInput = {}): Promise<MiniMaxLiveValidationResult> {
+    return this.minimaxLiveValidationService().execute(input)
+  }
+
+  async listMiniMaxLiveValidations(limit = 20): Promise<MiniMaxLiveValidationRecord[]> {
+    return this.minimaxLiveValidationService().list(limit)
+  }
+
+  async getMiniMaxLiveValidation(validationId: string): Promise<MiniMaxLiveValidationResult | null> {
+    return this.minimaxLiveValidationService().get(validationId)
   }
 
   previewExternalApiResearchIngestion(input: ExternalApiResearchIngestionInput): ExternalApiResearchIngestionPreview {
@@ -2888,6 +2915,18 @@ export class RuntimeServer {
     })
   }
 
+  private minimaxLiveValidationService(): MiniMaxLiveValidationService {
+    this.minimaxLiveValidationServiceInstance ??= new MiniMaxLiveValidationService({
+      eventStore: this.eventStore,
+      config: this.reasoningProviderConfig,
+      healthService: this.reasoningProviderHealthService(),
+      env: this.externalApiEnv,
+      now: this.externalApiNow,
+      idFactory: this.externalApiRequestId ? () => `minimax_live_${this.externalApiRequestId?.()}` : undefined,
+    })
+    return this.minimaxLiveValidationServiceInstance
+  }
+
   private externalApiResearchIngestionService(): ExternalApiResearchIngestionService {
     return new ExternalApiResearchIngestionService({
       registry: this.externalApiConnectorRegistry,
@@ -3001,6 +3040,26 @@ function readReasoningProviderSmokeInput(value: Record<string, unknown>): Reason
     dry_run: optionalBoolean(value.dryRun ?? value.dry_run, "dryRun"),
     requested_by: optionalString(value.requestedBy ?? value.requested_by, "requestedBy"),
   }
+}
+
+function readMiniMaxLiveValidationInput(value: Record<string, unknown>): MiniMaxLiveValidationInput {
+  const rawSurfaces = value.surfaces ?? value.surface
+  const surfaces = rawSurfaces === undefined
+    ? undefined
+    : (Array.isArray(rawSurfaces) ? rawSurfaces : [rawSurfaces]).map((item, index) => readMiniMaxLiveValidationSurface(item, `surfaces[${index}]`))
+  return {
+    surfaces,
+    requested_by: optionalString(value.requestedBy ?? value.requested_by, "requestedBy"),
+    timeout_ms: optionalPositiveInteger(value.timeoutMs ?? value.timeout_ms, "timeoutMs", 60_000),
+    dry_run: optionalBoolean(value.dryRun ?? value.dry_run, "dryRun"),
+  }
+}
+
+function readMiniMaxLiveValidationSurface(value: unknown, field: string): MiniMaxLiveValidationSurface {
+  if (value === "research" || value === "research_synthesis") return "research_synthesis"
+  if (value === "cycle" || value === "commander_cycle") return "commander_cycle"
+  if (value === "executor_review" || value === "commander_executor_review") return "commander_executor_review"
+  throw new Error(`${field} must be research_synthesis, commander_cycle, or commander_executor_review`)
 }
 
 function optionalStringArray(value: unknown, field: string): string[] | undefined {

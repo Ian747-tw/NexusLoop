@@ -158,6 +158,84 @@ export type ReasoningProviderState = ReasoningProviderStatusSummary & {
   commandError?: string
 }
 
+export type MiniMaxLiveValidationCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type MiniMaxLiveValidationPreviewSummary = {
+  validation_id?: string
+  status: string
+  can_execute: boolean
+  provider_kind: string
+  provider_id: string
+  connector_id?: string
+  model?: string
+  enabled_surfaces: string[]
+  requested_surfaces: string[]
+  opt_in_required: boolean
+  opt_in_present: boolean
+  timeout_ms: number
+  blockers: string[]
+  warnings: string[]
+  redacted_summary_preview: string
+  recommended_commands: MiniMaxLiveValidationCommandSummary[]
+  generated_at: string
+}
+
+export type MiniMaxLiveValidationSurfaceResultSummary = {
+  surface: string
+  status: string
+  ok: boolean
+  parsed: boolean
+  request_id?: string
+  summary_preview?: string
+  error?: string
+  duration_ms?: number
+  schema_version?: string
+}
+
+export type MiniMaxLiveValidationResultSummary = {
+  validation_id: string
+  status: string
+  provider_kind: string
+  provider_id: string
+  connector_id?: string
+  model?: string
+  surfaces: MiniMaxLiveValidationSurfaceResultSummary[]
+  started_at: string
+  completed_at: string
+  duration_ms?: number
+  requested_by: string
+  validation_hash: string
+  diagnostics: string[]
+  error?: string
+}
+
+export type MiniMaxLiveValidationRecordSummary = {
+  validation_id: string
+  status: string
+  provider_id: string
+  model?: string
+  completed_at: string
+  surface_count: number
+  succeeded_count: number
+  failed_count: number
+  summary_preview: string
+  validation_hash: string
+}
+
+export type MiniMaxLiveValidationState = {
+  preview?: MiniMaxLiveValidationPreviewSummary | null
+  latestResult?: MiniMaxLiveValidationResultSummary | null
+  records: MiniMaxLiveValidationRecordSummary[]
+  selected?: MiniMaxLiveValidationResultSummary | null
+  commandError?: string
+}
+
 export type MissionRecord = {
   mission_id: string
   intent_id?: string
@@ -2963,6 +3041,7 @@ export type UiState = {
   opencodeResultReview?: OpenCodeResultReviewState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
+  minimaxLiveValidation?: MiniMaxLiveValidationState
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState
   runtimeRestore?: RuntimeRestoreState

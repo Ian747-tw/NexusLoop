@@ -475,4 +475,12 @@ const runtimeCommands = new Set([
   "reasoning-smoke-preview",
   "reasoning-smoke",
   "reasoning-smoke-dry-run",
+  "minimax-live-preview",
+  "minimax-live-validate",
+  "minimax-live-dry-run",
+  "minimax-live-validations",
+  "minimax-live-show",
+  "reasoning-live-preview",
+  "reasoning-live-validate",
+  "minimax-provider-validate",
 ])
