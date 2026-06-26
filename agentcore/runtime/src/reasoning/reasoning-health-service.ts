@@ -96,7 +96,7 @@ export class ReasoningProviderHealthService {
         body: JSON.stringify(request),
         requested_by: `reasoning-smoke:${redactText(input.requested_by ?? "operator")}`,
       }, {
-        timeout_ms: this.options.config.timeout_ms,
+        timeout_ms: input.timeout_ms ?? this.options.config.timeout_ms,
         redact_response_body: false,
         omit_response_preview_from_audit: true,
         persist_audit: input.persist_external_api_audit !== false,

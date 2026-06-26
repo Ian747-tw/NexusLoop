@@ -57,6 +57,7 @@ export interface ReasoningProviderSmokeInput {
   surface?: ReasoningProviderSurface | "research" | "cycle"
   dry_run?: boolean
   requested_by?: string
+  timeout_ms?: number
   persist_event?: boolean
   require_real_smoke_gate?: boolean
   persist_external_api_audit?: boolean

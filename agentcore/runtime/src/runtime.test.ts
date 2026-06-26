@@ -6960,7 +6960,7 @@ describe("RuntimeServer core", () => {
     expect(transport.requests).toHaveLength(0)
 
     await server.start()
-    const result = await server.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requestedBy: "operator" }) as Record<string, unknown>
+    const result = await server.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requestedBy: "operator", timeoutMs: 1234 }) as Record<string, unknown>
     expect(result).toMatchObject({
       validation_id: "minimax_live_api_minimax_live_validation",
       status: "succeeded",
@@ -6968,6 +6968,7 @@ describe("RuntimeServer core", () => {
     })
     expect(result.surfaces).toEqual([expect.objectContaining({ surface: "commander_executor_review", status: "succeeded", ok: true, parsed: true })])
     expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].timeout_ms).toBe(1234)
     const kinds = await readEventKinds(dir)
     expect(kinds).toEqual(expect.arrayContaining(["runtime_started", "minimax_live_validation_started", "minimax_live_validation_succeeded"]))
     expect(kinds).not.toContain("reasoning_provider_smoke_succeeded")
