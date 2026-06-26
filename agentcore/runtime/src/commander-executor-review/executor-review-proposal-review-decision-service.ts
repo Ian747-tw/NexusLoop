@@ -305,6 +305,7 @@ function normalizePreviewInput(input: Record<string, unknown>): ExecutorReviewPr
 function normalizeDecisionInput(input: Record<string, unknown>): ExecutorReviewProposalReviewDecisionInput {
   return {
     ...normalizePreviewInput(input),
+    reason: optionalUnbounded(input.reason),
     decided_by: optional(input.decided_by ?? input.decidedBy) ?? "operator",
     dry_run: input.dry_run === true || input.dryRun === true,
   }
@@ -495,6 +496,12 @@ function optional(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const trimmed = value.trim()
   return trimmed ? bound(trimmed) : undefined
+}
+
+function optionalUnbounded(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed ? redactText(trimmed).replace(/\s+/g, " ").trim() : undefined
 }
 
 function numberOptional(value: unknown): number | undefined {

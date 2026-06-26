@@ -14959,16 +14959,20 @@ describe("RuntimeServerClient", () => {
 	    })
 	    await expect(server.command("runtime.get_commander_proposal", { proposal_id: cancelFixture.created.proposal_id })).resolves.toMatchObject({ status: "review_requested" })
 
+	    const longRejectReason = `needs human review ${Array.from({ length: 60 }, (_, index) => `detail-${index}`).join(" ")}`
 	    const rejected = await server.command("runtime.decide_executor_review_proposal_review", {
-      review_request_id: rejectFixture.requested.review_request_id,
-      decision: "reject",
-      reason: "needs human review token=decision-secret",
-      decided_by: "carol",
-    }) as { status: string; reason_preview?: string }
-    expect(rejected).toMatchObject({
-      status: "rejected",
-      reason_preview: expect.stringContaining("[REDACTED]"),
-    })
+	      review_request_id: rejectFixture.requested.review_request_id,
+	      decision: "reject",
+	      reason: longRejectReason,
+	      decided_by: "carol",
+	    }) as { status: string; reason_preview?: string }
+	    expect(rejected).toMatchObject({
+	      status: "rejected",
+	      reason_preview: longRejectReason.slice(0, 240),
+	    })
+	    const rejectedReview = await server.command("runtime.get_review_request", { review_id: rejectFixture.requested.review_request_id }) as { decision_reason?: string }
+	    expect(rejectedReview.decision_reason).toBe(longRejectReason)
+	    expect(rejectedReview.decision_reason!.length).toBeGreaterThan(240)
     await expect(server.command("runtime.list_executor_review_proposal_review_decisions")).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ status: "approved", review_request_id: approveFixture.requested.review_request_id }),
       expect.objectContaining({ status: "rejected", review_request_id: rejectFixture.requested.review_request_id }),
