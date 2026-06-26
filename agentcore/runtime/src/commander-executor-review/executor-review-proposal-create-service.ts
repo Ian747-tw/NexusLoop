@@ -81,6 +81,9 @@ export class ExecutorReviewProposalCreateService {
         && event.draft_id === preview.draft_id
         && event.proposal_id === preview.existing_proposal_id)
       if (existingEvent) return redactValue(resultFromEvent(existingEvent))
+      const existingProposal = await this.findProposalById(preview.existing_proposal_id)
+      const recovered = existingProposal ? resultFromProposal(existingProposal) : undefined
+      if (recovered) return redactValue(recovered)
       return redactValue(resultFromPreview(preview, {
         create_id: createId,
         status: "blocked",
@@ -170,19 +173,20 @@ export class ExecutorReviewProposalCreateService {
 
   async list(input: { limit?: number; review_id?: string; proposal_id?: string } = {}): Promise<ExecutorReviewProposalCreateRecord[]> {
     const limit = Math.max(1, Math.min(input.limit ?? 20, 100))
-    const events = await this.createEvents()
-    return redactValue(events
-      .filter((event) => !input.review_id || event.review_id === input.review_id)
-      .filter((event) => !input.proposal_id || event.proposal_id === input.proposal_id)
+    const results = await this.createResults()
+    return redactValue(results
+      .filter((result) => !input.review_id || result.review_id === input.review_id)
+      .filter((result) => !input.proposal_id || result.proposal_id === input.proposal_id)
+      .sort((left, right) => left.created_at.localeCompare(right.created_at))
       .reverse()
-      .map(recordFromEvent)
+      .map(recordFromResult)
       .slice(0, limit))
   }
 
   async get(createId: string): Promise<ExecutorReviewProposalCreateResult | null> {
     const safeId = required(createId, "create_id")
-    const event = (await this.createEvents()).reverse().find((item) => item.create_id === safeId)
-    return event ? redactValue(resultFromEvent(event)) : null
+    const result = (await this.createResults()).reverse().find((item) => item.create_id === safeId)
+    return result ? redactValue(result) : null
   }
 
   private async buildPreview(input: ExecutorReviewProposalCreatePreviewInput): Promise<ExecutorReviewProposalCreatePreview> {
@@ -239,11 +243,31 @@ export class ExecutorReviewProposalCreateService {
     })
   }
 
+  private async findProposalById(proposalId: string): Promise<CommanderProposal | undefined> {
+    return (await this.options.proposalRegistry.listAllProposals()).find((proposal) => proposal.proposal_id === proposalId)
+  }
+
   private async createEvents(): Promise<JsonlEvent[]> {
     return (await this.options.eventStore.readAll()).filter((event) =>
       event.kind === "commander_executor_review_proposal_created"
       || event.kind === "commander_executor_review_proposal_create_blocked"
       || event.kind === "commander_executor_review_proposal_create_failed")
+  }
+
+  private async createResults(): Promise<ExecutorReviewProposalCreateResult[]> {
+    const results = (await this.createEvents()).map(resultFromEvent)
+    const proposals = await this.options.proposalRegistry.listAllProposals()
+    for (const proposal of proposals) {
+      const recovered = resultFromProposal(proposal)
+      if (!recovered) continue
+      const hasCreatedRecord = results.some((result) =>
+        result.status === "created"
+        && result.proposal_id === recovered.proposal_id
+        && result.review_id === recovered.review_id
+        && result.draft_id === recovered.draft_id)
+      if (!hasCreatedRecord) results.push(recovered)
+    }
+    return results
   }
 
   private async append(kind: string, result: ExecutorReviewProposalCreateResult): Promise<void> {
@@ -308,16 +332,20 @@ function resultFromPreview(preview: ExecutorReviewProposalCreatePreview, input: 
 }
 
 function recordFromEvent(event: JsonlEvent): ExecutorReviewProposalCreateRecord {
+  return recordFromResult(resultFromEvent(event))
+}
+
+function recordFromResult(result: ExecutorReviewProposalCreateResult): ExecutorReviewProposalCreateRecord {
   return {
-    create_id: String(event.create_id ?? ""),
-    status: String(event.status ?? "blocked"),
-    proposal_id: optional(event.proposal_id),
-    review_id: String(event.review_id ?? ""),
-    draft_id: String(event.draft_id ?? ""),
-    draft_kind: String(event.draft_kind ?? "other"),
-    created_at: String(event.created_at ?? event.timestamp ?? ""),
-    summary_preview: bound(String(event.summary_preview ?? event.error ?? "")),
-    create_hash: String(event.create_hash ?? ""),
+    create_id: result.create_id,
+    status: result.status,
+    proposal_id: result.proposal_id,
+    review_id: result.review_id,
+    draft_id: result.draft_id,
+    draft_kind: String(result.draft_kind ?? "other"),
+    created_at: result.created_at,
+    summary_preview: bound(result.summary_preview ?? result.error ?? ""),
+    create_hash: result.create_hash,
   }
 }
 
@@ -340,6 +368,39 @@ function resultFromEvent(event: JsonlEvent): ExecutorReviewProposalCreateResult 
     error: optional(event.error),
     create_hash: String(event.create_hash ?? ""),
     recommended_commands: Array.isArray(event.recommended_commands) ? event.recommended_commands.map(readCommand).slice(0, MAX_ROWS) : [],
+  }
+}
+
+function resultFromProposal(proposal: CommanderProposal): ExecutorReviewProposalCreateResult | undefined {
+  const payload = isRecord(proposal.action_payload) ? proposal.action_payload : {}
+  if (payload.source !== "executor_review_proposal_create") return undefined
+  const reviewId = optional(payload.review_id)
+  const draftId = optional(payload.draft_id)
+  if (!reviewId || !draftId) return undefined
+  const createHash = optional(payload.create_hash) ?? sha256(JSON.stringify({
+    proposal_id: proposal.proposal_id,
+    review_id: reviewId,
+    draft_id: draftId,
+    title: proposal.title,
+    summary: proposal.summary,
+  }))
+  return {
+    create_id: `executor_review_proposal_create_${createHash.slice(0, 16)}`,
+    status: "created",
+    proposal_id: proposal.proposal_id,
+    review_id: reviewId,
+    draft_id: draftId,
+    source_packet_id: optional(payload.source_packet_id),
+    draft_kind: optional(payload.draft_kind) ?? "other",
+    proposed_action_kind: optional(payload.proposed_action_kind) ?? proposal.action_kind,
+    title_preview: bound(proposal.title),
+    summary_preview: bound(proposal.summary),
+    evidence_ids: boundList(payload.evidence_ids),
+    finding_ids: boundList(payload.finding_ids),
+    created_at: proposal.created_at,
+    requested_by: bound(proposal.proposed_by ?? "operator"),
+    create_hash: createHash,
+    recommended_commands: recommendedCommands(reviewId, draftId, proposal.proposal_id),
   }
 }
 

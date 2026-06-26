@@ -14702,6 +14702,76 @@ describe("RuntimeServerClient", () => {
     await server.shutdown()
   })
 
+  test("executor review proposal create recovers records when gate metadata append fails", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.eventStore.append({
+      kind: "commander_executor_review_succeeded",
+      review_id: "executor_review_recover_create_1",
+      packet_id: "packet_recover_create_1",
+      packet_status: "ready_for_commander_review",
+      status: "succeeded",
+      provider_kind: "fake-commander-executor-review",
+      decision: "needs_human_review",
+      confidence: 0.86,
+      summary: "Human review requested after executor result.",
+      findings: [{
+        finding_id: "finding_recover_create_1",
+        severity: "warning",
+        title: "Inspect",
+        summary: "Operator should inspect the bounded result.",
+        evidence_ids: ["manual_note:recover_create"],
+        recommended_commands: [],
+      }],
+      evidence_ids: ["manual_note:recover_create"],
+      recommended_commands: [],
+      started_at: "2026-06-26T00:00:00.000Z",
+      completed_at: "2026-06-26T00:00:01.000Z",
+      requested_by: "tester",
+      review_hash: "review_hash_recover_create_1",
+    } as JsonlEvent)
+
+    const draftPreview = await server.command("runtime.preview_executor_review_proposal_drafts", { review_id: "executor_review_recover_create_1" }) as { candidates: Array<{ draft_id: string }> }
+    const draftId = draftPreview.candidates[0]?.draft_id
+    expect(typeof draftId).toBe("string")
+
+    await server.start()
+    const append = server.eventStore.append.bind(server.eventStore)
+    let failGateMetadata = true
+    server.eventStore.append = async (event: JsonlEvent) => {
+      if (event.kind === "commander_executor_review_proposal_created" && failGateMetadata) {
+        failGateMetadata = false
+        throw new Error("gate metadata append failed token=recover-secret")
+      }
+      return append(event)
+    }
+
+    const failed = await server.command("runtime.create_executor_review_proposal", { review_id: "executor_review_recover_create_1", draft_id: draftId, requested_by: "operator" }) as { status: string; error?: string }
+    expect(failed).toMatchObject({ status: "failed", error: expect.stringContaining("gate metadata append failed") })
+    expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("recover-secret")
+    const proposals = await server.command("runtime.list_commander_proposals") as Array<{ proposal_id: string; action_payload?: Record<string, unknown> }>
+    const proposal = proposals.find((item) => item.action_payload?.source === "executor_review_proposal_create")
+    expect(proposal?.proposal_id).toMatch(/^proposal_/)
+    expect(await readEventKinds(dir)).toEqual(expect.arrayContaining(["commander_proposal_created", "commander_executor_review_proposal_create_failed"]))
+    expect((await readEventKinds(dir)).filter((kind) => kind === "commander_executor_review_proposal_created")).toHaveLength(0)
+
+    const recovered = await server.command("runtime.create_executor_review_proposal", { review_id: "executor_review_recover_create_1", draft_id: draftId, requested_by: "operator" }) as { status: string; proposal_id?: string; create_id?: string }
+    expect(recovered).toMatchObject({ status: "created", proposal_id: proposal?.proposal_id })
+    await expect(server.command("runtime.list_executor_review_proposal_creates", { review_id: "executor_review_recover_create_1" })).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "created", proposal_id: proposal?.proposal_id, create_id: recovered.create_id }),
+    ]))
+    await expect(server.command("runtime.get_executor_review_proposal_create", { create_id: recovered.create_id })).resolves.toMatchObject({
+      status: "created",
+      proposal_id: proposal?.proposal_id,
+      review_id: "executor_review_recover_create_1",
+      draft_id: draftId,
+    })
+    expect((await readEventKinds(dir)).filter((kind) => kind === "commander_proposal_created")).toHaveLength(1)
+    await server.shutdown()
+  })
+
   test("executor review proposal create runtime client commands do not auto-start OpenCode", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
