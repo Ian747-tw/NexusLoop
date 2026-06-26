@@ -5,11 +5,32 @@ import json
 import pytest
 
 
+def _force_non_live_minimax_env(sandbox) -> None:
+    live_env_keys = [
+        "NXL_MINIMAX_LIVE_VALIDATION",
+        "NXL_MINIMAX_API_KEY",
+        "NXL_EXTERNAL_API_CONNECTORS_JSON",
+        "NXL_REASONING_PROVIDER_KIND",
+        "NXL_REASONING_PROVIDER_ID",
+        "NXL_REASONING_CONNECTOR_ID",
+        "NXL_REASONING_MODEL",
+        "NXL_REASONING_ENABLE_COMMANDER_EXECUTOR_REVIEW",
+        "NXL_REASONING_ENABLE_RESEARCH_SYNTHESIS",
+        "NXL_REASONING_ENABLE_COMMANDER_CYCLE",
+        "NXL_REASONING_TIMEOUT_MS",
+    ]
+    for env in (sandbox.env, sandbox.runner.env):
+        for key in live_env_keys:
+            env.pop(key, None)
+        env["NXL_REASONING_PROVIDER_KIND"] = "fake"
+
+
 @pytest.mark.phase_m4
 def test_user_previews_minimax_live_validation_without_live_calls(sandbox) -> None:
     install = sandbox.install_from_current_repo()
     assert install.exit_code == 0, install.stdout + install.stderr
 
+    _force_non_live_minimax_env(sandbox)
     sandbox.env["NXL_TUI_HEADLESS"] = "1"
     sandbox.runner.env["NXL_TUI_HEADLESS"] = "1"
     sandbox.env["NXL_RUNTIME_CLIENT"] = "real"
