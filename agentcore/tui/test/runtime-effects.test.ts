@@ -3564,6 +3564,8 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-reject", args: [`review=${second.reviewRequestId}`] })
     expect(state.executorReviewProposalReviewDecision?.commandError).toContain("executor review proposal review reject requires reason=<reason>")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-approve", args: [`review=${second.reviewRequestId}`, "decision=reject", "reason=should not override"] })
+    expect(state.executorReviewProposalReviewDecision?.commandError).toContain("executor review proposal review approve command cannot use decision=reject")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-decision-preview", args: [`review=${second.reviewRequestId}`, "decision=invalid"] })
     expect(state.executorReviewProposalReviewDecision?.commandError).toContain("executor review proposal review decision must be approve or reject")
 

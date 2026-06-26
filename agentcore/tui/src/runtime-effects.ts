@@ -3960,11 +3960,11 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "executor-review-proposal-review-approve":
     case "executor-draft-review-approve":
     case "commander-executor-proposal-review-approve":
-      return applyRuntimeUiEffect(commandState, runtime, executorReviewProposalReviewDecisionEffect("decide-executor-review-proposal-review", ["decision=approve", ...args]))
+      return applyRuntimeUiEffect(commandState, runtime, executorReviewProposalReviewDecisionEffect("decide-executor-review-proposal-review", args, "approve"))
     case "executor-review-proposal-review-reject":
     case "executor-draft-review-reject":
     case "commander-executor-proposal-review-reject":
-      return applyRuntimeUiEffect(commandState, runtime, executorReviewProposalReviewDecisionEffect("decide-executor-review-proposal-review", ["decision=reject", ...args]))
+      return applyRuntimeUiEffect(commandState, runtime, executorReviewProposalReviewDecisionEffect("decide-executor-review-proposal-review", args, "reject"))
     case "executor-review-proposal-review-decision-dry-run": {
       const effect = executorReviewProposalReviewDecisionEffect("decide-executor-review-proposal-review", args) as Extract<RuntimeUiEffect, { type: "decide-executor-review-proposal-review" }>
       return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
@@ -11140,8 +11140,9 @@ function executorReviewProposalReviewRequestEffect(
 function executorReviewProposalReviewDecisionEffect(
   type: "preview-executor-review-proposal-review-decision" | "decide-executor-review-proposal-review",
   args: string[],
+  enforcedDecision?: "approve" | "reject",
 ): Extract<RuntimeUiEffect, { type: "preview-executor-review-proposal-review-decision" | "decide-executor-review-proposal-review" }> {
-  const effect: Extract<RuntimeUiEffect, { type: "preview-executor-review-proposal-review-decision" | "decide-executor-review-proposal-review" }> = { type, reviewRequestId: "", decision: "approve" }
+  const effect: Extract<RuntimeUiEffect, { type: "preview-executor-review-proposal-review-decision" | "decide-executor-review-proposal-review" }> = { type, reviewRequestId: "", decision: enforcedDecision ?? "approve" }
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!
     const [key, ...rest] = arg.split("=")
@@ -11150,6 +11151,7 @@ function executorReviewProposalReviewDecisionEffect(
     if (key === "review") effect.reviewRequestId = value
     else if (key === "decision") {
       if (value !== "approve" && value !== "reject") throw new Error("executor review proposal review decision must be approve or reject")
+      if (enforcedDecision && value !== enforcedDecision) throw new Error(`executor review proposal review ${enforcedDecision} command cannot use decision=${value}`)
       effect.decision = value
     } else if (key === "reason") {
       effect.reason = [value, ...args.slice(index + 1)].join(" ").trim()
