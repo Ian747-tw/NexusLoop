@@ -79,12 +79,13 @@ export class ExecutorReviewProposalReviewRequestService {
       }))
     }
     if (!preview.can_request) {
+      const blockedRequestHash = blockedRequestHashFor(preview, normalized)
       const result = resultFromPreview(preview, {
-        request_gate_id: gateId,
+        request_gate_id: requestGateId(blockedRequestHash),
         status: "blocked",
         requested_at: requestedAt,
         requested_by: normalized.requested_by ?? "operator",
-        request_hash: requestHash,
+        request_hash: blockedRequestHash,
         error: preview.blockers[0] ?? "executor-review proposal review request is blocked",
       })
       await this.append("commander_executor_review_proposal_review_request_blocked", result)
@@ -385,6 +386,17 @@ function requestHashFor(preview: ExecutorReviewProposalReviewRequestPreview): st
     source_evidence_ids: preview.source_evidence_ids,
     source_finding_ids: preview.source_finding_ids,
     risk: preview.risk,
+  }))
+}
+
+function blockedRequestHashFor(preview: ExecutorReviewProposalReviewRequestPreview, input: ExecutorReviewProposalReviewRequestInput): string {
+  return sha256(JSON.stringify({
+    proposal_id: preview.proposal_id,
+    create_id: preview.create_id,
+    attempted_create_id: input.create_id,
+    review_id: preview.review_id,
+    draft_id: preview.draft_id,
+    blockers: preview.blockers,
   }))
 }
 
