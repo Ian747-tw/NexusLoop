@@ -1149,6 +1149,66 @@ export type CommanderExecutorReviewState = {
   commandError?: string
 }
 
+export type ExecutorReviewProposalDraftCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type ExecutorReviewProposalDraftCandidateSummary = {
+  draft_id: string
+  draft_kind: string
+  title: string
+  summary: string
+  rationale: string
+  source_review_id: string
+  source_packet_id: string
+  mission_id?: string
+  result_id?: string
+  handoff_id?: string
+  proposal_id?: string
+  evidence_ids: string[]
+  finding_ids: string[]
+  confidence: number
+  risk: string
+  would_create_proposal: boolean
+  would_mutate_mission: boolean
+  recommended_commands: ExecutorReviewProposalDraftCommandSummary[]
+}
+
+export type ExecutorReviewProposalDraftPreviewSummary = {
+  preview_id: string
+  status: string
+  review_id?: string
+  packet_id?: string
+  review_decision?: string
+  review_confidence?: number
+  can_create_proposals_now: boolean
+  candidates: ExecutorReviewProposalDraftCandidateSummary[]
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: ExecutorReviewProposalDraftCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+}
+
+export type ExecutorReviewProposalDraftSummary = {
+  total_reviews_considered: number
+  draftable_review_count: number
+  blocked_review_count: number
+  candidate_count: number
+  latest_review_id?: string
+  generated_at: string
+}
+
+export type ExecutorReviewProposalDraftState = {
+  preview?: ExecutorReviewProposalDraftPreviewSummary | null
+  summary?: ExecutorReviewProposalDraftSummary | null
+  commandError?: string
+}
+
 export type OpenCodeHandoffFollowupStatus =
   | "sent"
   | "claimed"
@@ -2902,6 +2962,7 @@ export type UiState = {
   opencodeHandoffReadiness?: OpenCodeHandoffReadinessState
   opencodeResultReview?: OpenCodeResultReviewState
   commanderExecutorReview?: CommanderExecutorReviewState
+  executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState
   runtimeRestore?: RuntimeRestoreState

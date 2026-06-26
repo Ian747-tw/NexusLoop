@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary } from "./state"
 
 export interface SubmitUserMessageResult {
@@ -410,6 +410,10 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.commanderExecutorReviews.slice(0, readLimit(payload.limit, 20)).map(recordFromCommanderExecutorReview)
       case "runtime.get_commander_executor_review":
         return this.commanderExecutorReviews.find((item) => item.review_id === String(payload.reviewId ?? payload.review_id ?? "")) ?? null
+      case "runtime.preview_executor_review_proposal_drafts":
+        return this.previewExecutorReviewProposalDrafts(payload)
+      case "runtime.executor_review_proposal_draft_summary":
+        return this.executorReviewProposalDraftSummary()
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(String(payload.handoffId ?? payload.handoff_id ?? ""))
       case "runtime.list_opencode_handoff_followups":
@@ -1547,6 +1551,84 @@ export class FakeRuntimeClient implements RuntimeClient {
     }
     if (!dryRun) this.commanderExecutorReviews.unshift(result)
     return result
+  }
+
+  private previewExecutorReviewProposalDrafts(payload: Record<string, unknown>): ExecutorReviewProposalDraftPreviewSummary {
+    const reviewId = String(payload.reviewId ?? payload.review_id ?? "")
+    const resultId = String(payload.resultId ?? payload.result_id ?? "")
+    const packetId = String(payload.packetId ?? payload.packet_id ?? "")
+    const missionId = String(payload.missionId ?? payload.mission_id ?? "")
+    const handoffId = String(payload.handoffId ?? payload.handoff_id ?? "")
+    const proposalId = String(payload.proposalId ?? payload.proposal_id ?? "")
+    const hasExplicitTarget = Boolean(reviewId || resultId || packetId || missionId || handoffId || proposalId)
+    const review = this.commanderExecutorReviews.find((item) =>
+      (reviewId ? item.review_id === reviewId : true)
+      && (resultId ? item.result_id === resultId : true)
+      && (packetId ? item.packet_id === packetId : true)
+      && (missionId ? item.mission_id === missionId : true)
+      && (handoffId ? item.handoff_id === handoffId : true)
+      && (proposalId ? item.proposal_id === proposalId : true),
+    ) ?? (hasExplicitTarget ? undefined : this.commanderExecutorReviews[0])
+    const blockers = review ? [] : [
+      hasExplicitTarget
+        ? "no Commander executor review matched the requested draft target"
+        : "no Commander executor review records were found",
+    ]
+    const candidates: ExecutorReviewProposalDraftCandidateSummary[] = review && review.status === "succeeded" && review.decision === "accept_result"
+      ? [{
+        draft_id: `fake-draft-${review.review_id}`,
+        draft_kind: review.result_id ? "mission_result" : "mission_progress",
+        title: "Draft accepted executor result",
+        summary: review.summary,
+        rationale: "Fake Commander executor review accepted the bounded executor result packet.",
+        source_review_id: review.review_id,
+        source_packet_id: review.packet_id,
+        mission_id: review.mission_id,
+        result_id: review.result_id,
+        handoff_id: review.handoff_id,
+        proposal_id: review.proposal_id,
+        evidence_ids: review.evidence_ids,
+        finding_ids: review.findings.map((finding) => finding.finding_id),
+        confidence: review.confidence,
+        risk: "low",
+        would_create_proposal: false,
+        would_mutate_mission: false,
+        recommended_commands: [
+          { label: "Show executor review", command: `/executor-review-show ${review.review_id}`, command_type: "read" },
+          { label: "Inspect result packet", command: review.result_id ? `/result-review-packet result=${review.result_id}` : "/result-review-packet", command_type: "read" },
+        ],
+      }]
+      : []
+    return {
+      preview_id: review ? `fake-draft-preview-${review.review_id}` : "fake-draft-preview-none",
+      status: candidates.length > 0 ? "ready" : (review ? "blocked" : "unknown"),
+      review_id: review?.review_id,
+      packet_id: review?.packet_id,
+      review_decision: review?.decision,
+      review_confidence: review?.confidence,
+      can_create_proposals_now: false,
+      candidates,
+      blockers,
+      warnings: ["draft preview does not create proposals, request reviews, apply changes, call providers, or launch OpenCode"],
+      recommended_commands: [
+        { label: "Show executor reviews", command: "/executor-reviews", command_type: "read" },
+        { label: "Show draft authority", command: "/authority-show /executor-review-draft-preview", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: candidates.length > 0 ? `${candidates.length} fake draft candidate(s); no proposal was created.` : "No fake executor review is available for draft preview.",
+    }
+  }
+
+  private executorReviewProposalDraftSummary(): ExecutorReviewProposalDraftSummary {
+    const draftable = this.commanderExecutorReviews.filter((review) => review.status === "succeeded" && review.decision === "accept_result").length
+    return {
+      total_reviews_considered: this.commanderExecutorReviews.length,
+      draftable_review_count: draftable,
+      blocked_review_count: Math.max(0, this.commanderExecutorReviews.length - draftable),
+      candidate_count: draftable,
+      latest_review_id: this.commanderExecutorReviews[0]?.review_id,
+      generated_at: new Date(0).toISOString(),
+    }
   }
 
   private getOpenCodeHandoffFollowup(handoffId: string): OpenCodeHandoffFollowupSummary | null {
@@ -6185,6 +6267,19 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
     fakeCommandAuthorityRecord("/executor-review-show", "runtime.get_commander_executor_review", "safe_read", "none", "commander_cycle", {
       reads: ["/executor-reviews"],
       targeted: ["tests/e2e_user/scenarios/test_commander_executor_review_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-draft-preview", "runtime.preview_executor_review_proposal_drafts", "safe_read", "none", "commander_cycle", {
+      reads: ["/executor-review-show", "/executor-reviews", "/result-review-packet"],
+      targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_draft_tui.py"],
+      aliases: ["/executor-review-drafts", "/commander-executor-draft-preview", "/commander-executor-drafts"],
+      notes: ["Read-only executor-review proposal draft preview; does not create proposals, call providers, or mutate missions."],
+      out: ["proposal creation", "review request", "proposal apply", "provider calls", "OpenCode launch", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/executor-review-draft-summary", "runtime.executor_review_proposal_draft_summary", "safe_read", "none", "commander_cycle", {
+      reads: ["/executor-review-draft-preview", "/executor-reviews"],
+      targeted: ["tests/e2e_user/scenarios/test_executor_review_proposal_draft_tui.py"],
+      notes: ["Read-only executor-review proposal draft summary; no proposal registry writes."],
+      out: ["proposal creation", "review request", "proposal apply", "provider calls", "OpenCode launch", "mission mutation"],
     }),
     fakeCommandAuthorityRecord("/apply-proposal", "runtime.apply_commander_proposal", "high_impact_write", "proposal_review_runtime", "proposal", {
       mutates: true,

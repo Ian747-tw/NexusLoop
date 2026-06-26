@@ -14,6 +14,7 @@ import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPre
 import type { ResearchSynthesisInput, ResearchSynthesisPreview, ResearchSynthesisRecord, ResearchSynthesisResult } from "../research-synthesis/research-synthesis-types"
 import type { CommanderCycleInput, CommanderCyclePreview, CommanderCycleRecord, CommanderCycleResult } from "../commander-cycle/commander-cycle-types"
 import type { CommanderExecutorReviewInput, CommanderExecutorReviewPreview, CommanderExecutorReviewRecord, CommanderExecutorReviewResult } from "../commander-executor-review/commander-executor-review-types"
+import type { ExecutorReviewProposalDraftPreview, ExecutorReviewProposalDraftPreviewInput, ExecutorReviewProposalDraftSummary } from "../commander-executor-review/executor-review-proposal-draft-types"
 import type { ReasoningProviderStatus } from "../reasoning/reasoning-provider-config"
 import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "../reasoning/reasoning-health-types"
 import type { OpenCodeHandoffPreview, OpenCodeHandoffRecord, OpenCodeHandoffResult } from "../opencode/opencode-handoff-types"
@@ -252,6 +253,8 @@ export interface RuntimeClient {
   command(name: "runtime.execute_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewResult>
   command(name: "runtime.list_commander_executor_reviews", payload?: { limit?: number; packet_id?: string; packetId?: string; mission_id?: string; missionId?: string; handoff_id?: string; handoffId?: string }): Promise<CommanderExecutorReviewRecord[]>
   command(name: "runtime.get_commander_executor_review", payload: { review_id: string } | { reviewId: string }): Promise<CommanderExecutorReviewResult | null>
+  command(name: "runtime.preview_executor_review_proposal_drafts", payload?: ExecutorReviewProposalDraftPreviewInput): Promise<ExecutorReviewProposalDraftPreview>
+  command(name: "runtime.executor_review_proposal_draft_summary", payload?: { limit?: number }): Promise<ExecutorReviewProposalDraftSummary>
   command(name: "runtime.get_opencode_handoff_followup", payload: { handoffId: string } | { handoff_id: string }): Promise<OpenCodeHandoffFollowup | null>
   command(name: "runtime.list_opencode_handoff_followups", payload?: { limit?: number; staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowup[]>
   command(name: "runtime.opencode_handoff_followup_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowupSummary>
@@ -455,6 +458,12 @@ export interface RuntimeCommandEnvelope {
     | "runtime.opencode_handoff_readiness_summary"
     | "runtime.preview_opencode_result_review_packet"
     | "runtime.opencode_result_review_summary"
+    | "runtime.preview_commander_executor_review"
+    | "runtime.execute_commander_executor_review"
+    | "runtime.list_commander_executor_reviews"
+    | "runtime.get_commander_executor_review"
+    | "runtime.preview_executor_review_proposal_drafts"
+    | "runtime.executor_review_proposal_draft_summary"
     | "runtime.get_opencode_handoff_followup"
     | "runtime.list_opencode_handoff_followups"
     | "runtime.opencode_handoff_followup_summary"

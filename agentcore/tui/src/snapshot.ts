@@ -83,6 +83,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeHandoffReadinessLines(state))
   out.push(...opencodeResultReviewLines(state))
   out.push(...commanderExecutorReviewLines(state))
+  out.push(...executorReviewProposalDraftLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
@@ -570,6 +571,48 @@ function commanderExecutorReviewLines(state: UiState): string[] {
   }
   if (review.commandError) out.push(`  command_error=${redactText(review.commandError)}`)
   out.push("  note=executor review does not create proposals or apply changes")
+  return out
+}
+
+function executorReviewProposalDraftLines(state: UiState): string[] {
+  const drafts = state.executorReviewProposalDrafts
+  const out = ["Executor review proposal drafts"]
+  if (!drafts) {
+    out.push("  preview=none")
+    out.push("  note=draft preview does not create proposals, request reviews, or apply changes")
+    return out
+  }
+  if (drafts.preview) {
+    const item = drafts.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} candidates=${item.candidates.length} can_create_proposals_now=${item.can_create_proposals_now}`)
+    out.push(`  source review=${item.review_id ?? "none"} packet=${item.packet_id ?? "none"} decision=${item.review_decision ?? "unknown"} confidence=${item.review_confidence ?? 0}`)
+    out.push(`  summary=${preview(redactText(item.redacted_summary_preview))}`)
+    if (item.candidates.length > 0) {
+      out.push("  candidates")
+      out.push(...item.candidates.slice(0, 10).map((candidate) => `    - ${candidate.draft_id ?? "draft"} kind=${candidate.draft_kind ?? "other"} risk=${candidate.risk ?? "unknown"} confidence=${candidate.confidence ?? 0}: ${preview(redactText(candidate.title ?? ""))}`))
+    }
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(String(blocker ?? "")))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(String(warning ?? "")))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(String(command.label ?? "")))}: ${preview(redactText(String(command.command ?? "")))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (drafts.summary) {
+    out.push(`  summary total=${drafts.summary.total_reviews_considered} draftable=${drafts.summary.draftable_review_count} blocked=${drafts.summary.blocked_review_count} candidates=${drafts.summary.candidate_count}`)
+    if (drafts.summary.latest_review_id) out.push(`  latest_review=${drafts.summary.latest_review_id}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (drafts.commandError) out.push(`  command_error=${redactText(drafts.commandError)}`)
+  out.push("  note=draft preview does not create proposals, request reviews, or apply changes")
   return out
 }
 
