@@ -14511,6 +14511,22 @@ describe("RuntimeServerClient", () => {
     const adapter = new LongLivedAdapter()
     const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
     await server.eventStore.append({
+      kind: "work_intent_created",
+      intent: { intent_id: "intent_create_1", kind: "user_message", message: "executor review proposal target", created_at: "2026-06-26T00:00:00.000Z", status: "created" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "mission_created",
+      mission: { mission_id: "mission_create_1", intent_id: "intent_create_1", project_dir: dir, objective: "executor review proposal target", status: "sent", created_at: "2026-06-26T00:00:00.000Z", updated_at: "2026-06-26T00:00:00.000Z", sent_at: "2026-06-26T00:00:00.000Z" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "mission_claimed",
+      claim: { claim_id: "claim_create_1", mission_id: "mission_create_1", executor_id: "executor", claimed_at: "2026-06-26T00:00:00.000Z", status: "active" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "mission_result_submitted",
+      result: { result_id: "result_create_1", mission_id: "mission_create_1", claim_id: "claim_create_1", summary: "executor result", created_at: "2026-06-26T00:00:00.000Z", status: "submitted" },
+    } as JsonlEvent)
+    await server.eventStore.append({
       kind: "commander_executor_review_succeeded",
       review_id: "executor_review_accept_create_1",
       packet_id: "packet_accept_create_1",
@@ -14558,6 +14574,8 @@ describe("RuntimeServerClient", () => {
       proposal_id: proposalId,
       status: "proposed",
       action_kind: "other",
+      mission_id: "mission_create_1",
+      result_id: "result_create_1",
       action_payload: expect.objectContaining({
         source: "executor_review_proposal_create",
         review_id: "executor_review_accept_create_1",
@@ -14579,15 +14597,16 @@ describe("RuntimeServerClient", () => {
       proposal_id: proposalId,
     })
     const kinds = await readEventKinds(dir)
+    const addedKinds = kinds.slice(before.length)
     expect(kinds.filter((kind) => kind === "commander_proposal_created")).toHaveLength(1)
     expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_created")).toHaveLength(1)
-    expect(kinds).not.toContain("commander_proposal_review_requested")
-    expect(kinds).not.toContain("commander_proposal_applied")
-    expect(kinds).not.toContain("mission_progress_recorded")
-    expect(kinds).not.toContain("mission_result_submitted")
-    expect(kinds).not.toContain("commander_cycle_completed")
-    expect(kinds).not.toContain("research_synthesis_created")
-    expect(kinds).not.toContain("opencode_handoff_started")
+    expect(addedKinds).not.toContain("commander_proposal_review_requested")
+    expect(addedKinds).not.toContain("commander_proposal_applied")
+    expect(addedKinds).not.toContain("mission_progress_recorded")
+    expect(addedKinds).not.toContain("mission_result_submitted")
+    expect(addedKinds).not.toContain("commander_cycle_completed")
+    expect(addedKinds).not.toContain("research_synthesis_created")
+    expect(addedKinds).not.toContain("opencode_handoff_started")
     expect(adapter.startCalls).toBe(1)
     expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("abc123")
     await server.shutdown()
@@ -14598,6 +14617,22 @@ describe("RuntimeServerClient", () => {
     await makeProject(dir, { approvedSpec: true })
     const adapter = new LongLivedAdapter()
     const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.eventStore.append({
+      kind: "work_intent_created",
+      intent: { intent_id: "intent_concurrent_create_1", kind: "user_message", message: "concurrent executor review proposal target", created_at: "2026-06-26T00:00:00.000Z", status: "created" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "mission_created",
+      mission: { mission_id: "mission_concurrent_create_1", intent_id: "intent_concurrent_create_1", project_dir: dir, objective: "concurrent executor review proposal target", status: "sent", created_at: "2026-06-26T00:00:00.000Z", updated_at: "2026-06-26T00:00:00.000Z", sent_at: "2026-06-26T00:00:00.000Z" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "mission_claimed",
+      claim: { claim_id: "claim_concurrent_create_1", mission_id: "mission_concurrent_create_1", executor_id: "executor", claimed_at: "2026-06-26T00:00:00.000Z", status: "active" },
+    } as JsonlEvent)
+    await server.eventStore.append({
+      kind: "mission_result_submitted",
+      result: { result_id: "result_concurrent_create_1", mission_id: "mission_concurrent_create_1", claim_id: "claim_concurrent_create_1", summary: "concurrent executor result", created_at: "2026-06-26T00:00:00.000Z", status: "submitted" },
+    } as JsonlEvent)
     await server.eventStore.append({
       kind: "commander_executor_review_succeeded",
       review_id: "executor_review_concurrent_create_1",

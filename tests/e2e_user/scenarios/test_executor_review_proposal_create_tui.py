@@ -45,42 +45,83 @@ def test_user_creates_one_executor_review_proposal_from_selected_draft(sandbox) 
     draft_id = "draft_" + hashlib.sha256(f"{review_id}:mission_result:{review_hash}".encode("utf-8")).hexdigest()[:16]
     events_path = project / ".nxl" / "events.jsonl"
     events_path.parent.mkdir(parents=True, exist_ok=True)
-    events_path.write_text(
-        json.dumps(
-            {
-                "kind": "commander_executor_review_succeeded",
-                "review_id": review_id,
-                "packet_id": "packet_create_test",
-                "packet_status": "ready_for_commander_review",
-                "status": "succeeded",
-                "provider_kind": "fake-commander-executor-review",
-                "decision": "accept_result",
-                "confidence": 0.82,
-                "summary": "Accepted executor result for proposal creation.",
-                "findings": [
-                    {
-                        "finding_id": "finding_create_test",
-                        "severity": "info",
-                        "title": "Executor result accepted",
-                        "summary": "Bounded executor evidence supports a manual proposal.",
-                        "evidence_ids": ["mission_result:result_create_test"],
-                        "recommended_commands": [],
-                    }
-                ],
-                "evidence_ids": ["mission_result:result_create_test"],
-                "recommended_commands": [],
-                "started_at": "2026-06-26T00:00:00Z",
-                "completed_at": "2026-06-26T00:00:01Z",
-                "requested_by": "e2e",
-                "review_hash": review_hash,
+    initial_events = [
+        {
+            "kind": "work_intent_created",
+            "intent": {
+                "intent_id": "intent_create_test",
+                "kind": "user_message",
+                "message": "executor review proposal create fixture",
+                "created_at": "2026-06-26T00:00:00Z",
+                "status": "created",
+            },
+        },
+        {
+            "kind": "mission_created",
+            "mission": {
                 "mission_id": "mission_create_test",
+                "intent_id": "intent_create_test",
+                "project_dir": str(project),
+                "objective": "executor review proposal create fixture",
+                "status": "sent",
+                "created_at": "2026-06-26T00:00:00Z",
+                "updated_at": "2026-06-26T00:00:00Z",
+                "sent_at": "2026-06-26T00:00:00Z",
+            },
+        },
+        {
+            "kind": "mission_claimed",
+            "claim": {
+                "claim_id": "claim_create_test",
+                "mission_id": "mission_create_test",
+                "executor_id": "e2e",
+                "claimed_at": "2026-06-26T00:00:00Z",
+                "status": "active",
+            },
+        },
+        {
+            "kind": "mission_result_submitted",
+            "result": {
                 "result_id": "result_create_test",
-                "handoff_id": "handoff_create_test",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+                "mission_id": "mission_create_test",
+                "claim_id": "claim_create_test",
+                "summary": "executor result fixture",
+                "created_at": "2026-06-26T00:00:00Z",
+                "status": "submitted",
+            },
+        },
+        {
+            "kind": "commander_executor_review_succeeded",
+            "review_id": review_id,
+            "packet_id": "packet_create_test",
+            "packet_status": "ready_for_commander_review",
+            "status": "succeeded",
+            "provider_kind": "fake-commander-executor-review",
+            "decision": "accept_result",
+            "confidence": 0.82,
+            "summary": "Accepted executor result for proposal creation.",
+            "findings": [
+                {
+                    "finding_id": "finding_create_test",
+                    "severity": "info",
+                    "title": "Executor result accepted",
+                    "summary": "Bounded executor evidence supports a manual proposal.",
+                    "evidence_ids": ["mission_result:result_create_test"],
+                    "recommended_commands": [],
+                }
+            ],
+            "evidence_ids": ["mission_result:result_create_test"],
+            "recommended_commands": [],
+            "started_at": "2026-06-26T00:00:00Z",
+            "completed_at": "2026-06-26T00:00:01Z",
+            "requested_by": "e2e",
+            "review_hash": review_hash,
+            "mission_id": "mission_create_test",
+            "result_id": "result_create_test",
+            "handoff_id": "handoff_create_test",
+        },
+    ]
+    events_path.write_text("\n".join(json.dumps(event) for event in initial_events) + "\n", encoding="utf-8")
 
     keys = [
         {"type": "submit"},
@@ -135,6 +176,7 @@ def test_user_creates_one_executor_review_proposal_from_selected_draft(sandbox) 
         if line.strip()
     ]
     event_kinds = [event["kind"] for event in events]
+    appended_event_kinds = event_kinds[len(initial_events):]
     assert event_kinds.count("commander_proposal_created") == 1
     assert event_kinds.count("commander_executor_review_proposal_created") == 1
     assert "runtime_started" in event_kinds
@@ -173,7 +215,7 @@ def test_user_creates_one_executor_review_proposal_from_selected_draft(sandbox) 
         "runtime_wake_scheduler_recovery_workflow_created",
         "runtime_wake_scheduler_recovery_workflow_step_recorded",
     }
-    assert forbidden.isdisjoint(event_kinds)
+    assert forbidden.isdisjoint(appended_event_kinds)
     serialized_events = json.dumps(events)
     assert "executor-create-secret" not in serialized_events
     assert "executor-create-secret-abc123" not in serialized_events

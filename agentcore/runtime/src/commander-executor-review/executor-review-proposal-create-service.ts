@@ -93,6 +93,8 @@ export class ExecutorReviewProposalCreateService {
     }
     try {
       const proposal = await this.options.proposalRegistry.createProposal({
+        mission_id: preview.target_mission_id,
+        result_id: preview.target_result_id,
         action_kind: "other",
         title: preview.title_preview,
         summary: preview.summary_preview,
