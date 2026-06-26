@@ -64,6 +64,17 @@ export class ExecutorReviewProposalCreateService {
     const createHash = createHashFor(preview)
     const createId = `executor_review_proposal_create_${createHash.slice(0, 16)}`
     if (preview.existing_proposal_id) {
+      if (preview.existing_proposal_status === "cancelled") {
+        return redactValue(resultFromPreview(preview, {
+          create_id: createId,
+          status: "blocked",
+          proposal_id: preview.existing_proposal_id,
+          created_at: createdAt,
+          requested_by: normalized.requested_by ?? "operator",
+          create_hash: createHash,
+          error: "proposal already exists for this executor review draft and was cancelled",
+        }))
+      }
       const existingEvent = (await this.createEvents()).reverse().find((event) =>
         event.kind === "commander_executor_review_proposal_created"
         && event.review_id === preview.review_id
@@ -209,6 +220,7 @@ export class ExecutorReviewProposalCreateService {
       source_confidence: candidate?.confidence ?? draftPreview.review_confidence ?? 0,
       risk: candidate?.risk ?? "medium",
       existing_proposal_id: existing?.proposal_id,
+      existing_proposal_status: existing?.status,
       blockers: boundList(blockers),
       warnings: boundList(warnings),
       recommended_commands: recommendedCommands(input.review_id, input.draft_id, existing?.proposal_id),
@@ -224,7 +236,6 @@ export class ExecutorReviewProposalCreateService {
       return payload.source === "executor_review_proposal_create"
         && payload.review_id === candidate.source_review_id
         && payload.draft_id === candidate.draft_id
-        && proposal.status !== "cancelled"
     })
   }
 

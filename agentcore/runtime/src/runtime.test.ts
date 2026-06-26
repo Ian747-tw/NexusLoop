@@ -14593,6 +14593,22 @@ describe("RuntimeServerClient", () => {
       proposal_id: proposalId,
       create_id: created.create_id,
     })
+    await expect(server.command("runtime.cancel_commander_proposal", { proposalId, reason: "operator cancelled duplicate target" })).resolves.toMatchObject({
+      status: "cancelled",
+      proposal_id: proposalId,
+    })
+    await expect(server.command("runtime.preview_executor_review_proposal_create", { reviewId: "executor_review_accept_create_1", draftId })).resolves.toMatchObject({
+      status: "blocked",
+      can_create: false,
+      existing_proposal_id: proposalId,
+      existing_proposal_status: "cancelled",
+      blockers: expect.arrayContaining(["proposal already exists for this executor review draft"]),
+    })
+    await expect(server.command("runtime.create_executor_review_proposal", { reviewId: "executor_review_accept_create_1", draftId, requestedBy: "operator" })).resolves.toMatchObject({
+      status: "blocked",
+      proposal_id: proposalId,
+      error: "proposal already exists for this executor review draft and was cancelled",
+    })
     await expect(server.command("runtime.list_executor_review_proposal_creates")).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ create_id: created.create_id, status: "created", proposal_id: proposalId }),
     ]))
@@ -14605,6 +14621,7 @@ describe("RuntimeServerClient", () => {
     const addedKinds = kinds.slice(before.length)
     expect(kinds.filter((kind) => kind === "commander_proposal_created")).toHaveLength(1)
     expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_created")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "commander_proposal_cancelled")).toHaveLength(1)
     expect(addedKinds).not.toContain("commander_proposal_review_requested")
     expect(addedKinds).not.toContain("commander_proposal_applied")
     expect(addedKinds).not.toContain("mission_progress_recorded")

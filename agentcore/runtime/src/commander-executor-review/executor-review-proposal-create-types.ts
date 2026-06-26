@@ -35,6 +35,7 @@ export type ExecutorReviewProposalCreatePreview = {
   source_confidence: number
   risk: "low" | "medium" | "high" | string
   existing_proposal_id?: string
+  existing_proposal_status?: string
   blockers: string[]
   warnings: string[]
   recommended_commands: ExecutorReviewProposalCreateCommand[]
