@@ -1402,6 +1402,7 @@ export class RuntimeServer {
   }
 
   async executeMiniMaxLiveValidation(input: MiniMaxLiveValidationInput = {}): Promise<MiniMaxLiveValidationResult> {
+    if (input.dry_run !== true) this.requireMiniMaxLiveValidationRuntime("runtime.execute_minimax_live_validation")
     return this.minimaxLiveValidationService().execute(input)
   }
 
@@ -2311,6 +2312,11 @@ export class RuntimeServer {
   private requireReasoningProviderSmokeRuntime(commandName: string): void {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before reasoning provider smoke")
+  }
+
+  private requireMiniMaxLiveValidationRuntime(commandName: string): void {
+    if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
+    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before MiniMax live validation writes")
   }
 
   private requireOpenCodeHandoffRuntime(commandName: string): void {

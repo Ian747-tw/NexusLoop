@@ -288,6 +288,7 @@ export class MiniMaxLiveValidationService {
 
   private readSurfaces(value: unknown): MiniMaxLiveValidationSurface[] {
     const raw = Array.isArray(value) ? value : value === undefined ? defaultSurfaces(this.config.enabled_for) : [value]
+    if (raw.length === 0) throw new Error("MiniMax live validation requires at least one surface")
     return unique(raw.map((item) => readSurface(item)))
   }
 

@@ -6863,10 +6863,11 @@ describe("RuntimeServer core", () => {
     expect(JSON.stringify(missingOptInPreview)).toContain("NXL_MINIMAX_LIVE_VALIDATION=1 is required")
     const dryRun = await missingOptInServer.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], dryRun: true, requestedBy: "operator" }) as Record<string, unknown>
     expect(dryRun).toMatchObject({ status: "skipped", requested_by: "operator" })
+    await missingOptInServer.start()
     const blocked = await missingOptInServer.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requestedBy: "operator" }) as Record<string, unknown>
     expect(blocked).toMatchObject({ status: "blocked" })
     expect(missingOptInTransport.requests).toHaveLength(0)
-    expect(await readEventKinds(missingOptInDir)).toEqual([])
+    expect((await readEventKinds(missingOptInDir)).filter((kind) => String(kind).startsWith("minimax_live_validation_"))).toEqual([])
     await missingOptInServer.shutdown()
 
     const disabledDir = await tempProject()
@@ -6894,7 +6895,37 @@ describe("RuntimeServer core", () => {
     expect(disabledPreview).toMatchObject({ status: "blocked", can_execute: false })
     expect(JSON.stringify(disabledPreview)).toContain("provider is not enabled for commander_executor_review")
     expect(JSON.stringify(disabledPreview)).not.toContain("raw-minimax-secret")
+    await expect(disabledServer.command("runtime.preview_minimax_live_validation", { surfaces: [] })).rejects.toThrow("MiniMax live validation requires at least one surface")
+    await expect(disabledServer.command("runtime.execute_minimax_live_validation", { surfaces: [], dryRun: true })).rejects.toThrow("MiniMax live validation requires at least one surface")
     await disabledServer.shutdown()
+
+    const readOnlyDir = await tempProject()
+    await makeProject(readOnlyDir, { approvedSpec: true })
+    const readOnlyTransport = new FakeExternalApiTransport([{ status_code: 200, body: minimaxEnvelope(minimaxExecutorReviewPayload()) }])
+    const readOnlyServer = new RuntimeServer({
+      projectDir: readOnlyDir,
+      mode: "view-records",
+      externalApiConnectorRegistry: new ExternalApiConnectorRegistry([minimaxConnector()]),
+      externalApiTransport: readOnlyTransport,
+      externalApiEnv: {
+        NXL_MINIMAX_API_KEY: "raw-minimax-secret",
+        NXL_MINIMAX_LIVE_VALIDATION: "1",
+      },
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-m2-7",
+        connector_id: "minimax-anthropic",
+        model: "MiniMax-M2.7",
+        max_input_bytes: 32768,
+        max_output_bytes: 16384,
+        enabled_for: ["commander_executor_review"],
+      },
+      researchProjectionMode: "disabled",
+    })
+    await expect(readOnlyServer.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requestedBy: "operator" })).rejects.toThrow("runtime.execute_minimax_live_validation requires active mode")
+    expect(readOnlyTransport.requests).toHaveLength(0)
+    expect(await readEventKinds(readOnlyDir)).toEqual([])
+    await readOnlyServer.shutdown()
   })
 
   test("MiniMax live validation executes only opted-in smoke surfaces and stores validation metadata", async () => {
@@ -6928,6 +6959,7 @@ describe("RuntimeServer core", () => {
     expect(preview).toMatchObject({ status: "ready", can_execute: true, opt_in_present: true })
     expect(transport.requests).toHaveLength(0)
 
+    await server.start()
     const result = await server.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requestedBy: "operator" }) as Record<string, unknown>
     expect(result).toMatchObject({
       validation_id: "minimax_live_api_minimax_live_validation",
@@ -6937,7 +6969,7 @@ describe("RuntimeServer core", () => {
     expect(result.surfaces).toEqual([expect.objectContaining({ surface: "commander_executor_review", status: "succeeded", ok: true, parsed: true })])
     expect(transport.requests).toHaveLength(1)
     const kinds = await readEventKinds(dir)
-    expect(kinds).toEqual(["minimax_live_validation_started", "minimax_live_validation_succeeded"])
+    expect(kinds).toEqual(expect.arrayContaining(["runtime_started", "minimax_live_validation_started", "minimax_live_validation_succeeded"]))
     expect(kinds).not.toContain("reasoning_provider_smoke_succeeded")
     expect(kinds).not.toContain("external_api_request_executed")
     expect(kinds).not.toContain("research_synthesis_created")
@@ -6976,11 +7008,12 @@ describe("RuntimeServer core", () => {
       },
       researchProjectionMode: "disabled",
     })
+    await server.start()
     const result = await server.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requestedBy: "operator" }) as Record<string, unknown>
     expect(result).toMatchObject({ status: "failed" })
     expect(JSON.stringify(result)).not.toContain("malformed-secret")
     const kinds = await readEventKinds(dir)
-    expect(kinds).toEqual(["minimax_live_validation_started", "minimax_live_validation_failed"])
+    expect(kinds).toEqual(expect.arrayContaining(["runtime_started", "minimax_live_validation_started", "minimax_live_validation_failed"]))
     const events = await readJsonlEvents(dir)
     expect(JSON.stringify(events)).not.toContain("raw-minimax-secret")
     expect(JSON.stringify(events)).not.toContain("malformed-secret")
@@ -14503,11 +14536,11 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], dry_run: true })).resolves.toMatchObject({ status: "skipped" })
     await expect(client.command("runtime.list_minimax_live_validations")).resolves.toEqual([])
     await expect(client.command("runtime.get_minimax_live_validation", { validationId: "missing-validation" })).resolves.toBeNull()
-    await expect(client.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requested_by: "operator" })).resolves.toMatchObject({ status: "succeeded" })
+    await expect(client.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requested_by: "operator" })).rejects.toThrow("runtime must be started before MiniMax live validation writes")
 
     expect(adapter.startCalls).toBe(0)
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
-    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests).toHaveLength(0)
     await client.shutdown()
   })
 
