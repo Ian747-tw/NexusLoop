@@ -11161,7 +11161,7 @@ function executorReviewProposalReviewDecisionEffect(
     else throw new Error("executor review proposal review decision arg is unsupported")
   }
   if (!effect.reviewRequestId) throw new Error("executor review proposal review decision requires review=<id>")
-  if (effect.decision === "reject" && !effect.reason) throw new Error("executor review proposal review reject requires reason=<reason>")
+  if (type === "decide-executor-review-proposal-review" && effect.decision === "reject" && !effect.reason) throw new Error("executor review proposal review reject requires reason=<reason>")
   return effect
 }
 

@@ -3550,6 +3550,12 @@ describe("runtime UI effects", () => {
 
     const second = await createRequest(state)
     state = second.state
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-decision-preview", args: [`review=${second.reviewRequestId}`, "decision=reject"] })
+    expect(state.executorReviewProposalReviewDecision?.preview).toMatchObject({
+      status: "blocked",
+      blockers: expect.arrayContaining(["reject decision requires reason"]),
+    })
+    expect(state.executorReviewProposalReviewDecision?.commandError).toBeUndefined()
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-reject", args: [`review=${second.reviewRequestId}`, "reason=needs human review"] })
     expect(state.executorReviewProposalReviewDecision?.latestResult).toMatchObject({ status: "rejected", decision: "reject", review_request_id: second.reviewRequestId })
     expect(state.executorReviewProposalReviewDecision?.records).toHaveLength(2)
