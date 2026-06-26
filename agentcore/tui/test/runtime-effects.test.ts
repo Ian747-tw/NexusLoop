@@ -2778,11 +2778,20 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/executor-review-proposal-create-preview", "review=missing-review", "token=raw-secret"] })
     expect(state.operatorActions?.staged?.command).toBe("/executor-review-proposal-create-preview review=missing-review [REDACTED]")
+    expect(state.operatorActions?.staged?.command_type).toBe("read")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
     expect(state.operatorActions?.lastResult).toMatchObject({ command: "/executor-review-proposal-create-preview review=missing-review [REDACTED]", ok: false })
     expect(state.operatorActions?.commandError).toContain("executor review proposal create arg is unsupported")
     expect(state.operatorActions?.staged?.command).toBe("/executor-review-proposal-create-preview review=missing-review [REDACTED]")
     expect(JSON.stringify(state)).not.toContain("raw-secret")
+
+    for (const createCommand of ["/executor-review-proposal-create", "/executor-draft-create", "/commander-executor-proposal-create"]) {
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: [createCommand, "review=missing-review", "draft=missing-draft"] })
+      expect(state.operatorActions?.staged).toMatchObject({
+        command: `${createCommand} review=missing-review draft=missing-draft`,
+        command_type: "write",
+      })
+    }
 
     const smokeRuntime: RuntimeClient = {
       stream: () => runtime.stream(),
