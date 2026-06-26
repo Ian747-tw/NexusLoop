@@ -27,6 +27,7 @@ export type ExecutorReviewProposalCreateServiceOptions = {
 
 export class ExecutorReviewProposalCreateService {
   private readonly now: () => Date
+  private createQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: ExecutorReviewProposalCreateServiceOptions) {
     this.now = options.now ?? (() => new Date())
@@ -39,11 +40,11 @@ export class ExecutorReviewProposalCreateService {
 
   async create(input: ExecutorReviewProposalCreateInput): Promise<ExecutorReviewProposalCreateResult> {
     const normalized = normalizeCreateInput(input)
-    const preview = await this.buildPreview(normalized)
-    const createdAt = this.now().toISOString()
-    const createHash = createHashFor(preview)
-    const createId = `executor_review_proposal_create_${createHash.slice(0, 16)}`
     if (normalized.dry_run === true) {
+      const preview = await this.buildPreview(normalized)
+      const createdAt = this.now().toISOString()
+      const createHash = createHashFor(preview)
+      const createId = `executor_review_proposal_create_${createHash.slice(0, 16)}`
       return redactValue(resultFromPreview(preview, {
         create_id: createId,
         status: "dry_run",
@@ -52,6 +53,14 @@ export class ExecutorReviewProposalCreateService {
         create_hash: createHash,
       }))
     }
+    return this.serializeCreate(() => this.createNonDry(normalized))
+  }
+
+  private async createNonDry(normalized: ExecutorReviewProposalCreateInput): Promise<ExecutorReviewProposalCreateResult> {
+    const preview = await this.buildPreview(normalized)
+    const createdAt = this.now().toISOString()
+    const createHash = createHashFor(preview)
+    const createId = `executor_review_proposal_create_${createHash.slice(0, 16)}`
     if (preview.existing_proposal_id) {
       const existingEvent = (await this.createEvents()).reverse().find((event) =>
         event.kind === "commander_executor_review_proposal_created"
@@ -127,6 +136,20 @@ export class ExecutorReviewProposalCreateService {
       })
       await this.append("commander_executor_review_proposal_create_failed", result)
       return redactValue(result)
+    }
+  }
+
+  private async serializeCreate<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.createQueue
+    let release!: () => void
+    this.createQueue = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release()
     }
   }
 

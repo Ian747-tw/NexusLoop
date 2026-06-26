@@ -10,7 +10,7 @@ import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFrom
 import { RuntimeServerClient } from "./tui/runtime-server-client"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
-import type { RuntimeEvent } from "./events/event-types"
+import type { JsonlEvent, RuntimeEvent } from "./events/event-types"
 import type { RuntimeRestoreService } from "./checkpoints/runtime-restore-service"
 import { WakeAssessmentService } from "./wake/wake-hook-service"
 import { ContinuationService } from "./continuation/continuation-service"
@@ -14590,6 +14590,58 @@ describe("RuntimeServerClient", () => {
     expect(kinds).not.toContain("opencode_handoff_started")
     expect(adapter.startCalls).toBe(1)
     expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("abc123")
+    await server.shutdown()
+  })
+
+  test("executor review proposal create serializes concurrent duplicate creates", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.eventStore.append({
+      kind: "commander_executor_review_succeeded",
+      review_id: "executor_review_concurrent_create_1",
+      packet_id: "packet_concurrent_create_1",
+      packet_status: "ready_for_commander_review",
+      status: "succeeded",
+      provider_kind: "fake-commander-executor-review",
+      decision: "accept_result",
+      confidence: 0.91,
+      summary: "Accepted concurrent executor result.",
+      findings: [{
+        finding_id: "finding_concurrent_create_1",
+        severity: "info",
+        title: "Accepted",
+        summary: "Executor result is ready for proposal creation.",
+        evidence_ids: ["mission_result:result_concurrent_create_1"],
+        recommended_commands: [],
+      }],
+      evidence_ids: ["mission_result:result_concurrent_create_1"],
+      recommended_commands: [],
+      started_at: "2026-06-26T00:00:00.000Z",
+      completed_at: "2026-06-26T00:00:01.000Z",
+      requested_by: "tester",
+      review_hash: "review_hash_concurrent_create_1",
+      mission_id: "mission_concurrent_create_1",
+      result_id: "result_concurrent_create_1",
+    } as JsonlEvent)
+
+    const draftPreview = await server.command("runtime.preview_executor_review_proposal_drafts", { review_id: "executor_review_concurrent_create_1" }) as { candidates: Array<{ draft_id: string }> }
+    const draftId = draftPreview.candidates[0]?.draft_id
+    expect(typeof draftId).toBe("string")
+
+    await server.start()
+    const [first, second] = await Promise.all([
+      server.command("runtime.create_executor_review_proposal", { review_id: "executor_review_concurrent_create_1", draft_id: draftId, requested_by: "operator-a" }) as Promise<{ status: string; proposal_id?: string; create_id: string }>,
+      server.command("runtime.create_executor_review_proposal", { review_id: "executor_review_concurrent_create_1", draft_id: draftId, requested_by: "operator-b" }) as Promise<{ status: string; proposal_id?: string; create_id: string }>,
+    ])
+    expect(first.status).toBe("created")
+    expect(second.status).toBe("created")
+    expect(first.proposal_id).toBe(second.proposal_id)
+    expect(first.create_id).toBe(second.create_id)
+    const kinds = await readEventKinds(dir)
+    expect(kinds.filter((kind) => kind === "commander_proposal_created")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_created")).toHaveLength(1)
     await server.shutdown()
   })
 

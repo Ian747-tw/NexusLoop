@@ -3496,6 +3496,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeResultReviewCommands.has(command)) return state.opencodeResultReview?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
+  if (executorReviewProposalCreateCommands.has(command)) return state.executorReviewProposalCreate?.commandError
   if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
   if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
   if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError

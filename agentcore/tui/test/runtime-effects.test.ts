@@ -2776,6 +2776,14 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.commandError).toContain("not found")
     expect(state.operatorActions?.staged?.command).toBe("/handoff missing-proposal")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/executor-review-proposal-create-preview", "review=missing-review", "token=raw-secret"] })
+    expect(state.operatorActions?.staged?.command).toBe("/executor-review-proposal-create-preview review=missing-review [REDACTED]")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/executor-review-proposal-create-preview review=missing-review [REDACTED]", ok: false })
+    expect(state.operatorActions?.commandError).toContain("executor review proposal create arg is unsupported")
+    expect(state.operatorActions?.staged?.command).toBe("/executor-review-proposal-create-preview review=missing-review [REDACTED]")
+    expect(JSON.stringify(state)).not.toContain("raw-secret")
+
     const smokeRuntime: RuntimeClient = {
       stream: () => runtime.stream(),
       sendUserMessage: (message: string) => runtime.sendUserMessage(message),
