@@ -1772,7 +1772,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (!dryRun && existing) return existing
     const result: ExecutorReviewProposalCreateResultSummary = {
       create_id: createId,
-      status: dryRun ? "dry_run" : preview.can_create ? "created" : "blocked",
+      status: dryRun && preview.can_create ? "dry_run" : preview.can_create ? "created" : "blocked",
       proposal_id: !dryRun && preview.can_create ? `fake-proposal-${this.proposals.length + 1}` : undefined,
       review_id: preview.review_id,
       draft_id: preview.draft_id,

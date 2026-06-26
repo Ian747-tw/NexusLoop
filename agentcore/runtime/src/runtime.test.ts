@@ -14563,6 +14563,11 @@ describe("RuntimeServerClient", () => {
       status: "dry_run",
       proposal_id: undefined,
     })
+    await expect(server.command("runtime.create_executor_review_proposal", { reviewId: "executor_review_accept_create_1", draftId: "missing-draft", dryRun: true, requestedBy: "operator" })).resolves.toMatchObject({
+      status: "blocked",
+      proposal_id: undefined,
+      error: expect.stringContaining("requested draft_id was not found"),
+    })
     expect(await readEventKinds(dir)).toEqual(before)
 
     await server.start()
@@ -14692,7 +14697,8 @@ describe("RuntimeServerClient", () => {
       can_create: false,
     })
     await expect(client.command("runtime.create_executor_review_proposal", { review_id: "missing-review", draft_id: "missing-draft", dry_run: true })).resolves.toMatchObject({
-      status: "dry_run",
+      status: "blocked",
+      error: expect.stringContaining("requested draft_id was not found"),
     })
     await expect(client.command("runtime.list_executor_review_proposal_creates")).resolves.toEqual([])
     await expect(client.command("runtime.get_executor_review_proposal_create", { create_id: "missing-create" })).resolves.toBeNull()

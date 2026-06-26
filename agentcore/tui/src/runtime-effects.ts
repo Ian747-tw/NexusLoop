@@ -1086,7 +1086,15 @@ export async function applyRuntimeUiEffect(
           dry_run: effect.dryRun,
           requested_by: "tui",
         }))
-        if (effect.dryRun === true) return next
+        if (effect.dryRun === true) {
+          return {
+            ...next,
+            executorReviewProposalCreate: {
+              ...executorReviewProposalCreateState(next),
+              records: executorReviewProposalCreateState(state).records,
+            },
+          }
+        }
         const refreshed = applyExecutorReviewProposalCreateRecords(next, await runtime.command("runtime.list_executor_review_proposal_creates", { limit: HANDOFF_LIMIT }))
         const createError = next.executorReviewProposalCreate?.commandError
         return createError

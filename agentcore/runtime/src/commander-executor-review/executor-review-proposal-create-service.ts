@@ -47,9 +47,11 @@ export class ExecutorReviewProposalCreateService {
       const createId = `executor_review_proposal_create_${createHash.slice(0, 16)}`
       return redactValue(resultFromPreview(preview, {
         create_id: createId,
-        status: "dry_run",
+        status: preview.can_create ? "dry_run" : "blocked",
+        proposal_id: preview.existing_proposal_id,
         created_at: createdAt,
         requested_by: normalized.requested_by ?? "operator",
+        error: preview.can_create ? undefined : preview.blockers[0] ?? "executor review proposal creation is blocked",
         create_hash: createHash,
       }))
     }

@@ -3350,6 +3350,10 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create-dry-run", args: [`review=${reviewId}`, `draft=${draftId}`] })
     expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "dry_run", proposal_id: undefined })
     expect(state.executorReviewProposalCreate?.records).toHaveLength(0)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create-dry-run", args: [`review=${reviewId}`, "draft=missing-draft"] })
+    expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "blocked", proposal_id: undefined })
+    expect(state.executorReviewProposalCreate?.commandError).toContain("requested draft_id was not found")
+    expect(state.executorReviewProposalCreate?.records).toHaveLength(0)
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create", args: [`review=${reviewId}`, `draft=${draftId}`] })
     expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "created", proposal_id: "fake-proposal-1" })
