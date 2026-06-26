@@ -3376,6 +3376,13 @@ describe("runtime UI effects", () => {
     expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "created", proposal_id: "fake-proposal-1" })
     expect(state.executorReviewProposalCreate?.records).toHaveLength(1)
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "cancel-proposal", args: ["fake-proposal-1", "operator", "cancelled"] })
+    expect(state.proposals?.selectedProposal?.status).toBe("cancelled")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create", args: [`review=${reviewId}`, `draft=${draftId}`] })
+    expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "blocked", proposal_id: "fake-proposal-1" })
+    expect(state.executorReviewProposalCreate?.commandError).toContain("proposal already exists for this executor review draft and was cancelled")
+    expect(state.executorReviewProposalCreate?.records).toHaveLength(1)
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create", args: [`review=${reviewId}`, "draft=missing-draft"] })
     expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "blocked", proposal_id: undefined })
     expect(state.executorReviewProposalCreate?.commandError).toContain("requested draft_id was not found")

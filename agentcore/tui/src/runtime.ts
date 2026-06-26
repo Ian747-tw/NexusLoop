@@ -1728,6 +1728,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const draftPreview = this.previewExecutorReviewProposalDrafts({ reviewId })
     const candidate = draftPreview.candidates.find((item) => item.draft_id === draftId)
     const existing = this.executorReviewProposalCreates.find((item) => item.review_id === reviewId && item.draft_id === draftId && item.status === "created")
+    const existingProposal = existing?.proposal_id ? this.proposals.find((proposal) => proposal.proposal_id === existing.proposal_id) : undefined
     const blockers = [
       ...(candidate ? [] : ["requested draft_id was not found for the exact executor review"]),
       ...(existing ? ["proposal already exists for this executor review draft"] : []),
@@ -1752,6 +1753,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       source_confidence: candidate?.confidence ?? draftPreview.review_confidence ?? 0,
       risk: candidate?.risk ?? "medium",
       existing_proposal_id: existing?.proposal_id,
+      existing_proposal_status: existingProposal?.status,
       blockers,
       warnings: ["proposal creation does not request review, apply changes, mutate missions, call providers, or launch OpenCode"],
       recommended_commands: [
@@ -1769,11 +1771,12 @@ export class FakeRuntimeClient implements RuntimeClient {
     const preview = this.previewExecutorReviewProposalCreate(payload)
     const createId = `fake-create-${preview.review_id}-${preview.draft_id}`
     const existing = this.executorReviewProposalCreates.find((item) => item.review_id === preview.review_id && item.draft_id === preview.draft_id && item.status === "created")
-    if (!dryRun && existing) return existing
+    const existingProposal = existing?.proposal_id ? this.proposals.find((proposal) => proposal.proposal_id === existing.proposal_id) : undefined
+    if (!dryRun && existing && existingProposal?.status !== "cancelled") return existing
     const result: ExecutorReviewProposalCreateResultSummary = {
       create_id: createId,
       status: dryRun && preview.can_create ? "dry_run" : preview.can_create ? "created" : "blocked",
-      proposal_id: !dryRun && preview.can_create ? `fake-proposal-${this.proposals.length + 1}` : undefined,
+      proposal_id: existing && existingProposal?.status === "cancelled" ? existing.proposal_id : !dryRun && preview.can_create ? `fake-proposal-${this.proposals.length + 1}` : undefined,
       review_id: preview.review_id,
       draft_id: preview.draft_id,
       source_packet_id: preview.source_packet_id,
@@ -1785,7 +1788,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       finding_ids: preview.finding_ids,
       created_at: new Date(0).toISOString(),
       requested_by: "tui",
-      error: preview.blockers[0],
+      error: existingProposal?.status === "cancelled" ? "proposal already exists for this executor review draft and was cancelled" : preview.blockers[0],
       create_hash: `fake-create-hash-${preview.review_id}-${preview.draft_id}`,
       recommended_commands: preview.recommended_commands,
     }
