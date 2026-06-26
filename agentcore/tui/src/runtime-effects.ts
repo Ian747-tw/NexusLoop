@@ -1086,7 +1086,18 @@ export async function applyRuntimeUiEffect(
           dry_run: effect.dryRun,
           requested_by: "tui",
         }))
-        return effect.dryRun === true ? next : applyExecutorReviewProposalCreateRecords(next, await runtime.command("runtime.list_executor_review_proposal_creates", { limit: HANDOFF_LIMIT }))
+        if (effect.dryRun === true) return next
+        const refreshed = applyExecutorReviewProposalCreateRecords(next, await runtime.command("runtime.list_executor_review_proposal_creates", { limit: HANDOFF_LIMIT }))
+        const createError = next.executorReviewProposalCreate?.commandError
+        return createError
+          ? {
+            ...refreshed,
+            executorReviewProposalCreate: {
+              ...executorReviewProposalCreateState(refreshed),
+              commandError: createError,
+            },
+          }
+          : refreshed
       }
       case "load-executor-review-proposal-creates":
         return applyExecutorReviewProposalCreateRecords(state, await runtime.command("runtime.list_executor_review_proposal_creates", { limit: effect.limit ?? HANDOFF_LIMIT }))
@@ -2247,6 +2258,9 @@ function applyExecutorReviewProposalCreatePreview(state: UiState, value: unknown
 function applyExecutorReviewProposalCreateResult(state: UiState, value: unknown): UiState {
   const result = readExecutorReviewProposalCreateResult(value)
   const current = executorReviewProposalCreateState(state)
+  const commandError = result.status === "blocked" || result.status === "failed"
+    ? result.error ?? `executor review proposal create ${result.status}`
+    : undefined
   return {
     ...state,
     executorReviewProposalCreate: {
@@ -2256,7 +2270,7 @@ function applyExecutorReviewProposalCreateResult(state: UiState, value: unknown)
       records: result.status === "dry_run"
         ? current.records
         : [recordFromExecutorReviewProposalCreateResult(result), ...current.records.filter((item) => item.create_id !== result.create_id)].slice(0, HANDOFF_LIMIT),
-      commandError: undefined,
+      commandError,
     },
     systemActions: [...state.systemActions, { title: "executor review proposal create", detail: `status=${result.status} proposal=${result.proposal_id ?? "none"}`, status: result.status }].slice(-12),
   }

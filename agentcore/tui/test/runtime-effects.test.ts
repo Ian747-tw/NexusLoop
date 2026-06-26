@@ -3354,10 +3354,27 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create", args: [`review=${reviewId}`, `draft=${draftId}`] })
     expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "created", proposal_id: "fake-proposal-1" })
     expect(state.executorReviewProposalCreate?.records).toHaveLength(1)
+    const fakeProposal = await runtime.command("runtime.get_commander_proposal", { proposalId: "fake-proposal-1" }) as Record<string, unknown>
+    expect(fakeProposal).toMatchObject({
+      proposal_id: "fake-proposal-1",
+      mission_id: "mission-handoff-1",
+      result_id: "result-handoff-1",
+      action_payload: expect.objectContaining({
+        source: "executor_review_proposal_create",
+        review_id: reviewId,
+        draft_id: draftId,
+        target_mission_id: "mission-handoff-1",
+        target_result_id: "result-handoff-1",
+      }),
+    })
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create", args: [`review=${reviewId}`, `draft=${draftId}`] })
     expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "created", proposal_id: "fake-proposal-1" })
     expect(state.executorReviewProposalCreate?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-create", args: [`review=${reviewId}`, "draft=missing-draft"] })
+    expect(state.executorReviewProposalCreate?.latestResult).toMatchObject({ status: "blocked", proposal_id: undefined })
+    expect(state.executorReviewProposalCreate?.commandError).toContain("requested draft_id was not found")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-creates" })
     expect(state.executorReviewProposalCreate?.records).toEqual([expect.objectContaining({ status: "created", proposal_id: "fake-proposal-1" })])
