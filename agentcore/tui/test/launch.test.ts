@@ -25,7 +25,7 @@ class TestRuntimeClient implements RuntimeClient {
 
   async sendCommand(_command: string): Promise<void> {}
 
-  async command(name: string): Promise<unknown> {
+  async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
     this.commandNames.push(name)
     if (name === "runtime.status") {
       return {
@@ -46,17 +46,23 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "runtime.preview_opencode_process_smoke") return { status: "not_configured", can_execute: false, opt_in_required: true, opt_in_present: false, binary_detected: false, blockers: ["missing"], warnings: [], recommended_commands: [] }
     if (name === "runtime.execute_opencode_process_smoke") return { smoke_id: "smoke_test", status: "blocked", summary_preview: "blocked", diagnostics: [], requested_by: "operator", started_at: "2026-06-20T00:00:00.000Z", completed_at: "2026-06-20T00:00:00.000Z", smoke_hash: "hash" }
     if (name === "runtime.list_opencode_process_smokes") return []
-    if (name === "runtime.preview_opencode_result_review_packet") return {
-      packet_id: "packet_test",
-      status: "blocked",
-      title: "OpenCode result review packet has insufficient evidence",
-      artifact_previews: [],
-      evidence: [{ evidence_id: "authority:/handoff", kind: "authority", related_id: "/handoff", status: "high_impact_write", fresh: true, summary_preview: "/handoff authority", blockers: [], warnings: [] }],
-      blockers: ["no OpenCode handoff evidence"],
-      warnings: [],
-      recommended_commands: [{ label: "Show handoff authority", command: "/authority-show /handoff", command_type: "read" }],
-      generated_at: "2026-06-20T00:00:00.000Z",
-      redacted_summary_preview: "no OpenCode handoff evidence",
+    if (name === "runtime.preview_minimax_live_validation") return minimaxLiveValidationPreview()
+    if (name === "runtime.execute_minimax_live_validation") return minimaxLiveValidationResult(payload?.dry_run === true ? "skipped" : "blocked")
+    if (name === "runtime.list_minimax_live_validations") return []
+    if (name === "runtime.get_minimax_live_validation") return null
+    if (name === "runtime.preview_opencode_result_review_packet") {
+      return {
+        packet_id: "packet_test",
+        status: "blocked",
+        title: "OpenCode result review packet has insufficient evidence",
+        artifact_previews: [],
+        evidence: [{ evidence_id: "authority:/handoff", kind: "authority", related_id: "/handoff", status: "high_impact_write", fresh: true, summary_preview: "/handoff authority", blockers: [], warnings: [] }],
+        blockers: ["no OpenCode handoff evidence"],
+        warnings: [],
+        recommended_commands: [{ label: "Show handoff authority", command: "/authority-show /handoff", command_type: "read" }],
+        generated_at: "2026-06-20T00:00:00.000Z",
+        redacted_summary_preview: "no OpenCode handoff evidence",
+      }
     }
     if (name === "runtime.opencode_result_review_summary") return { total_considered: 0, ready_count: 0, needs_result_count: 0, failed_count: 0, blocked_count: 0, stale_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
     if (name === "runtime.command_authority_get") {
@@ -116,6 +122,41 @@ class TestRuntimeClient implements RuntimeClient {
 
   async shutdown(): Promise<void> {
     this.shutdownCount += 1
+  }
+}
+
+function minimaxLiveValidationPreview() {
+  return {
+    status: "not_configured",
+    can_execute: false,
+    provider_kind: "fake",
+    provider_id: "fake",
+    enabled_surfaces: [],
+    requested_surfaces: ["commander_executor_review"],
+    opt_in_required: true,
+    opt_in_present: false,
+    timeout_ms: 10_000,
+    blockers: ["MiniMax live validation is not configured"],
+    warnings: [],
+    redacted_summary_preview: "MiniMax live validation is not configured",
+    recommended_commands: [{ label: "Preview validation", command: "/minimax-live-preview surface=commander_executor_review", command_type: "read" }],
+    generated_at: "2026-06-20T00:00:00.000Z",
+  }
+}
+
+function minimaxLiveValidationResult(status: "blocked" | "skipped") {
+  return {
+    validation_id: status === "skipped" ? "minimax-live-dry-run" : "minimax-live-blocked",
+    status,
+    provider_kind: "fake",
+    provider_id: "fake",
+    surfaces: [{ surface: "commander_executor_review", status, ok: false, parsed: false, error: "MiniMax live validation is not configured" }],
+    started_at: "2026-06-20T00:00:00.000Z",
+    completed_at: "2026-06-20T00:00:00.000Z",
+    requested_by: "tui",
+    validation_hash: `hash-${status}`,
+    diagnostics: ["MiniMax live validation is not configured"],
+    error: status === "blocked" ? "MiniMax live validation is not configured" : undefined,
   }
 }
 
@@ -790,6 +831,62 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.command_authority_get")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless MiniMax live inspection scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/minimax-live-preview surface=commander_executor_review" },
+      { type: "submit" },
+      { type: "insert", text: "/minimax-live-dry-run" },
+      { type: "submit" },
+      { type: "insert", text: "/minimax-live-validations" },
+      { type: "submit" },
+      { type: "insert", text: "/authority-show /minimax-live-validate" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-minimax-live-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("MiniMax live validation")
+    expect(runtime.commandNames).toContain("runtime.preview_minimax_live_validation")
+    expect(runtime.commandNames).toContain("runtime.execute_minimax_live_validation")
+    expect(runtime.commandNames).toContain("runtime.list_minimax_live_validations")
+    expect(runtime.commandNames).toContain("runtime.command_authority_get")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless MiniMax live validate script performs startup refresh before command replay", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/minimax-live-validate surface=commander_executor_review" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-minimax-live-validate-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("MiniMax live validation")
+    expect(runtime.commandNames).toContain("runtime.execute_minimax_live_validation")
+    expect(runtime.commandNames).toContain("runtime.status")
+    expect(runtime.commandNames).toContain("runtime.list_recent_missions")
+    expect(runtime.commandNames.indexOf("runtime.status")).toBeLessThan(runtime.commandNames.indexOf("runtime.execute_minimax_live_validation"))
   })
 
   test("headless executor review on stopped real runtime does not start OpenCode", async () => {
