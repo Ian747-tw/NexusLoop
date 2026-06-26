@@ -1402,8 +1402,9 @@ export class RuntimeServer {
   }
 
   async executeMiniMaxLiveValidation(input: MiniMaxLiveValidationInput = {}): Promise<MiniMaxLiveValidationResult> {
-    if (input.dry_run !== true) this.requireMiniMaxLiveValidationRuntime("runtime.execute_minimax_live_validation")
-    return this.minimaxLiveValidationService().execute(input)
+    if (input.dry_run === true) return this.minimaxLiveValidationService().execute(input)
+    await this.requireMiniMaxLiveValidationWriteAuthority("runtime.execute_minimax_live_validation")
+    return this.withMiniMaxLiveValidationWriteLock(() => this.minimaxLiveValidationService().execute(input))
   }
 
   async listMiniMaxLiveValidations(limit = 20): Promise<MiniMaxLiveValidationRecord[]> {
@@ -2314,9 +2315,21 @@ export class RuntimeServer {
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before reasoning provider smoke")
   }
 
-  private requireMiniMaxLiveValidationRuntime(commandName: string): void {
+  private async requireMiniMaxLiveValidationWriteAuthority(commandName: string): Promise<void> {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
-    if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before MiniMax live validation writes")
+    if (!this.specSummary && modeRequiresApprovedSpec(this.mode)) {
+      this.specSummary = await this.specService.requireApproved()
+    }
+  }
+
+  private async withMiniMaxLiveValidationWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.runLock.isHeld()) return operation()
+    await this.runLock.acquire()
+    try {
+      return await operation()
+    } finally {
+      await this.runLock.release()
+    }
   }
 
   private requireOpenCodeHandoffRuntime(commandName: string): void {

@@ -865,7 +865,7 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })
 
-  test("headless MiniMax live validate script performs startup refresh before command replay", async () => {
+  test("headless MiniMax live validate script skips broad startup refresh", async () => {
     const runtime = new TestRuntimeClient()
     const output: string[] = []
     const keys = [
@@ -884,9 +884,9 @@ describe("TUI launch boundary", () => {
     const snapshot = output.join("\n")
     expect(snapshot).toContain("MiniMax live validation")
     expect(runtime.commandNames).toContain("runtime.execute_minimax_live_validation")
-    expect(runtime.commandNames).toContain("runtime.status")
-    expect(runtime.commandNames).toContain("runtime.list_recent_missions")
-    expect(runtime.commandNames.indexOf("runtime.status")).toBeLessThan(runtime.commandNames.indexOf("runtime.execute_minimax_live_validation"))
+    expect(runtime.commandNames).toContain("runtime.list_minimax_live_validations")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })
 
   test("headless executor review on stopped real runtime does not start OpenCode", async () => {

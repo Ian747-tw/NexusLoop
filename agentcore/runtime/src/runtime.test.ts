@@ -6959,7 +6959,6 @@ describe("RuntimeServer core", () => {
     expect(preview).toMatchObject({ status: "ready", can_execute: true, opt_in_present: true })
     expect(transport.requests).toHaveLength(0)
 
-    await server.start()
     const result = await server.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requestedBy: "operator", timeoutMs: 1234 }) as Record<string, unknown>
     expect(result).toMatchObject({
       validation_id: "minimax_live_api_minimax_live_validation",
@@ -6970,7 +6969,8 @@ describe("RuntimeServer core", () => {
     expect(transport.requests).toHaveLength(1)
     expect(transport.requests[0].timeout_ms).toBe(1234)
     const kinds = await readEventKinds(dir)
-    expect(kinds).toEqual(expect.arrayContaining(["runtime_started", "minimax_live_validation_started", "minimax_live_validation_succeeded"]))
+    expect(kinds).toEqual(expect.arrayContaining(["minimax_live_validation_started", "minimax_live_validation_succeeded"]))
+    expect(kinds).not.toContain("runtime_started")
     expect(kinds).not.toContain("reasoning_provider_smoke_succeeded")
     expect(kinds).not.toContain("external_api_request_executed")
     expect(kinds).not.toContain("research_synthesis_created")
@@ -6981,6 +6981,7 @@ describe("RuntimeServer core", () => {
     const records = await server.command("runtime.list_minimax_live_validations") as unknown[]
     expect(records).toEqual([expect.objectContaining({ validation_id: "minimax_live_api_minimax_live_validation", status: "succeeded", surface_count: 1 })])
     await expect(server.command("runtime.get_minimax_live_validation", { validationId: "minimax_live_api_minimax_live_validation" })).resolves.toMatchObject({ validation_id: "minimax_live_api_minimax_live_validation", status: "succeeded" })
+    expect((server as unknown as { runLock: { isHeld: () => boolean } }).runLock.isHeld()).toBe(false)
     await server.shutdown()
   })
 
@@ -14537,11 +14538,12 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], dry_run: true })).resolves.toMatchObject({ status: "skipped" })
     await expect(client.command("runtime.list_minimax_live_validations")).resolves.toEqual([])
     await expect(client.command("runtime.get_minimax_live_validation", { validationId: "missing-validation" })).resolves.toBeNull()
-    await expect(client.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requested_by: "operator" })).rejects.toThrow("runtime must be started before MiniMax live validation writes")
+    await expect(client.command("runtime.execute_minimax_live_validation", { surfaces: ["commander_executor_review"], requested_by: "operator" })).resolves.toMatchObject({ status: "succeeded" })
 
     expect(adapter.startCalls).toBe(0)
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
-    expect(transport.requests).toHaveLength(0)
+    expect(await readEventKinds(dir)).toEqual(expect.arrayContaining(["minimax_live_validation_started", "minimax_live_validation_succeeded"]))
+    expect(transport.requests).toHaveLength(1)
     await client.shutdown()
   })
 
