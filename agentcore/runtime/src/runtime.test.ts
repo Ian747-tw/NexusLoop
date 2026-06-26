@@ -14851,7 +14851,7 @@ describe("RuntimeServerClient", () => {
         packet_status: "ready_for_commander_review",
         status: "succeeded",
         provider_kind: "fake-provider",
-        decision: suffix === "reject" ? "needs_human_review" : "accept_result",
+	        decision: suffix === "reject" || suffix === "cancel" ? "needs_human_review" : "accept_result",
         confidence: 0.88,
         summary: `Accepted generic result token=decision-secret-${suffix}`,
         findings: [{ finding_id: `finding_decision_${suffix}`, severity: "info", title: "Accepted", summary: "Generic executor evidence is usable.", evidence_ids: [`mission_result:result_decision_${suffix}`], recommended_commands: [] }],
@@ -14861,7 +14861,7 @@ describe("RuntimeServerClient", () => {
         completed_at: "2026-06-26T00:00:01.000Z",
         requested_by: "operator",
         review_hash: `review_hash_decision_${suffix}`,
-        ...(suffix === "reject" ? {} : {
+	        ...(suffix === "reject" || suffix === "cancel" ? {} : {
           mission_id: `mission_decision_${suffix}`,
           result_id: `result_decision_${suffix}`,
         }),
@@ -14879,12 +14879,14 @@ describe("RuntimeServerClient", () => {
       return { draftId: seed.draftId, created, requested }
     }
 
-    const approveSeed = await seedReview("approve")
-    const rejectSeed = await seedReview("reject")
-    await server.start()
-    const approveFixture = await createRequest(approveSeed)
-    const rejectFixture = await createRequest(rejectSeed)
-    const beforeDecisionKinds = await readEventKinds(dir)
+	    const approveSeed = await seedReview("approve")
+	    const rejectSeed = await seedReview("reject")
+	    const cancelSeed = await seedReview("cancel")
+	    await server.start()
+	    const approveFixture = await createRequest(approveSeed)
+	    const rejectFixture = await createRequest(rejectSeed)
+	    const cancelFixture = await createRequest(cancelSeed)
+	    const beforeDecisionKinds = await readEventKinds(dir)
 
     await expect(server.command("runtime.preview_executor_review_proposal_review_decision", {
       review_request_id: approveFixture.requested.review_request_id,
@@ -14937,17 +14939,27 @@ describe("RuntimeServerClient", () => {
       decided_by: "alice token=decision-secret",
     }) as { status: string; decision_gate_id: string }
     expect(duplicateApprove).toMatchObject({ status: "approved", decision_gate_id: approved.decision_gate_id })
-    await expect(server.command("runtime.decide_executor_review_proposal_review", {
-      review_request_id: approveFixture.requested.review_request_id,
-      decision: "reject",
-      reason: "conflicting decision",
+	    await expect(server.command("runtime.decide_executor_review_proposal_review", {
+	      review_request_id: approveFixture.requested.review_request_id,
+	      decision: "reject",
+	      reason: "conflicting decision",
       decided_by: "alice",
     })).resolves.toMatchObject({
-      status: "blocked",
-      error: "review request already approved",
-    })
+	      status: "blocked",
+	      error: "review request already approved",
+	    })
+	    await expect(server.reviewRegistry.cancelReviewRequest(cancelFixture.requested.review_request_id, "operator", "cancel before decision")).resolves.toMatchObject({ status: "cancelled" })
+	    await expect(server.command("runtime.decide_executor_review_proposal_review", {
+	      review_request_id: cancelFixture.requested.review_request_id,
+	      decision: "approve",
+	      decided_by: "operator",
+	    })).resolves.toMatchObject({
+	      status: "blocked",
+	      error: "review request already cancelled",
+	    })
+	    await expect(server.command("runtime.get_commander_proposal", { proposal_id: cancelFixture.created.proposal_id })).resolves.toMatchObject({ status: "review_requested" })
 
-    const rejected = await server.command("runtime.decide_executor_review_proposal_review", {
+	    const rejected = await server.command("runtime.decide_executor_review_proposal_review", {
       review_request_id: rejectFixture.requested.review_request_id,
       decision: "reject",
       reason: "needs human review token=decision-secret",
@@ -14975,10 +14987,12 @@ describe("RuntimeServerClient", () => {
     })
 
     const kinds = await readEventKinds(dir)
-    expect(kinds.filter((kind) => kind === "review_request_approved")).toHaveLength(1)
-    expect(kinds.filter((kind) => kind === "review_request_rejected")).toHaveLength(1)
-    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_review_approved")).toHaveLength(1)
-    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_review_rejected")).toHaveLength(1)
+	    expect(kinds.filter((kind) => kind === "review_request_approved")).toHaveLength(1)
+	    expect(kinds.filter((kind) => kind === "review_request_rejected")).toHaveLength(1)
+	    expect(kinds.filter((kind) => kind === "review_request_cancelled")).toHaveLength(1)
+	    expect(kinds.filter((kind) => kind === "commander_proposal_rejected")).toHaveLength(1)
+	    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_review_approved")).toHaveLength(1)
+	    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_review_rejected")).toHaveLength(1)
     const addedKinds = kinds.slice(beforeDecisionKinds.length)
     expect(addedKinds).not.toContain("commander_proposal_applied")
     expect(addedKinds).not.toContain("mission_progress_recorded")
@@ -15062,9 +15076,16 @@ describe("RuntimeServerClient", () => {
 	      review_request_id: requested.review_request_id,
 	      decision: "approve",
 	      decided_by: "alice",
-	    }) as { status: string; review_request_id: string }
+	    }) as { status: string; review_request_id: string; decision_gate_id: string }
 	    expect(recovered).toMatchObject({ status: "approved", review_request_id: requested.review_request_id })
 	    await expect(server.command("runtime.get_commander_proposal", { proposal_id: created.proposal_id })).resolves.toMatchObject({ status: "approved" })
+	    await expect(server.command("runtime.list_executor_review_proposal_review_decisions", { review_request_id: requested.review_request_id })).resolves.toEqual([
+	      expect.objectContaining({ status: "approved", decision_gate_id: recovered.decision_gate_id }),
+	    ])
+	    await expect(server.command("runtime.get_executor_review_proposal_review_decision", { decision_gate_id: recovered.decision_gate_id })).resolves.toMatchObject({
+	      status: "approved",
+	      review_request_id: requested.review_request_id,
+	    })
 	    const kinds = await readEventKinds(dir)
 	    expect(kinds.filter((kind) => kind === "review_request_approved")).toHaveLength(1)
 	    expect(kinds.filter((kind) => kind === "commander_proposal_approved")).toHaveLength(1)

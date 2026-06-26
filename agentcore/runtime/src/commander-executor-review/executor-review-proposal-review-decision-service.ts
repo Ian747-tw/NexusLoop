@@ -65,7 +65,8 @@ export class ExecutorReviewProposalReviewDecisionService {
     const decidedAt = this.now().toISOString()
     const decisionHash = decisionHashFor(preview)
     const gateId = decisionGateId(decisionHash)
-    const duplicateOnly = preview.existing_decision
+    const duplicateOnly = ((preview.existing_decision === "approved" && normalized.decision === "approve")
+      || (preview.existing_decision === "rejected" && normalized.decision === "reject"))
       && preview.blockers.length === 1
       && preview.blockers[0] === `review request already ${preview.existing_decision}`
     if (duplicateOnly) {
@@ -250,7 +251,7 @@ export class ExecutorReviewProposalReviewDecisionService {
       const matches = (result: ExecutorReviewProposalReviewDecisionResult) =>
         result.decision_gate_id === recovered.decision_gate_id
         || (result.review_request_id === recovered.review_request_id && result.status === recovered.status)
-      if (results.some((result) => matches(result))) continue
+      if (results.some((result) => matches(result) && (result.status === "approved" || result.status === "rejected"))) continue
       results = results.filter((result) => !matches(result))
       results.push(recovered)
     }
