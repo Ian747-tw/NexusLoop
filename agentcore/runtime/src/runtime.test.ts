@@ -14759,9 +14759,10 @@ describe("RuntimeServerClient", () => {
 
     const recovered = await server.command("runtime.create_executor_review_proposal", { review_id: "executor_review_recover_create_1", draft_id: draftId, requested_by: "operator" }) as { status: string; proposal_id?: string; create_id?: string }
     expect(recovered).toMatchObject({ status: "created", proposal_id: proposal?.proposal_id })
-    await expect(server.command("runtime.list_executor_review_proposal_creates", { review_id: "executor_review_recover_create_1" })).resolves.toEqual(expect.arrayContaining([
+    const recoveredRecords = await server.command("runtime.list_executor_review_proposal_creates", { review_id: "executor_review_recover_create_1" }) as Array<{ status: string; proposal_id?: string; create_id?: string }>
+    expect(recoveredRecords).toEqual([
       expect.objectContaining({ status: "created", proposal_id: proposal?.proposal_id, create_id: recovered.create_id }),
-    ]))
+    ])
     await expect(server.command("runtime.get_executor_review_proposal_create", { create_id: recovered.create_id })).resolves.toMatchObject({
       status: "created",
       proposal_id: proposal?.proposal_id,

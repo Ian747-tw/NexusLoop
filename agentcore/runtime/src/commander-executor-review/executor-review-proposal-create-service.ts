@@ -260,12 +260,16 @@ export class ExecutorReviewProposalCreateService {
     for (const proposal of proposals) {
       const recovered = resultFromProposal(proposal)
       if (!recovered) continue
-      const hasCreatedRecord = results.some((result) =>
-        result.status === "created"
-        && result.proposal_id === recovered.proposal_id
-        && result.review_id === recovered.review_id
-        && result.draft_id === recovered.draft_id)
-      if (!hasCreatedRecord) results.push(recovered)
+      const existingIndex = results.findIndex((result) =>
+        result.create_id === recovered.create_id
+        || (result.proposal_id === recovered.proposal_id
+          && result.review_id === recovered.review_id
+          && result.draft_id === recovered.draft_id))
+      if (existingIndex < 0) {
+        results.push(recovered)
+      } else if (results[existingIndex]?.status !== "created") {
+        results[existingIndex] = recovered
+      }
     }
     return results
   }
