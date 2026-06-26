@@ -1287,6 +1287,81 @@ export type ExecutorReviewProposalDraftState = {
   commandError?: string
 }
 
+export type ExecutorReviewProposalCreateCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type ExecutorReviewProposalCreatePreviewSummary = {
+  preview_id: string
+  status: string
+  can_create: boolean
+  review_id: string
+  draft_id: string
+  source_packet_id?: string
+  draft_kind: string
+  title_preview: string
+  summary_preview: string
+  proposed_action_kind: string
+  target_mission_id?: string
+  target_result_id?: string
+  target_handoff_id?: string
+  target_proposal_id?: string
+  evidence_ids: string[]
+  finding_ids: string[]
+  source_confidence: number
+  risk: string
+  existing_proposal_id?: string
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: ExecutorReviewProposalCreateCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+}
+
+export type ExecutorReviewProposalCreateResultSummary = {
+  create_id: string
+  status: string
+  proposal_id?: string
+  review_id: string
+  draft_id: string
+  source_packet_id?: string
+  draft_kind: string
+  proposed_action_kind: string
+  title_preview: string
+  summary_preview: string
+  evidence_ids: string[]
+  finding_ids: string[]
+  created_at: string
+  requested_by: string
+  error?: string
+  create_hash: string
+  recommended_commands: ExecutorReviewProposalCreateCommandSummary[]
+}
+
+export type ExecutorReviewProposalCreateRecordSummary = {
+  create_id: string
+  status: string
+  proposal_id?: string
+  review_id: string
+  draft_id: string
+  draft_kind: string
+  created_at: string
+  summary_preview: string
+  create_hash: string
+}
+
+export type ExecutorReviewProposalCreateState = {
+  preview?: ExecutorReviewProposalCreatePreviewSummary | null
+  latestResult?: ExecutorReviewProposalCreateResultSummary | null
+  records: ExecutorReviewProposalCreateRecordSummary[]
+  selected?: ExecutorReviewProposalCreateResultSummary | null
+  commandError?: string
+}
+
 export type OpenCodeHandoffFollowupStatus =
   | "sent"
   | "claimed"
@@ -3041,6 +3116,7 @@ export type UiState = {
   opencodeResultReview?: OpenCodeResultReviewState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
+  executorReviewProposalCreate?: ExecutorReviewProposalCreateState
   minimaxLiveValidation?: MiniMaxLiveValidationState
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState
