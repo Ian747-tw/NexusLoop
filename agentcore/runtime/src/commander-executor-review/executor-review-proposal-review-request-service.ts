@@ -62,7 +62,10 @@ export class ExecutorReviewProposalReviewRequestService {
     const requestedAt = this.now().toISOString()
     const requestHash = requestHashFor(preview)
     const gateId = requestGateId(requestHash)
-    if (preview.existing_review_request_id) {
+    const duplicateOnly = preview.existing_review_request_id
+      && preview.blockers.length === 1
+      && preview.blockers[0] === "review request already exists for this executor-review proposal"
+    if (duplicateOnly) {
       const recovered = await this.resultFromLinkedProposal(preview.proposal_id)
       if (recovered) return redactValue(recovered)
       return redactValue(resultFromPreview(preview, {

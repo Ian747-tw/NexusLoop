@@ -14796,6 +14796,10 @@ describe("RuntimeServerClient", () => {
       existing_review_request_id: requested.review_request_id,
       blockers: expect.arrayContaining(["review request already exists for this executor-review proposal"]),
     })
+    await expect(server.command("runtime.request_executor_review_proposal_review", { proposalId, createId: "wrong-create", requestedBy: "mallory" })).resolves.toMatchObject({
+      status: "blocked",
+      error: "create_id does not match the proposal source create record",
+    })
     const kinds = await readEventKinds(dir)
     expect(kinds.filter((kind) => kind === "review_request_created")).toHaveLength(1)
     expect(kinds.filter((kind) => kind === "commander_proposal_review_requested")).toHaveLength(1)
