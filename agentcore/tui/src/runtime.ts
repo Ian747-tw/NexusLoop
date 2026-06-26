@@ -1841,7 +1841,6 @@ export class FakeRuntimeClient implements RuntimeClient {
     const createId = optionalString(payload.createId ?? payload.create_id)
     const proposal = this.proposals.find((item) => item.proposal_id === proposalId)
     const createRecord = this.executorReviewProposalCreates.find((item) => item.proposal_id === proposalId && item.status === "created")
-      ?? (this.executorReviewProposalCreates.length === 1 ? this.executorReviewProposalCreates[0] : undefined)
     const source = proposal?.action_payload
     const sourceReviewId = typeof source?.review_id === "string" ? source.review_id : createRecord?.review_id
     const sourceDraftId = typeof source?.draft_id === "string" ? source.draft_id : createRecord?.draft_id

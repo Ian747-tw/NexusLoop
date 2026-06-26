@@ -14773,11 +14773,15 @@ describe("RuntimeServerClient", () => {
     const requested = await server.command("runtime.request_executor_review_proposal_review", { proposalId, requestedBy: "bob" }) as { status: string; review_request_id: string; request_gate_id: string }
     expect(requested.status).toBe("requested")
     expect(requested.review_request_id).toMatch(/^review_/)
-    await expect(server.command("runtime.request_executor_review_proposal_review", { proposalId, requestedBy: "bob" })).resolves.toMatchObject({
+    const duplicate = await server.command("runtime.request_executor_review_proposal_review", { proposalId, requestedBy: "bob" }) as { status: string; review_request_id: string; request_gate_id: string; requested_by?: string; requested_at?: string }
+    expect(duplicate).toMatchObject({
       status: "requested",
       review_request_id: requested.review_request_id,
       request_gate_id: requested.request_gate_id,
     })
+    const linkedReview = await server.command("runtime.get_review_request", { reviewId: requested.review_request_id }) as { created_at: string; requested_by: string }
+    expect(duplicate.requested_by).toBe(linkedReview.requested_by)
+    expect(duplicate.requested_at).toBe(linkedReview.created_at)
     await expect(server.command("runtime.list_executor_review_proposal_review_requests", { proposalId })).resolves.toEqual([
       expect.objectContaining({ status: "requested", proposal_id: proposalId, review_request_id: requested.review_request_id }),
     ])

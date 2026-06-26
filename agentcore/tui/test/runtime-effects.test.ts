@@ -3418,6 +3418,17 @@ describe("runtime UI effects", () => {
     expect(state.executorReviewProposalReviewRequest?.preview).toMatchObject({ status: "blocked", can_request: false })
     expect(state.executorReviewProposalReviewRequest?.preview?.blockers).toContain("create_id does not match the proposal source create record")
 
+    const ordinaryProposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "Ordinary proposal",
+      summary: "Manual proposal not created by executor review proposal gate.",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-preview", args: [`proposal=${ordinaryProposal.proposal_id}`] })
+    expect(state.executorReviewProposalReviewRequest?.preview).toMatchObject({ status: "blocked", can_request: false })
+    expect(state.executorReviewProposalReviewRequest?.preview?.proposal_id).toBe(ordinaryProposal.proposal_id)
+    expect(state.executorReviewProposalReviewRequest?.preview?.blockers).toContain("proposal was not created by executor-review proposal creation gate")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/executor-review-proposal-review-request proposal=missing-proposal"] })
     expect(state.operatorActions?.staged?.command_type).toBe("write")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged", args: [] })

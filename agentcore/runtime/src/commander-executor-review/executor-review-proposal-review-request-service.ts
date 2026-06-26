@@ -231,6 +231,7 @@ export class ExecutorReviewProposalReviewRequestService {
     const draftId = optional(payload.draft_id)
     if (!reviewId || !draftId) return undefined
     const createId = createIdForProposal(proposal)
+    const linkedReview = await this.options.reviewRegistry.getReviewRequest(proposal.review_id)
     const preview: ExecutorReviewProposalReviewRequestPreview = {
       preview_id: "recovered",
       status: "blocked",
@@ -251,7 +252,7 @@ export class ExecutorReviewProposalReviewRequestService {
       source_confidence: numberOptional(payload.source_confidence),
       risk: optional(payload.risk),
       existing_review_request_id: proposal.review_id,
-      existing_review_request_status: (await this.options.reviewRegistry.getReviewRequest(proposal.review_id))?.status,
+      existing_review_request_status: linkedReview?.status,
       blockers: ["review request already exists for this executor-review proposal"],
       warnings: [],
       recommended_commands: recommendedCommands(proposal.proposal_id, createId, proposal.review_id),
@@ -263,8 +264,8 @@ export class ExecutorReviewProposalReviewRequestService {
       request_gate_id: requestGateId(requestHash),
       status: "requested",
       review_request_id: proposal.review_id,
-      requested_at: proposal.updated_at,
-      requested_by: proposal.proposed_by ?? "operator",
+      requested_at: linkedReview?.created_at ?? proposal.updated_at,
+      requested_by: linkedReview?.requested_by ?? proposal.proposed_by ?? "operator",
       request_hash: requestHash,
     })
   }
