@@ -14747,7 +14747,7 @@ describe("RuntimeServerClient", () => {
     const draftId = draftPreview.candidates[0]?.draft_id
     expect(typeof draftId).toBe("string")
     await server.start()
-    const created = await server.command("runtime.create_executor_review_proposal", { reviewId: "executor_review_request_1", draftId, requestedBy: "operator" }) as { status: string; proposal_id: string; create_id: string }
+    const created = await server.command("runtime.create_executor_review_proposal", { reviewId: "executor_review_request_1", draftId, requestedBy: "alice" }) as { status: string; proposal_id: string; create_id: string }
     expect(created.status).toBe("created")
     const proposalId = created.proposal_id
     const before = await readEventKinds(dir)
@@ -14765,15 +14765,15 @@ describe("RuntimeServerClient", () => {
       can_request: false,
       blockers: expect.arrayContaining(["create_id does not match the proposal source create record"]),
     })
-    await expect(server.command("runtime.request_executor_review_proposal_review", { proposalId, dryRun: true, requestedBy: "operator" })).resolves.toMatchObject({
+    await expect(server.command("runtime.request_executor_review_proposal_review", { proposalId, dryRun: true, requestedBy: "bob" })).resolves.toMatchObject({
       status: "dry_run",
       review_request_id: undefined,
     })
     expect(await readEventKinds(dir)).toEqual(before)
-    const requested = await server.command("runtime.request_executor_review_proposal_review", { proposalId, requestedBy: "operator" }) as { status: string; review_request_id: string; request_gate_id: string }
+    const requested = await server.command("runtime.request_executor_review_proposal_review", { proposalId, requestedBy: "bob" }) as { status: string; review_request_id: string; request_gate_id: string }
     expect(requested.status).toBe("requested")
     expect(requested.review_request_id).toMatch(/^review_/)
-    await expect(server.command("runtime.request_executor_review_proposal_review", { proposalId, requestedBy: "operator" })).resolves.toMatchObject({
+    await expect(server.command("runtime.request_executor_review_proposal_review", { proposalId, requestedBy: "bob" })).resolves.toMatchObject({
       status: "requested",
       review_request_id: requested.review_request_id,
       request_gate_id: requested.request_gate_id,
@@ -14785,6 +14785,7 @@ describe("RuntimeServerClient", () => {
       status: "requested",
       proposal_id: proposalId,
       review_request_id: requested.review_request_id,
+      requested_by: "bob",
     })
     await expect(server.command("runtime.preview_executor_review_proposal_review_request", { proposalId })).resolves.toMatchObject({
       status: "blocked",

@@ -215,6 +215,7 @@ export class ExecutorReviewProposalReviewRequestService {
       const matches = (result: ExecutorReviewProposalReviewRequestResult) =>
         result.request_gate_id === recovered.request_gate_id
         || (result.proposal_id === recovered.proposal_id && result.review_request_id === recovered.review_request_id)
+      if (results.some((result) => result.status === "requested" && matches(result))) continue
       results = results.filter((result) => !matches(result))
       results.push(recovered)
     }
