@@ -132,8 +132,10 @@ export class OpenCodeSessionService {
     blockers.push(...source.link_blockers)
     if (input.review_request_id && source.review_request_id && input.review_request_id !== source.review_request_id) blockers.push("review_request_id does not match linked proposal")
     if (input.apply_id && !source.apply_id_matches) blockers.push("apply_id does not match durable narrow apply evidence")
+    const hasExplicitLinkedSource = !!input.proposal_id || !!input.mission_id || !!input.review_request_id || !!input.apply_id
     const hasLinkedSource = !!source.proposal_id || !!source.mission_id || !!source.apply_id
-    const terminalSourceStatus = source.source_statuses.find((status) => ["cancelled", "rejected", "failed"].includes(status))
+    if (sourceKind === "manual" && hasExplicitLinkedSource) blockers.push("manual source_kind cannot be combined with linked source IDs")
+    const terminalSourceStatus = source.source_statuses.find((status) => ["cancelled", "rejected", "failed", "completed"].includes(status))
     if (terminalSourceStatus && (sourceKind !== "manual" || hasLinkedSource)) blockers.push(`source status ${terminalSourceStatus} is not plan-eligible`)
     if (objective.length < 12) warnings.push("objective is short; future launch may require clearer tactical scope")
     const maxContextBytes = boundedNumber(input.max_context_bytes, DEFAULT_MAX_CONTEXT_BYTES, 1_000, MAX_CONTEXT_BYTES)
@@ -213,6 +215,7 @@ export class OpenCodeSessionService {
     const linkBlockers: string[] = []
     if (input.mission_id && proposalMissionId && input.mission_id !== proposalMissionId) linkBlockers.push("mission_id does not match linked proposal")
     if (input.apply_id && input.proposal_id && applyProposalId && input.proposal_id !== applyProposalId) linkBlockers.push("apply_id does not match linked proposal")
+    if (input.review_request_id && proposal?.review_id && input.review_request_id !== proposal.review_id) linkBlockers.push("review_request_id does not match linked proposal")
     if (applyProposalId && !proposal) linkBlockers.push("apply_id linked proposal was not found")
     const sourceStatuses: string[] = []
     if (proposal?.status) sourceStatuses.push(proposal.status)
