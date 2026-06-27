@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
 import type { ProposalRegistry } from "../missions/proposal-registry"
+import type { CommanderProposal } from "../missions/proposal-types"
 import { redactText, redactValue } from "../security/redaction"
 import type { ExecutorReviewProposalApplyCandidateKind, ExecutorReviewProposalApplyReadinessPreview } from "./executor-review-proposal-apply-readiness-types"
 import type { ExecutorReviewProposalApplyReadinessService } from "./executor-review-proposal-apply-readiness-service"
@@ -16,6 +17,7 @@ import type {
 
 const MAX_TEXT = 240
 const MAX_ROWS = 12
+const APPLICATION_RESULT_PREFIX = "executor_review_narrow_apply:"
 const ALLOWED_KINDS = new Set<ExecutorReviewProposalApplyCandidateKind>(["generic", "manual_action", "human_review", "followup_task", "blocked_followup"])
 const BLOCKED_KINDS = new Set<ExecutorReviewProposalApplyCandidateKind>(["mission_progress", "mission_result", "checkpoint", "unsupported"])
 
@@ -81,7 +83,12 @@ export class ExecutorReviewProposalNarrowApplyService {
     const id = applyId(applyHash)
     if (preview.existing_apply_id) {
       const existing = await this.get(preview.existing_apply_id)
-      if (existing) return redactValue(existing)
+      if (existing) {
+        if (!await this.hasSuccessfulApplyEvent(existing.apply_id)) {
+          await this.append("commander_executor_review_proposal_narrow_applied", existing)
+        }
+        return redactValue(existing)
+      }
     }
     if (!preview.can_apply) {
       return redactValue(resultFromPreview(preview, {
@@ -178,9 +185,26 @@ export class ExecutorReviewProposalNarrowApplyService {
   }
 
   private async applyResults(): Promise<ExecutorReviewProposalNarrowApplyResult[]> {
-    return (await this.options.eventStore.readAll())
+    let results = (await this.options.eventStore.readAll())
       .filter((event) => event.kind === "commander_executor_review_proposal_narrow_applied" || event.kind === "commander_executor_review_proposal_narrow_apply_failed")
       .map(resultFromEvent)
+    for (const recovered of await this.recoveredApplyResults()) {
+      if (results.some((result) => result.apply_id === recovered.apply_id && result.status === "applied")) continue
+      results = results.filter((result) => result.apply_id !== recovered.apply_id && result.proposal_id !== recovered.proposal_id)
+      results.push(recovered)
+    }
+    return results
+  }
+
+  private async recoveredApplyResults(): Promise<ExecutorReviewProposalNarrowApplyResult[]> {
+    const proposals = await this.options.proposalRegistry.listAllProposals({ status: "applied" })
+    return proposals.map(resultFromAppliedProposal).filter((result): result is ExecutorReviewProposalNarrowApplyResult => result !== null)
+  }
+
+  private async hasSuccessfulApplyEvent(applyIdValue: string): Promise<boolean> {
+    return (await this.options.eventStore.readAll()).some((event) =>
+      event.kind === "commander_executor_review_proposal_narrow_applied"
+      && event.apply_id === applyIdValue)
   }
 
   private async append(kind: string, result: ExecutorReviewProposalNarrowApplyResult): Promise<void> {
@@ -294,6 +318,37 @@ function recordFromResult(result: ExecutorReviewProposalNarrowApplyResult): Exec
     summary_preview: bound(result.error ?? result.reason_preview ?? `Narrow apply ${result.status} for ${result.proposal_id}`),
     apply_hash: result.apply_hash,
   }
+}
+
+function resultFromAppliedProposal(proposal: CommanderProposal): ExecutorReviewProposalNarrowApplyResult | null {
+  const applicationResult = optional(proposal.application_result)
+  if (!applicationResult?.startsWith(APPLICATION_RESULT_PREFIX)) return null
+  const applyIdValue = applicationResult.slice(APPLICATION_RESULT_PREFIX.length)
+  if (!applyIdValue) return null
+  const payload = isRecord(proposal.action_payload) ? proposal.action_payload : {}
+  if (payload.source !== "executor_review_proposal_create") return null
+  const candidateKind = readCandidateKind(payload.draft_kind)
+  return redactValue({
+    apply_id: bound(applyIdValue),
+    status: "applied",
+    proposal_id: proposal.proposal_id,
+    source_executor_review_id: optional(payload.review_id),
+    source_draft_id: optional(payload.draft_id),
+    source_packet_id: optional(payload.source_packet_id),
+    candidate_kind: candidateKind,
+    candidate_risk: payload.risk === "low" || payload.risk === "high" ? payload.risk : "medium",
+    applied_at: proposal.applied_at ?? proposal.updated_at,
+    applied_by: proposal.proposed_by ?? "operator",
+    apply_hash: sha256(JSON.stringify({
+      proposal_id: proposal.proposal_id,
+      application_result: applicationResult,
+      source_executor_review_id: optional(payload.review_id),
+      source_draft_id: optional(payload.draft_id),
+      source_packet_id: optional(payload.source_packet_id),
+      candidate_kind: candidateKind,
+    })),
+    recommended_commands: recommendedCommands(proposal.proposal_id),
+  })
 }
 
 function recommendedCommands(proposalId?: string, readiness?: ExecutorReviewProposalApplyReadinessPreview): ExecutorReviewProposalNarrowApplyCommand[] {

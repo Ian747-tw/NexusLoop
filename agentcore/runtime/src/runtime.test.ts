@@ -15294,6 +15294,71 @@ describe("RuntimeServerClient", () => {
     await server.shutdown()
   })
 
+  test("executor review proposal narrow apply recovers metadata after proposal mark-applied succeeds", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.eventStore.append({
+      kind: "commander_executor_review_succeeded",
+      review_id: "executor_review_narrow_apply_recover",
+      packet_id: "packet_narrow_apply_recover",
+      packet_status: "ready_for_commander_review",
+      status: "succeeded",
+      provider_kind: "fake-provider",
+      decision: "needs_human_review",
+      confidence: 0.84,
+      summary: "Human review requested for metadata recovery.",
+      findings: [{ finding_id: "finding_narrow_apply_recover", severity: "warning", title: "Inspect", summary: "Operator should inspect recovered metadata.", evidence_ids: ["manual_note:narrow_apply_recover"], recommended_commands: [] }],
+      evidence_ids: ["manual_note:narrow_apply_recover"],
+      recommended_commands: [],
+      started_at: "2026-06-26T00:00:00.000Z",
+      completed_at: "2026-06-26T00:00:01.000Z",
+      requested_by: "operator",
+      review_hash: "review_hash_narrow_apply_recover",
+    } as JsonlEvent)
+    const draftPreview = await server.command("runtime.preview_executor_review_proposal_drafts", { review_id: "executor_review_narrow_apply_recover" }) as { candidates: Array<{ draft_id: string; draft_kind: string }> }
+    const draftId = draftPreview.candidates[0]?.draft_id
+    expect(draftPreview.candidates[0]?.draft_kind).toBe("human_review")
+
+    await server.start()
+    const created = await server.command("runtime.create_executor_review_proposal", { review_id: "executor_review_narrow_apply_recover", draft_id: draftId, requested_by: "alice" }) as { status: string; proposal_id: string }
+    const requested = await server.command("runtime.request_executor_review_proposal_review", { proposal_id: created.proposal_id, requested_by: "bob" }) as { status: string; review_request_id: string }
+    await expect(server.command("runtime.decide_executor_review_proposal_review", { review_request_id: requested.review_request_id, decision: "approve", decided_by: "carol" })).resolves.toMatchObject({ status: "approved" })
+
+    const originalAppend = server.eventStore.append.bind(server.eventStore)
+    let failMetadataAppend = true
+    server.eventStore.append = async (event: JsonlEvent) => {
+      if (failMetadataAppend && event.kind === "commander_executor_review_proposal_narrow_applied") {
+        failMetadataAppend = false
+        throw new Error("metadata append failed token=narrow-recover-secret")
+      }
+      return originalAppend(event)
+    }
+
+    const failed = await server.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: created.proposal_id, applied_by: "operator" }) as { status: string; apply_id: string; error?: string }
+    const failedApplyId = failed.apply_id
+    expect(failed.status).toBe("failed")
+    expect(failedApplyId).toContain("executor_review_proposal_narrow_apply_")
+    await expect(server.command("runtime.get_commander_proposal", { proposal_id: created.proposal_id })).resolves.toMatchObject({
+      status: "applied",
+      application_result: `executor_review_narrow_apply:${failedApplyId}`,
+    })
+
+    const recoveredList = await server.command("runtime.list_executor_review_proposal_narrow_applies", { proposal_id: created.proposal_id }) as Array<{ status: string; proposal_id: string; apply_id: string }>
+    expect(recoveredList).toEqual([
+      expect.objectContaining({ status: "applied", proposal_id: created.proposal_id, apply_id: failedApplyId }),
+    ])
+    const retry = await server.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: created.proposal_id, applied_by: "operator" }) as { status: string; apply_id: string; proposal_id: string }
+    expect(retry).toMatchObject({ status: "applied", proposal_id: created.proposal_id, apply_id: failedApplyId })
+    const kinds = await readEventKinds(dir)
+    expect(kinds.filter((kind) => kind === "commander_proposal_applied")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_narrow_apply_failed")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_narrow_applied")).toHaveLength(1)
+    expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("narrow-recover-secret")
+    await server.shutdown()
+  })
+
 	  test("executor review proposal review decision duplicate recovery repairs proposal sync", async () => {
 	    const dir = await tempProject()
 	    await makeProject(dir, { approvedSpec: true })
