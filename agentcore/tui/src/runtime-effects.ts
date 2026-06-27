@@ -32,6 +32,11 @@ import type {
   OpenCodeResultReviewPacketSummary,
   OpenCodeResultReviewState,
   OpenCodeResultReviewSummary,
+  OpenCodeSessionPlanSummary,
+  OpenCodeSessionPreviewSummary,
+  OpenCodeSessionRecordSummary,
+  OpenCodeSessionsState,
+  OpenCodeSessionSummary,
   CommanderExecutorReviewCommandSummary,
   CommanderExecutorReviewFindingSummary,
   CommanderExecutorReviewPreviewSummary,
@@ -359,6 +364,11 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-handoff-readiness-summary"; maxSmokeAgeMs?: number }
   | { type: "preview-opencode-result-review-packet"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; staleAfterMs?: number }
   | { type: "load-opencode-result-review-summary"; staleAfterMs?: number; limit?: number }
+  | { type: "preview-opencode-session-plan"; objective?: string; proposalId?: string; missionId?: string; reviewRequestId?: string; applyId?: string; title?: string }
+  | { type: "create-opencode-session-plan"; objective?: string; proposalId?: string; missionId?: string; reviewRequestId?: string; applyId?: string; title?: string; dryRun?: boolean }
+  | { type: "load-opencode-sessions"; limit?: number }
+  | { type: "load-opencode-session"; sessionId: string }
+  | { type: "load-opencode-session-summary" }
   | { type: "preview-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string }
   | { type: "execute-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; dryRun?: boolean }
   | { type: "load-commander-executor-reviews"; limit?: number }
@@ -1063,6 +1073,34 @@ export async function applyRuntimeUiEffect(
           state,
           await runtime.command("runtime.opencode_result_review_summary", { staleAfterMs: effect.staleAfterMs, limit: effect.limit }),
         )
+      case "preview-opencode-session-plan":
+        return applyOpenCodeSessionPreview(state, await runtime.command("runtime.preview_opencode_session_plan", {
+          objective: effect.objective,
+          proposalId: effect.proposalId,
+          missionId: effect.missionId,
+          reviewRequestId: effect.reviewRequestId,
+          applyId: effect.applyId,
+          title: effect.title,
+        }))
+      case "create-opencode-session-plan": {
+        const next = applyOpenCodeSessionPlan(state, await runtime.command("runtime.create_opencode_session_plan", {
+          objective: effect.objective,
+          proposalId: effect.proposalId,
+          missionId: effect.missionId,
+          reviewRequestId: effect.reviewRequestId,
+          applyId: effect.applyId,
+          title: effect.title,
+          dryRun: effect.dryRun === true,
+          createdBy: "operator",
+        }))
+        return effect.dryRun === true ? next : applyOpenCodeSessionRecords(next, await runtime.command("runtime.list_opencode_sessions", { limit: HANDOFF_LIMIT }))
+      }
+      case "load-opencode-sessions":
+        return applyOpenCodeSessionRecords(state, await runtime.command("runtime.list_opencode_sessions", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "load-opencode-session":
+        return applyOpenCodeSessionSelected(state, await runtime.command("runtime.get_opencode_session", { sessionId: effect.sessionId }), effect.sessionId)
+      case "load-opencode-session-summary":
+        return applyOpenCodeSessionSummary(state, await runtime.command("runtime.opencode_session_summary"))
       case "preview-commander-executor-review":
         return applyCommanderExecutorReviewPreview(
           state,
@@ -1680,6 +1718,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeProcessSmokeEffect(effect)) return recordOpenCodeProcessSmokeCommandError(state, error)
     if (isOpenCodeHandoffReadinessEffect(effect)) return recordOpenCodeHandoffReadinessCommandError(state, error)
     if (isOpenCodeResultReviewEffect(effect)) return recordOpenCodeResultReviewCommandError(state, error)
+    if (isOpenCodeSessionEffect(effect)) return recordOpenCodeSessionCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
     if (isExecutorReviewProposalCreateEffect(effect)) return recordExecutorReviewProposalCreateCommandError(state, error)
@@ -2698,6 +2737,71 @@ function applyExecutorReviewProposalNarrowApplySelected(state: UiState, value: u
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "executor review proposal narrow apply selected", detail: `apply_id=${redactText(applyId)}`, status: result ? result.status : "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeSessionPreview(state: UiState, value: unknown): UiState {
+  const previewResult = readOpenCodeSessionPreview(value)
+  return {
+    ...state,
+    opencodeSessions: {
+      ...opencodeSessionsState(state),
+      preview: previewResult,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode session preview", detail: `source=${previewResult.source_kind}`, status: previewResult.can_create ? "ready" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeSessionPlan(state: UiState, value: unknown): UiState {
+  const plan = readOpenCodeSessionPlan(value)
+  return {
+    ...state,
+    opencodeSessions: {
+      ...opencodeSessionsState(state),
+      latestPlan: plan,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode session planned", detail: `session_id=${plan.session_id}`, status: plan.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeSessionRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeSessionRecords(value)
+  return {
+    ...state,
+    opencodeSessions: {
+      ...opencodeSessionsState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode session records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeSessionSelected(state: UiState, value: unknown, sessionId: string): UiState {
+  const selected = value === null ? null : readOpenCodeSessionPlan(value)
+  return {
+    ...state,
+    opencodeSessions: {
+      ...opencodeSessionsState(state),
+      selected,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode session selected", detail: `session_id=${redactText(sessionId)}`, status: selected?.status ?? "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeSessionSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeSessionSummary(value)
+  return {
+    ...state,
+    opencodeSessions: {
+      ...opencodeSessionsState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode session summary", detail: `planned=${summary.planned_count}`, status: "loaded" }].slice(-12),
   }
 }
 
@@ -3907,6 +4011,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeProcessSmokeCommands.has(command)) return state.opencodeProcessSmoke?.commandError
   if (opencodeHandoffReadinessCommands.has(command)) return state.opencodeHandoffReadiness?.commandError
   if (opencodeResultReviewCommands.has(command)) return state.opencodeResultReview?.commandError
+  if (opencodeSessionCommands.has(command)) return state.opencodeSessions?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
   if (executorReviewProposalCreateCommands.has(command)) return state.executorReviewProposalCreate?.commandError
@@ -3945,6 +4050,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeProcessSmokeCommands.has(command)) return { ...state, opencodeProcessSmoke: { ...opencodeProcessSmokeState(state), commandError: undefined } }
   if (opencodeHandoffReadinessCommands.has(command)) return { ...state, opencodeHandoffReadiness: { ...opencodeHandoffReadinessState(state), commandError: undefined } }
   if (opencodeResultReviewCommands.has(command)) return { ...state, opencodeResultReview: { ...opencodeResultReviewState(state), commandError: undefined } }
+  if (opencodeSessionCommands.has(command)) return { ...state, opencodeSessions: { ...opencodeSessionsState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
   if (executorReviewProposalCreateCommands.has(command)) return { ...state, executorReviewProposalCreate: { ...executorReviewProposalCreateState(state), commandError: undefined } }
@@ -4080,6 +4186,24 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, resultReviewPacketEffect(args))
     case "result-review-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-result-review-summary" })
+    case "opencode-session-preview":
+    case "session-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeSessionEffect("preview-opencode-session-plan", args, false))
+    case "opencode-session-plan":
+    case "session-plan":
+    case "opencode-plan":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeSessionEffect("create-opencode-session-plan", args, true))
+    case "opencode-session-plan-dry-run": {
+      const effect = opencodeSessionEffect("create-opencode-session-plan", args, true) as Extract<RuntimeUiEffect, { type: "create-opencode-session-plan" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-sessions":
+    case "sessions":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-sessions", limit: HANDOFF_LIMIT })
+    case "opencode-session-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-session", sessionId: requiredArg(args, 0, "sessionId") })
+    case "opencode-session-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-session-summary" })
     case "executor-review-preview":
     case "commander-executor-review-preview":
       return applyRuntimeUiEffect(commandState, runtime, commanderExecutorReviewEffect("preview-commander-executor-review", args))
@@ -4965,6 +5089,11 @@ function isOpenCodeResultReviewEffect(effect: RuntimeUiEffect): boolean {
   return opencodeResultReviewCommands.has(effect.command)
 }
 
+function isOpenCodeSessionEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return opencodeSessionEffectTypes.has(effect.type)
+  return opencodeSessionCommands.has(effect.command)
+}
+
 function isCommanderExecutorReviewEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return commanderExecutorReviewEffectTypes.has(effect.type)
   return commanderExecutorReviewCommands.has(effect.command)
@@ -5190,6 +5319,27 @@ const opencodeResultReviewCommands = new Set([
   "opencode-result-review",
   "executor-result-review",
   "handoff-result-review",
+])
+
+const opencodeSessionCommands = new Set([
+  "opencode-session-preview",
+  "session-preview",
+  "opencode-session-plan",
+  "session-plan",
+  "opencode-plan",
+  "opencode-session-plan-dry-run",
+  "opencode-sessions",
+  "sessions",
+  "opencode-session-show",
+  "opencode-session-summary",
+])
+
+const opencodeSessionEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-opencode-session-plan",
+  "create-opencode-session-plan",
+  "load-opencode-sessions",
+  "load-opencode-session",
+  "load-opencode-session-summary",
 ])
 
 const commanderExecutorReviewCommands = new Set([
@@ -6621,6 +6771,18 @@ function recordOpenCodeResultReviewCommandError(state: UiState, error: unknown):
   }
 }
 
+function recordOpenCodeSessionCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    opencodeSessions: {
+      ...opencodeSessionsState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "opencode session command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function recordCommanderExecutorReviewCommandError(state: UiState, error: unknown): UiState {
   const message = redactText(error instanceof Error ? error.message : String(error))
   return {
@@ -7451,6 +7613,139 @@ function recordFromOpenCodeResultReviewPacket(packet: OpenCodeResultReviewPacket
     generated_at: packet.generated_at,
     summary_preview: packet.redacted_summary_preview,
   }
+}
+
+function readOpenCodeSessionPreview(value: unknown): OpenCodeSessionPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_session_plan returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    can_create: readBoolean(value.can_create),
+    source_kind: readString(value.source_kind, "unknown"),
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    proposal_id: typeof value.proposal_id === "string" ? redactText(value.proposal_id) : undefined,
+    review_request_id: typeof value.review_request_id === "string" ? redactText(value.review_request_id) : undefined,
+    apply_id: typeof value.apply_id === "string" ? redactText(value.apply_id) : undefined,
+    title_preview: preview(readString(value.title_preview, "")),
+    objective_preview: preview(readString(value.objective_preview, "")),
+    commander_context_summary_preview: preview(readString(value.commander_context_summary_preview, "")),
+    opencode_context_seed_preview: preview(readString(value.opencode_context_seed_preview, "")),
+    success_criteria: readStringList(value.success_criteria, 10).map(preview),
+    constraints: readStringList(value.constraints, 10).map(preview),
+    timeout_policy: readOpenCodeSessionTimeoutPolicy(value.timeout_policy),
+    question_policy: readOpenCodeSessionQuestionPolicy(value.question_policy),
+    human_control_policy: readOpenCodeSessionHumanPolicy(value.human_control_policy),
+    existing_session_id: typeof value.existing_session_id === "string" ? redactText(value.existing_session_id) : undefined,
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    recommended_commands: readOpenCodeSessionCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readOpenCodeSessionPlan(value: unknown): OpenCodeSessionPlanSummary {
+  if (!isRecord(value) || typeof value.session_id !== "string") throw new Error("runtime opencode session command returned invalid plan")
+  return {
+    session_id: redactText(value.session_id),
+    status: readString(value.status, "unknown"),
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    proposal_id: typeof value.proposal_id === "string" ? redactText(value.proposal_id) : undefined,
+    review_request_id: typeof value.review_request_id === "string" ? redactText(value.review_request_id) : undefined,
+    apply_id: typeof value.apply_id === "string" ? redactText(value.apply_id) : undefined,
+    source_kind: readString(value.source_kind, "unknown"),
+    objective: preview(readString(value.objective, "")),
+    title: preview(readString(value.title, "")),
+    commander_context_summary: preview(readString(value.commander_context_summary, "")),
+    opencode_context_seed: preview(readString(value.opencode_context_seed, "")),
+    shared_context_summary: preview(readString(value.shared_context_summary, "")),
+    success_criteria: readStringList(value.success_criteria, 10).map(preview),
+    constraints: readStringList(value.constraints, 10).map(preview),
+    artifact_expectations: readStringList(value.artifact_expectations, 10).map(preview),
+    timeout_policy: readOpenCodeSessionTimeoutPolicy(value.timeout_policy),
+    question_policy: readOpenCodeSessionQuestionPolicy(value.question_policy),
+    human_control_policy: readOpenCodeSessionHumanPolicy(value.human_control_policy),
+    created_at: readString(value.created_at, ""),
+    created_by: readString(value.created_by, ""),
+    session_hash: readString(value.session_hash, ""),
+  }
+}
+
+function readOpenCodeSessionRecords(value: unknown): OpenCodeSessionRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error("runtime.list_opencode_sessions returned invalid records")
+  return value.filter(isRecord).slice(0, HANDOFF_LIMIT).map((record) => ({
+    session_id: readString(record.session_id, ""),
+    status: readString(record.status, "unknown"),
+    title: preview(readString(record.title, "")),
+    mission_id: typeof record.mission_id === "string" ? redactText(record.mission_id) : undefined,
+    proposal_id: typeof record.proposal_id === "string" ? redactText(record.proposal_id) : undefined,
+    source_kind: readString(record.source_kind, "unknown"),
+    created_at: readString(record.created_at, ""),
+    updated_at: typeof record.updated_at === "string" ? readString(record.updated_at, "") : undefined,
+    summary_preview: preview(readString(record.summary_preview, "")),
+    session_hash: readString(record.session_hash, ""),
+  }))
+}
+
+function readOpenCodeSessionSummary(value: unknown): OpenCodeSessionSummary {
+  if (!isRecord(value)) throw new Error("runtime.opencode_session_summary returned invalid summary")
+  return {
+    total_sessions: readNumber(value.total_sessions, 0),
+    planned_count: readNumber(value.planned_count, 0),
+    running_count: readNumber(value.running_count, 0),
+    paused_count: readNumber(value.paused_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    completed_count: readNumber(value.completed_count, 0),
+    failed_count: readNumber(value.failed_count, 0),
+    cancelled_count: readNumber(value.cancelled_count, 0),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeSessionTimeoutPolicy(value: unknown): OpenCodeSessionPreviewSummary["timeout_policy"] {
+  const record = isRecord(value) ? value : {}
+  return {
+    max_wall_time_ms: readNumber(record.max_wall_time_ms, 0),
+    max_no_progress_ms: readNumber(record.max_no_progress_ms, 0),
+    heartbeat_interval_ms: readNumber(record.heartbeat_interval_ms, 0),
+    max_tool_idle_ms: typeof record.max_tool_idle_ms === "number" ? record.max_tool_idle_ms : undefined,
+    forced_pause_enabled: readBoolean(record.forced_pause_enabled),
+    report_required_on_timeout: readBoolean(record.report_required_on_timeout),
+    timeout_policy_hash: readString(record.timeout_policy_hash, ""),
+  }
+}
+
+function readOpenCodeSessionQuestionPolicy(value: unknown): OpenCodeSessionPreviewSummary["question_policy"] {
+  const record = isRecord(value) ? value : {}
+  return {
+    allow_opencode_questions: readBoolean(record.allow_opencode_questions),
+    commander_answer_required_for_blockers: readBoolean(record.commander_answer_required_for_blockers),
+    human_escalation_allowed: readBoolean(record.human_escalation_allowed),
+    max_pending_questions: readNumber(record.max_pending_questions, 0),
+    question_policy_hash: readString(record.question_policy_hash, ""),
+  }
+}
+
+function readOpenCodeSessionHumanPolicy(value: unknown): OpenCodeSessionPreviewSummary["human_control_policy"] {
+  const record = isRecord(value) ? value : {}
+  return {
+    allow_human_pause: readBoolean(record.allow_human_pause),
+    allow_human_override: readBoolean(record.allow_human_override),
+    allow_human_stop: readBoolean(record.allow_human_stop),
+    allow_human_guidance_note: readBoolean(record.allow_human_guidance_note),
+    require_reason_for_stop: readBoolean(record.require_reason_for_stop),
+    human_policy_hash: readString(record.human_policy_hash, ""),
+  }
+}
+
+function readOpenCodeSessionCommands(value: unknown): OpenCodeSessionPreviewSummary["recommended_commands"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
 }
 
 function readCommanderExecutorReviewPreview(value: unknown): CommanderExecutorReviewPreviewSummary {
@@ -10887,6 +11182,10 @@ function opencodeResultReviewState(state: UiState): OpenCodeResultReviewState {
   return state.opencodeResultReview ?? { packet: null, summary: null, records: [] }
 }
 
+function opencodeSessionsState(state: UiState): OpenCodeSessionsState {
+  return state.opencodeSessions ?? { preview: null, latestPlan: null, records: [], selected: null, summary: null }
+}
+
 function commanderExecutorReviewState(state: UiState): CommanderExecutorReviewState {
   return state.commanderExecutorReview ?? { preview: null, latestResult: null, records: [], selected: null }
 }
@@ -11656,6 +11955,33 @@ function executorReviewProposalNarrowApplyEffect(type: "preview-executor-review-
     else throw new Error("executor review proposal narrow apply arg is unsupported")
   }
   if (!effect.proposalId) throw new Error("executor review proposal narrow apply requires proposal=<id>")
+  return effect
+}
+
+function opencodeSessionEffect(type: "preview-opencode-session-plan" | "create-opencode-session-plan", args: string[], requireSource: boolean): Extract<RuntimeUiEffect, { type: "preview-opencode-session-plan" | "create-opencode-session-plan" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-session-plan" | "create-opencode-session-plan" }> = { type }
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? ""
+    const separator = arg.indexOf("=")
+    if (separator <= 0) throw new Error("OpenCode session args must use objective=<text>, proposal=<id>, mission=<id>, review=<id>, apply=<id>, or title=<text>")
+    const key = arg.slice(0, separator).trim()
+    const value = arg.slice(separator + 1).trim()
+    if (!key || !value) throw new Error("OpenCode session args must include non-empty key=value pairs")
+    if (key === "objective") {
+      effect.objective = [value, ...args.slice(index + 1)].join(" ").trim()
+      break
+    } else if (key === "title") {
+      effect.title = [value, ...args.slice(index + 1)].join(" ").trim()
+      break
+    } else if (key === "proposal") effect.proposalId = value
+    else if (key === "mission") effect.missionId = value
+    else if (key === "review") effect.reviewRequestId = value
+    else if (key === "apply") effect.applyId = value
+    else throw new Error("OpenCode session arg is unsupported")
+  }
+  if (requireSource && !effect.objective && !effect.proposalId && !effect.missionId) {
+    throw new Error("OpenCode session plan requires objective=<text>, proposal=<id>, or mission=<id>")
+  }
   return effect
 }
 

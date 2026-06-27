@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary } from "./state"
 
 export interface SubmitUserMessageResult {
@@ -51,6 +51,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly commanderCycles: CommanderCycleResultSummary[] = []
   private readonly opencodeHandoffs: OpenCodeHandoffResultSummary[] = []
   private readonly opencodeProcessSmokes: OpenCodeProcessSmokeResultSummary[] = []
+  private readonly opencodeSessions: OpenCodeSessionPlanSummary[] = []
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly executorReviewProposalCreates: ExecutorReviewProposalCreateResultSummary[] = []
   private readonly executorReviewProposalReviewRequests: ExecutorReviewProposalReviewRequestResultSummary[] = []
@@ -415,6 +416,16 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.previewOpenCodeResultReviewPacket(payload)
       case "runtime.opencode_result_review_summary":
         return this.openCodeResultReviewSummary()
+      case "runtime.preview_opencode_session_plan":
+        return this.previewOpenCodeSessionPlan(payload)
+      case "runtime.create_opencode_session_plan":
+        return this.createOpenCodeSessionPlan(payload)
+      case "runtime.list_opencode_sessions":
+        return this.listOpenCodeSessions(payload)
+      case "runtime.get_opencode_session":
+        return this.getOpenCodeSession(String(payload.sessionId ?? payload.session_id ?? ""))
+      case "runtime.opencode_session_summary":
+        return this.openCodeSessionSummary()
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(payload)
       case "runtime.execute_commander_executor_review":
@@ -1612,6 +1623,149 @@ export class FakeRuntimeClient implements RuntimeClient {
       stale_count: stale,
       latest_handoff_id: followups[0]?.handoff_id,
       latest_result_id: this.results[0]?.result_id,
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private previewOpenCodeSessionPlan(payload: Record<string, unknown>): OpenCodeSessionPreviewSummary {
+    const objective = optionalString(payload.objective)
+    const proposalId = optionalString(payload.proposalId ?? payload.proposal_id ?? payload.proposal)
+    const missionId = optionalString(payload.missionId ?? payload.mission_id ?? payload.mission)
+    const reviewRequestId = optionalString(payload.reviewRequestId ?? payload.review_request_id ?? payload.review)
+    const applyId = optionalString(payload.applyId ?? payload.apply_id ?? payload.apply)
+    const proposal = proposalId ? this.proposals.find((item) => item.proposal_id === proposalId) : undefined
+    const mission = missionId ? this.missions.find((item) => item.mission_id === missionId) : undefined
+    const resolvedObjective = objective ?? proposal?.summary ?? mission?.objective
+    const blockers = [
+      ...(resolvedObjective ? [] : ["OpenCode session plan requires objective=<text>, proposal=<id>, or mission=<id>"]),
+      ...(proposalId && !proposal ? [`proposal not found: ${proposalId}`] : []),
+      ...(missionId && !mission ? [`mission not found: ${missionId}`] : []),
+      ...(reviewRequestId && proposal?.review_id && proposal.review_id !== reviewRequestId ? ["review_request_id does not match proposal linkage"] : []),
+      ...(applyId && !this.executorReviewProposalNarrowApplies.some((item) => item.apply_id === applyId && (!proposalId || item.proposal_id === proposalId)) ? [`apply record not found: ${applyId}`] : []),
+    ]
+    const sourceKind = proposalId ? "proposal" : missionId ? "mission" : applyId ? "executor_review" : objective ? "manual" : "unknown"
+    const safeObjective = preview(redactText(resolvedObjective ?? ""))
+    const title = optionalString(payload.title) ?? (proposal?.title ?? mission?.objective ?? resolvedObjective ?? "Planned OpenCode session")
+    const contextHash = createHash("sha256").update(`${safeObjective}:${proposalId ?? ""}:${missionId ?? ""}:${applyId ?? ""}`).digest("hex")
+    return {
+      preview_id: `fake-opencode-session-preview-${contextHash.slice(0, 12)}`,
+      can_create: blockers.length === 0,
+      source_kind: sourceKind,
+      mission_id: mission?.mission_id ?? missionId,
+      proposal_id: proposal?.proposal_id ?? proposalId,
+      review_request_id: reviewRequestId ?? proposal?.review_id,
+      apply_id: applyId,
+      title_preview: preview(redactText(title)),
+      objective_preview: safeObjective,
+      commander_context_summary_preview: preview(redactText(`Commander strategic context for ${title}`)),
+      opencode_context_seed_preview: preview(redactText(`OpenCode tactical seed for ${safeObjective}`)),
+      success_criteria: ["report bounded execution findings", "preserve Commander/OpenCode context boundary"],
+      constraints: ["do not launch OpenCode in session planning", "do not mutate missions", "do not call providers"],
+      timeout_policy: {
+        max_wall_time_ms: readNumber(payload.maxWallTimeMs ?? payload.max_wall_time_ms, 1_800_000),
+        max_no_progress_ms: readNumber(payload.maxNoProgressMs ?? payload.max_no_progress_ms, 600_000),
+        heartbeat_interval_ms: readNumber(payload.heartbeatIntervalMs ?? payload.heartbeat_interval_ms, 60_000),
+        forced_pause_enabled: true,
+        report_required_on_timeout: true,
+        timeout_policy_hash: createHash("sha256").update("fake-timeout-policy").digest("hex"),
+      },
+      question_policy: {
+        allow_opencode_questions: true,
+        commander_answer_required_for_blockers: true,
+        human_escalation_allowed: true,
+        max_pending_questions: 3,
+        question_policy_hash: createHash("sha256").update("fake-question-policy").digest("hex"),
+      },
+      human_control_policy: {
+        allow_human_pause: true,
+        allow_human_override: true,
+        allow_human_stop: true,
+        allow_human_guidance_note: true,
+        require_reason_for_stop: true,
+        human_policy_hash: createHash("sha256").update("fake-human-policy").digest("hex"),
+      },
+      blockers: blockers.map(redactText),
+      warnings: safeObjective.length < 16 ? ["objective/context seed is very short"] : ["planning stores metadata only; no OpenCode launch occurs"],
+      recommended_commands: [
+        { label: "List sessions", command: "/opencode-sessions", command_type: "read" },
+        { label: "Session summary", command: "/opencode-session-summary", command_type: "read" },
+        { label: "Show authority", command: "/authority-show /opencode-session-plan", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `planned OpenCode session preview for ${safeObjective}`,
+    }
+  }
+
+  private createOpenCodeSessionPlan(payload: Record<string, unknown>): OpenCodeSessionPlanSummary {
+    const previewResult = this.previewOpenCodeSessionPlan(payload)
+    const sessionHash = createHash("sha256").update(`${previewResult.source_kind}:${previewResult.proposal_id ?? ""}:${previewResult.mission_id ?? ""}:${previewResult.objective_preview}`).digest("hex")
+    const existing = this.opencodeSessions.find((item) => item.session_hash === sessionHash && item.status === "planned")
+    if (existing) return existing
+    if (!previewResult.can_create) throw new Error(previewResult.blockers[0] ?? "OpenCode session plan is blocked")
+    const session: OpenCodeSessionPlanSummary = {
+      session_id: `fake-opencode-session-${sessionHash.slice(0, 12)}`,
+      status: "planned",
+      mission_id: previewResult.mission_id,
+      proposal_id: previewResult.proposal_id,
+      review_request_id: previewResult.review_request_id,
+      apply_id: previewResult.apply_id,
+      source_kind: previewResult.source_kind,
+      objective: previewResult.objective_preview,
+      title: previewResult.title_preview,
+      commander_context_summary: previewResult.commander_context_summary_preview,
+      opencode_context_seed: previewResult.opencode_context_seed_preview,
+      shared_context_summary: "Shared bounded session planning metadata only",
+      success_criteria: previewResult.success_criteria,
+      constraints: previewResult.constraints,
+      artifact_expectations: ["bounded result summary", "durable event evidence"],
+      timeout_policy: previewResult.timeout_policy,
+      question_policy: previewResult.question_policy,
+      human_control_policy: previewResult.human_control_policy,
+      created_at: new Date(0).toISOString(),
+      created_by: redactText(String(payload.createdBy ?? payload.created_by ?? "operator")),
+      session_hash: sessionHash,
+    }
+    if (payload.dryRun === true || payload.dry_run === true) return session
+    this.opencodeSessions.unshift(session)
+    return session
+  }
+
+  private listOpenCodeSessions(payload: Record<string, unknown>): OpenCodeSessionRecordSummary[] {
+    const limit = readLimit(payload.limit, 20)
+    return this.opencodeSessions
+      .filter((item) => !payload.status || item.status === payload.status)
+      .filter((item) => !payload.missionId && !payload.mission_id || item.mission_id === (payload.missionId ?? payload.mission_id))
+      .filter((item) => !payload.proposalId && !payload.proposal_id || item.proposal_id === (payload.proposalId ?? payload.proposal_id))
+      .filter((item) => !payload.sourceKind && !payload.source_kind || item.source_kind === (payload.sourceKind ?? payload.source_kind))
+      .slice(0, limit)
+      .map((item) => ({
+        session_id: item.session_id,
+        status: item.status,
+        title: item.title,
+        mission_id: item.mission_id,
+        proposal_id: item.proposal_id,
+        source_kind: item.source_kind,
+        created_at: item.created_at,
+        summary_preview: item.objective,
+        session_hash: item.session_hash,
+      }))
+  }
+
+  private getOpenCodeSession(sessionId: string): OpenCodeSessionPlanSummary | null {
+    const id = requiredString(sessionId, "sessionId")
+    return this.opencodeSessions.find((item) => item.session_id === id) ?? null
+  }
+
+  private openCodeSessionSummary(): OpenCodeSessionSummary {
+    return {
+      total_sessions: this.opencodeSessions.length,
+      planned_count: this.opencodeSessions.filter((item) => item.status === "planned").length,
+      running_count: this.opencodeSessions.filter((item) => item.status === "running").length,
+      paused_count: this.opencodeSessions.filter((item) => item.status === "paused").length,
+      blocked_count: this.opencodeSessions.filter((item) => item.status === "blocked").length,
+      completed_count: this.opencodeSessions.filter((item) => item.status === "completed").length,
+      failed_count: this.opencodeSessions.filter((item) => item.status === "failed").length,
+      cancelled_count: this.opencodeSessions.filter((item) => item.status === "cancelled").length,
       generated_at: new Date(0).toISOString(),
     }
   }
@@ -7049,6 +7203,44 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_packet_tui.py"],
       notes: ["Read-only OpenCode result review summary; does not mutate executor or commander state."],
       out: ["OpenCode launch", "handoff execution", "provider calls", "mission mutation", "proposal mutation", "review mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-session-preview", "runtime.preview_opencode_session_plan", "safe_read", "opencode_runtime", "opencode_handoff", {
+      reads: ["/opencode-sessions", "/opencode-session-summary"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_model_tui.py"],
+      aliases: ["/session-preview"],
+      notes: ["Read-only OpenCode planned session preview; does not launch OpenCode, send prompts, call providers, or mutate missions."],
+      out: ["OpenCode launch", "OpenCode prompt send", "provider calls", "mission mutation", "checkpoint creation", "scheduler execution"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-session-plan-dry-run", "runtime.create_opencode_session_plan", "safe_read", "opencode_runtime", "opencode_handoff", {
+      reads: ["/opencode-session-preview", "/opencode-sessions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_model_tui.py"],
+      notes: ["Dry-run planned session creation appends no events, creates no session, and does not launch OpenCode."],
+      out: ["OpenCode launch", "OpenCode prompt send", "provider calls", "mission mutation", "checkpoint creation", "scheduler execution"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-session-plan", "runtime.create_opencode_session_plan", "high_impact_write", "opencode_runtime", "opencode_handoff", {
+      mutates: true,
+      active: true,
+      lock: true,
+      blocked: true,
+      events: ["opencode_session_planned"],
+      reads: ["/opencode-session-preview", "/opencode-sessions", "/opencode-session-summary"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_model_tui.py"],
+      aliases: ["/session-plan", "/opencode-plan"],
+      notes: ["Creates exactly one durable planned OpenCode session intent; does not launch OpenCode, send prompts, call providers, mutate missions, or schedule supervision."],
+      out: ["OpenCode launch", "OpenCode prompt send", "provider calls", "mission mutation", "checkpoint creation", "scheduler execution"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-sessions", "runtime.list_opencode_sessions", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-session-show", "/opencode-session-summary"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_model_tui.py"],
+      aliases: ["/sessions"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-session-show", "runtime.get_opencode_session", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-sessions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_model_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-session-summary", "runtime.opencode_session_summary", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-sessions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_model_tui.py"],
     }),
     fakeCommandAuthorityRecord("/executor-review-preview", "runtime.preview_commander_executor_review", "safe_read", "reasoning_provider_runtime", "commander_cycle", {
       reads: ["/result-review-packet", "/authority-show /executor-review"],

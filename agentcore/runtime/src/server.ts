@@ -71,6 +71,8 @@ import { OpenCodeHandoffReadinessService, readOpenCodeHandoffReadinessInput } fr
 import type { OpenCodeHandoffReadinessPreview, OpenCodeHandoffReadinessSummary } from "./opencode/opencode-handoff-readiness-types"
 import { OpenCodeResultReviewPacketService, readOpenCodeResultReviewPacketInput } from "./opencode/opencode-result-review-packet-service"
 import type { OpenCodeResultReviewPacket, OpenCodeResultReviewSummary } from "./opencode/opencode-result-review-packet-types"
+import { OpenCodeSessionService, readOpenCodeSessionCreateInput, readOpenCodeSessionPreviewInput } from "./opencode-session/opencode-session-service"
+import type { OpenCodeSessionPlan, OpenCodeSessionPreview, OpenCodeSessionRecord, OpenCodeSessionSourceKind, OpenCodeSessionStatus, OpenCodeSessionSummary } from "./opencode-session/opencode-session-types"
 import type { OpenCodeSpawn } from "./opencode/process-adapter"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
@@ -278,6 +280,7 @@ export class RuntimeServer {
   private opencodeProcessSmokeServiceInstance: OpenCodeProcessSmokeService | null = null
   private opencodeHandoffReadinessServiceInstance: OpenCodeHandoffReadinessService | null = null
   private opencodeResultReviewPacketServiceInstance: OpenCodeResultReviewPacketService | null = null
+  private opencodeSessionServiceInstance: OpenCodeSessionService | null = null
   private commanderExecutorReviewServiceInstance: CommanderExecutorReviewService | null = null
   private executorReviewProposalDraftServiceInstance: ExecutorReviewProposalDraftService | null = null
   private executorReviewProposalCreateServiceInstance: ExecutorReviewProposalCreateService | null = null
@@ -793,6 +796,22 @@ export class RuntimeServer {
         return this.previewOpenCodeResultReviewPacket(readOpenCodeResultReviewPacketInput(payload))
       case "runtime.opencode_result_review_summary":
         return this.openCodeResultReviewSummary(readOpenCodeResultReviewPacketInput(payload))
+      case "runtime.preview_opencode_session_plan":
+        return this.previewOpenCodeSessionPlan(readOpenCodeSessionPreviewInput(payload))
+      case "runtime.create_opencode_session_plan":
+        return this.createOpenCodeSessionPlan(readOpenCodeSessionCreateInput(payload))
+      case "runtime.list_opencode_sessions":
+        return this.listOpenCodeSessions({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          status: optionalString(payload.status, "status") as OpenCodeSessionStatus | undefined,
+          mission_id: optionalString(payload.missionId ?? payload.mission_id, "missionId"),
+          proposal_id: optionalString(payload.proposalId ?? payload.proposal_id, "proposalId"),
+          source_kind: optionalString(payload.sourceKind ?? payload.source_kind, "sourceKind") as OpenCodeSessionSourceKind | undefined,
+        })
+      case "runtime.get_opencode_session":
+        return this.getOpenCodeSession(requiredString(payload.sessionId ?? payload.session_id, "sessionId"))
+      case "runtime.opencode_session_summary":
+        return this.openCodeSessionSummary()
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(readCommanderExecutorReviewInput(payload))
       case "runtime.execute_commander_executor_review":
@@ -1606,6 +1625,27 @@ export class RuntimeServer {
 
   async openCodeResultReviewSummary(input: Parameters<OpenCodeResultReviewPacketService["summary"]>[0] = {}): Promise<OpenCodeResultReviewSummary> {
     return this.opencodeResultReviewPacketService().summary(input)
+  }
+
+  async previewOpenCodeSessionPlan(input: Parameters<OpenCodeSessionService["preview"]>[0] = {}): Promise<OpenCodeSessionPreview> {
+    return this.opencodeSessionService().preview(input)
+  }
+
+  async createOpenCodeSessionPlan(input: Parameters<OpenCodeSessionService["create"]>[0] = {}): Promise<OpenCodeSessionPlan> {
+    if (input.dry_run !== true) this.requireProposalWriteRuntime("runtime.create_opencode_session_plan")
+    return this.opencodeSessionService().create(input)
+  }
+
+  async listOpenCodeSessions(input: Parameters<OpenCodeSessionService["list"]>[0] = {}): Promise<OpenCodeSessionRecord[]> {
+    return this.opencodeSessionService().list(input)
+  }
+
+  async getOpenCodeSession(sessionId: string): Promise<OpenCodeSessionPlan | null> {
+    return this.opencodeSessionService().get(sessionId)
+  }
+
+  async openCodeSessionSummary(): Promise<OpenCodeSessionSummary> {
+    return this.opencodeSessionService().summary()
   }
 
   async previewCommanderExecutorReview(input: Parameters<CommanderExecutorReviewService["preview"]>[0] = {}): Promise<CommanderExecutorReviewPreview> {
@@ -2616,6 +2656,15 @@ export class RuntimeServer {
       listSmokes: (limit) => this.opencodeProcessSmokeService().list(limit),
     })
     return this.opencodeResultReviewPacketServiceInstance
+  }
+
+  private opencodeSessionService(): OpenCodeSessionService {
+    this.opencodeSessionServiceInstance ??= new OpenCodeSessionService({
+      eventStore: this.eventStore,
+      missionRegistry: this.missionRegistry,
+      proposalRegistry: this.proposalRegistry,
+    })
+    return this.opencodeSessionServiceInstance
   }
 
   private commanderExecutorReviewService(): CommanderExecutorReviewService {

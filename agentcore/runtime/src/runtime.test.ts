@@ -981,6 +981,12 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/opencode-smoke")).toMatchObject({ risk: "low_risk_write", gate: "opencode_runtime", creates_external_process: true, mutates_events: true, blocked_by_default: true })
     expect(service.get("/result-review-packet")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_result_review_packet", owner: "opencode_handoff", mutates_events: false })
     expect(service.get("/result-review-summary")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_result_review_summary", owner: "opencode_handoff", mutates_events: false })
+    expect(service.get("/opencode-session-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_session_plan", mutates_events: false, creates_external_process: false })
+    expect(service.get("/opencode-session-plan-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.create_opencode_session_plan", mutates_events: false, creates_external_process: false })
+    expect(service.get("/opencode-session-plan")).toMatchObject({ risk: "high_impact_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, creates_external_process: false, blocked_by_default: true })
+    expect(service.get("/opencode-session-plan").expected_event_kinds).toEqual(["opencode_session_planned"])
+    expect(service.get("/opencode-sessions")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_opencode_sessions", mutates_events: false })
+    expect(service.get("/opencode-session-summary")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_session_summary", mutates_events: false })
     expect(service.get("/api-ingest")).toMatchObject({ risk: "high_impact_write", gate: "external_api_runtime", owner: "research", mutates_events: true })
     expect(service.get("/api-ingest-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "research", mutates_events: false })
     expect(service.get("/api-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "external_api_runtime", owner: "reasoning_provider", mutates_events: false, expected_event_kinds: [] })
@@ -1031,6 +1037,10 @@ describe("CommandAuthorityService", () => {
     const minimax = service.validationProfile("/minimax-live-validate")
     expect(minimax.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"])
     expect(minimax.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_reasoning_provider_tui.py", "tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"])
+
+    const sessionPlan = service.validationProfile("/opencode-session-plan")
+    expect(sessionPlan.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_session_model_tui.py"])
+    expect(sessionPlan.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"])
   })
 
   test("query and unsupported command handling fail closed", () => {
@@ -14237,6 +14247,82 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
     await server.start()
     expect(adapter.startCalls).toBe(1)
     await server.shutdown()
+  })
+})
+
+describe("OpenCode session planning", () => {
+  test("preview and dry-run are read-only and create appends one planned session without launching OpenCode", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+
+    await expect(server.command("runtime.preview_opencode_session_plan", { objective: "inspect training progress token=session-secret" })).resolves.toMatchObject({
+      can_create: true,
+      source_kind: "manual",
+      timeout_policy: expect.objectContaining({ forced_pause_enabled: true, report_required_on_timeout: true }),
+      question_policy: expect.objectContaining({ allow_opencode_questions: true, max_pending_questions: 3 }),
+      human_control_policy: expect.objectContaining({ allow_human_pause: true, require_reason_for_stop: true }),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", { objective: "inspect training progress token=session-secret", dryRun: true })).resolves.toMatchObject({
+      status: "planned",
+      source_kind: "manual",
+    })
+    expect(await readEventKinds(dir)).not.toContain("opencode_session_planned")
+
+    await server.start()
+    expect(adapter.startCalls).toBe(1)
+    const created = await server.command("runtime.create_opencode_session_plan", {
+      objective: "inspect training progress token=session-secret",
+      title: "Training progress inspection",
+      createdBy: "operator token=session-secret",
+    }) as { session_id: string; session_hash: string; commander_context_summary: string; opencode_context_seed: string }
+    expect(adapter.startCalls).toBe(1)
+    expect(created.commander_context_summary).not.toEqual(created.opencode_context_seed)
+    await expect(server.command("runtime.list_opencode_sessions")).resolves.toEqual([
+      expect.objectContaining({ session_id: created.session_id, status: "planned", source_kind: "manual" }),
+    ])
+    await expect(server.command("runtime.get_opencode_session", { sessionId: created.session_id })).resolves.toMatchObject({
+      session_id: created.session_id,
+      status: "planned",
+    })
+    await expect(server.command("runtime.opencode_session_summary")).resolves.toMatchObject({
+      total_sessions: 1,
+      planned_count: 1,
+      running_count: 0,
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", { objective: "inspect training progress token=session-secret" })).resolves.toMatchObject({
+      session_id: created.session_id,
+      session_hash: created.session_hash,
+    })
+    const kinds = await readEventKinds(dir)
+    expect(kinds.filter((kind) => kind === "opencode_session_planned")).toHaveLength(1)
+    expect(kinds).not.toContain("opencode_process_smoke_started")
+    expect(kinds).not.toContain("runtime_opencode_handoff_started")
+    expect(kinds).not.toContain("mission_progress_recorded")
+    expect(kinds).not.toContain("mission_result_submitted")
+    expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("session-secret")
+    await server.shutdown()
+  })
+
+  test("RuntimeServerClient never auto-starts planned session creation", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_session_plan", { objective: "manual planning target" })).resolves.toMatchObject({ can_create: true })
+    await expect(client.command("runtime.create_opencode_session_plan", { objective: "manual planning target", dry_run: true })).resolves.toMatchObject({ status: "planned" })
+    await expect(client.command("runtime.list_opencode_sessions")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_session", { sessionId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.opencode_session_summary")).resolves.toMatchObject({ total_sessions: 0 })
+    await expect(client.command("runtime.create_opencode_session_plan", { objective: "manual planning target" })).rejects.toThrow("runtime must be started before proposal writes")
+
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(await readEventKinds(dir)).not.toContain("opencode_session_planned")
+    await client.shutdown()
   })
 })
 

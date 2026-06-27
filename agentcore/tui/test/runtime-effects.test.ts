@@ -4826,4 +4826,63 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("abc123")
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
+
+  test("opencode session plan commands render planned session metadata without launching execution", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-preview", args: ["objective=inspect", "training", "progress", "token=abc123"] })
+    expect(state.opencodeSessions?.preview).toMatchObject({
+      can_create: true,
+      source_kind: "manual",
+      timeout_policy: expect.objectContaining({ forced_pause_enabled: true, report_required_on_timeout: true }),
+      question_policy: expect.objectContaining({ allow_opencode_questions: true, max_pending_questions: 3 }),
+      human_control_policy: expect.objectContaining({ allow_human_pause: true, require_reason_for_stop: true }),
+    })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode sessions")
+    expect(snapshot).toContain("commander_context=")
+    expect(snapshot).toContain("opencode_context_seed=")
+    expect(snapshot).toContain("timeout wall_ms=")
+    expect(snapshot).toContain("question_policy questions=true")
+    expect(snapshot).toContain("human_control pause=true")
+    expect(snapshot).toContain("note=session planning does not launch OpenCode or mutate missions")
+    expect(snapshot).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan-dry-run", args: ["objective=inspect", "training", "progress", "token=abc123"] })
+    expect(state.opencodeSessions?.latestPlan).toMatchObject({ status: "planned", source_kind: "manual" })
+    expect(state.opencodeSessions?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=inspect", "training", "progress", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    expect(state.opencodeSessions?.records).toHaveLength(1)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=inspect", "training", "progress", "token=abc123"] })
+    expect(state.opencodeSessions?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-sessions", args: [] })
+    expect(state.opencodeSessions?.records.map((record) => record.session_id)).toContain(sessionId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-show", args: [sessionId!] })
+    expect(state.opencodeSessions?.selected?.session_id).toBe(sessionId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-summary", args: [] })
+    expect(state.opencodeSessions?.summary).toMatchObject({ total_sessions: 1, planned_count: 1, running_count: 0 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-session-plan"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/opencode-session-plan", risk: "high_impact_write", creates_external_process: false })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/opencode-session-plan objective=stage command token=abc123"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: [] })
+    expect(state.opencodeSessions?.commandError).toContain("requires objective")
+
+    expect(runtime.sentCommands).toEqual([])
+    expect(state.opencodeHandoff?.lastResult).toBeNull()
+    expect(state.opencodeProcessSmoke?.latestResult).toBeNull()
+    expect(state.missionExecution?.selectedResultId).toBeUndefined()
+    expect(state.missionExecution?.results).toEqual([])
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("latest=fake-opencode-session")
+    expect(snapshot).toContain("summary total=1 planned=1")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
 })

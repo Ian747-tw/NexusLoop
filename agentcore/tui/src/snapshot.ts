@@ -83,6 +83,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeProcessSmokeLines(state))
   out.push(...opencodeHandoffReadinessLines(state))
   out.push(...opencodeResultReviewLines(state))
+  out.push(...opencodeSessionLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
   out.push(...executorReviewProposalCreateLines(state))
@@ -561,6 +562,67 @@ function opencodeResultReviewLines(state: UiState): string[] {
   }
   if (review.commandError) out.push(`  command_error=${redactText(review.commandError)}`)
   out.push("  note=packet preview does not call Commander/provider or create proposals")
+  return out
+}
+
+function opencodeSessionLines(state: UiState): string[] {
+  const sessions = state.opencodeSessions
+  const out = ["OpenCode sessions"]
+  if (!sessions) {
+    out.push("  preview=none")
+    out.push("  latest=none")
+    out.push("  records=0")
+    out.push("  note=session planning does not launch OpenCode or mutate missions")
+    return out
+  }
+  if (sessions.preview) {
+    const item = sessions.preview
+    out.push(`  preview=${item.preview_id} can_create=${item.can_create} source=${item.source_kind}`)
+    out.push(`  links mission=${item.mission_id ?? "none"} proposal=${item.proposal_id ?? "none"} review=${item.review_request_id ?? "none"} apply=${item.apply_id ?? "none"}`)
+    out.push(`  title=${preview(redactText(item.title_preview))}`)
+    out.push(`  objective=${preview(redactText(item.objective_preview))}`)
+    out.push(`  commander_context=${preview(redactText(item.commander_context_summary_preview))}`)
+    out.push(`  opencode_context_seed=${preview(redactText(item.opencode_context_seed_preview))}`)
+    out.push(`  timeout wall_ms=${item.timeout_policy.max_wall_time_ms ?? 1800000} no_progress_ms=${item.timeout_policy.max_no_progress_ms ?? 600000} heartbeat_ms=${item.timeout_policy.heartbeat_interval_ms ?? 60000}`)
+    out.push(`  question_policy questions=${item.question_policy.allow_opencode_questions ?? true} max_pending=${item.question_policy.max_pending_questions ?? 3}`)
+    out.push(`  human_control pause=${item.human_control_policy.allow_human_pause ?? true} stop=${item.human_control_policy.allow_human_stop ?? true} reason_required=${item.human_control_policy.require_reason_for_stop ?? true}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(String(blocker ?? "")))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(String(warning ?? "")))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (sessions.latestPlan) {
+    const plan = sessions.latestPlan
+    out.push(`  latest=${plan.session_id} status=${plan.status} source=${plan.source_kind}`)
+    out.push(`  latest_context commander=${preview(redactText(plan.commander_context_summary))}`)
+    out.push(`  latest_context opencode=${preview(redactText(plan.opencode_context_seed))}`)
+  } else {
+    out.push("  latest=none")
+  }
+  if (sessions.summary) {
+    const summary = sessions.summary
+    out.push(`  summary total=${summary.total_sessions} planned=${summary.planned_count} running=${summary.running_count} paused=${summary.paused_count} blocked=${summary.blocked_count} completed=${summary.completed_count} failed=${summary.failed_count} cancelled=${summary.cancelled_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  out.push(`  records=${sessions.records.length}`)
+  if (sessions.records.length > 0) {
+    out.push("  planned_sessions")
+    out.push(...sessions.records.slice(0, 10).map((record) => `    - ${record.session_id} status=${record.status} source=${record.source_kind} proposal=${record.proposal_id ?? "none"} mission=${record.mission_id ?? "none"}: ${preview(redactText(record.summary_preview))}`))
+  }
+  if (sessions.selected && sessions.selected.session_id !== sessions.latestPlan?.session_id) out.push(`  selected=${sessions.selected.session_id} status=${sessions.selected.status}`)
+  if (sessions.commandError) out.push(`  command_error=${redactText(sessions.commandError)}`)
+  out.push("  note=session planning does not launch OpenCode or mutate missions")
+  out.push("  note=session planning does not launch OpenCode, call providers, create checkpoints, or mutate missions")
   return out
 }
 
