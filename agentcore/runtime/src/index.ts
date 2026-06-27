@@ -51,6 +51,7 @@ export { ExecutorReviewProposalCreateService } from "./commander-executor-review
 export { ExecutorReviewProposalReviewRequestService } from "./commander-executor-review/executor-review-proposal-review-request-service"
 export { ExecutorReviewProposalReviewDecisionService } from "./commander-executor-review/executor-review-proposal-review-decision-service"
 export { ExecutorReviewProposalApplyReadinessService } from "./commander-executor-review/executor-review-proposal-apply-readiness-service"
+export { ExecutorReviewProposalNarrowApplyService } from "./commander-executor-review/executor-review-proposal-narrow-apply-service"
 export { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"

@@ -3576,6 +3576,28 @@ describe("runtime UI effects", () => {
       blockers: [],
       recommended_commands: expect.arrayContaining([expect.objectContaining({ command: `/proposal ${first.proposalId}` })]),
     })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-narrow-apply-preview", args: [`proposal=${first.proposalId}`] })
+    expect(state.executorReviewProposalNarrowApply?.preview).toMatchObject({
+      status: "blocked",
+      can_apply: false,
+      proposal_id: first.proposalId,
+      candidate_kind: "mission_result",
+    })
+    expect(state.executorReviewProposalNarrowApply?.preview?.blockers).toContain("mission_result proposals are out of scope for narrow apply")
+    let narrowApplySnapshot = layoutSnapshot(state)
+    expect(narrowApplySnapshot).toContain("Executor review proposal narrow apply")
+    expect(narrowApplySnapshot).toContain("note=narrow apply marks the proposal applied only")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-narrow-apply-dry-run", args: [`proposal=${first.proposalId}`] })
+    expect(state.executorReviewProposalNarrowApply?.latestResult).toMatchObject({ status: "blocked", proposal_id: first.proposalId })
+    expect(state.executorReviewProposalNarrowApply?.commandError).toContain("mission_result proposals are out of scope for narrow apply")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-narrow-applies" })
+    expect(state.executorReviewProposalNarrowApply?.records).toEqual([])
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: [`/executor-review-proposal-narrow-apply proposal=${first.proposalId}`] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-narrow-apply-preview", args: ["token=abc123"] })
+    expect(state.executorReviewProposalNarrowApply?.commandError).toContain("executor review proposal narrow apply arg is unsupported")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/executor-review-proposal-narrow-apply"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_narrow_apply_tui.py")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/executor-review-proposal-apply-readiness"] })
     expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_apply_readiness_tui.py")
 

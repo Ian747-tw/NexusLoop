@@ -15217,6 +15217,148 @@ describe("RuntimeServerClient", () => {
 	    await server.shutdown()
 	  })
 
+	  test("executor review proposal narrow apply marks approved generic proposal applied without mission mutation", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.eventStore.append({
+      kind: "commander_executor_review_succeeded",
+      review_id: "executor_review_narrow_apply_1",
+      packet_id: "packet_narrow_apply_1",
+      packet_status: "ready_for_commander_review",
+      status: "succeeded",
+      provider_kind: "fake-provider",
+      decision: "needs_human_review",
+      confidence: 0.86,
+      summary: "Human review accepted for a generic executor outcome token=narrow-secret",
+      findings: [{ finding_id: "finding_narrow_apply_1", severity: "warning", title: "Inspect", summary: "Operator should inspect the bounded result.", evidence_ids: ["manual_note:narrow_apply_1"], recommended_commands: [] }],
+      evidence_ids: ["manual_note:narrow_apply_1"],
+      recommended_commands: [],
+      started_at: "2026-06-26T00:00:00.000Z",
+      completed_at: "2026-06-26T00:00:01.000Z",
+      requested_by: "operator",
+      review_hash: "review_hash_narrow_apply_1",
+    } as JsonlEvent)
+    const draftPreview = await server.command("runtime.preview_executor_review_proposal_drafts", { review_id: "executor_review_narrow_apply_1" }) as { candidates: Array<{ draft_id: string; draft_kind: string }> }
+    const draftId = draftPreview.candidates[0]?.draft_id
+    expect(typeof draftId).toBe("string")
+    expect(draftPreview.candidates[0]?.draft_kind).toBe("human_review")
+
+    await server.start()
+    const created = await server.command("runtime.create_executor_review_proposal", { review_id: "executor_review_narrow_apply_1", draft_id: draftId, requested_by: "alice" }) as { status: string; proposal_id: string }
+    expect(created.status).toBe("created")
+    const requested = await server.command("runtime.request_executor_review_proposal_review", { proposal_id: created.proposal_id, requested_by: "bob" }) as { status: string; review_request_id: string }
+    expect(requested.status).toBe("requested")
+    await expect(server.command("runtime.decide_executor_review_proposal_review", { review_request_id: requested.review_request_id, decision: "approve", decided_by: "carol" })).resolves.toMatchObject({ status: "approved" })
+    const readiness = await server.command("runtime.preview_executor_review_proposal_apply_readiness", { proposal_id: created.proposal_id }) as { readiness_id: string; status: string; candidate_kind: string }
+    expect(readiness).toMatchObject({ status: "ready", candidate_kind: "human_review" })
+    await expect(server.command("runtime.preview_executor_review_proposal_narrow_apply", { proposal_id: created.proposal_id, readiness_id: readiness.readiness_id })).resolves.toMatchObject({
+      status: "ready",
+      can_apply: true,
+      proposal_id: created.proposal_id,
+      candidate_kind: "human_review",
+    })
+
+    const beforeApplyKinds = await readEventKinds(dir)
+    await expect(server.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: created.proposal_id, dry_run: true, applied_by: "dry-runner token=narrow-secret" })).resolves.toMatchObject({
+      status: "dry_run",
+      proposal_id: created.proposal_id,
+    })
+    expect(await readEventKinds(dir)).toEqual(beforeApplyKinds)
+    const applied = await server.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: created.proposal_id, applied_by: "operator token=narrow-secret" }) as { status: string; apply_id: string; proposal_id: string }
+    expect(applied).toMatchObject({ status: "applied", proposal_id: created.proposal_id })
+    await expect(server.command("runtime.get_commander_proposal", { proposal_id: created.proposal_id })).resolves.toMatchObject({
+      status: "applied",
+      application_result: `executor_review_narrow_apply:${applied.apply_id}`,
+    })
+    await expect(server.command("runtime.list_executor_review_proposal_narrow_applies", { proposal_id: created.proposal_id })).resolves.toEqual([
+      expect.objectContaining({ status: "applied", proposal_id: created.proposal_id, apply_id: applied.apply_id }),
+    ])
+    await expect(server.command("runtime.get_executor_review_proposal_narrow_apply", { apply_id: applied.apply_id })).resolves.toMatchObject({
+      status: "applied",
+      proposal_id: created.proposal_id,
+    })
+    const duplicate = await server.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: created.proposal_id, applied_by: "operator" }) as { status: string; apply_id: string }
+    expect(duplicate).toMatchObject({ status: "applied", apply_id: applied.apply_id })
+    const kinds = await readEventKinds(dir)
+    expect(kinds.filter((kind) => kind === "commander_proposal_applied")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_narrow_applied")).toHaveLength(1)
+    const addedKinds = kinds.slice(beforeApplyKinds.length)
+    expect(addedKinds).not.toContain("mission_progress_recorded")
+    expect(addedKinds).not.toContain("mission_result_submitted")
+    expect(addedKinds).not.toContain("runtime_checkpoint_created")
+    expect(addedKinds).not.toContain("external_api_request_executed")
+    expect(addedKinds).not.toContain("opencode_handoff_started")
+    expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("narrow-secret")
+    await server.shutdown()
+  })
+
+  test("executor review proposal narrow apply recovers metadata after proposal mark-applied succeeds", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.eventStore.append({
+      kind: "commander_executor_review_succeeded",
+      review_id: "executor_review_narrow_apply_recover",
+      packet_id: "packet_narrow_apply_recover",
+      packet_status: "ready_for_commander_review",
+      status: "succeeded",
+      provider_kind: "fake-provider",
+      decision: "needs_human_review",
+      confidence: 0.84,
+      summary: "Human review requested for metadata recovery.",
+      findings: [{ finding_id: "finding_narrow_apply_recover", severity: "warning", title: "Inspect", summary: "Operator should inspect recovered metadata.", evidence_ids: ["manual_note:narrow_apply_recover"], recommended_commands: [] }],
+      evidence_ids: ["manual_note:narrow_apply_recover"],
+      recommended_commands: [],
+      started_at: "2026-06-26T00:00:00.000Z",
+      completed_at: "2026-06-26T00:00:01.000Z",
+      requested_by: "operator",
+      review_hash: "review_hash_narrow_apply_recover",
+    } as JsonlEvent)
+    const draftPreview = await server.command("runtime.preview_executor_review_proposal_drafts", { review_id: "executor_review_narrow_apply_recover" }) as { candidates: Array<{ draft_id: string; draft_kind: string }> }
+    const draftId = draftPreview.candidates[0]?.draft_id
+    expect(draftPreview.candidates[0]?.draft_kind).toBe("human_review")
+
+    await server.start()
+    const created = await server.command("runtime.create_executor_review_proposal", { review_id: "executor_review_narrow_apply_recover", draft_id: draftId, requested_by: "alice" }) as { status: string; proposal_id: string }
+    const requested = await server.command("runtime.request_executor_review_proposal_review", { proposal_id: created.proposal_id, requested_by: "bob" }) as { status: string; review_request_id: string }
+    await expect(server.command("runtime.decide_executor_review_proposal_review", { review_request_id: requested.review_request_id, decision: "approve", decided_by: "carol" })).resolves.toMatchObject({ status: "approved" })
+
+    const originalAppend = server.eventStore.append.bind(server.eventStore)
+    let failMetadataAppend = true
+    server.eventStore.append = async (event: JsonlEvent) => {
+      if (failMetadataAppend && event.kind === "commander_executor_review_proposal_narrow_applied") {
+        failMetadataAppend = false
+        throw new Error("metadata append failed token=narrow-recover-secret")
+      }
+      return originalAppend(event)
+    }
+
+    const failed = await server.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: created.proposal_id, applied_by: "operator" }) as { status: string; apply_id: string; error?: string }
+    const failedApplyId = failed.apply_id
+    expect(failed.status).toBe("failed")
+    expect(failedApplyId).toContain("executor_review_proposal_narrow_apply_")
+    await expect(server.command("runtime.get_commander_proposal", { proposal_id: created.proposal_id })).resolves.toMatchObject({
+      status: "applied",
+      application_result: `executor_review_narrow_apply:${failedApplyId}`,
+    })
+
+    const recoveredList = await server.command("runtime.list_executor_review_proposal_narrow_applies", { proposal_id: created.proposal_id }) as Array<{ status: string; proposal_id: string; apply_id: string }>
+    expect(recoveredList).toEqual([
+      expect.objectContaining({ status: "applied", proposal_id: created.proposal_id, apply_id: failedApplyId }),
+    ])
+    const retry = await server.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: created.proposal_id, applied_by: "operator" }) as { status: string; apply_id: string; proposal_id: string }
+    expect(retry).toMatchObject({ status: "applied", proposal_id: created.proposal_id, apply_id: failedApplyId })
+    const kinds = await readEventKinds(dir)
+    expect(kinds.filter((kind) => kind === "commander_proposal_applied")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_narrow_apply_failed")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_narrow_applied")).toHaveLength(1)
+    expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("narrow-recover-secret")
+    await server.shutdown()
+  })
+
 	  test("executor review proposal review decision duplicate recovery repairs proposal sync", async () => {
 	    const dir = await tempProject()
 	    await makeProject(dir, { approvedSpec: true })
@@ -15426,6 +15568,17 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.executor_review_proposal_apply_readiness_summary")).resolves.toMatchObject({ total_considered: 0 })
     await expect(client.command("runtime.list_executor_review_proposal_apply_readiness")).resolves.toEqual([])
     await expect(client.command("runtime.get_executor_review_proposal_apply_readiness", { readiness_id: "missing-readiness" })).resolves.toBeNull()
+    await expect(client.command("runtime.preview_executor_review_proposal_narrow_apply", { proposal_id: "missing-proposal" })).resolves.toMatchObject({
+      status: "blocked",
+      can_apply: false,
+    })
+    await expect(client.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: "missing-proposal", dry_run: true })).resolves.toMatchObject({
+      status: "blocked",
+      error: expect.stringContaining("apply readiness is blocked"),
+    })
+    await expect(client.command("runtime.list_executor_review_proposal_narrow_applies")).resolves.toEqual([])
+    await expect(client.command("runtime.get_executor_review_proposal_narrow_apply", { apply_id: "missing-apply" })).resolves.toBeNull()
+    await expect(client.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: "missing-proposal", applied_by: "operator" })).rejects.toThrow("runtime must be started before proposal writes")
     expect(adapter.startCalls).toBe(0)
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
     await client.shutdown()
@@ -15548,6 +15701,28 @@ describe("RuntimeServerClient", () => {
       runtime_command: "runtime.list_executor_review_proposal_apply_readiness",
     })
     expect(authority.validationProfile("/executor-review-proposal-apply-readiness").targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_apply_readiness_tui.py")
+  })
+
+  test("authority registry includes executor review proposal narrow apply commands", () => {
+    const authority = new CommandAuthorityService()
+    expect(authority.get("/executor-review-proposal-narrow-apply-preview")).toMatchObject({
+      risk: "safe_read",
+      mutates_events: false,
+      runtime_command: "runtime.preview_executor_review_proposal_narrow_apply",
+      gate: "none",
+    })
+    expect(authority.get("/executor-review-proposal-narrow-apply")).toMatchObject({
+      risk: "high_impact_write",
+      mutates_events: true,
+      runtime_command: "runtime.apply_executor_review_proposal_narrow",
+      gate: "proposal_review_runtime",
+    })
+    expect(authority.get("/executor-review-proposal-narrow-apply-dry-run")).toMatchObject({
+      risk: "safe_read",
+      mutates_events: false,
+      runtime_command: "runtime.apply_executor_review_proposal_narrow",
+    })
+    expect(authority.validationProfile("/executor-review-proposal-narrow-apply").targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_narrow_apply_tui.py")
   })
 
   test("authority registry includes MiniMax live validation commands", () => {

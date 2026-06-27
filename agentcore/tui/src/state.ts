@@ -1592,6 +1592,89 @@ export type ExecutorReviewProposalApplyReadinessState = {
   commandError?: string
 }
 
+export type ExecutorReviewProposalNarrowApplyCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type ExecutorReviewProposalNarrowApplyPreviewSummary = {
+  preview_id: string
+  status: string
+  can_apply: boolean
+  proposal_id: string
+  readiness_id?: string
+  review_request_id?: string
+  request_gate_id?: string
+  decision_gate_id?: string
+  create_id?: string
+  source_executor_review_id?: string
+  source_draft_id?: string
+  source_packet_id?: string
+  proposal_status?: string
+  readiness_status?: string
+  candidate_kind: string
+  candidate_risk: string
+  proposal_title_preview: string
+  proposal_summary_preview: string
+  action_kind?: string
+  mission_id?: string
+  result_id?: string
+  source_evidence_ids: string[]
+  source_finding_ids: string[]
+  source_confidence?: number
+  existing_apply_id?: string
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: ExecutorReviewProposalNarrowApplyCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+}
+
+export type ExecutorReviewProposalNarrowApplyResultSummary = {
+  apply_id: string
+  status: string
+  proposal_id: string
+  readiness_id?: string
+  review_request_id?: string
+  request_gate_id?: string
+  decision_gate_id?: string
+  create_id?: string
+  source_executor_review_id?: string
+  source_draft_id?: string
+  source_packet_id?: string
+  candidate_kind: string
+  candidate_risk: string
+  applied_at: string
+  applied_by: string
+  reason_preview?: string
+  error?: string
+  apply_hash: string
+  recommended_commands: ExecutorReviewProposalNarrowApplyCommandSummary[]
+}
+
+export type ExecutorReviewProposalNarrowApplyRecordSummary = {
+  apply_id: string
+  status: string
+  proposal_id: string
+  readiness_id?: string
+  candidate_kind: string
+  candidate_risk: string
+  applied_at: string
+  summary_preview: string
+  apply_hash: string
+}
+
+export type ExecutorReviewProposalNarrowApplyState = {
+  preview?: ExecutorReviewProposalNarrowApplyPreviewSummary | null
+  latestResult?: ExecutorReviewProposalNarrowApplyResultSummary | null
+  records: ExecutorReviewProposalNarrowApplyRecordSummary[]
+  selected?: ExecutorReviewProposalNarrowApplyResultSummary | null
+  commandError?: string
+}
+
 export type OpenCodeHandoffFollowupStatus =
   | "sent"
   | "claimed"
@@ -3350,6 +3433,7 @@ export type UiState = {
   executorReviewProposalReviewRequest?: ExecutorReviewProposalReviewRequestState
   executorReviewProposalReviewDecision?: ExecutorReviewProposalReviewDecisionState
   executorReviewProposalApplyReadiness?: ExecutorReviewProposalApplyReadinessState
+  executorReviewProposalNarrowApply?: ExecutorReviewProposalNarrowApplyState
   minimaxLiveValidation?: MiniMaxLiveValidationState
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState
