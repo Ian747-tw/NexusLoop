@@ -3569,7 +3569,13 @@ describe("runtime UI effects", () => {
     const readinessId = state.executorReviewProposalApplyReadiness?.records[0]?.readiness_id
     expect(readinessId).toBeTruthy()
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness-show", args: [readinessId!] })
-    expect(state.executorReviewProposalApplyReadiness?.selected).toMatchObject({ status: "ready", proposal_id: first.proposalId })
+    expect(state.executorReviewProposalApplyReadiness?.selected).toMatchObject({
+      status: "ready",
+      proposal_id: first.proposalId,
+      can_apply_in_future: true,
+      blockers: [],
+      recommended_commands: expect.arrayContaining([expect.objectContaining({ command: `/proposal ${first.proposalId}` })]),
+    })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/executor-review-proposal-apply-readiness"] })
     expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_apply_readiness_tui.py")
 

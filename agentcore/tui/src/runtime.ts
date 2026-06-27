@@ -457,7 +457,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       case "runtime.list_executor_review_proposal_apply_readiness":
         return this.listExecutorReviewProposalApplyReadiness(payload)
       case "runtime.get_executor_review_proposal_apply_readiness":
-        return this.listExecutorReviewProposalApplyReadiness({ limit: 100 }).find((item) => item.readiness_id === String(payload.readinessId ?? payload.readiness_id ?? "")) ?? null
+        return this.getExecutorReviewProposalApplyReadiness(String(payload.readinessId ?? payload.readiness_id ?? ""))
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(String(payload.handoffId ?? payload.handoff_id ?? ""))
       case "runtime.list_opencode_handoff_followups":
@@ -2190,6 +2190,13 @@ export class FakeRuntimeClient implements RuntimeClient {
       .filter((record) => !payload.candidateKind && !payload.candidate_kind || record.candidate_kind === (payload.candidateKind ?? payload.candidate_kind))
       .filter((record) => !payload.proposalId && !payload.proposal_id || record.proposal_id === (payload.proposalId ?? payload.proposal_id))
       .slice(0, readLimit(payload.limit, 20))
+  }
+
+  private getExecutorReviewProposalApplyReadiness(readinessId: string): ExecutorReviewProposalApplyReadinessPreviewSummary | null {
+    return this.proposals
+      .filter((proposal) => isRecord(proposal.action_payload) && proposal.action_payload.source === "executor_review_proposal_create")
+      .map((proposal) => this.previewExecutorReviewProposalApplyReadiness({ proposalId: proposal.proposal_id }))
+      .find((preview) => preview.readiness_id === readinessId) ?? null
   }
 
   private proposalIdForFakeReview(reviewRequestId?: string): string | undefined {
