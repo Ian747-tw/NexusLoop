@@ -99,6 +99,39 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "runtime.executor_review_proposal_apply_readiness_summary") return { total_considered: 0, ready_count: 0, blocked_count: 0, needs_review_count: 0, rejected_count: 0, generic_count: 0, high_risk_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
     if (name === "runtime.list_executor_review_proposal_apply_readiness") return []
     if (name === "runtime.get_executor_review_proposal_apply_readiness") return null
+    if (name === "runtime.preview_executor_review_proposal_narrow_apply") return {
+      preview_id: "narrow_apply_preview_test",
+      status: "blocked",
+      can_apply: false,
+      proposal_id: payload?.proposal_id ?? "unknown",
+      readiness_id: "readiness_test",
+      candidate_kind: "generic",
+      candidate_risk: "medium",
+      proposal_title_preview: "Narrow apply preview",
+      proposal_summary_preview: "Narrow apply preview",
+      source_evidence_ids: [],
+      source_finding_ids: [],
+      blockers: ["apply readiness is blocked"],
+      warnings: [],
+      recommended_commands: [],
+      generated_at: "2026-06-20T00:00:00.000Z",
+      redacted_summary_preview: "Narrow apply preview blocked.",
+    }
+    if (name === "runtime.apply_executor_review_proposal_narrow") return {
+      apply_id: "narrow_apply_test",
+      status: "blocked",
+      proposal_id: payload?.proposal_id ?? "unknown",
+      readiness_id: "readiness_test",
+      candidate_kind: "generic",
+      candidate_risk: "medium",
+      applied_at: "2026-06-20T00:00:00.000Z",
+      applied_by: "operator",
+      error: "apply readiness is blocked",
+      apply_hash: "hash",
+      recommended_commands: [],
+    }
+    if (name === "runtime.list_executor_review_proposal_narrow_applies") return []
+    if (name === "runtime.get_executor_review_proposal_narrow_apply") return null
     if (name === "runtime.preview_opencode_result_review_packet") {
       return {
         packet_id: "packet_test",
@@ -978,6 +1011,41 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.executor_review_proposal_apply_readiness_summary")
     expect(runtime.commandNames).toContain("runtime.list_executor_review_proposal_apply_readiness")
     expect(runtime.commandNames).toContain("runtime.get_executor_review_proposal_apply_readiness")
+    expect(runtime.commandNames).toContain("runtime.command_authority_get")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless executor review proposal narrow-apply scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-narrow-apply-preview proposal=proposal-test" },
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-narrow-apply-dry-run proposal=proposal-test" },
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-narrow-applies" },
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-narrow-apply-show narrow-apply-test" },
+      { type: "submit" },
+      { type: "insert", text: "/authority-show /executor-review-proposal-narrow-apply" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-executor-review-narrow-apply-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Executor review proposal narrow apply")
+    expect(runtime.commandNames).toContain("runtime.preview_executor_review_proposal_narrow_apply")
+    expect(runtime.commandNames).toContain("runtime.apply_executor_review_proposal_narrow")
+    expect(runtime.commandNames).toContain("runtime.list_executor_review_proposal_narrow_applies")
+    expect(runtime.commandNames).toContain("runtime.get_executor_review_proposal_narrow_apply")
     expect(runtime.commandNames).toContain("runtime.command_authority_get")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")

@@ -89,6 +89,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...executorReviewProposalReviewRequestLines(state))
   out.push(...executorReviewProposalReviewDecisionLines(state))
   out.push(...executorReviewProposalApplyReadinessLines(state))
+  out.push(...executorReviewProposalNarrowApplyLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
@@ -848,6 +849,54 @@ function executorReviewProposalApplyReadinessLines(state: UiState): string[] {
   if (readiness.selected && readiness.selected.readiness_id !== readiness.preview?.readiness_id) out.push(`  selected=${readiness.selected.readiness_id} status=${readiness.selected.status} proposal=${readiness.selected.proposal_id}`)
   if (readiness.commandError) out.push(`  command_error=${redactText(readiness.commandError)}`)
   out.push("  note=apply readiness does not apply proposals, mutate missions, call provider, or launch OpenCode")
+  return out
+}
+
+function executorReviewProposalNarrowApplyLines(state: UiState): string[] {
+  const apply = state.executorReviewProposalNarrowApply
+  const out = ["Executor review proposal narrow apply"]
+  if (!apply) {
+    out.push("  preview=none")
+    out.push("  latest=none")
+    out.push("  records=0")
+    out.push("  note=narrow apply marks the proposal applied only and does not mutate missions, submit results, call provider, or launch OpenCode")
+    return out
+  }
+  if (apply.preview) {
+    const item = apply.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_apply=${item.can_apply}`)
+    out.push(`  proposal=${item.proposal_id} readiness=${item.readiness_id ?? "none"} review_request=${item.review_request_id ?? "none"} decision=${item.decision_gate_id ?? "none"} create=${item.create_id ?? "none"}`)
+    out.push(`  source_review=${item.source_executor_review_id ?? "none"} draft=${item.source_draft_id ?? "none"} packet=${item.source_packet_id ?? "none"}`)
+    out.push(`  proposal_status=${item.proposal_status ?? "none"} readiness_status=${item.readiness_status ?? "none"} candidate=${item.candidate_kind} risk=${item.candidate_risk} action=${item.action_kind ?? "none"}`)
+    out.push(`  title=${preview(redactText(item.proposal_title_preview))}`)
+    out.push(`  summary=${preview(redactText(item.redacted_summary_preview))}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(String(blocker ?? "")))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(String(warning ?? "")))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (apply.latestResult) {
+    const result = apply.latestResult
+    out.push(`  latest=${result.apply_id} status=${result.status} proposal=${result.proposal_id} candidate=${result.candidate_kind} risk=${result.candidate_risk}`)
+    if (result.reason_preview) out.push(`  reason=${preview(redactText(result.reason_preview))}`)
+    if (result.error) out.push(`  latest_error=${preview(redactText(result.error))}`)
+  } else {
+    out.push("  latest=none")
+  }
+  out.push(`  records=${apply.records.length}`)
+  if (apply.records.length > 0) {
+    out.push("  recent_applies")
+    out.push(...apply.records.slice(0, 10).map((record) => `    - ${record.apply_id} status=${record.status} proposal=${record.proposal_id} kind=${record.candidate_kind} risk=${record.candidate_risk}: ${preview(redactText(record.summary_preview))}`))
+  }
+  if (apply.selected && apply.selected.apply_id !== apply.latestResult?.apply_id) out.push(`  selected=${apply.selected.apply_id} status=${apply.selected.status} proposal=${apply.selected.proposal_id}`)
+  if (apply.commandError) out.push(`  command_error=${redactText(apply.commandError)}`)
+  out.push("  note=narrow apply marks the proposal applied only and does not mutate missions, submit results, call provider, or launch OpenCode")
   return out
 }
 

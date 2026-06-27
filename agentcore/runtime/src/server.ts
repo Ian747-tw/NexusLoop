@@ -53,6 +53,8 @@ import { ExecutorReviewProposalReviewDecisionService, readExecutorReviewProposal
 import type { ExecutorReviewProposalReviewDecisionPreview, ExecutorReviewProposalReviewDecisionRecord, ExecutorReviewProposalReviewDecisionResult } from "./commander-executor-review/executor-review-proposal-review-decision-types"
 import { ExecutorReviewProposalApplyReadinessService, readExecutorReviewProposalApplyReadinessInput } from "./commander-executor-review/executor-review-proposal-apply-readiness-service"
 import type { ExecutorReviewProposalApplyCandidateKind, ExecutorReviewProposalApplyReadinessPreview, ExecutorReviewProposalApplyReadinessRecord, ExecutorReviewProposalApplyReadinessStatus, ExecutorReviewProposalApplyReadinessSummary } from "./commander-executor-review/executor-review-proposal-apply-readiness-types"
+import { ExecutorReviewProposalNarrowApplyService, readExecutorReviewProposalNarrowApplyInput, readExecutorReviewProposalNarrowApplyPreviewInput } from "./commander-executor-review/executor-review-proposal-narrow-apply-service"
+import type { ExecutorReviewProposalNarrowApplyPreview, ExecutorReviewProposalNarrowApplyRecord, ExecutorReviewProposalNarrowApplyResult } from "./commander-executor-review/executor-review-proposal-narrow-apply-types"
 import { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
 import { defaultReasoningProviderConfig, reasoningProviderStatus, validateReasoningProviderConfig, type ReasoningProviderConfig, type ReasoningProviderStatus } from "./reasoning/reasoning-provider-config"
 import { ReasoningProviderHealthService } from "./reasoning/reasoning-health-service"
@@ -282,6 +284,7 @@ export class RuntimeServer {
   private executorReviewProposalReviewRequestServiceInstance: ExecutorReviewProposalReviewRequestService | null = null
   private executorReviewProposalReviewDecisionServiceInstance: ExecutorReviewProposalReviewDecisionService | null = null
   private executorReviewProposalApplyReadinessServiceInstance: ExecutorReviewProposalApplyReadinessService | null = null
+  private executorReviewProposalNarrowApplyServiceInstance: ExecutorReviewProposalNarrowApplyService | null = null
   private minimaxLiveValidationServiceInstance: MiniMaxLiveValidationService | null = null
   private runtimeCheckpointServiceInstance: RuntimeCheckpointService | null = null
   private runtimeRestoreServiceInstance: RuntimeRestoreService | null = null
@@ -861,6 +864,19 @@ export class RuntimeServer {
         })
       case "runtime.get_executor_review_proposal_apply_readiness":
         return this.getExecutorReviewProposalApplyReadiness(requiredString(payload.readinessId ?? payload.readiness_id, "readinessId"))
+      case "runtime.preview_executor_review_proposal_narrow_apply":
+        return this.previewExecutorReviewProposalNarrowApply(readExecutorReviewProposalNarrowApplyPreviewInput(payload))
+      case "runtime.apply_executor_review_proposal_narrow":
+        return this.applyExecutorReviewProposalNarrow(readExecutorReviewProposalNarrowApplyInput(payload))
+      case "runtime.list_executor_review_proposal_narrow_applies":
+        return this.listExecutorReviewProposalNarrowApplies({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          proposal_id: optionalString(payload.proposalId ?? payload.proposal_id, "proposalId"),
+          status: optionalString(payload.status, "status"),
+          candidate_kind: optionalString(payload.candidateKind ?? payload.candidate_kind, "candidateKind") as ExecutorReviewProposalApplyCandidateKind | undefined,
+        })
+      case "runtime.get_executor_review_proposal_narrow_apply":
+        return this.getExecutorReviewProposalNarrowApply(requiredString(payload.applyId ?? payload.apply_id, "applyId"))
       case "runtime.get_opencode_handoff_followup":
         return this.getOpenCodeHandoffFollowup(requiredString(payload.handoffId ?? payload.handoff_id, "handoffId"))
       case "runtime.list_opencode_handoff_followups":
@@ -1682,6 +1698,23 @@ export class RuntimeServer {
 
   async getExecutorReviewProposalApplyReadiness(readinessId: string): Promise<ExecutorReviewProposalApplyReadinessPreview | null> {
     return this.executorReviewProposalApplyReadinessService().get(readinessId)
+  }
+
+  async previewExecutorReviewProposalNarrowApply(input: Parameters<ExecutorReviewProposalNarrowApplyService["preview"]>[0]): Promise<ExecutorReviewProposalNarrowApplyPreview> {
+    return this.executorReviewProposalNarrowApplyService().preview(input)
+  }
+
+  async applyExecutorReviewProposalNarrow(input: Parameters<ExecutorReviewProposalNarrowApplyService["apply"]>[0]): Promise<ExecutorReviewProposalNarrowApplyResult> {
+    if (input.dry_run !== true) this.requireProposalWriteRuntime("runtime.apply_executor_review_proposal_narrow")
+    return this.executorReviewProposalNarrowApplyService().apply(input)
+  }
+
+  async listExecutorReviewProposalNarrowApplies(input: Parameters<ExecutorReviewProposalNarrowApplyService["list"]>[0] = {}): Promise<ExecutorReviewProposalNarrowApplyRecord[]> {
+    return this.executorReviewProposalNarrowApplyService().list(input)
+  }
+
+  async getExecutorReviewProposalNarrowApply(applyId: string): Promise<ExecutorReviewProposalNarrowApplyResult | null> {
+    return this.executorReviewProposalNarrowApplyService().get(applyId)
   }
 
   async getOpenCodeHandoffFollowup(handoffId: string): Promise<OpenCodeHandoffFollowup | null> {
@@ -2648,6 +2681,16 @@ export class RuntimeServer {
       now: this.commanderExecutorReviewNow ?? this.opencodeHandoffNow,
     })
     return this.executorReviewProposalApplyReadinessServiceInstance
+  }
+
+  private executorReviewProposalNarrowApplyService(): ExecutorReviewProposalNarrowApplyService {
+    this.executorReviewProposalNarrowApplyServiceInstance ??= new ExecutorReviewProposalNarrowApplyService({
+      eventStore: this.eventStore,
+      proposalRegistry: this.proposalRegistry,
+      applyReadinessService: this.executorReviewProposalApplyReadinessService(),
+      now: this.commanderExecutorReviewNow ?? this.opencodeHandoffNow,
+    })
+    return this.executorReviewProposalNarrowApplyServiceInstance
   }
 
   private opencodeHandoffFollowupService(): OpenCodeHandoffFollowupService {

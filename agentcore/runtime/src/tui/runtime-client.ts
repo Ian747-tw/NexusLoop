@@ -19,6 +19,7 @@ import type { ExecutorReviewProposalCreateInput, ExecutorReviewProposalCreatePre
 import type { ExecutorReviewProposalReviewRequestInput, ExecutorReviewProposalReviewRequestPreview, ExecutorReviewProposalReviewRequestPreviewInput, ExecutorReviewProposalReviewRequestRecord, ExecutorReviewProposalReviewRequestResult } from "../commander-executor-review/executor-review-proposal-review-request-types"
 import type { ExecutorReviewProposalReviewDecisionInput, ExecutorReviewProposalReviewDecisionPreview, ExecutorReviewProposalReviewDecisionPreviewInput, ExecutorReviewProposalReviewDecisionRecord, ExecutorReviewProposalReviewDecisionResult } from "../commander-executor-review/executor-review-proposal-review-decision-types"
 import type { ExecutorReviewProposalApplyCandidateKind, ExecutorReviewProposalApplyReadinessInput, ExecutorReviewProposalApplyReadinessPreview, ExecutorReviewProposalApplyReadinessRecord, ExecutorReviewProposalApplyReadinessStatus, ExecutorReviewProposalApplyReadinessSummary } from "../commander-executor-review/executor-review-proposal-apply-readiness-types"
+import type { ExecutorReviewProposalNarrowApplyInput, ExecutorReviewProposalNarrowApplyPreview, ExecutorReviewProposalNarrowApplyPreviewInput, ExecutorReviewProposalNarrowApplyRecord, ExecutorReviewProposalNarrowApplyResult } from "../commander-executor-review/executor-review-proposal-narrow-apply-types"
 import type { ReasoningProviderStatus } from "../reasoning/reasoning-provider-config"
 import type { ReasoningProviderHealth, ReasoningProviderSmokePreview, ReasoningProviderSmokeResult } from "../reasoning/reasoning-health-types"
 import type { MiniMaxLiveValidationInput, MiniMaxLiveValidationPreview, MiniMaxLiveValidationRecord, MiniMaxLiveValidationResult } from "../reasoning/minimax-live-validation-types"
@@ -280,6 +281,10 @@ export interface RuntimeClient {
   command(name: "runtime.executor_review_proposal_apply_readiness_summary", payload?: { limit?: number }): Promise<ExecutorReviewProposalApplyReadinessSummary>
   command(name: "runtime.list_executor_review_proposal_apply_readiness", payload?: { limit?: number; status?: ExecutorReviewProposalApplyReadinessStatus; candidate_kind?: ExecutorReviewProposalApplyCandidateKind; candidateKind?: ExecutorReviewProposalApplyCandidateKind; proposal_id?: string; proposalId?: string }): Promise<ExecutorReviewProposalApplyReadinessRecord[]>
   command(name: "runtime.get_executor_review_proposal_apply_readiness", payload: { readiness_id: string } | { readinessId: string }): Promise<ExecutorReviewProposalApplyReadinessPreview | null>
+  command(name: "runtime.preview_executor_review_proposal_narrow_apply", payload: ExecutorReviewProposalNarrowApplyPreviewInput): Promise<ExecutorReviewProposalNarrowApplyPreview>
+  command(name: "runtime.apply_executor_review_proposal_narrow", payload: ExecutorReviewProposalNarrowApplyInput): Promise<ExecutorReviewProposalNarrowApplyResult>
+  command(name: "runtime.list_executor_review_proposal_narrow_applies", payload?: { limit?: number; proposal_id?: string; proposalId?: string; status?: string; candidate_kind?: ExecutorReviewProposalApplyCandidateKind; candidateKind?: ExecutorReviewProposalApplyCandidateKind }): Promise<ExecutorReviewProposalNarrowApplyRecord[]>
+  command(name: "runtime.get_executor_review_proposal_narrow_apply", payload: { apply_id: string } | { applyId: string }): Promise<ExecutorReviewProposalNarrowApplyResult | null>
   command(name: "runtime.get_opencode_handoff_followup", payload: { handoffId: string } | { handoff_id: string }): Promise<OpenCodeHandoffFollowup | null>
   command(name: "runtime.list_opencode_handoff_followups", payload?: { limit?: number; staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowup[]>
   command(name: "runtime.opencode_handoff_followup_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number }): Promise<OpenCodeHandoffFollowupSummary>
@@ -509,6 +514,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.executor_review_proposal_apply_readiness_summary"
     | "runtime.list_executor_review_proposal_apply_readiness"
     | "runtime.get_executor_review_proposal_apply_readiness"
+    | "runtime.preview_executor_review_proposal_narrow_apply"
+    | "runtime.apply_executor_review_proposal_narrow"
+    | "runtime.list_executor_review_proposal_narrow_applies"
+    | "runtime.get_executor_review_proposal_narrow_apply"
     | "runtime.get_opencode_handoff_followup"
     | "runtime.list_opencode_handoff_followups"
     | "runtime.opencode_handoff_followup_summary"
