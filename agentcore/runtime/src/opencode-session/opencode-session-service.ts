@@ -21,6 +21,7 @@ import type {
 
 const MAX_TEXT = 320
 const MAX_ROWS = 12
+const MAX_IDENTITY_TEXT = 64_000
 const DEFAULT_MAX_CONTEXT_BYTES = 12_000
 const MAX_CONTEXT_BYTES = 48_000
 const DEFAULT_MAX_WALL_TIME_MS = 30 * 60 * 1000
@@ -117,7 +118,8 @@ export class OpenCodeSessionService {
     const generatedAt = this.now().toISOString()
     const source = await this.resolveSource(input)
     const sourceKind = input.source_kind ?? source.source_kind
-    const objective = bound(input.objective ?? source.objective ?? "")
+    const rawObjective = String(input.objective ?? source.objective ?? "")
+    const objective = bound(rawObjective)
     const title = bound(input.title ?? source.title ?? titleFromObjective(objective))
     const blockers: string[] = []
     const warnings = [
@@ -142,8 +144,12 @@ export class OpenCodeSessionService {
     const sessionTimeoutPolicy = timeoutPolicy(input)
     const sessionQuestionPolicy = questionPolicy()
     const humanPolicy = humanControlPolicy()
-    const commanderContext = bound(`Commander strategic context: ${source.context ?? objective}`)
-    const opencodeSeed = bound(`OpenCode tactical seed: ${objective}`)
+    const rawCommanderContext = `Commander strategic context: ${source.context ?? rawObjective}`
+    const rawOpenCodeSeed = `OpenCode tactical seed: ${rawObjective}`
+    const commanderContext = bound(rawCommanderContext)
+    const opencodeSeed = bound(rawOpenCodeSeed)
+    const commanderContextHash = sha256(rawCommanderContext)
+    const opencodeContextHash = sha256(rawOpenCodeSeed)
     const sharedContext = bound(`Shared source: ${sourceKind}${source.proposal_id ? ` proposal=${source.proposal_id}` : ""}${source.mission_id ? ` mission=${source.mission_id}` : ""}`)
     const previewHash = sha256(stableJson({
       source_kind: sourceKind,
@@ -151,7 +157,7 @@ export class OpenCodeSessionService {
       proposal_id: source.proposal_id,
       review_request_id: source.review_request_id,
       apply_id: source.apply_id,
-      objective,
+      objective: rawObjective,
     }))
     const existing = blockers.length === 0 ? await this.findExisting(previewHash) : undefined
     if (existing) blockers.push("matching active planned OpenCode session already exists")
@@ -167,6 +173,8 @@ export class OpenCodeSessionService {
       objective_preview: objective,
       commander_context_summary_preview: commanderContext,
       opencode_context_seed_preview: opencodeSeed,
+      commander_context_hash: commanderContextHash,
+      opencode_context_hash: opencodeContextHash,
       max_context_bytes: maxContextBytes,
       success_criteria: boundList(source.success_criteria.length ? source.success_criteria : ["Produce bounded progress evidence or a blocker report"]),
       constraints: boundList([
@@ -183,6 +191,7 @@ export class OpenCodeSessionService {
       recommended_commands: recommendedCommands(source.proposal_id, source.mission_id, existing?.session_id),
       generated_at: generatedAt,
       redacted_summary_preview: blockers.length === 0 ? `Planned OpenCode session can be created for ${sourceKind} source.` : blockers[0] ?? "OpenCode session plan is blocked.",
+      session_hash: previewHash,
     })
   }
 
@@ -282,8 +291,8 @@ function normalizePreviewInput(input: Record<string, unknown>): OpenCodeSessionP
     proposal_id: optional(input.proposal_id ?? input.proposalId ?? input.proposal),
     review_request_id: optional(input.review_request_id ?? input.reviewRequestId ?? input.review),
     apply_id: optional(input.apply_id ?? input.applyId ?? input.apply),
-    objective: optional(input.objective),
-    title: optional(input.title),
+    objective: optionalIdentityText(input.objective),
+    title: optionalIdentityText(input.title),
     source_kind: readSourceKind(input.source_kind ?? input.sourceKind),
     max_context_bytes: optionalNumber(input.max_context_bytes ?? input.maxContextBytes),
     max_wall_time_ms: optionalNumber(input.max_wall_time_ms ?? input.maxWallTimeMs),
@@ -316,6 +325,8 @@ function planFromPreview(preview: OpenCodeSessionPreview, extra: { session_id: s
     commander_context_summary: preview.commander_context_summary_preview,
     opencode_context_seed: preview.opencode_context_seed_preview,
     shared_context_summary: bound(`Shared planning context for ${preview.source_kind}`),
+    commander_context_hash: preview.commander_context_hash,
+    opencode_context_hash: preview.opencode_context_hash,
     max_context_bytes: preview.max_context_bytes,
     success_criteria: preview.success_criteria,
     constraints: preview.constraints,
@@ -330,6 +341,8 @@ function planFromPreview(preview: OpenCodeSessionPreview, extra: { session_id: s
 }
 
 function planFromEvent(event: JsonlEvent): OpenCodeSessionPlan {
+  const commanderContext = readEventString(event.commander_context_summary, "commander_context_summary")
+  const opencodeSeed = readEventString(event.opencode_context_seed, "opencode_context_seed")
   return redactValue({
     session_id: readEventString(event.session_id, "session_id"),
     status: "planned",
@@ -340,9 +353,11 @@ function planFromEvent(event: JsonlEvent): OpenCodeSessionPlan {
     source_kind: readSourceKind(event.source_kind) ?? "unknown",
     objective: readEventString(event.objective, "objective"),
     title: readEventString(event.title, "title"),
-    commander_context_summary: readEventString(event.commander_context_summary, "commander_context_summary"),
-    opencode_context_seed: readEventString(event.opencode_context_seed, "opencode_context_seed"),
+    commander_context_summary: commanderContext,
+    opencode_context_seed: opencodeSeed,
     shared_context_summary: readEventString(event.shared_context_summary, "shared_context_summary"),
+    commander_context_hash: optional(event.commander_context_hash) ?? sha256(commanderContext),
+    opencode_context_hash: optional(event.opencode_context_hash) ?? sha256(opencodeSeed),
     max_context_bytes: boundedNumber(event.max_context_bytes, DEFAULT_MAX_CONTEXT_BYTES, 1_000, MAX_CONTEXT_BYTES),
     success_criteria: boundList(event.success_criteria),
     constraints: boundList(event.constraints),
@@ -436,14 +451,7 @@ function readHumanPolicy(value: unknown): OpenCodeSessionHumanControlPolicy {
 }
 
 function sessionHashFor(preview: OpenCodeSessionPreview): string {
-  return sha256(stableJson({
-    source_kind: preview.source_kind,
-    mission_id: preview.mission_id,
-    proposal_id: preview.proposal_id,
-    review_request_id: preview.review_request_id,
-    apply_id: preview.apply_id,
-    objective: preview.objective_preview,
-  }))
+  return preview.session_hash
 }
 
 function sessionId(hash: string): string {
@@ -495,6 +503,12 @@ function optional(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const bounded = bound(value.trim())
   return bounded ? bounded : undefined
+}
+
+function optionalIdentityText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim().slice(0, MAX_IDENTITY_TEXT)
+  return trimmed ? trimmed : undefined
 }
 
 function required(value: unknown, name: string): string {

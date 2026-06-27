@@ -14261,6 +14261,9 @@ describe("OpenCode session planning", () => {
       can_create: true,
       source_kind: "manual",
       max_context_bytes: 4096,
+      commander_context_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      opencode_context_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      session_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
       timeout_policy: expect.objectContaining({ forced_pause_enabled: true, report_required_on_timeout: true }),
       question_policy: expect.objectContaining({ allow_opencode_questions: true, max_pending_questions: 3 }),
       human_control_policy: expect.objectContaining({ allow_human_pause: true, require_reason_for_stop: true }),
@@ -14269,6 +14272,8 @@ describe("OpenCode session planning", () => {
       status: "planned",
       source_kind: "manual",
       max_context_bytes: 4096,
+      commander_context_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      opencode_context_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
     })
     expect(await readEventKinds(dir)).not.toContain("opencode_session_planned")
 
@@ -14279,9 +14284,12 @@ describe("OpenCode session planning", () => {
       title: "Training progress inspection",
       createdBy: "operator token=session-secret",
       maxContextBytes: 4096,
-    }) as { session_id: string; session_hash: string; commander_context_summary: string; opencode_context_seed: string; max_context_bytes: number }
+    }) as { session_id: string; session_hash: string; commander_context_summary: string; opencode_context_seed: string; commander_context_hash: string; opencode_context_hash: string; max_context_bytes: number }
     expect(adapter.startCalls).toBe(1)
     expect(created.commander_context_summary).not.toEqual(created.opencode_context_seed)
+    expect(created.commander_context_hash).toMatch(/^[a-f0-9]{64}$/)
+    expect(created.opencode_context_hash).toMatch(/^[a-f0-9]{64}$/)
+    expect(created.commander_context_hash).not.toBe(created.opencode_context_hash)
     expect(created.max_context_bytes).toBe(4096)
     await expect(server.command("runtime.list_opencode_sessions")).resolves.toEqual([
       expect.objectContaining({ session_id: created.session_id, status: "planned", source_kind: "manual" }),
@@ -14290,6 +14298,8 @@ describe("OpenCode session planning", () => {
       session_id: created.session_id,
       status: "planned",
       max_context_bytes: 4096,
+      commander_context_hash: created.commander_context_hash,
+      opencode_context_hash: created.opencode_context_hash,
     })
     await expect(server.command("runtime.opencode_session_summary")).resolves.toMatchObject({
       total_sessions: 1,
@@ -14302,11 +14312,39 @@ describe("OpenCode session planning", () => {
     })
     const kinds = await readEventKinds(dir)
     expect(kinds.filter((kind) => kind === "opencode_session_planned")).toHaveLength(1)
+    const planned = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_planned")
+    expect(planned[0]).toMatchObject({
+      session_hash: created.session_hash,
+      commander_context_hash: created.commander_context_hash,
+      opencode_context_hash: created.opencode_context_hash,
+      max_context_bytes: 4096,
+    })
     expect(kinds).not.toContain("opencode_process_smoke_started")
     expect(kinds).not.toContain("runtime_opencode_handoff_started")
     expect(kinds).not.toContain("mission_progress_recorded")
     expect(kinds).not.toContain("mission_result_submitted")
     expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("session-secret")
+    await server.shutdown()
+  })
+
+  test("session identity uses the full objective instead of the rendered preview", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const sharedPrefix = `inspect long config sweep ${"x".repeat(340)}`
+    const first = await server.command("runtime.create_opencode_session_plan", {
+      objective: `${sharedPrefix} variant alpha`,
+    }) as { session_id: string; session_hash: string; objective: string }
+    const second = await server.command("runtime.create_opencode_session_plan", {
+      objective: `${sharedPrefix} variant beta`,
+    }) as { session_id: string; session_hash: string; objective: string }
+
+    expect(first.objective).toBe(second.objective)
+    expect(first.session_id).not.toBe(second.session_id)
+    expect(first.session_hash).not.toBe(second.session_hash)
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(2)
     await server.shutdown()
   })
 
