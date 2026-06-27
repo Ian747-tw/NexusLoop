@@ -1650,7 +1650,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const safeObjective = preview(redactText(resolvedObjective ?? ""))
     const title = optionalString(payload.title) ?? (proposal?.title ?? mission?.objective ?? resolvedObjective ?? "Planned OpenCode session")
     const maxContextBytes = Math.max(1_000, Math.min(readNumber(payload.maxContextBytes ?? payload.max_context_bytes, 12_000), 48_000))
-    const contextHash = createHash("sha256").update(`${safeObjective}:${proposalId ?? ""}:${missionId ?? ""}:${applyId ?? ""}`).digest("hex")
+    const contextHash = this.openCodeSessionIdentityHash(payload, sourceKind, linkedProposalId, linkedMissionId, applyId)
     return {
       preview_id: `fake-opencode-session-preview-${contextHash.slice(0, 12)}`,
       can_create: blockers.length === 0,
@@ -1703,7 +1703,7 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private createOpenCodeSessionPlan(payload: Record<string, unknown>): OpenCodeSessionPlanSummary {
     const previewResult = this.previewOpenCodeSessionPlan(payload)
-    const sessionHash = createHash("sha256").update(`${previewResult.source_kind}:${previewResult.proposal_id ?? ""}:${previewResult.mission_id ?? ""}:${previewResult.objective_preview}`).digest("hex")
+    const sessionHash = this.openCodeSessionIdentityHash(payload, previewResult.source_kind, previewResult.proposal_id, previewResult.mission_id, previewResult.apply_id)
     const existing = this.opencodeSessions.find((item) => item.session_hash === sessionHash && item.status === "planned")
     if (existing) return existing
     if (!previewResult.can_create) throw new Error(previewResult.blockers[0] ?? "OpenCode session plan is blocked")
@@ -1734,6 +1734,17 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (payload.dryRun === true || payload.dry_run === true) return session
     this.opencodeSessions.unshift(session)
     return session
+  }
+
+  private openCodeSessionIdentityHash(payload: Record<string, unknown>, sourceKind: string, proposalId?: string, missionId?: string, applyId?: string): string {
+    const objective = optionalString(payload.objective)
+    const apply = applyId ? this.executorReviewProposalNarrowApplies.find((item) => item.apply_id === applyId && (!proposalId || item.proposal_id === proposalId)) : undefined
+    const linkedProposalId = proposalId ?? apply?.proposal_id
+    const proposal = linkedProposalId ? this.proposals.find((item) => item.proposal_id === linkedProposalId) : undefined
+    const linkedMissionId = proposal?.mission_id ?? missionId
+    const mission = linkedMissionId ? this.missions.find((item) => item.mission_id === linkedMissionId) : undefined
+    const rawObjective = objective ?? proposal?.summary ?? mission?.objective ?? ""
+    return createHash("sha256").update(`${sourceKind}:${linkedProposalId ?? ""}:${linkedMissionId ?? ""}:${applyId ?? ""}:${rawObjective}`).digest("hex")
   }
 
   private listOpenCodeSessions(payload: Record<string, unknown>): OpenCodeSessionRecordSummary[] {

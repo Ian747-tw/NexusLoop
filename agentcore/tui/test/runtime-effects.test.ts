@@ -4898,4 +4898,22 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("abc123")
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
+
+  test("fake opencode session identity uses raw long objectives instead of rendered previews", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    const sharedPrefix = "inspect training configuration ".repeat(12)
+    const firstObjective = `${sharedPrefix}variant alpha`
+    const secondObjective = `${sharedPrefix}variant beta`
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: [`objective=${firstObjective}`] })
+    const firstSessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(firstSessionId).toBeTruthy()
+    expect(state.opencodeSessions?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: [`objective=${secondObjective}`] })
+    expect(state.opencodeSessions?.latestPlan?.session_id).not.toBe(firstSessionId)
+    expect(state.opencodeSessions?.records).toHaveLength(2)
+    expect(new Set(state.opencodeSessions?.records.map((record) => record.session_id)).size).toBe(2)
+  })
 })
