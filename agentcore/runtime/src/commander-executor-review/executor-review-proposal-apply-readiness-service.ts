@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto"
+import type { EventStore } from "../events/event-store"
+import type { JsonlEvent } from "../events/event-types"
 import type { CommanderProposal } from "../missions/proposal-types"
 import type { ProposalRegistry } from "../missions/proposal-registry"
 import type { ReviewRegistry } from "../missions/review-registry"
@@ -24,6 +26,7 @@ const MAX_TEXT = 240
 const MAX_ROWS = 12
 
 export type ExecutorReviewProposalApplyReadinessServiceOptions = {
+  eventStore: EventStore
   proposalRegistry: ProposalRegistry
   reviewRegistry: ReviewRegistry
   createService: ExecutorReviewProposalCreateService
@@ -96,65 +99,102 @@ export class ExecutorReviewProposalApplyReadinessService {
   }
 
   private async resolveChain(input: ExecutorReviewProposalApplyReadinessInput): Promise<Chain> {
+    const gateEvents = await this.gateEvents()
     const proposalId = input.proposal_id
-      ?? await this.proposalIdForReview(input.review_request_id)
-      ?? await this.proposalIdForDecision(input.decision_gate_id)
-      ?? await this.proposalIdForCreate(input.create_id)
+      ?? this.proposalIdForReview(input.review_request_id, gateEvents)
+      ?? this.proposalIdForDecision(input.decision_gate_id, gateEvents)
+      ?? this.proposalIdForCreate(input.create_id, gateEvents)
     const proposal = proposalId ? await this.options.proposalRegistry.getProposal(proposalId) : null
     const reviewRequestId = input.review_request_id ?? proposal?.review_id
     const review = reviewRequestId ? await this.options.reviewRegistry.getReviewRequest(reviewRequestId) : null
-    const requestRecord = reviewRequestId ? (await this.options.requestService.list({ limit: 100, review_request_id: reviewRequestId })).find((record) => record.status === "requested") : undefined
-    const createRecord = input.create_id ? await this.createRecordFromResult(input.create_id) : proposalId ? (await this.options.createService.list({ limit: 100, proposal_id: proposalId })).find((record) => record.status === "created") : undefined
-    const decisionRecord = input.decision_gate_id ? await this.decisionRecordFromResult(input.decision_gate_id) : reviewRequestId ? (await this.options.decisionService.list({ limit: 100, review_request_id: reviewRequestId })).find((record) => record.status === "approved" || record.status === "rejected") : undefined
+    const requestRecord = reviewRequestId ? this.requestRecordFromGateEvents(gateEvents, { review_request_id: reviewRequestId }) : undefined
+    const createRecord = input.create_id ? this.createRecordFromGateEvents(gateEvents, { create_id: input.create_id }) : proposalId ? this.createRecordFromGateEvents(gateEvents, { proposal_id: proposalId }) : undefined
+    const decisionRecord = input.decision_gate_id ? this.decisionRecordFromGateEvents(gateEvents, { decision_gate_id: input.decision_gate_id }) : reviewRequestId ? this.decisionRecordFromGateEvents(gateEvents, { review_request_id: reviewRequestId }) : undefined
     return { proposal, review, createRecord, requestRecord, decisionRecord }
   }
 
-  private async createRecordFromResult(createId: string): Promise<ExecutorReviewProposalCreateRecord | undefined> {
-    const result = await this.options.createService.get(createId)
-    if (!result) return undefined
+  private async gateEvents(): Promise<JsonlEvent[]> {
+    return (await this.options.eventStore.readAll()).filter((event) =>
+      event.kind === "commander_executor_review_proposal_created"
+      || event.kind === "commander_executor_review_proposal_review_requested"
+      || event.kind === "commander_executor_review_proposal_review_approved"
+      || event.kind === "commander_executor_review_proposal_review_rejected")
+  }
+
+  private createRecordFromGateEvents(events: JsonlEvent[], query: { create_id?: string; proposal_id?: string }): ExecutorReviewProposalCreateRecord | undefined {
+    const event = events.slice().reverse().find((candidate) =>
+      candidate.kind === "commander_executor_review_proposal_created"
+      && (!query.create_id || candidate.create_id === query.create_id)
+      && (!query.proposal_id || candidate.proposal_id === query.proposal_id))
+    if (!event || typeof event.create_id !== "string" || typeof event.review_id !== "string" || typeof event.draft_id !== "string") return undefined
     return {
-      create_id: result.create_id,
-      status: result.status,
-      proposal_id: result.proposal_id,
-      review_id: result.review_id,
-      draft_id: result.draft_id,
-      draft_kind: String(result.draft_kind),
-      created_at: result.created_at,
-      summary_preview: result.summary_preview,
-      create_hash: result.create_hash,
+      create_id: event.create_id,
+      status: "created",
+      proposal_id: typeof event.proposal_id === "string" ? event.proposal_id : undefined,
+      review_id: event.review_id,
+      draft_id: event.draft_id,
+      draft_kind: typeof event.draft_kind === "string" ? event.draft_kind : "other",
+      created_at: typeof event.created_at === "string" ? event.created_at : "",
+      summary_preview: typeof event.summary_preview === "string" ? event.summary_preview : typeof event.title_preview === "string" ? event.title_preview : event.draft_id,
+      create_hash: typeof event.create_hash === "string" ? event.create_hash : "",
     }
   }
 
-  private async decisionRecordFromResult(decisionGateId: string): Promise<ExecutorReviewProposalReviewDecisionRecord | undefined> {
-    const result = await this.options.decisionService.get(decisionGateId)
-    if (!result) return undefined
+  private requestRecordFromGateEvents(events: JsonlEvent[], query: { review_request_id?: string; proposal_id?: string }): ExecutorReviewProposalReviewRequestRecord | undefined {
+    const event = events.slice().reverse().find((candidate) =>
+      candidate.kind === "commander_executor_review_proposal_review_requested"
+      && (!query.review_request_id || candidate.review_request_id === query.review_request_id)
+      && (!query.proposal_id || candidate.proposal_id === query.proposal_id))
+    if (!event || typeof event.request_gate_id !== "string" || typeof event.proposal_id !== "string") return undefined
     return {
-      decision_gate_id: result.decision_gate_id,
-      status: result.status,
-      decision: result.decision,
-      review_request_id: result.review_request_id,
-      proposal_id: result.proposal_id,
-      request_gate_id: result.request_gate_id,
-      create_id: result.create_id,
-      decided_at: result.decided_at,
-      summary_preview: result.reason_preview ?? result.error ?? result.review_request_id,
-      decision_hash: result.decision_hash,
+      request_gate_id: event.request_gate_id,
+      status: "requested",
+      review_request_id: typeof event.review_request_id === "string" ? event.review_request_id : undefined,
+      proposal_id: event.proposal_id,
+      create_id: typeof event.create_id === "string" ? event.create_id : undefined,
+      review_id: typeof event.review_id === "string" ? event.review_id : undefined,
+      draft_id: typeof event.draft_id === "string" ? event.draft_id : undefined,
+      requested_at: typeof event.requested_at === "string" ? event.requested_at : "",
+      summary_preview: typeof event.summary_preview === "string" ? event.summary_preview : event.proposal_id,
+      request_hash: typeof event.request_hash === "string" ? event.request_hash : "",
     }
   }
 
-  private async proposalIdForReview(reviewRequestId?: string): Promise<string | undefined> {
+  private decisionRecordFromGateEvents(events: JsonlEvent[], query: { decision_gate_id?: string; review_request_id?: string; proposal_id?: string }): ExecutorReviewProposalReviewDecisionRecord | undefined {
+    const event = events.slice().reverse().find((candidate) =>
+      (candidate.kind === "commander_executor_review_proposal_review_approved" || candidate.kind === "commander_executor_review_proposal_review_rejected")
+      && (!query.decision_gate_id || candidate.decision_gate_id === query.decision_gate_id)
+      && (!query.review_request_id || candidate.review_request_id === query.review_request_id)
+      && (!query.proposal_id || candidate.proposal_id === query.proposal_id))
+    if (!event || typeof event.decision_gate_id !== "string" || typeof event.review_request_id !== "string") return undefined
+    const approved = event.kind === "commander_executor_review_proposal_review_approved"
+    return {
+      decision_gate_id: event.decision_gate_id,
+      status: approved ? "approved" : "rejected",
+      decision: approved ? "approve" : "reject",
+      review_request_id: event.review_request_id,
+      proposal_id: typeof event.proposal_id === "string" ? event.proposal_id : undefined,
+      request_gate_id: typeof event.request_gate_id === "string" ? event.request_gate_id : undefined,
+      create_id: typeof event.create_id === "string" ? event.create_id : undefined,
+      decided_at: typeof event.decided_at === "string" ? event.decided_at : "",
+      summary_preview: typeof event.reason_preview === "string" ? event.reason_preview : event.review_request_id,
+      decision_hash: typeof event.decision_hash === "string" ? event.decision_hash : "",
+    }
+  }
+
+  private proposalIdForReview(reviewRequestId: string | undefined, events: JsonlEvent[]): string | undefined {
     if (!reviewRequestId) return undefined
-    return (await this.options.requestService.list({ limit: 100, review_request_id: reviewRequestId })).find((record) => record.status === "requested")?.proposal_id
+    return this.requestRecordFromGateEvents(events, { review_request_id: reviewRequestId })?.proposal_id
   }
 
-  private async proposalIdForDecision(decisionGateId?: string): Promise<string | undefined> {
+  private proposalIdForDecision(decisionGateId: string | undefined, events: JsonlEvent[]): string | undefined {
     if (!decisionGateId) return undefined
-    return (await this.options.decisionService.get(decisionGateId))?.proposal_id
+    return this.decisionRecordFromGateEvents(events, { decision_gate_id: decisionGateId })?.proposal_id
   }
 
-  private async proposalIdForCreate(createId?: string): Promise<string | undefined> {
+  private proposalIdForCreate(createId: string | undefined, events: JsonlEvent[]): string | undefined {
     if (!createId) return undefined
-    return (await this.options.createService.get(createId))?.proposal_id
+    return this.createRecordFromGateEvents(events, { create_id: createId })?.proposal_id
   }
 
   private buildPreview(chain: Chain, input: ExecutorReviewProposalApplyReadinessInput): ExecutorReviewProposalApplyReadinessPreview {
@@ -166,12 +206,15 @@ export class ExecutorReviewProposalApplyReadinessService {
     if (!proposal) blockers.push("proposal was not found")
     if (proposal && payload.source !== "executor_review_proposal_create") blockers.push("proposal was not created by executor-review proposal creation gate")
     if (proposal && (!optional(payload.review_id) || !optional(payload.draft_id))) blockers.push("executor-review proposal source metadata is incomplete")
+    if (proposal && !chain.createRecord) blockers.push("executor-review proposal creation gate record was not found")
     if (proposal && ["cancelled", "applied"].includes(proposal.status)) blockers.push(`proposal status ${proposal.status} cannot be apply-ready`)
     if (chain.review?.status === "cancelled") blockers.push("review request is cancelled")
     if (input.create_id && (!chain.createRecord || chain.createRecord.proposal_id !== proposal?.proposal_id)) blockers.push("create_id does not match the proposal source create record")
     if (input.review_request_id && proposal && input.proposal_id && input.review_request_id !== proposal.review_id) blockers.push("review_request_id does not match linked proposal review")
     if (input.decision_gate_id && (!chain.decisionRecord || chain.decisionRecord.proposal_id !== proposal?.proposal_id)) blockers.push("decision_gate_id does not match linked proposal review decision")
     if (proposal && proposal.review_id && !chain.review) blockers.push("linked review request was not found")
+    if (proposal && proposal.review_id && !chain.requestRecord) blockers.push("executor-review proposal review-request gate record was not found")
+    if (chain.review && (chain.review.status === "approved" || chain.review.status === "rejected") && !chain.decisionRecord) blockers.push("executor-review proposal review decision gate record was not found")
     if (proposal && chain.requestRecord && chain.requestRecord.proposal_id !== proposal.proposal_id) blockers.push("review-request gate linkage is inconsistent")
     if (proposal && chain.decisionRecord && chain.decisionRecord.proposal_id && chain.decisionRecord.proposal_id !== proposal.proposal_id) blockers.push("review-decision gate linkage is inconsistent")
     const evidenceIds = boundList(payload.evidence_ids)

@@ -2639,6 +2639,7 @@ export class RuntimeServer {
 
   private executorReviewProposalApplyReadinessService(): ExecutorReviewProposalApplyReadinessService {
     this.executorReviewProposalApplyReadinessServiceInstance ??= new ExecutorReviewProposalApplyReadinessService({
+      eventStore: this.eventStore,
       proposalRegistry: this.proposalRegistry,
       reviewRegistry: this.reviewRegistry,
       createService: this.executorReviewProposalCreateService(),

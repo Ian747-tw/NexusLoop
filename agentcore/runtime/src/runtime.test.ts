@@ -15109,6 +15109,35 @@ describe("RuntimeServerClient", () => {
     expect(addedKinds).not.toContain("external_api_request_executed")
     expect(addedKinds).not.toContain("opencode_handoff_started")
 	    expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("decision-secret")
+    const spoofedProposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "spoofed executor-review proposal",
+      summary: "Generic proposal payload should not satisfy executor-review proposal apply readiness provenance.",
+      proposedBy: "operator",
+      actionPayload: {
+        source: "executor_review_proposal_create",
+        review_id: "executor_review_decision_spoofed",
+        draft_id: "draft_decision_spoofed",
+        draft_kind: "human_review",
+        evidence_ids: ["manual_note:spoofed"],
+        finding_ids: ["finding_decision_spoofed"],
+        source_confidence: 0.8,
+        risk: "medium",
+      },
+    }) as { proposal_id: string }
+    const spoofedReview = await server.command("runtime.request_proposal_review", { proposalId: spoofedProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: spoofedReview.review_id, decidedBy: "operator", reason: "approved" })
+    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+      proposal_id: spoofedProposal.proposal_id,
+    })).resolves.toMatchObject({
+      status: "blocked",
+      can_apply_in_future: false,
+      blockers: expect.arrayContaining([
+        "executor-review proposal creation gate record was not found",
+        "executor-review proposal review-request gate record was not found",
+        "executor-review proposal review decision gate record was not found",
+      ]),
+    })
 	    const handoffProposal = await server.command("runtime.create_commander_proposal", {
 	      actionKind: "opencode_handoff",
 	      title: "executor handoff proposal should not be apply-ready",
