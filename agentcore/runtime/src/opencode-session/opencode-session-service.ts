@@ -126,9 +126,11 @@ export class OpenCodeSessionService {
     if (!objective) blockers.push("objective or valid linked proposal/mission source is required")
     if (input.proposal_id && !source.proposal_found) blockers.push("proposal_id was not found")
     if (input.mission_id && !source.mission_found) blockers.push("mission_id was not found")
+    blockers.push(...source.link_blockers)
     if (input.review_request_id && source.review_request_id && input.review_request_id !== source.review_request_id) blockers.push("review_request_id does not match linked proposal")
     if (input.apply_id && !source.apply_id_matches) blockers.push("apply_id does not match durable narrow apply evidence")
-    if (source.source_status && ["cancelled", "rejected", "failed"].includes(source.source_status) && sourceKind !== "manual") blockers.push(`source status ${source.source_status} is not plan-eligible`)
+    const hasLinkedSource = !!source.proposal_id || !!source.mission_id || !!source.apply_id
+    if (source.source_status && ["cancelled", "rejected", "failed"].includes(source.source_status) && (sourceKind !== "manual" || hasLinkedSource)) blockers.push(`source status ${source.source_status} is not plan-eligible`)
     if (objective.length < 12) warnings.push("objective is short; future launch may require clearer tactical scope")
     const maxContextBytes = boundedNumber(input.max_context_bytes, DEFAULT_MAX_CONTEXT_BYTES, 1_000, MAX_CONTEXT_BYTES)
     const sessionTimeoutPolicy = timeoutPolicy(input)
@@ -192,17 +194,23 @@ export class OpenCodeSessionService {
     apply_id_matches?: boolean
     success_criteria: string[]
     constraints: string[]
+    link_blockers: string[]
   }> {
     const proposal = input.proposal_id ? await this.options.proposalRegistry.getProposal(input.proposal_id) : null
-    const missionId = input.mission_id ?? proposal?.mission_id
-    const mission = missionId ? await this.options.missionRegistry.getMission(missionId) : null
     const apply = input.apply_id ? await this.findNarrowApply(input.apply_id) : undefined
+    const applyProposalId = optional(apply?.proposal_id)
+    const proposalMissionId = proposal?.mission_id
+    const missionId = proposalMissionId ?? input.mission_id
+    const mission = missionId ? await this.options.missionRegistry.getMission(missionId) : null
     const payload = isRecord(proposal?.action_payload) ? proposal.action_payload : {}
     const sourceKind = input.source_kind ?? (proposal ? "proposal" : mission ? "mission" : apply ? "executor_review" : input.objective ? "manual" : "unknown")
+    const linkBlockers: string[] = []
+    if (input.proposal_id && input.mission_id && proposalMissionId && input.mission_id !== proposalMissionId) linkBlockers.push("mission_id does not match linked proposal")
+    if (input.apply_id && input.proposal_id && applyProposalId && input.proposal_id !== applyProposalId) linkBlockers.push("apply_id does not match linked proposal")
     return {
       source_kind: sourceKind,
       mission_id: mission?.mission_id ?? missionId,
-      proposal_id: proposal?.proposal_id ?? input.proposal_id,
+      proposal_id: proposal?.proposal_id ?? applyProposalId ?? input.proposal_id,
       review_request_id: input.review_request_id ?? proposal?.review_id,
       apply_id: optional(apply?.apply_id) ?? input.apply_id,
       objective: input.objective ?? proposal?.summary ?? mission?.objective,
@@ -214,6 +222,7 @@ export class OpenCodeSessionService {
       apply_id_matches: input.apply_id ? !!apply : undefined,
       success_criteria: optionalStringArray(payload.success_criteria) ?? [],
       constraints: optionalStringArray(payload.constraints) ?? [],
+      link_blockers: linkBlockers,
     }
   }
 

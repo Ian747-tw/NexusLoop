@@ -14324,6 +14324,108 @@ describe("OpenCode session planning", () => {
     expect(await readEventKinds(dir)).not.toContain("opencode_session_planned")
     await client.shutdown()
   })
+
+  test("linked proposal mission and apply sources must match before planning a session", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const first = await server.submitUserMessage("first linked source mission")
+    const second = await server.submitUserMessage("second linked source mission")
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      missionId: first.missionId,
+      actionKind: "other",
+      title: "linked source proposal",
+      summary: "proposal source objective",
+      proposedBy: "commander",
+      actionPayload: { success_criteria: ["preserve source linkage"] },
+    }) as { proposal_id: string }
+    await server.eventStore.append({
+      kind: "commander_executor_review_proposal_narrow_applied",
+      apply_id: "apply_other_source",
+      proposal_id: "proposal_other_source",
+      status: "applied",
+      candidate_kind: "generic_proposal",
+      reason_preview: "other source",
+      applied_at: "2026-06-27T00:00:00.000Z",
+      applied_by: "test",
+      apply_hash: "hash_other_source",
+    } as JsonlEvent)
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+      missionId: second.missionId,
+    })).resolves.toMatchObject({
+      can_create: false,
+      blockers: expect.arrayContaining(["mission_id does not match linked proposal"]),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+      missionId: second.missionId,
+    })).rejects.toThrow("mission_id does not match linked proposal")
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+      applyId: "apply_other_source",
+    })).resolves.toMatchObject({
+      can_create: false,
+      blockers: expect.arrayContaining(["apply_id does not match linked proposal"]),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+      applyId: "apply_other_source",
+    })).rejects.toThrow("apply_id does not match linked proposal")
+
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("manual source kind cannot bypass terminal linked sources", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("terminal linked source mission")
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      actionKind: "other",
+      title: "terminal source proposal",
+      summary: "terminal proposal objective",
+      proposedBy: "commander",
+    }) as { proposal_id: string }
+    await server.command("runtime.cancel_commander_proposal", { proposalId: proposal.proposal_id, reason: "terminal source" })
+    await server.command("runtime.cancel_mission", { missionId: submitted.missionId, reason: "terminal source" })
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+      sourceKind: "manual",
+      objective: "manual override still linked to terminal proposal",
+    })).resolves.toMatchObject({
+      can_create: false,
+      source_kind: "manual",
+      blockers: expect.arrayContaining(["source status cancelled is not plan-eligible"]),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+      sourceKind: "manual",
+      objective: "manual override still linked to terminal proposal",
+    })).rejects.toThrow("source status cancelled is not plan-eligible")
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      missionId: submitted.missionId,
+      sourceKind: "manual",
+      objective: "manual override still linked to terminal mission",
+    })).resolves.toMatchObject({
+      can_create: false,
+      source_kind: "manual",
+      blockers: expect.arrayContaining(["source status cancelled is not plan-eligible"]),
+    })
+
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(0)
+    await server.shutdown()
+  })
 })
 
 describe("RuntimeServerClient", () => {
