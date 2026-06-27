@@ -4868,6 +4868,11 @@ describe("runtime UI effects", () => {
     expect(state.opencodeSessions?.records).toHaveLength(1)
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=inspect", "training", "progress", "token=abc123"] })
     expect(state.opencodeSessions?.records).toHaveLength(1)
+    await expect(runtime.command("runtime.create_opencode_session_plan", {
+      objective: "inspect training progress token=abc123",
+      maxContextBytes: 4096,
+    })).rejects.toThrow("different boundary or policy metadata")
+    expect(state.opencodeSessions?.records).toHaveLength(1)
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-sessions", args: [] })
     expect(state.opencodeSessions?.records.map((record) => record.session_id)).toContain(sessionId)

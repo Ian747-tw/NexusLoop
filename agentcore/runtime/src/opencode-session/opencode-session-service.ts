@@ -56,7 +56,7 @@ export class OpenCodeSessionService {
     const createdAt = this.now().toISOString()
     const sessionHash = sessionHashFor(preview)
     const existing = preview.existing_session_id ? await this.get(preview.existing_session_id) : null
-    if (existing) return redactValue(existing)
+    if (existing && matchingPlanMetadata(existing, preview)) return redactValue(existing)
     if (!preview.can_create) throw new Error(preview.blockers[0] ?? "opencode session plan is blocked")
     const plan = planFromPreview(preview, {
       session_id: sessionId(sessionHash),
@@ -68,7 +68,7 @@ export class OpenCodeSessionService {
     return this.serializeCreate(async () => {
       const rebuilt = await this.buildPreview(normalized)
       const rebuiltExisting = rebuilt.existing_session_id ? await this.get(rebuilt.existing_session_id) : null
-      if (rebuiltExisting) return redactValue(rebuiltExisting)
+      if (rebuiltExisting && matchingPlanMetadata(rebuiltExisting, rebuilt)) return redactValue(rebuiltExisting)
       if (!rebuilt.can_create) throw new Error(rebuilt.blockers[0] ?? "opencode session plan is blocked")
       const finalHash = sessionHashFor(rebuilt)
       const finalPlan = planFromPreview(rebuilt, {
@@ -165,7 +165,18 @@ export class OpenCodeSessionService {
       objective: rawObjective,
     }))
     const existing = blockers.length === 0 ? await this.findExisting(previewHash) : undefined
-    if (existing) blockers.push("matching active planned OpenCode session already exists")
+    const existingMetadataMatches = existing ? matchingPlanMetadata(existing, {
+      title_preview: title,
+      objective_preview: objective,
+      commander_context_hash: commanderContextHash,
+      opencode_context_hash: opencodeContextHash,
+      max_context_bytes: maxContextBytes,
+      timeout_policy: sessionTimeoutPolicy,
+      question_policy: sessionQuestionPolicy,
+      human_control_policy: humanPolicy,
+    }) : false
+    if (existing && !existingMetadataMatches) blockers.push("matching active planned OpenCode session already exists with different boundary or policy metadata")
+    else if (existing) blockers.push("matching active planned OpenCode session already exists")
     return redactValue({
       preview_id: `opencode_session_preview_${previewHash.slice(0, 16)}`,
       can_create: blockers.length === 0,
@@ -190,10 +201,10 @@ export class OpenCodeSessionService {
       timeout_policy: sessionTimeoutPolicy,
       question_policy: sessionQuestionPolicy,
       human_control_policy: humanPolicy,
-      existing_session_id: existing?.session_id,
+      existing_session_id: existingMetadataMatches ? existing?.session_id : undefined,
       blockers: boundList(blockers),
       warnings: boundList(warnings),
-      recommended_commands: recommendedCommands(source.proposal_id, source.mission_id, existing?.session_id),
+      recommended_commands: recommendedCommands(source.proposal_id, source.mission_id, existingMetadataMatches ? existing?.session_id : undefined),
       generated_at: generatedAt,
       redacted_summary_preview: blockers.length === 0 ? `Planned OpenCode session can be created for ${sourceKind} source.` : blockers[0] ?? "OpenCode session plan is blocked.",
       session_hash: previewHash,
@@ -390,6 +401,17 @@ function recordFromPlan(plan: OpenCodeSessionPlan): OpenCodeSessionRecord {
     summary_preview: bound(plan.objective),
     session_hash: plan.session_hash,
   }
+}
+
+function matchingPlanMetadata(plan: OpenCodeSessionPlan, preview: Pick<OpenCodeSessionPreview, "title_preview" | "objective_preview" | "commander_context_hash" | "opencode_context_hash" | "max_context_bytes" | "timeout_policy" | "question_policy" | "human_control_policy">): boolean {
+  return plan.title === preview.title_preview
+    && plan.objective === preview.objective_preview
+    && plan.commander_context_hash === preview.commander_context_hash
+    && plan.opencode_context_hash === preview.opencode_context_hash
+    && plan.max_context_bytes === preview.max_context_bytes
+    && plan.timeout_policy.timeout_policy_hash === preview.timeout_policy.timeout_policy_hash
+    && plan.question_policy.question_policy_hash === preview.question_policy.question_policy_hash
+    && plan.human_control_policy.human_policy_hash === preview.human_control_policy.human_policy_hash
 }
 
 function timeoutPolicy(input: OpenCodeSessionPreviewInput): OpenCodeSessionTimeoutPolicy {

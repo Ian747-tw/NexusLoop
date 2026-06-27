@@ -14306,10 +14306,19 @@ describe("OpenCode session planning", () => {
       planned_count: 1,
       running_count: 0,
     })
-    await expect(server.command("runtime.create_opencode_session_plan", { objective: "inspect training progress token=session-secret" })).resolves.toMatchObject({
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      objective: "inspect training progress token=session-secret",
+      title: "Training progress inspection",
+      maxContextBytes: 4096,
+    })).resolves.toMatchObject({
       session_id: created.session_id,
       session_hash: created.session_hash,
     })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      objective: "inspect training progress token=session-secret",
+      title: "Training progress inspection",
+      maxContextBytes: 8192,
+    })).rejects.toThrow("different boundary or policy metadata")
     const kinds = await readEventKinds(dir)
     expect(kinds.filter((kind) => kind === "opencode_session_planned")).toHaveLength(1)
     const planned = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_planned")

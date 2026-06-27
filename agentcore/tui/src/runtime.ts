@@ -1705,7 +1705,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     const previewResult = this.previewOpenCodeSessionPlan(payload)
     const sessionHash = this.openCodeSessionIdentityHash(payload, previewResult.source_kind, previewResult.proposal_id, previewResult.mission_id, previewResult.apply_id)
     const existing = this.opencodeSessions.find((item) => item.session_hash === sessionHash && item.status === "planned")
-    if (existing) return existing
+    if (existing && this.openCodeSessionPlanMetadataMatches(existing, previewResult)) return existing
+    if (existing) throw new Error("matching active planned OpenCode session already exists with different boundary or policy metadata")
     if (!previewResult.can_create) throw new Error(previewResult.blockers[0] ?? "OpenCode session plan is blocked")
     const session: OpenCodeSessionPlanSummary = {
       session_id: `fake-opencode-session-${sessionHash.slice(0, 12)}`,
@@ -1745,6 +1746,15 @@ export class FakeRuntimeClient implements RuntimeClient {
     const mission = linkedMissionId ? this.missions.find((item) => item.mission_id === linkedMissionId) : undefined
     const rawObjective = objective ?? proposal?.summary ?? mission?.objective ?? ""
     return createHash("sha256").update(`${sourceKind}:${linkedProposalId ?? ""}:${linkedMissionId ?? ""}:${applyId ?? ""}:${rawObjective}`).digest("hex")
+  }
+
+  private openCodeSessionPlanMetadataMatches(existing: OpenCodeSessionPlanSummary, previewResult: OpenCodeSessionPreviewSummary): boolean {
+    return existing.title === previewResult.title_preview
+      && existing.objective === previewResult.objective_preview
+      && existing.max_context_bytes === previewResult.max_context_bytes
+      && existing.timeout_policy.timeout_policy_hash === previewResult.timeout_policy.timeout_policy_hash
+      && existing.question_policy.question_policy_hash === previewResult.question_policy.question_policy_hash
+      && existing.human_control_policy.human_policy_hash === previewResult.human_control_policy.human_policy_hash
   }
 
   private listOpenCodeSessions(payload: Record<string, unknown>): OpenCodeSessionRecordSummary[] {
