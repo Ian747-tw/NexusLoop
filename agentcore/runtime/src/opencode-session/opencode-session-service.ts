@@ -132,6 +132,7 @@ export class OpenCodeSessionService {
     if (sourceKind === "mission" && (!source.mission_id || source.mission_found === false)) blockers.push("mission source_kind requires a resolved mission_id")
     if (sourceKind === "executor_review" && (!source.apply_id || source.apply_id_matches === false)) blockers.push("executor_review source_kind requires resolved apply_id evidence")
     if (sourceKind === "research") blockers.push("research source_kind requires durable research source evidence")
+    if (sourceKind === "unknown") blockers.push("unknown source_kind cannot create planned sessions")
     blockers.push(...source.link_blockers)
     if (input.review_request_id && source.review_request_id && input.review_request_id !== source.review_request_id) blockers.push("review_request_id does not match linked proposal")
     if (input.apply_id && !source.apply_id_matches) blockers.push("apply_id does not match durable narrow apply evidence")

@@ -14590,6 +14590,14 @@ describe("OpenCode session planning", () => {
       source_kind: "research",
       blockers: expect.arrayContaining(["research source_kind requires durable research source evidence"]),
     })
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      objective: "manual objective cannot masquerade as unknown",
+      sourceKind: "unknown",
+    })).resolves.toMatchObject({
+      can_create: false,
+      source_kind: "unknown",
+      blockers: expect.arrayContaining(["unknown source_kind cannot create planned sessions"]),
+    })
 
     await server.start()
     await expect(server.command("runtime.create_opencode_session_plan", {
@@ -14600,6 +14608,10 @@ describe("OpenCode session planning", () => {
       objective: "manual objective cannot masquerade as research",
       sourceKind: "research",
     })).rejects.toThrow("research source_kind requires durable research source evidence")
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      objective: "manual objective cannot masquerade as unknown",
+      sourceKind: "unknown",
+    })).rejects.toThrow("unknown source_kind cannot create planned sessions")
     expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(0)
     await server.shutdown()
   })
