@@ -11970,11 +11970,19 @@ function opencodeSessionEffect(type: "preview-opencode-session-plan" | "create-o
     const value = arg.slice(separator + 1).trim()
     if (!key || !value) throw new Error("OpenCode session args must include non-empty key=value pairs")
     if (key === "objective") {
-      effect.objective = [value, ...args.slice(index + 1)].join(" ").trim()
-      break
+      const parts = [value]
+      while (index + 1 < args.length && !looksLikeKeyValueArg(args[index + 1] ?? "")) {
+        index += 1
+        parts.push(args[index] ?? "")
+      }
+      effect.objective = parts.join(" ").trim()
     } else if (key === "title") {
-      effect.title = [value, ...args.slice(index + 1)].join(" ").trim()
-      break
+      const parts = [value]
+      while (index + 1 < args.length && !looksLikeKeyValueArg(args[index + 1] ?? "")) {
+        index += 1
+        parts.push(args[index] ?? "")
+      }
+      effect.title = parts.join(" ").trim()
     } else if (key === "proposal") effect.proposalId = value
     else if (key === "mission") effect.missionId = value
     else if (key === "review") effect.reviewRequestId = value
@@ -11985,6 +11993,13 @@ function opencodeSessionEffect(type: "preview-opencode-session-plan" | "create-o
     throw new Error("OpenCode session plan requires objective=<text>, proposal=<id>, mission=<id>, or apply=<id>")
   }
   return effect
+}
+
+function looksLikeKeyValueArg(value: string): boolean {
+  const separator = value.indexOf("=")
+  if (separator <= 0) return false
+  const key = value.slice(0, separator).trim()
+  return ["objective", "title", "proposal", "mission", "review", "apply"].includes(key)
 }
 
 function checkpointEffect(type: "preview-runtime-checkpoint" | "create-runtime-checkpoint", args: string[]): Extract<RuntimeUiEffect, { type: "preview-runtime-checkpoint" | "create-runtime-checkpoint" }> {

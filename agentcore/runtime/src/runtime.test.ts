@@ -14421,6 +14421,45 @@ describe("OpenCode session planning", () => {
     await server.shutdown()
   })
 
+  test("linked source kinds require resolved durable source links", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      objective: "manual objective cannot masquerade as proposal",
+      sourceKind: "proposal",
+    })).resolves.toMatchObject({
+      can_create: false,
+      source_kind: "proposal",
+      blockers: expect.arrayContaining(["proposal source_kind requires a resolved proposal_id"]),
+    })
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      objective: "manual objective cannot masquerade as mission",
+      sourceKind: "mission",
+    })).resolves.toMatchObject({
+      can_create: false,
+      source_kind: "mission",
+      blockers: expect.arrayContaining(["mission source_kind requires a resolved mission_id"]),
+    })
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      objective: "manual objective cannot masquerade as executor review",
+      sourceKind: "executor_review",
+    })).resolves.toMatchObject({
+      can_create: false,
+      source_kind: "executor_review",
+      blockers: expect.arrayContaining(["executor_review source_kind requires resolved apply_id evidence"]),
+    })
+
+    await server.start()
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      objective: "manual objective cannot masquerade as proposal",
+      sourceKind: "proposal",
+    })).rejects.toThrow("proposal source_kind requires a resolved proposal_id")
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(0)
+    await server.shutdown()
+  })
+
   test("apply-only session sources hydrate linked proposal context", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

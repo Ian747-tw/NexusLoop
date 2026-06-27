@@ -4850,6 +4850,14 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("note=session planning does not launch OpenCode or mutate missions")
     expect(snapshot).not.toContain("abc123")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-preview", args: ["objective=triage", "proposal=fake-missing-proposal"] })
+    expect(state.opencodeSessions?.preview).toMatchObject({
+      can_create: false,
+      source_kind: "proposal",
+      objective_preview: "triage",
+      blockers: expect.arrayContaining(["proposal not found: fake-missing-proposal"]),
+    })
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan-dry-run", args: ["objective=inspect", "training", "progress", "token=abc123"] })
     expect(state.opencodeSessions?.latestPlan).toMatchObject({ status: "planned", source_kind: "manual" })
     expect(state.opencodeSessions?.records).toEqual([])
