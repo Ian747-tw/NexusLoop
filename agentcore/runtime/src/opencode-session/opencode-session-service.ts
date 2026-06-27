@@ -223,8 +223,10 @@ export class OpenCodeSessionService {
     const sourceKind = input.source_kind ?? (apply ? "executor_review" : proposal ? "proposal" : mission ? "mission" : input.objective ? "manual" : "unknown")
     const linkBlockers: string[] = []
     if (input.mission_id && proposalMissionId && input.mission_id !== proposalMissionId) linkBlockers.push("mission_id does not match linked proposal")
+    if (input.mission_id && proposal && !proposalMissionId) linkBlockers.push("mission_id cannot be linked because proposal has no mission_id")
     if (input.apply_id && input.proposal_id && applyProposalId && input.proposal_id !== applyProposalId) linkBlockers.push("apply_id does not match linked proposal")
     if (input.review_request_id && proposal?.review_id && input.review_request_id !== proposal.review_id) linkBlockers.push("review_request_id does not match linked proposal")
+    if (input.review_request_id && proposal && !proposal.review_id) linkBlockers.push("review_request_id cannot be linked because proposal has no review_id")
     if (applyProposalId && !proposal) linkBlockers.push("apply_id linked proposal was not found")
     const sourceStatuses: string[] = []
     if (proposal?.status) sourceStatuses.push(proposal.status)

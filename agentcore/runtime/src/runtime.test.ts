@@ -14385,6 +14385,12 @@ describe("OpenCode session planning", () => {
       actionPayload: { success_criteria: ["preserve source linkage"] },
     }) as { proposal_id: string }
     const review = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    const unlinkedProposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "unlinked source proposal",
+      summary: "proposal objective without durable mission or review links",
+      proposedBy: "commander",
+    }) as { proposal_id: string }
     await server.eventStore.append({
       kind: "commander_executor_review_proposal_narrow_applied",
       apply_id: "apply_other_source",
@@ -14432,6 +14438,30 @@ describe("OpenCode session planning", () => {
       proposalId: proposal.proposal_id,
       reviewRequestId: `${review.review_id}_other`,
     })).rejects.toThrow("review_request_id does not match linked proposal")
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      proposalId: unlinkedProposal.proposal_id,
+      missionId: first.missionId,
+    })).resolves.toMatchObject({
+      can_create: false,
+      blockers: expect.arrayContaining(["mission_id cannot be linked because proposal has no mission_id"]),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      proposalId: unlinkedProposal.proposal_id,
+      missionId: first.missionId,
+    })).rejects.toThrow("mission_id cannot be linked because proposal has no mission_id")
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      proposalId: unlinkedProposal.proposal_id,
+      reviewRequestId: "review_unlinked",
+    })).resolves.toMatchObject({
+      can_create: false,
+      blockers: expect.arrayContaining(["review_request_id cannot be linked because proposal has no review_id"]),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      proposalId: unlinkedProposal.proposal_id,
+      reviewRequestId: "review_unlinked",
+    })).rejects.toThrow("review_request_id cannot be linked because proposal has no review_id")
 
     expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(0)
     await server.shutdown()
