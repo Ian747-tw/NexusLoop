@@ -15769,6 +15769,18 @@ describe("RuntimeServerClient", () => {
       status: "applied",
       proposal_id: created.proposal_id,
     })
+    await expect(server.command("runtime.preview_opencode_session_plan", { applyId: applied.apply_id })).resolves.toMatchObject({
+      can_create: true,
+      source_kind: "executor_review",
+      proposal_id: created.proposal_id,
+      apply_id: applied.apply_id,
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", { applyId: applied.apply_id })).resolves.toMatchObject({
+      status: "planned",
+      source_kind: "executor_review",
+      proposal_id: created.proposal_id,
+      apply_id: applied.apply_id,
+    })
     const duplicate = await server.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: created.proposal_id, applied_by: "operator" }) as { status: string; apply_id: string }
     expect(duplicate).toMatchObject({ status: "applied", apply_id: applied.apply_id })
     const kinds = await readEventKinds(dir)
