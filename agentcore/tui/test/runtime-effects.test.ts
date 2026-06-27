@@ -3516,7 +3516,7 @@ describe("runtime UI effects", () => {
   test("executor review proposal review decision fake path approves rejects and dedupes", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")
-    const createRequest = async (current: UiState): Promise<{ state: UiState; reviewRequestId: string }> => {
+    const createRequest = async (current: UiState): Promise<{ state: UiState; reviewRequestId: string; proposalId: string; createId: string }> => {
       let next = await applyRuntimeUiEffect(current, runtime, { type: "send-command", command: "executor-review", args: ["result=result-handoff-1"] })
       const reviewId = next.commanderExecutorReview?.latestResult?.review_id
       expect(reviewId).toBeTruthy()
@@ -3525,11 +3525,13 @@ describe("runtime UI effects", () => {
       expect(draftId).toBeTruthy()
       next = await applyRuntimeUiEffect(next, runtime, { type: "send-command", command: "executor-review-proposal-create", args: [`review=${reviewId}`, `draft=${draftId}`] })
       const proposalId = next.executorReviewProposalCreate?.latestResult?.proposal_id
+      const createId = next.executorReviewProposalCreate?.latestResult?.create_id
       expect(proposalId).toBeTruthy()
+      expect(createId).toBeTruthy()
       next = await applyRuntimeUiEffect(next, runtime, { type: "send-command", command: "executor-review-proposal-review-request", args: [`proposal=${proposalId}`] })
       const reviewRequestId = next.executorReviewProposalReviewRequest?.latestResult?.review_request_id
       expect(reviewRequestId).toBeTruthy()
-      return { state: next, reviewRequestId: reviewRequestId! }
+      return { state: next, reviewRequestId: reviewRequestId!, proposalId: proposalId!, createId: createId! }
     }
 
     const first = await createRequest(state)
@@ -3539,6 +3541,37 @@ describe("runtime UI effects", () => {
     expect(state.executorReviewProposalReviewDecision?.records).toHaveLength(1)
     const approvedGateId = state.executorReviewProposalReviewDecision?.records[0]?.decision_gate_id
     expect(approvedGateId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness", args: [`proposal=${first.proposalId}`] })
+    expect(state.executorReviewProposalApplyReadiness?.preview).toMatchObject({
+      status: "ready",
+      can_apply_in_future: true,
+      proposal_id: first.proposalId,
+      review_request_id: first.reviewRequestId,
+      decision_gate_id: approvedGateId,
+      candidate_kind: "mission_result",
+      candidate_risk: "high",
+    })
+    let applyReadinessSnapshot = layoutSnapshot(state)
+    expect(applyReadinessSnapshot).toContain("Executor review proposal apply readiness")
+    expect(applyReadinessSnapshot).toContain("note=apply readiness does not apply proposals, mutate missions, call provider, or launch OpenCode")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness", args: [`review=${first.reviewRequestId}`] })
+    expect(state.executorReviewProposalApplyReadiness?.preview).toMatchObject({ status: "ready", proposal_id: first.proposalId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness", args: [`decision=${approvedGateId}`] })
+    expect(state.executorReviewProposalApplyReadiness?.preview).toMatchObject({ status: "ready", proposal_id: first.proposalId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness", args: [`create=${first.createId}`] })
+    expect(state.executorReviewProposalApplyReadiness?.preview).toMatchObject({ status: "ready", proposal_id: first.proposalId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness-summary" })
+    expect(state.executorReviewProposalApplyReadiness?.summary).toMatchObject({ ready_count: 1, high_risk_count: 1 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness-list", args: ["status=ready"] })
+    expect(state.executorReviewProposalApplyReadiness?.records).toEqual([expect.objectContaining({ status: "ready", proposal_id: first.proposalId })])
+    const readinessId = state.executorReviewProposalApplyReadiness?.records[0]?.readiness_id
+    expect(readinessId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness-show", args: [readinessId!] })
+    expect(state.executorReviewProposalApplyReadiness?.selected).toMatchObject({ status: "ready", proposal_id: first.proposalId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-profile", args: ["/executor-review-proposal-apply-readiness"] })
+    expect(state.commandAuthority?.validationProfile?.targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_apply_readiness_tui.py")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-approve", args: [`review=${first.reviewRequestId}`] })
     expect(state.executorReviewProposalReviewDecision?.latestResult).toMatchObject({ status: "approved", decision_gate_id: approvedGateId })
@@ -3559,6 +3592,23 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-reject", args: [`review=${second.reviewRequestId}`, "reason=needs human review"] })
     expect(state.executorReviewProposalReviewDecision?.latestResult).toMatchObject({ status: "rejected", decision: "reject", review_request_id: second.reviewRequestId })
     expect(state.executorReviewProposalReviewDecision?.records).toHaveLength(2)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness", args: [`proposal=${second.proposalId}`] })
+    expect(state.executorReviewProposalApplyReadiness?.preview).toMatchObject({ status: "rejected", can_apply_in_future: false, proposal_id: second.proposalId })
+
+    const pending = await createRequest(state)
+    state = pending.state
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness", args: [`proposal=${pending.proposalId}`] })
+    expect(state.executorReviewProposalApplyReadiness?.preview).toMatchObject({ status: "needs_review", can_apply_in_future: false, proposal_id: pending.proposalId })
+    const ordinaryProposal = await runtime.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: "Novel generic proposal",
+      summary: "Novel manual content is not rejected by topic.",
+      proposedBy: "operator",
+    }) as { proposal_id: string }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-apply-readiness", args: [`proposal=${ordinaryProposal.proposal_id}`] })
+    expect(state.executorReviewProposalApplyReadiness?.preview).toMatchObject({ status: "blocked", candidate_kind: "generic" })
+    expect(state.executorReviewProposalApplyReadiness?.preview?.blockers).toContain("proposal was not created by executor-review proposal creation gate")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "executor-review-proposal-review-decisions" })
     expect(state.executorReviewProposalReviewDecision?.records).toEqual(expect.arrayContaining([

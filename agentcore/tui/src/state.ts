@@ -1520,6 +1520,78 @@ export type ExecutorReviewProposalReviewDecisionState = {
   commandError?: string
 }
 
+export type ExecutorReviewProposalApplyReadinessCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type ExecutorReviewProposalApplyReadinessPreviewSummary = {
+  readiness_id: string
+  status: string
+  can_apply_in_future: boolean
+  proposal_id: string
+  review_request_id?: string
+  request_gate_id?: string
+  decision_gate_id?: string
+  create_id?: string
+  source_executor_review_id?: string
+  source_draft_id?: string
+  source_packet_id?: string
+  proposal_status?: string
+  review_request_status?: string
+  review_decision?: string
+  proposal_title_preview: string
+  proposal_summary_preview: string
+  action_kind?: string
+  candidate_kind: string
+  candidate_risk: string
+  mission_id?: string
+  result_id?: string
+  source_evidence_ids: string[]
+  source_finding_ids: string[]
+  source_confidence?: number
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: ExecutorReviewProposalApplyReadinessCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+}
+
+export type ExecutorReviewProposalApplyReadinessRecordSummary = {
+  readiness_id: string
+  status: string
+  proposal_id: string
+  review_request_id?: string
+  decision_gate_id?: string
+  create_id?: string
+  candidate_kind: string
+  candidate_risk: string
+  generated_at: string
+  summary_preview: string
+}
+
+export type ExecutorReviewProposalApplyReadinessSummary = {
+  total_considered: number
+  ready_count: number
+  blocked_count: number
+  needs_review_count: number
+  rejected_count: number
+  generic_count: number
+  high_risk_count: number
+  generated_at: string
+}
+
+export type ExecutorReviewProposalApplyReadinessState = {
+  preview?: ExecutorReviewProposalApplyReadinessPreviewSummary | null
+  summary?: ExecutorReviewProposalApplyReadinessSummary | null
+  records: ExecutorReviewProposalApplyReadinessRecordSummary[]
+  selected?: ExecutorReviewProposalApplyReadinessPreviewSummary | null
+  commandError?: string
+}
+
 export type OpenCodeHandoffFollowupStatus =
   | "sent"
   | "claimed"
@@ -3277,6 +3349,7 @@ export type UiState = {
   executorReviewProposalCreate?: ExecutorReviewProposalCreateState
   executorReviewProposalReviewRequest?: ExecutorReviewProposalReviewRequestState
   executorReviewProposalReviewDecision?: ExecutorReviewProposalReviewDecisionState
+  executorReviewProposalApplyReadiness?: ExecutorReviewProposalApplyReadinessState
   minimaxLiveValidation?: MiniMaxLiveValidationState
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState

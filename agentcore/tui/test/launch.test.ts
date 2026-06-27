@@ -79,6 +79,26 @@ class TestRuntimeClient implements RuntimeClient {
     }
     if (name === "runtime.list_executor_review_proposal_review_decisions") return []
     if (name === "runtime.get_executor_review_proposal_review_decision") return null
+    if (name === "runtime.preview_executor_review_proposal_apply_readiness") return {
+      readiness_id: "readiness_test",
+      status: "unknown",
+      can_apply_in_future: false,
+      proposal_id: payload?.proposal_id ?? "unknown",
+      proposal_title_preview: "Apply readiness preview",
+      proposal_summary_preview: "Apply readiness preview",
+      candidate_kind: "generic",
+      candidate_risk: "medium",
+      source_evidence_ids: [],
+      source_finding_ids: [],
+      blockers: ["apply readiness preview requires proposal_id, review_request_id, decision_gate_id, or create_id"],
+      warnings: [],
+      recommended_commands: [],
+      generated_at: "2026-06-20T00:00:00.000Z",
+      redacted_summary_preview: "Apply readiness preview requires an explicit target.",
+    }
+    if (name === "runtime.executor_review_proposal_apply_readiness_summary") return { total_considered: 0, ready_count: 0, blocked_count: 0, needs_review_count: 0, rejected_count: 0, generic_count: 0, high_risk_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
+    if (name === "runtime.list_executor_review_proposal_apply_readiness") return []
+    if (name === "runtime.get_executor_review_proposal_apply_readiness") return null
     if (name === "runtime.preview_opencode_result_review_packet") {
       return {
         packet_id: "packet_test",
@@ -923,6 +943,41 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.preview_executor_review_proposal_review_decision")
     expect(runtime.commandNames).toContain("runtime.decide_executor_review_proposal_review")
     expect(runtime.commandNames).toContain("runtime.list_executor_review_proposal_review_decisions")
+    expect(runtime.commandNames).toContain("runtime.command_authority_get")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless executor review proposal apply-readiness scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-apply-readiness proposal=proposal-test" },
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-apply-readiness-summary" },
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-apply-readiness-list" },
+      { type: "submit" },
+      { type: "insert", text: "/executor-review-proposal-apply-readiness-show readiness-test" },
+      { type: "submit" },
+      { type: "insert", text: "/authority-show /executor-review-proposal-apply-readiness" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-executor-review-apply-readiness-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Executor review proposal apply readiness")
+    expect(runtime.commandNames).toContain("runtime.preview_executor_review_proposal_apply_readiness")
+    expect(runtime.commandNames).toContain("runtime.executor_review_proposal_apply_readiness_summary")
+    expect(runtime.commandNames).toContain("runtime.list_executor_review_proposal_apply_readiness")
+    expect(runtime.commandNames).toContain("runtime.get_executor_review_proposal_apply_readiness")
     expect(runtime.commandNames).toContain("runtime.command_authority_get")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")

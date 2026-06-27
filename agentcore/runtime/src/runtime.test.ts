@@ -14887,6 +14887,14 @@ describe("RuntimeServerClient", () => {
 	    const rejectFixture = await createRequest(rejectSeed)
 	    const cancelFixture = await createRequest(cancelSeed)
 	    const beforeDecisionKinds = await readEventKinds(dir)
+	    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+	      proposal_id: approveFixture.created.proposal_id,
+	    })).resolves.toMatchObject({
+	      status: "needs_review",
+	      can_apply_in_future: false,
+	      proposal_id: approveFixture.created.proposal_id,
+	      review_request_id: approveFixture.requested.review_request_id,
+	    })
 
     await expect(server.command("runtime.preview_executor_review_proposal_review_decision", {
       review_request_id: approveFixture.requested.review_request_id,
@@ -14931,6 +14939,46 @@ describe("RuntimeServerClient", () => {
       status: "approved",
       proposal_id: approveFixture.created.proposal_id,
     })
+    const beforeReadinessKinds = await readEventKinds(dir)
+    const readyByProposal = await server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+      proposal_id: approveFixture.created.proposal_id,
+    }) as { readiness_id: string; status: string; candidate_kind: string; candidate_risk: string }
+    expect(readyByProposal).toMatchObject({
+      status: "ready",
+      candidate_kind: "mission_result",
+      candidate_risk: "high",
+    })
+    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+      review_request_id: approveFixture.requested.review_request_id,
+    })).resolves.toMatchObject({
+      status: "ready",
+      proposal_id: approveFixture.created.proposal_id,
+    })
+    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+      decision_gate_id: approved.decision_gate_id,
+    })).resolves.toMatchObject({
+      status: "ready",
+      proposal_id: approveFixture.created.proposal_id,
+    })
+    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+      create_id: approveFixture.created.create_id,
+    })).resolves.toMatchObject({
+      status: "ready",
+      proposal_id: approveFixture.created.proposal_id,
+    })
+    await expect(server.command("runtime.executor_review_proposal_apply_readiness_summary")).resolves.toMatchObject({
+      ready_count: 1,
+      needs_review_count: 2,
+      high_risk_count: expect.any(Number),
+    })
+    await expect(server.command("runtime.list_executor_review_proposal_apply_readiness", { status: "ready" })).resolves.toEqual([
+      expect.objectContaining({ status: "ready", proposal_id: approveFixture.created.proposal_id }),
+    ])
+    await expect(server.command("runtime.get_executor_review_proposal_apply_readiness", { readiness_id: readyByProposal.readiness_id })).resolves.toMatchObject({
+      status: "ready",
+      proposal_id: approveFixture.created.proposal_id,
+    })
+    expect(await readEventKinds(dir)).toEqual(beforeReadinessKinds)
     await expect(server.command("runtime.get_review_request", { review_id: approveFixture.requested.review_request_id })).resolves.toMatchObject({ status: "approved" })
     await expect(server.command("runtime.get_commander_proposal", { proposal_id: approveFixture.created.proposal_id })).resolves.toMatchObject({ status: "approved" })
     const duplicateApprove = await server.command("runtime.decide_executor_review_proposal_review", {
@@ -14969,6 +15017,12 @@ describe("RuntimeServerClient", () => {
 	    expect(rejected).toMatchObject({
 	      status: "rejected",
 	      reason_preview: longRejectReason.slice(0, 240),
+	    })
+	    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+	      proposal_id: rejectFixture.created.proposal_id,
+	    })).resolves.toMatchObject({
+	      status: "rejected",
+	      can_apply_in_future: false,
 	    })
 	    const rejectedReview = await server.command("runtime.get_review_request", { review_id: rejectFixture.requested.review_request_id }) as { decision_reason?: string }
 	    expect(rejectedReview.decision_reason).toBe(longRejectReason)
@@ -15209,6 +15263,13 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.list_executor_review_proposal_review_decisions")).resolves.toEqual([])
     await expect(client.command("runtime.get_executor_review_proposal_review_decision", { decision_gate_id: "missing-decision-gate" })).resolves.toBeNull()
     await expect(client.command("runtime.decide_executor_review_proposal_review", { review_request_id: "missing-review", decision: "approve", decided_by: "operator" })).rejects.toThrow("runtime must be started before review writes")
+    await expect(client.command("runtime.preview_executor_review_proposal_apply_readiness", { proposal_id: "missing-proposal" })).resolves.toMatchObject({
+      status: "blocked",
+      can_apply_in_future: false,
+    })
+    await expect(client.command("runtime.executor_review_proposal_apply_readiness_summary")).resolves.toMatchObject({ total_considered: 0 })
+    await expect(client.command("runtime.list_executor_review_proposal_apply_readiness")).resolves.toEqual([])
+    await expect(client.command("runtime.get_executor_review_proposal_apply_readiness", { readiness_id: "missing-readiness" })).resolves.toBeNull()
     expect(adapter.startCalls).toBe(0)
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
     await client.shutdown()
@@ -15315,6 +15376,22 @@ describe("RuntimeServerClient", () => {
       mutates_events: false,
     })
     expect(authority.validationProfile("/executor-review-proposal-review-approve").targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_review_decision_tui.py")
+  })
+
+  test("authority registry includes executor review proposal apply readiness commands", () => {
+    const authority = new CommandAuthorityService()
+    expect(authority.get("/executor-review-proposal-apply-readiness")).toMatchObject({
+      risk: "safe_read",
+      mutates_events: false,
+      runtime_command: "runtime.preview_executor_review_proposal_apply_readiness",
+      gate: "none",
+    })
+    expect(authority.get("/executor-review-proposal-apply-readiness-list")).toMatchObject({
+      risk: "safe_read",
+      mutates_events: false,
+      runtime_command: "runtime.list_executor_review_proposal_apply_readiness",
+    })
+    expect(authority.validationProfile("/executor-review-proposal-apply-readiness").targeted_e2e).toContain("tests/e2e_user/scenarios/test_executor_review_proposal_apply_readiness_tui.py")
   })
 
   test("authority registry includes MiniMax live validation commands", () => {
