@@ -15109,6 +15109,41 @@ describe("RuntimeServerClient", () => {
     expect(addedKinds).not.toContain("external_api_request_executed")
     expect(addedKinds).not.toContain("opencode_handoff_started")
 	    expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("decision-secret")
+    const recoverSeed = await seedReview("recover")
+    const recoverDryRun = await server.command("runtime.create_executor_review_proposal", {
+      review_id: "executor_review_decision_recover",
+      draft_id: recoverSeed.draftId,
+      dry_run: true,
+      requested_by: "operator",
+    }) as { title_preview: string; summary_preview: string; create_hash: string; draft_kind: string; evidence_ids: string[]; finding_ids: string[]; source_packet_id?: string; risk?: string; source_confidence?: number }
+    const recoveredProposal = await server.command("runtime.create_commander_proposal", {
+      actionKind: "other",
+      title: recoverDryRun.title_preview,
+      summary: recoverDryRun.summary_preview,
+      proposedBy: "operator",
+      actionPayload: {
+        source: "executor_review_proposal_create",
+        review_id: "executor_review_decision_recover",
+        draft_id: recoverSeed.draftId,
+        source_packet_id: recoverDryRun.source_packet_id,
+        draft_kind: recoverDryRun.draft_kind,
+        evidence_ids: recoverDryRun.evidence_ids,
+        finding_ids: recoverDryRun.finding_ids,
+        source_confidence: recoverDryRun.source_confidence ?? 0.88,
+        risk: recoverDryRun.risk ?? "medium",
+        create_hash: recoverDryRun.create_hash,
+      },
+    }) as { proposal_id: string }
+    const recoveredReview = await server.command("runtime.request_proposal_review", { proposalId: recoveredProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: recoveredReview.review_id, decidedBy: "operator", reason: "approved" })
+    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+      proposal_id: recoveredProposal.proposal_id,
+    })).resolves.toMatchObject({
+      status: "ready",
+      can_apply_in_future: true,
+      proposal_id: recoveredProposal.proposal_id,
+      review_request_id: recoveredReview.review_id,
+    })
     const spoofedProposal = await server.command("runtime.create_commander_proposal", {
       actionKind: "other",
       title: "spoofed executor-review proposal",

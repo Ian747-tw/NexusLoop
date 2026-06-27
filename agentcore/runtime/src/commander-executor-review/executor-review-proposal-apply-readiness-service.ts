@@ -99,26 +99,84 @@ export class ExecutorReviewProposalApplyReadinessService {
   }
 
   private async resolveChain(input: ExecutorReviewProposalApplyReadinessInput): Promise<Chain> {
-    const gateEvents = await this.gateEvents()
+    const events = await this.options.eventStore.readAll()
+    const gateEvents = this.gateEvents(events)
     const proposalId = input.proposal_id
       ?? this.proposalIdForReview(input.review_request_id, gateEvents)
       ?? this.proposalIdForDecision(input.decision_gate_id, gateEvents)
       ?? this.proposalIdForCreate(input.create_id, gateEvents)
+      ?? await this.recoveredProposalIdForReview(input.review_request_id)
+      ?? await this.recoveredProposalIdForDecision(input.decision_gate_id)
+      ?? await this.recoveredProposalIdForCreate(input.create_id)
     const proposal = proposalId ? await this.options.proposalRegistry.getProposal(proposalId) : null
     const reviewRequestId = input.review_request_id ?? proposal?.review_id
     const review = reviewRequestId ? await this.options.reviewRegistry.getReviewRequest(reviewRequestId) : null
-    const requestRecord = reviewRequestId ? this.requestRecordFromGateEvents(gateEvents, { review_request_id: reviewRequestId }) : undefined
-    const createRecord = input.create_id ? this.createRecordFromGateEvents(gateEvents, { create_id: input.create_id }) : proposalId ? this.createRecordFromGateEvents(gateEvents, { proposal_id: proposalId }) : undefined
-    const decisionRecord = input.decision_gate_id ? this.decisionRecordFromGateEvents(gateEvents, { decision_gate_id: input.decision_gate_id }) : reviewRequestId ? this.decisionRecordFromGateEvents(gateEvents, { review_request_id: reviewRequestId }) : undefined
+    const eventCreateRecord = input.create_id ? this.createRecordFromGateEvents(gateEvents, { create_id: input.create_id }) : proposalId ? this.createRecordFromGateEvents(gateEvents, { proposal_id: proposalId }) : undefined
+    const createRecord = eventCreateRecord ?? await this.recoveredCreateRecord(proposal, events, input.create_id ? { create_id: input.create_id } : proposalId ? { proposal_id: proposalId } : {})
+    const eventRequestRecord = reviewRequestId ? this.requestRecordFromGateEvents(gateEvents, { review_request_id: reviewRequestId }) : undefined
+    const requestRecord = eventRequestRecord ?? await this.recoveredRequestRecord(proposal, createRecord, reviewRequestId ? { review_request_id: reviewRequestId } : proposalId ? { proposal_id: proposalId } : {})
+    const eventDecisionRecord = input.decision_gate_id ? this.decisionRecordFromGateEvents(gateEvents, { decision_gate_id: input.decision_gate_id }) : reviewRequestId ? this.decisionRecordFromGateEvents(gateEvents, { review_request_id: reviewRequestId }) : undefined
+    const decisionRecord = eventDecisionRecord ?? await this.recoveredDecisionRecord(proposal, review, requestRecord, input.decision_gate_id ? { decision_gate_id: input.decision_gate_id } : reviewRequestId ? { review_request_id: reviewRequestId } : proposalId ? { proposal_id: proposalId } : {})
     return { proposal, review, createRecord, requestRecord, decisionRecord }
   }
 
-  private async gateEvents(): Promise<JsonlEvent[]> {
-    return (await this.options.eventStore.readAll()).filter((event) =>
+  private gateEvents(events: JsonlEvent[]): JsonlEvent[] {
+    return events.filter((event) =>
       event.kind === "commander_executor_review_proposal_created"
       || event.kind === "commander_executor_review_proposal_review_requested"
       || event.kind === "commander_executor_review_proposal_review_approved"
       || event.kind === "commander_executor_review_proposal_review_rejected")
+  }
+
+  private async recoveredCreateRecord(proposal: CommanderProposal | null, events: JsonlEvent[], query: { create_id?: string; proposal_id?: string }): Promise<ExecutorReviewProposalCreateRecord | undefined> {
+    if (!proposal) return undefined
+    const records = query.create_id
+      ? [await this.options.createService.get(query.create_id)]
+      : await this.options.createService.list({ limit: 100, proposal_id: query.proposal_id ?? proposal.proposal_id })
+    const record = records.find((item): item is ExecutorReviewProposalCreateRecord => !!item && item.status === "created" && item.proposal_id === proposal.proposal_id)
+    if (!record) return undefined
+    return this.trustedRecoveredCreateRecord(proposal, record, events)
+  }
+
+  private trustedRecoveredCreateRecord(proposal: CommanderProposal, record: ExecutorReviewProposalCreateRecord, events: JsonlEvent[]): ExecutorReviewProposalCreateRecord | undefined {
+    const payload = isRecord(proposal.action_payload) ? proposal.action_payload : {}
+    const createHash = optional(payload.create_hash)
+    const reviewId = optional(payload.review_id)
+    const draftId = optional(payload.draft_id)
+    if (!createHash || !reviewId || !draftId) return undefined
+    if (record.create_hash !== createHash) return undefined
+    if (record.create_id !== `executor_review_proposal_create_${createHash.slice(0, 16)}`) return undefined
+    if (record.review_id !== reviewId || record.draft_id !== draftId) return undefined
+    const sourceReview = events.find((event) =>
+      event.kind === "commander_executor_review_succeeded"
+      && event.review_id === reviewId
+      && event.status === "succeeded")
+    return sourceReview ? record : undefined
+  }
+
+  private async recoveredRequestRecord(proposal: CommanderProposal | null, createRecord: ExecutorReviewProposalCreateRecord | undefined, query: { review_request_id?: string; proposal_id?: string }): Promise<ExecutorReviewProposalReviewRequestRecord | undefined> {
+    if (!proposal || !createRecord) return undefined
+    const records = await this.options.requestService.list({ limit: 100, proposal_id: query.proposal_id ?? proposal.proposal_id, review_request_id: query.review_request_id })
+    const record = records.find((item) => item.status === "requested" && item.proposal_id === proposal.proposal_id)
+    if (!record) return undefined
+    if (record.review_request_id !== proposal.review_id) return undefined
+    if (record.create_id !== createRecord.create_id) return undefined
+    if (record.review_id !== createRecord.review_id || record.draft_id !== createRecord.draft_id) return undefined
+    return record
+  }
+
+  private async recoveredDecisionRecord(proposal: CommanderProposal | null, review: { status: string } | null, requestRecord: ExecutorReviewProposalReviewRequestRecord | undefined, query: { decision_gate_id?: string; review_request_id?: string; proposal_id?: string }): Promise<ExecutorReviewProposalReviewDecisionRecord | undefined> {
+    if (!proposal || !requestRecord || (review?.status !== "approved" && review?.status !== "rejected")) return undefined
+    const records = query.decision_gate_id
+      ? [await this.options.decisionService.get(query.decision_gate_id)]
+      : await this.options.decisionService.list({ limit: 100, proposal_id: query.proposal_id ?? proposal.proposal_id, review_request_id: query.review_request_id ?? requestRecord.review_request_id })
+    const record = records.find((item): item is ExecutorReviewProposalReviewDecisionRecord => !!item && (item.status === "approved" || item.status === "rejected") && item.proposal_id === proposal.proposal_id)
+    if (!record) return undefined
+    if (record.review_request_id !== requestRecord.review_request_id) return undefined
+    if (record.request_gate_id !== requestRecord.request_gate_id) return undefined
+    if (record.create_id !== requestRecord.create_id) return undefined
+    if (record.status !== review.status) return undefined
+    return record
   }
 
   private createRecordFromGateEvents(events: JsonlEvent[], query: { create_id?: string; proposal_id?: string }): ExecutorReviewProposalCreateRecord | undefined {
@@ -195,6 +253,23 @@ export class ExecutorReviewProposalApplyReadinessService {
   private proposalIdForCreate(createId: string | undefined, events: JsonlEvent[]): string | undefined {
     if (!createId) return undefined
     return this.createRecordFromGateEvents(events, { create_id: createId })?.proposal_id
+  }
+
+  private async recoveredProposalIdForReview(reviewRequestId?: string): Promise<string | undefined> {
+    if (!reviewRequestId) return undefined
+    return (await this.options.requestService.list({ limit: 100, review_request_id: reviewRequestId })).find((record) => record.status === "requested" && record.review_request_id === reviewRequestId)?.proposal_id
+  }
+
+  private async recoveredProposalIdForDecision(decisionGateId?: string): Promise<string | undefined> {
+    if (!decisionGateId) return undefined
+    const record = await this.options.decisionService.get(decisionGateId)
+    return record?.status === "approved" || record?.status === "rejected" ? record.proposal_id : undefined
+  }
+
+  private async recoveredProposalIdForCreate(createId?: string): Promise<string | undefined> {
+    if (!createId) return undefined
+    const record = await this.options.createService.get(createId)
+    return record?.status === "created" ? record.proposal_id : undefined
   }
 
   private buildPreview(chain: Chain, input: ExecutorReviewProposalApplyReadinessInput): ExecutorReviewProposalApplyReadinessPreview {
