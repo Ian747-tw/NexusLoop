@@ -147,6 +147,11 @@ class TestRuntimeClient implements RuntimeClient {
       }
     }
     if (name === "runtime.opencode_result_review_summary") return { total_considered: 0, ready_count: 0, needs_result_count: 0, failed_count: 0, blocked_count: 0, stale_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
+    if (name === "runtime.preview_opencode_session_plan") return opencodeSessionPreview(payload)
+    if (name === "runtime.create_opencode_session_plan") return opencodeSessionPlan(payload, payload?.dry_run === true || payload?.dryRun === true ? "dry_run" : "planned")
+    if (name === "runtime.list_opencode_sessions") return []
+    if (name === "runtime.get_opencode_session") return null
+    if (name === "runtime.opencode_session_summary") return { total_sessions: 0, planned_count: 0, running_count: 0, paused_count: 0, blocked_count: 0, completed_count: 0, failed_count: 0, cancelled_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
     if (name === "runtime.command_authority_get") {
       return {
         authority_id: "authority_opencode_smoke",
@@ -204,6 +209,54 @@ class TestRuntimeClient implements RuntimeClient {
 
   async shutdown(): Promise<void> {
     this.shutdownCount += 1
+  }
+}
+
+function opencodeSessionPreview(payload?: Record<string, unknown>) {
+  const objective = String(payload?.objective ?? "inspect session")
+  return {
+    preview_id: "session_preview_test",
+    can_create: true,
+    source_kind: "manual",
+    title_preview: "Session preview",
+    objective_preview: objective,
+    commander_context_summary_preview: `Commander context for ${objective}`,
+    opencode_context_seed_preview: `OpenCode seed for ${objective}`,
+    max_context_bytes: 12_000,
+    success_criteria: ["report findings"],
+    constraints: ["do not launch OpenCode"],
+    timeout_policy: { max_wall_time_ms: 1_800_000, max_no_progress_ms: 600_000, heartbeat_interval_ms: 60_000, forced_pause_enabled: true, report_required_on_timeout: true, timeout_policy_hash: "hash-timeout" },
+    question_policy: { allow_opencode_questions: true, commander_answer_required_for_blockers: true, human_escalation_allowed: true, max_pending_questions: 3, question_policy_hash: "hash-question" },
+    human_control_policy: { allow_human_pause: true, allow_human_override: true, allow_human_stop: true, allow_human_guidance_note: true, require_reason_for_stop: true, human_policy_hash: "hash-human" },
+    blockers: [],
+    warnings: ["planning only"],
+    recommended_commands: [],
+    generated_at: "2026-06-20T00:00:00.000Z",
+    redacted_summary_preview: "session preview",
+  }
+}
+
+function opencodeSessionPlan(payload: Record<string, unknown> | undefined, status: "dry_run" | "planned") {
+  const preview = opencodeSessionPreview(payload)
+  return {
+    session_id: status === "dry_run" ? "session_dry_run_test" : "session_plan_test",
+    status: "planned",
+    source_kind: preview.source_kind,
+    objective: preview.objective_preview,
+    title: preview.title_preview,
+    commander_context_summary: preview.commander_context_summary_preview,
+    opencode_context_seed: preview.opencode_context_seed_preview,
+    shared_context_summary: "shared session metadata",
+    max_context_bytes: preview.max_context_bytes,
+    success_criteria: preview.success_criteria,
+    constraints: preview.constraints,
+    artifact_expectations: ["bounded report"],
+    timeout_policy: preview.timeout_policy,
+    question_policy: preview.question_policy,
+    human_control_policy: preview.human_control_policy,
+    created_at: "2026-06-20T00:00:00.000Z",
+    created_by: "operator",
+    session_hash: `hash-${status}`,
   }
 }
 
@@ -823,6 +876,39 @@ describe("TUI launch boundary", () => {
     const snapshot = output.join("\n")
     expect(snapshot).toContain("command_error=runtime failed [REDACTED]")
     expect(snapshot).not.toContain("launch-secret")
+  })
+
+  test("headless OpenCode session inspection scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/opencode-session-preview objective=inspect session token=abc123" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-session-plan-dry-run objective=inspect session token=abc123" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-sessions" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-session-summary" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-opencode-session-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("OpenCode sessions")
+    expect(snapshot).not.toContain("abc123")
+    expect(runtime.commandNames).toContain("runtime.preview_opencode_session_plan")
+    expect(runtime.commandNames).toContain("runtime.create_opencode_session_plan")
+    expect(runtime.commandNames).toContain("runtime.list_opencode_sessions")
+    expect(runtime.commandNames).toContain("runtime.opencode_session_summary")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })
 
   test("headless OpenCode smoke inspection scripts skip broad startup refresh", async () => {
