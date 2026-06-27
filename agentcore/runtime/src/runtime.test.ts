@@ -14582,12 +14582,24 @@ describe("OpenCode session planning", () => {
       source_kind: "executor_review",
       blockers: expect.arrayContaining(["executor_review source_kind requires resolved apply_id evidence"]),
     })
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      objective: "manual objective cannot masquerade as research",
+      sourceKind: "research",
+    })).resolves.toMatchObject({
+      can_create: false,
+      source_kind: "research",
+      blockers: expect.arrayContaining(["research source_kind requires durable research source evidence"]),
+    })
 
     await server.start()
     await expect(server.command("runtime.create_opencode_session_plan", {
       objective: "manual objective cannot masquerade as proposal",
       sourceKind: "proposal",
     })).rejects.toThrow("proposal source_kind requires a resolved proposal_id")
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      objective: "manual objective cannot masquerade as research",
+      sourceKind: "research",
+    })).rejects.toThrow("research source_kind requires durable research source evidence")
     expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(0)
     await server.shutdown()
   })
