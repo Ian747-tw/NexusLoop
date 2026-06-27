@@ -14490,6 +14490,35 @@ describe("OpenCode session planning", () => {
     await expect(server.command("runtime.create_opencode_session_plan", {
       proposalId: completedProposal.proposal_id,
     })).rejects.toThrow("source status completed is not plan-eligible")
+
+    const applied = await server.submitUserMessage("applied proposal source mission")
+    const appliedClaim = await server.command("runtime.claim_mission", { missionId: applied.missionId, executorId: "executor" }) as { claim_id: string }
+    const appliedProposal = await server.command("runtime.create_commander_proposal", {
+      missionId: applied.missionId,
+      claimId: appliedClaim.claim_id,
+      actionKind: "record_progress",
+      title: "proposal that becomes applied",
+      summary: "proposal is consumed by apply",
+      proposedBy: "commander",
+      actionPayload: {
+        mission_id: applied.missionId,
+        claim_id: appliedClaim.claim_id,
+        message: "progress before session planning",
+      },
+    }) as { proposal_id: string }
+    const appliedReview = await server.command("runtime.request_proposal_review", { proposalId: appliedProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    await server.command("runtime.approve_review_request", { reviewId: appliedReview.review_id, decidedBy: "operator", reason: "approve apply" })
+    await server.command("runtime.apply_commander_proposal", { proposalId: appliedProposal.proposal_id })
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      proposalId: appliedProposal.proposal_id,
+    })).resolves.toMatchObject({
+      can_create: false,
+      blockers: expect.arrayContaining(["source status applied is not plan-eligible"]),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      proposalId: appliedProposal.proposal_id,
+    })).rejects.toThrow("source status applied is not plan-eligible")
     expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(0)
     await server.shutdown()
   })

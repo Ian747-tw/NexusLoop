@@ -137,7 +137,7 @@ export class OpenCodeSessionService {
     const hasExplicitLinkedSource = !!input.proposal_id || !!input.mission_id || !!input.review_request_id || !!input.apply_id
     const hasLinkedSource = !!source.proposal_id || !!source.mission_id || !!source.apply_id
     if (sourceKind === "manual" && hasExplicitLinkedSource) blockers.push("manual source_kind cannot be combined with linked source IDs")
-    const terminalSourceStatus = source.source_statuses.find((status) => ["cancelled", "rejected", "failed", "completed"].includes(status))
+    const terminalSourceStatus = source.source_statuses.find((status) => ["cancelled", "rejected", "failed", "completed", "applied"].includes(status))
     if (terminalSourceStatus && (sourceKind !== "manual" || hasLinkedSource)) blockers.push(`source status ${terminalSourceStatus} is not plan-eligible`)
     if (objective.length < 12) warnings.push("objective is short; future launch may require clearer tactical scope")
     const maxContextBytes = boundedNumber(input.max_context_bytes, DEFAULT_MAX_CONTEXT_BYTES, 1_000, MAX_CONTEXT_BYTES)
