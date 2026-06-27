@@ -15860,11 +15860,24 @@ describe("RuntimeServerClient", () => {
     expect(recoveredList).toEqual([
       expect.objectContaining({ status: "applied", proposal_id: created.proposal_id, apply_id: failedApplyId }),
     ])
+    await expect(server.command("runtime.preview_opencode_session_plan", { applyId: failedApplyId })).resolves.toMatchObject({
+      can_create: true,
+      source_kind: "executor_review",
+      proposal_id: created.proposal_id,
+      apply_id: failedApplyId,
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", { applyId: failedApplyId })).resolves.toMatchObject({
+      status: "planned",
+      source_kind: "executor_review",
+      proposal_id: created.proposal_id,
+      apply_id: failedApplyId,
+    })
     const retry = await server.command("runtime.apply_executor_review_proposal_narrow", { proposal_id: created.proposal_id, applied_by: "operator" }) as { status: string; apply_id: string; proposal_id: string }
     expect(retry).toMatchObject({ status: "applied", proposal_id: created.proposal_id, apply_id: failedApplyId })
     const kinds = await readEventKinds(dir)
     expect(kinds.filter((kind) => kind === "commander_proposal_applied")).toHaveLength(1)
     expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_narrow_apply_failed")).toHaveLength(1)
+    expect(kinds.filter((kind) => kind === "opencode_session_planned")).toHaveLength(1)
     expect(kinds.filter((kind) => kind === "commander_executor_review_proposal_narrow_applied")).toHaveLength(1)
     expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("narrow-recover-secret")
     await server.shutdown()

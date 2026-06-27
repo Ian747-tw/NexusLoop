@@ -30,6 +30,7 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 60 * 1000
 const MAX_WALL_TIME_MS = 24 * 60 * 60 * 1000
 const MAX_NO_PROGRESS_MS = 2 * 60 * 60 * 1000
 const MAX_HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000
+const EXECUTOR_REVIEW_NARROW_APPLY_PREFIX = "executor_review_narrow_apply:"
 
 export type OpenCodeSessionServiceOptions = {
   eventStore: EventStore
@@ -266,10 +267,21 @@ export class OpenCodeSessionService {
     }
   }
 
-  private async findNarrowApply(applyIdValue: string): Promise<JsonlEvent | undefined> {
-    return (await this.options.eventStore.readAll()).slice().reverse().find((event) =>
+  private async findNarrowApply(applyIdValue: string): Promise<{ apply_id: string; proposal_id: string } | undefined> {
+    const eventApply = (await this.options.eventStore.readAll()).slice().reverse().find((event) =>
       event.kind === "commander_executor_review_proposal_narrow_applied"
       && event.apply_id === applyIdValue)
+    if (eventApply) {
+      const proposalId = optional(eventApply.proposal_id)
+      return proposalId ? { apply_id: applyIdValue, proposal_id: proposalId } : undefined
+    }
+    const proposals = await this.options.proposalRegistry.listAllProposals({ status: "applied" })
+    const recoveredProposal = proposals.find((proposal) => {
+      if (proposal.application_result !== `${EXECUTOR_REVIEW_NARROW_APPLY_PREFIX}${applyIdValue}`) return false
+      const payload = isRecord(proposal.action_payload) ? proposal.action_payload : {}
+      return payload.source === "executor_review_proposal_create"
+    })
+    return recoveredProposal ? { apply_id: applyIdValue, proposal_id: recoveredProposal.proposal_id } : undefined
   }
 
   private async findExisting(sessionHash: string): Promise<OpenCodeSessionPlan | undefined> {
