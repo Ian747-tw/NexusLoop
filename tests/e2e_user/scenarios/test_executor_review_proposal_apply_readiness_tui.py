@@ -232,6 +232,7 @@ def test_user_previews_executor_review_proposal_apply_readiness(sandbox) -> None
 
     keys = [
         {"type": "submit"},
+        # Force normal real-runtime startup before the explicit approval write.
         {"type": "insert", "text": "/status"},
         {"type": "submit"},
         {"type": "insert", "text": f"/executor-review-draft-preview review={review_id}"},

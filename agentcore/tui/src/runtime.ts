@@ -2099,6 +2099,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       ...(requestRecord && requestRecord.proposal_id !== proposal?.proposal_id ? ["review-request gate linkage is inconsistent"] : []),
       ...(decisionRecord?.proposal_id && decisionRecord.proposal_id !== proposal?.proposal_id ? ["review-decision gate linkage is inconsistent"] : []),
       ...(proposal && stringList(source.evidence_ids).length === 0 && stringList(source.finding_ids).length === 0 ? ["executor-review proposal source evidence metadata is incomplete"] : []),
+      ...(proposal?.action_kind === "opencode_handoff" ? ["opencode_handoff proposals require the dedicated handoff command"] : []),
       ...(candidateKind === "unsupported" ? ["proposal candidate kind is unsupported for future apply"] : []),
     ]
     let status = "needs_review"

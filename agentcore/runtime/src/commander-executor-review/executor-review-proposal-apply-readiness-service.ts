@@ -179,12 +179,12 @@ export class ExecutorReviewProposalApplyReadinessService {
     if (proposal && evidenceIds.length === 0 && findingIds.length === 0) blockers.push("executor-review proposal source evidence metadata is incomplete")
     const candidateKind = classifyCandidate(proposal)
     const candidateRisk = classifyRisk(candidateKind, optional(payload.risk))
+    if (proposal?.action_kind === "opencode_handoff") blockers.push("opencode_handoff proposals require the dedicated handoff command")
     if (candidateKind === "unsupported") blockers.push("proposal candidate kind is unsupported for future apply")
 
     let status: ExecutorReviewProposalApplyReadinessStatus
     if (blockers.length > 0) status = "blocked"
     else if (chain.review?.status === "rejected" || proposal?.status === "rejected" || chain.decisionRecord?.status === "rejected") status = "rejected"
-    else if (chain.review?.status === "cancelled") status = "blocked"
     else if (!chain.requestRecord || !chain.review || chain.review.status === "pending" || !chain.decisionRecord) status = "needs_review"
     else if (chain.review.status === "approved" && chain.decisionRecord.status === "approved" && proposal?.status === "approved") status = "ready"
     else status = "needs_review"

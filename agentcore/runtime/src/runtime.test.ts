@@ -15109,6 +15109,47 @@ describe("RuntimeServerClient", () => {
     expect(addedKinds).not.toContain("external_api_request_executed")
     expect(addedKinds).not.toContain("opencode_handoff_started")
 	    expect(JSON.stringify(await server.eventStore.readAll())).not.toContain("decision-secret")
+	    const handoffProposal = await server.command("runtime.create_commander_proposal", {
+	      actionKind: "opencode_handoff",
+	      title: "executor handoff proposal should not be apply-ready",
+	      summary: "Executor handoff proposals require the dedicated handoff path.",
+	      proposedBy: "operator",
+	      actionPayload: {
+	        source: "executor_review_proposal_create",
+	        review_id: "executor_review_decision_handoff",
+	        draft_id: "draft_decision_handoff",
+	        draft_kind: "followup_task",
+	        evidence_ids: ["mission_result:result_decision_approve"],
+	        finding_ids: ["finding_decision_approve"],
+	        source_confidence: 0.8,
+	        risk: "medium",
+	      },
+	    }) as { proposal_id: string }
+	    const handoffReview = await server.command("runtime.request_proposal_review", { proposalId: handoffProposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+	    await server.eventStore.append({
+	      kind: "commander_executor_review_proposal_review_requested",
+	      request_gate_id: "request_gate_decision_handoff",
+	      status: "requested",
+	      review_request_id: handoffReview.review_id,
+	      proposal_id: handoffProposal.proposal_id,
+	      create_id: "create_decision_handoff",
+	      review_id: "executor_review_decision_handoff",
+	      draft_id: "draft_decision_handoff",
+	      source_packet_id: "packet_decision_handoff",
+	      requested_at: "2026-06-26T00:00:04.000Z",
+	      requested_by: "operator",
+	      request_hash: "request_hash_decision_handoff",
+	      recommended_commands: [],
+	    } as JsonlEvent)
+	    await server.command("runtime.approve_review_request", { reviewId: handoffReview.review_id, decidedBy: "operator", reason: "approved" })
+	    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+	      proposal_id: handoffProposal.proposal_id,
+	    })).resolves.toMatchObject({
+	      status: "blocked",
+	      blockers: expect.arrayContaining(["opencode_handoff proposals require the dedicated handoff command"]),
+	      can_apply_in_future: false,
+	    })
+	    expect(await readEventKinds(dir)).not.toContain("opencode_handoff_started")
 	    await server.shutdown()
 	  })
 
