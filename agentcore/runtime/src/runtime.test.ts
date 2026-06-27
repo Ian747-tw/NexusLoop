@@ -14974,11 +14974,53 @@ describe("RuntimeServerClient", () => {
     await expect(server.command("runtime.list_executor_review_proposal_apply_readiness", { status: "ready" })).resolves.toEqual([
       expect.objectContaining({ status: "ready", proposal_id: approveFixture.created.proposal_id }),
     ])
+    expect(await readEventKinds(dir)).toEqual(beforeReadinessKinds)
+    for (let index = 0; index < 25; index += 1) {
+      await server.command("runtime.create_commander_proposal", {
+        actionKind: "other",
+        title: `newer executor proposal ${index}`,
+        summary: `newer executor proposal ${index}`,
+        proposedBy: "operator",
+        actionPayload: {
+          source: "executor_review_proposal_create",
+          review_id: `newer_executor_review_${index}`,
+          draft_id: `newer_draft_${index}`,
+          draft_kind: "human_review",
+          evidence_ids: [`manual_note:newer_${index}`],
+          finding_ids: [`finding_newer_${index}`],
+          source_confidence: 0.7,
+          risk: "medium",
+        },
+      })
+    }
+    await expect(server.command("runtime.list_executor_review_proposal_apply_readiness", { status: "ready" })).resolves.toEqual([
+      expect.objectContaining({ status: "ready", proposal_id: approveFixture.created.proposal_id }),
+    ])
     await expect(server.command("runtime.get_executor_review_proposal_apply_readiness", { readiness_id: readyByProposal.readiness_id })).resolves.toMatchObject({
       status: "ready",
       proposal_id: approveFixture.created.proposal_id,
     })
-    expect(await readEventKinds(dir)).toEqual(beforeReadinessKinds)
+    await server.eventStore.append({
+      kind: "review_request_created",
+      review: {
+        review_id: "unrelated_apply_readiness_review",
+        mission_id: "mission_decision_approve",
+        request_type: "operator_checkpoint",
+        title: "Unrelated review",
+        summary: "Unrelated review must not satisfy proposal apply readiness.",
+        requested_by: "operator",
+        status: "pending",
+        created_at: "2026-06-26T00:00:05.000Z",
+        updated_at: "2026-06-26T00:00:05.000Z",
+      },
+    } as JsonlEvent)
+    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+      proposal_id: approveFixture.created.proposal_id,
+      review_request_id: "unrelated_apply_readiness_review",
+    })).resolves.toMatchObject({
+      status: "blocked",
+      blockers: expect.arrayContaining(["review_request_id does not match linked proposal review"]),
+    })
     await expect(server.command("runtime.get_review_request", { review_id: approveFixture.requested.review_request_id })).resolves.toMatchObject({ status: "approved" })
     await expect(server.command("runtime.get_commander_proposal", { proposal_id: approveFixture.created.proposal_id })).resolves.toMatchObject({ status: "approved" })
     const duplicateApprove = await server.command("runtime.decide_executor_review_proposal_review", {

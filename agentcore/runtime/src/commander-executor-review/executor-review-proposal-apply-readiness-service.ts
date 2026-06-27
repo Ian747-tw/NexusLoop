@@ -68,7 +68,7 @@ export class ExecutorReviewProposalApplyReadinessService {
   }
 
   async list(input: { limit?: number; status?: ExecutorReviewProposalApplyReadinessStatus; candidate_kind?: ExecutorReviewProposalApplyCandidateKind; proposal_id?: string } = {}): Promise<ExecutorReviewProposalApplyReadinessRecord[]> {
-    return redactValue((await this.candidatePreviews(limit(input.limit)))
+    return redactValue((await this.candidatePreviews(100))
       .filter((item) => !input.status || item.status === input.status)
       .filter((item) => !input.candidate_kind || item.candidate_kind === input.candidate_kind)
       .filter((item) => !input.proposal_id || item.proposal_id === input.proposal_id)
@@ -167,7 +167,7 @@ export class ExecutorReviewProposalApplyReadinessService {
     if (proposal && (!optional(payload.review_id) || !optional(payload.draft_id))) blockers.push("executor-review proposal source metadata is incomplete")
     if (proposal && ["cancelled", "applied"].includes(proposal.status)) blockers.push(`proposal status ${proposal.status} cannot be apply-ready`)
     if (input.create_id && (!chain.createRecord || chain.createRecord.proposal_id !== proposal?.proposal_id)) blockers.push("create_id does not match the proposal source create record")
-    if (input.review_request_id && input.review_request_id !== (chain.review?.review_id ?? proposal?.review_id)) blockers.push("review_request_id does not match linked proposal review")
+    if (input.review_request_id && proposal && input.proposal_id && input.review_request_id !== proposal.review_id) blockers.push("review_request_id does not match linked proposal review")
     if (input.decision_gate_id && (!chain.decisionRecord || chain.decisionRecord.proposal_id !== proposal?.proposal_id)) blockers.push("decision_gate_id does not match linked proposal review decision")
     if (proposal && proposal.review_id && !chain.review) blockers.push("linked review request was not found")
     if (proposal && chain.requestRecord && chain.requestRecord.proposal_id !== proposal.proposal_id) blockers.push("review-request gate linkage is inconsistent")
