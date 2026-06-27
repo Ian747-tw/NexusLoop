@@ -232,6 +232,8 @@ def test_user_previews_executor_review_proposal_apply_readiness(sandbox) -> None
 
     keys = [
         {"type": "submit"},
+        {"type": "insert", "text": "/status"},
+        {"type": "submit"},
         {"type": "insert", "text": f"/executor-review-draft-preview review={review_id}"},
         {"type": "submit"},
         {"type": "insert", "text": f"/executor-review-proposal-create review={review_id} draft={draft_id}"},

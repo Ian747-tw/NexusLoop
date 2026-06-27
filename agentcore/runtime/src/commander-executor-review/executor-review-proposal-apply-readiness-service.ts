@@ -184,9 +184,9 @@ export class ExecutorReviewProposalApplyReadinessService {
     let status: ExecutorReviewProposalApplyReadinessStatus
     if (blockers.length > 0) status = "blocked"
     else if (chain.review?.status === "rejected" || proposal?.status === "rejected" || chain.decisionRecord?.status === "rejected") status = "rejected"
+    else if (chain.review?.status === "cancelled") status = "blocked"
     else if (!chain.requestRecord || !chain.review || chain.review.status === "pending" || !chain.decisionRecord) status = "needs_review"
     else if (chain.review.status === "approved" && chain.decisionRecord.status === "approved" && proposal?.status === "approved") status = "ready"
-    else if (chain.review.status === "cancelled") status = "blocked"
     else status = "needs_review"
 
     const canApplyInFuture = status === "ready"
