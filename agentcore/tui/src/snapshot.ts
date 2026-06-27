@@ -88,6 +88,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...executorReviewProposalCreateLines(state))
   out.push(...executorReviewProposalReviewRequestLines(state))
   out.push(...executorReviewProposalReviewDecisionLines(state))
+  out.push(...executorReviewProposalApplyReadinessLines(state))
   out.push(...opencodeFollowupLines(state))
   out.push(...runtimeCheckpointLines(state))
   out.push(...runtimeRestoreLines(state))
@@ -802,6 +803,51 @@ function executorReviewProposalReviewDecisionLines(state: UiState): string[] {
   }
   if (decision.commandError) out.push(`  command_error=${redactText(decision.commandError)}`)
   out.push("  note=review decision does not apply proposals, mutate missions, call provider, or launch OpenCode")
+  return out
+}
+
+function executorReviewProposalApplyReadinessLines(state: UiState): string[] {
+  const readiness = state.executorReviewProposalApplyReadiness
+  const out = ["Executor review proposal apply readiness"]
+  if (!readiness) {
+    out.push("  preview=none")
+    out.push("  records=0")
+    out.push("  note=apply readiness does not apply proposals, mutate missions, call provider, or launch OpenCode")
+    return out
+  }
+  if (readiness.preview) {
+    const item = readiness.preview
+    out.push(`  preview=${item.readiness_id} status=${item.status} can_apply_in_future=${item.can_apply_in_future}`)
+    out.push(`  proposal=${item.proposal_id} review_request=${item.review_request_id ?? "none"} decision=${item.decision_gate_id ?? "none"} create=${item.create_id ?? "none"}`)
+    out.push(`  source_review=${item.source_executor_review_id ?? "none"} draft=${item.source_draft_id ?? "none"} packet=${item.source_packet_id ?? "none"}`)
+    out.push(`  proposal_status=${item.proposal_status ?? "none"} review_status=${item.review_request_status ?? "none"} review_decision=${item.review_decision ?? "none"}`)
+    out.push(`  candidate=${item.candidate_kind} risk=${item.candidate_risk} action=${item.action_kind ?? "none"} title=${preview(redactText(item.proposal_title_preview))}`)
+    out.push(`  summary=${preview(redactText(item.redacted_summary_preview))}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(String(blocker ?? "")))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(String(warning ?? "")))}`))
+    }
+  } else {
+    out.push("  preview=none")
+  }
+  if (readiness.summary) {
+    const summary = readiness.summary
+    out.push(`  summary total=${summary.total_considered} ready=${summary.ready_count} needs_review=${summary.needs_review_count} rejected=${summary.rejected_count} blocked=${summary.blocked_count} generic=${summary.generic_count} high_risk=${summary.high_risk_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  out.push(`  records=${readiness.records.length}`)
+  if (readiness.records.length > 0) {
+    out.push("  readiness_records")
+    out.push(...readiness.records.slice(0, 10).map((record) => `    - ${record.readiness_id} status=${record.status} proposal=${record.proposal_id} kind=${record.candidate_kind} risk=${record.candidate_risk}: ${preview(redactText(record.summary_preview))}`))
+  }
+  if (readiness.selected && readiness.selected.readiness_id !== readiness.preview?.readiness_id) out.push(`  selected=${readiness.selected.readiness_id} status=${readiness.selected.status} proposal=${readiness.selected.proposal_id}`)
+  if (readiness.commandError) out.push(`  command_error=${redactText(readiness.commandError)}`)
+  out.push("  note=apply readiness does not apply proposals, mutate missions, call provider, or launch OpenCode")
   return out
 }
 

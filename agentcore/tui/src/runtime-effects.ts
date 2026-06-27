@@ -58,6 +58,11 @@ import type {
   ExecutorReviewProposalReviewDecisionRecordSummary,
   ExecutorReviewProposalReviewDecisionResultSummary,
   ExecutorReviewProposalReviewDecisionState,
+  ExecutorReviewProposalApplyReadinessPreviewSummary,
+  ExecutorReviewProposalApplyReadinessRecordSummary,
+  ExecutorReviewProposalApplyReadinessState,
+  ExecutorReviewProposalApplyReadinessSummary,
+  ExecutorReviewProposalApplyReadinessCommandSummary,
   OpenCodeHandoffRecordSummary,
   OpenCodeHandoffResultSummary,
   OpenCodeHandoffState,
@@ -367,6 +372,10 @@ export type RuntimeUiEffect =
   | { type: "decide-executor-review-proposal-review"; reviewRequestId: string; decision: "approve" | "reject"; reason?: string; requestGateId?: string; dryRun?: boolean }
   | { type: "load-executor-review-proposal-review-decisions"; limit?: number }
   | { type: "load-executor-review-proposal-review-decision"; decisionGateId: string }
+  | { type: "preview-executor-review-proposal-apply-readiness"; proposalId?: string; reviewRequestId?: string; decisionGateId?: string; createId?: string }
+  | { type: "load-executor-review-proposal-apply-readiness-summary"; limit?: number }
+  | { type: "load-executor-review-proposal-apply-readiness-list"; limit?: number; status?: string; candidateKind?: string; proposalId?: string }
+  | { type: "load-executor-review-proposal-apply-readiness"; readinessId: string }
   | { type: "load-opencode-handoff-followup"; handoffId: string }
   | { type: "load-opencode-handoff-followups"; limit?: number }
   | { type: "load-opencode-handoff-followup-summary" }
@@ -1207,6 +1216,24 @@ export async function applyRuntimeUiEffect(
         return applyExecutorReviewProposalReviewDecisionRecords(state, await runtime.command("runtime.list_executor_review_proposal_review_decisions", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-executor-review-proposal-review-decision":
         return applyExecutorReviewProposalReviewDecisionSelected(state, await runtime.command("runtime.get_executor_review_proposal_review_decision", { decisionGateId: effect.decisionGateId }), effect.decisionGateId)
+      case "preview-executor-review-proposal-apply-readiness":
+        return applyExecutorReviewProposalApplyReadinessPreview(state, await runtime.command("runtime.preview_executor_review_proposal_apply_readiness", {
+          proposalId: effect.proposalId,
+          reviewRequestId: effect.reviewRequestId,
+          decisionGateId: effect.decisionGateId,
+          createId: effect.createId,
+        }))
+      case "load-executor-review-proposal-apply-readiness-summary":
+        return applyExecutorReviewProposalApplyReadinessSummary(state, await runtime.command("runtime.executor_review_proposal_apply_readiness_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "load-executor-review-proposal-apply-readiness-list":
+        return applyExecutorReviewProposalApplyReadinessRecords(state, await runtime.command("runtime.list_executor_review_proposal_apply_readiness", {
+          limit: effect.limit ?? HANDOFF_LIMIT,
+          status: effect.status,
+          candidateKind: effect.candidateKind,
+          proposalId: effect.proposalId,
+        }))
+      case "load-executor-review-proposal-apply-readiness":
+        return applyExecutorReviewProposalApplyReadinessSelected(state, await runtime.command("runtime.get_executor_review_proposal_apply_readiness", { readinessId: effect.readinessId }), effect.readinessId)
       case "load-opencode-handoff-followup":
         return applyOpenCodeHandoffFollowup(
           state,
@@ -1619,6 +1646,7 @@ export async function applyRuntimeUiEffect(
     if (isExecutorReviewProposalCreateEffect(effect)) return recordExecutorReviewProposalCreateCommandError(state, error)
     if (isExecutorReviewProposalReviewRequestEffect(effect)) return recordExecutorReviewProposalReviewRequestCommandError(state, error)
     if (isExecutorReviewProposalReviewDecisionEffect(effect)) return recordExecutorReviewProposalReviewDecisionCommandError(state, error)
+    if (isExecutorReviewProposalApplyReadinessEffect(effect)) return recordExecutorReviewProposalApplyReadinessCommandError(state, error)
     if (isMiniMaxLiveValidationEffect(effect)) return recordMiniMaxLiveValidationCommandError(state, error)
     if (isOpenCodeFollowupEffect(effect)) return recordOpenCodeFollowupCommandError(state, error)
     if (isRuntimeCheckpointEffect(effect)) return recordRuntimeCheckpointCommandError(state, error)
@@ -2525,6 +2553,58 @@ function applyExecutorReviewProposalReviewDecisionSelected(state: UiState, value
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "executor review proposal review decision selected", detail: `decision_gate_id=${redactText(decisionGateId)}`, status: result ? result.status : "missing" }].slice(-12),
+  }
+}
+
+function applyExecutorReviewProposalApplyReadinessPreview(state: UiState, value: unknown): UiState {
+  const previewResult = readExecutorReviewProposalApplyReadinessPreview(value)
+  return {
+    ...state,
+    executorReviewProposalApplyReadiness: {
+      ...executorReviewProposalApplyReadinessState(state),
+      preview: previewResult,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal apply readiness", detail: `status=${previewResult.status} proposal=${previewResult.proposal_id}`, status: previewResult.status }].slice(-12),
+  }
+}
+
+function applyExecutorReviewProposalApplyReadinessSummary(state: UiState, value: unknown): UiState {
+  const summary = readExecutorReviewProposalApplyReadinessSummary(value)
+  return {
+    ...state,
+    executorReviewProposalApplyReadiness: {
+      ...executorReviewProposalApplyReadinessState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal apply readiness summary", detail: `ready=${summary.ready_count} needs_review=${summary.needs_review_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyExecutorReviewProposalApplyReadinessRecords(state: UiState, value: unknown): UiState {
+  const records = readExecutorReviewProposalApplyReadinessRecords(value)
+  return {
+    ...state,
+    executorReviewProposalApplyReadiness: {
+      ...executorReviewProposalApplyReadinessState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal apply readiness records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyExecutorReviewProposalApplyReadinessSelected(state: UiState, value: unknown, readinessId: string): UiState {
+  const result = value === null ? null : readExecutorReviewProposalApplyReadinessPreview(value)
+  return {
+    ...state,
+    executorReviewProposalApplyReadiness: {
+      ...executorReviewProposalApplyReadinessState(state),
+      selected: result,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal apply readiness selected", detail: `readiness_id=${redactText(readinessId)}`, status: result ? result.status : "missing" }].slice(-12),
   }
 }
 
@@ -3739,6 +3819,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (executorReviewProposalCreateCommands.has(command)) return state.executorReviewProposalCreate?.commandError
   if (executorReviewProposalReviewRequestCommands.has(command)) return state.executorReviewProposalReviewRequest?.commandError
   if (executorReviewProposalReviewDecisionCommands.has(command)) return state.executorReviewProposalReviewDecision?.commandError
+  if (executorReviewProposalApplyReadinessCommands.has(command)) return state.executorReviewProposalApplyReadiness?.commandError
   if (opencodeFollowupCommands.has(command)) return state.opencodeFollowup?.commandError
   if (runtimeCheckpointCommands.has(command)) return state.runtimeCheckpoints?.commandError
   if (runtimeRestoreCommands.has(command)) return state.runtimeRestore?.commandError
@@ -3775,6 +3856,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (executorReviewProposalCreateCommands.has(command)) return { ...state, executorReviewProposalCreate: { ...executorReviewProposalCreateState(state), commandError: undefined } }
   if (executorReviewProposalReviewRequestCommands.has(command)) return { ...state, executorReviewProposalReviewRequest: { ...executorReviewProposalReviewRequestState(state), commandError: undefined } }
   if (executorReviewProposalReviewDecisionCommands.has(command)) return { ...state, executorReviewProposalReviewDecision: { ...executorReviewProposalReviewDecisionState(state), commandError: undefined } }
+  if (executorReviewProposalApplyReadinessCommands.has(command)) return { ...state, executorReviewProposalApplyReadiness: { ...executorReviewProposalApplyReadinessState(state), commandError: undefined } }
   if (opencodeFollowupCommands.has(command)) return { ...state, opencodeFollowup: { ...opencodeFollowupState(state), commandError: undefined } }
   if (runtimeCheckpointCommands.has(command)) return { ...state, runtimeCheckpoints: { ...runtimeCheckpointsState(state), commandError: undefined } }
   if (runtimeRestoreCommands.has(command)) return { ...state, runtimeRestore: { ...runtimeRestoreState(state), commandError: undefined } }
@@ -3973,6 +4055,17 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-executor-review-proposal-review-decisions", limit: HANDOFF_LIMIT })
     case "executor-review-proposal-review-decision-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-executor-review-proposal-review-decision", decisionGateId: requiredArg(args, 0, "decisionGateId") })
+    case "executor-review-proposal-apply-readiness":
+    case "executor-draft-apply-readiness":
+    case "commander-executor-proposal-apply-readiness":
+    case "proposal-apply-readiness":
+      return applyRuntimeUiEffect(commandState, runtime, executorReviewProposalApplyReadinessEffect(args))
+    case "executor-review-proposal-apply-readiness-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-executor-review-proposal-apply-readiness-summary", limit: HANDOFF_LIMIT })
+    case "executor-review-proposal-apply-readiness-list":
+      return applyRuntimeUiEffect(commandState, runtime, executorReviewProposalApplyReadinessListEffect(args))
+    case "executor-review-proposal-apply-readiness-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-executor-review-proposal-apply-readiness", readinessId: requiredArg(args, 0, "readinessId") })
     case "handoff-followup":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-followup", handoffId: requiredArg(args, 0, "handoffId") })
     case "handoff-followups":
@@ -4786,6 +4879,11 @@ function isExecutorReviewProposalReviewDecisionEffect(effect: RuntimeUiEffect): 
   return executorReviewProposalReviewDecisionCommands.has(effect.command)
 }
 
+function isExecutorReviewProposalApplyReadinessEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return executorReviewProposalApplyReadinessEffectTypes.has(effect.type)
+  return executorReviewProposalApplyReadinessCommands.has(effect.command)
+}
+
 function isOpenCodeFollowupEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return opencodeFollowupEffectTypes.has(effect.type)
   return opencodeFollowupCommands.has(effect.command)
@@ -5030,6 +5128,16 @@ const executorReviewProposalReviewDecisionCommands = new Set([
   "executor-draft-review-reject",
   "commander-executor-proposal-review-approve",
   "commander-executor-proposal-review-reject",
+])
+
+const executorReviewProposalApplyReadinessCommands = new Set([
+  "executor-review-proposal-apply-readiness",
+  "executor-review-proposal-apply-readiness-summary",
+  "executor-review-proposal-apply-readiness-list",
+  "executor-review-proposal-apply-readiness-show",
+  "executor-draft-apply-readiness",
+  "commander-executor-proposal-apply-readiness",
+  "proposal-apply-readiness",
 ])
 
 const opencodeFollowupCommands = new Set([
@@ -5302,6 +5410,13 @@ const executorReviewProposalReviewDecisionEffectTypes = new Set<RuntimeUiEffect[
   "decide-executor-review-proposal-review",
   "load-executor-review-proposal-review-decisions",
   "load-executor-review-proposal-review-decision",
+])
+
+const executorReviewProposalApplyReadinessEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-executor-review-proposal-apply-readiness",
+  "load-executor-review-proposal-apply-readiness-summary",
+  "load-executor-review-proposal-apply-readiness-list",
+  "load-executor-review-proposal-apply-readiness",
 ])
 
 const opencodeFollowupEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -6428,6 +6543,18 @@ function recordExecutorReviewProposalReviewDecisionCommandError(state: UiState, 
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "executor review proposal review decision command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordExecutorReviewProposalApplyReadinessCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    executorReviewProposalApplyReadiness: {
+      ...executorReviewProposalApplyReadinessState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "executor review proposal apply readiness command error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
@@ -7586,6 +7713,82 @@ function recordFromExecutorReviewProposalReviewDecisionResult(result: ExecutorRe
     summary_preview: result.error ?? result.reason_preview ?? result.review_request_id,
     decision_hash: result.decision_hash,
   }
+}
+
+function readExecutorReviewProposalApplyReadinessPreview(value: unknown): ExecutorReviewProposalApplyReadinessPreviewSummary {
+  if (!isRecord(value)) throw new Error("runtime.preview_executor_review_proposal_apply_readiness returned invalid preview")
+  return {
+    readiness_id: readString(value.readiness_id, ""),
+    status: readString(value.status, "unknown"),
+    can_apply_in_future: readBoolean(value.can_apply_in_future),
+    proposal_id: readString(value.proposal_id, ""),
+    review_request_id: typeof value.review_request_id === "string" ? redactText(value.review_request_id) : undefined,
+    request_gate_id: typeof value.request_gate_id === "string" ? redactText(value.request_gate_id) : undefined,
+    decision_gate_id: typeof value.decision_gate_id === "string" ? redactText(value.decision_gate_id) : undefined,
+    create_id: typeof value.create_id === "string" ? redactText(value.create_id) : undefined,
+    source_executor_review_id: typeof value.source_executor_review_id === "string" ? redactText(value.source_executor_review_id) : undefined,
+    source_draft_id: typeof value.source_draft_id === "string" ? redactText(value.source_draft_id) : undefined,
+    source_packet_id: typeof value.source_packet_id === "string" ? redactText(value.source_packet_id) : undefined,
+    proposal_status: typeof value.proposal_status === "string" ? readString(value.proposal_status, "") : undefined,
+    review_request_status: typeof value.review_request_status === "string" ? readString(value.review_request_status, "") : undefined,
+    review_decision: typeof value.review_decision === "string" ? readString(value.review_decision, "") : undefined,
+    proposal_title_preview: preview(readString(value.proposal_title_preview, "")),
+    proposal_summary_preview: preview(readString(value.proposal_summary_preview, "")),
+    action_kind: typeof value.action_kind === "string" ? readString(value.action_kind, "") : undefined,
+    candidate_kind: readString(value.candidate_kind, "generic"),
+    candidate_risk: readString(value.candidate_risk, "medium"),
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    result_id: typeof value.result_id === "string" ? redactText(value.result_id) : undefined,
+    source_evidence_ids: readStringList(value.source_evidence_ids, 12).map(redactText),
+    source_finding_ids: readStringList(value.source_finding_ids, 12).map(redactText),
+    source_confidence: typeof value.source_confidence === "number" ? value.source_confidence : undefined,
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    recommended_commands: readExecutorReviewProposalApplyReadinessCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readExecutorReviewProposalApplyReadinessSummary(value: unknown): ExecutorReviewProposalApplyReadinessSummary {
+  if (!isRecord(value)) throw new Error("runtime.executor_review_proposal_apply_readiness_summary returned invalid summary")
+  return {
+    total_considered: readNumber(value.total_considered, 0),
+    ready_count: readNumber(value.ready_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    needs_review_count: readNumber(value.needs_review_count, 0),
+    rejected_count: readNumber(value.rejected_count, 0),
+    generic_count: readNumber(value.generic_count, 0),
+    high_risk_count: readNumber(value.high_risk_count, 0),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readExecutorReviewProposalApplyReadinessRecords(value: unknown): ExecutorReviewProposalApplyReadinessRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((item) => ({
+    readiness_id: readString(item.readiness_id, ""),
+    status: readString(item.status, "unknown"),
+    proposal_id: readString(item.proposal_id, ""),
+    review_request_id: typeof item.review_request_id === "string" ? redactText(item.review_request_id) : undefined,
+    decision_gate_id: typeof item.decision_gate_id === "string" ? redactText(item.decision_gate_id) : undefined,
+    create_id: typeof item.create_id === "string" ? redactText(item.create_id) : undefined,
+    candidate_kind: readString(item.candidate_kind, "generic"),
+    candidate_risk: readString(item.candidate_risk, "medium"),
+    generated_at: readString(item.generated_at, ""),
+    summary_preview: preview(readString(item.summary_preview, "")),
+  }))
+}
+
+function readExecutorReviewProposalApplyReadinessCommands(value: unknown): ExecutorReviewProposalApplyReadinessCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
 }
 
 function recordFromExecutorReviewProposalReviewRequestResult(result: ExecutorReviewProposalReviewRequestResultSummary): ExecutorReviewProposalReviewRequestRecordSummary {
@@ -10470,6 +10673,10 @@ function executorReviewProposalReviewDecisionState(state: UiState): ExecutorRevi
   return state.executorReviewProposalReviewDecision ?? { preview: null, latestResult: null, records: [], selected: null }
 }
 
+function executorReviewProposalApplyReadinessState(state: UiState): ExecutorReviewProposalApplyReadinessState {
+  return state.executorReviewProposalApplyReadiness ?? { preview: null, summary: null, records: [], selected: null }
+}
+
 function opencodeFollowupState(state: UiState): OpenCodeHandoffFollowupState {
   return state.opencodeFollowup ?? { selected: null, summary: null, queueItems: [] }
 }
@@ -11162,6 +11369,36 @@ function executorReviewProposalReviewDecisionEffect(
   }
   if (!effect.reviewRequestId) throw new Error("executor review proposal review decision requires review=<id>")
   if (type === "decide-executor-review-proposal-review" && effect.decision === "reject" && !effect.reason) throw new Error("executor review proposal review reject requires reason=<reason>")
+  return effect
+}
+
+function executorReviewProposalApplyReadinessEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-executor-review-proposal-apply-readiness" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-executor-review-proposal-apply-readiness" }> = { type: "preview-executor-review-proposal-apply-readiness" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("executor review proposal apply readiness args must use proposal=<id>, review=<id>, decision=<id>, or create=<id>")
+    if (key === "proposal") effect.proposalId = value
+    else if (key === "review") effect.reviewRequestId = value
+    else if (key === "decision") effect.decisionGateId = value
+    else if (key === "create") effect.createId = value
+    else throw new Error("executor review proposal apply readiness arg is unsupported")
+  }
+  return effect
+}
+
+function executorReviewProposalApplyReadinessListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-executor-review-proposal-apply-readiness-list" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-executor-review-proposal-apply-readiness-list" }> = { type: "load-executor-review-proposal-apply-readiness-list", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("executor review proposal apply readiness list args must use key=value")
+    if (key === "status") effect.status = value
+    else if (key === "kind") effect.candidateKind = value
+    else if (key === "proposal") effect.proposalId = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("executor review proposal apply readiness list arg is unsupported")
+  }
   return effect
 }
 
