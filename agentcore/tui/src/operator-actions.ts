@@ -66,6 +66,12 @@ const WRITE_COMMANDS = new Set([
   "executor-review-proposal-review-request",
   "executor-draft-review-request",
   "commander-executor-proposal-review-request",
+  "executor-review-proposal-review-approve",
+  "executor-review-proposal-review-reject",
+  "executor-draft-review-approve",
+  "executor-draft-review-reject",
+  "commander-executor-proposal-review-approve",
+  "commander-executor-proposal-review-reject",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

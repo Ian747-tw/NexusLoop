@@ -1438,6 +1438,88 @@ export type ExecutorReviewProposalReviewRequestState = {
   commandError?: string
 }
 
+export type ExecutorReviewProposalReviewDecisionCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type ExecutorReviewProposalReviewDecisionPreviewSummary = {
+  preview_id: string
+  status: string
+  can_decide: boolean
+  decision: "approve" | "reject"
+  review_request_id: string
+  proposal_id?: string
+  request_gate_id?: string
+  create_id?: string
+  source_executor_review_id?: string
+  source_draft_id?: string
+  source_packet_id?: string
+  review_request_status?: string
+  proposal_status?: string
+  proposal_title_preview: string
+  proposal_summary_preview: string
+  action_kind?: string
+  mission_id?: string
+  result_id?: string
+  source_evidence_ids: string[]
+  source_finding_ids: string[]
+  source_confidence?: number
+  risk?: string
+  existing_decision?: string
+  existing_decision_at?: string
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: ExecutorReviewProposalReviewDecisionCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+}
+
+export type ExecutorReviewProposalReviewDecisionResultSummary = {
+  decision_gate_id: string
+  status: string
+  decision: "approve" | "reject"
+  review_request_id: string
+  proposal_id?: string
+  request_gate_id?: string
+  create_id?: string
+  source_executor_review_id?: string
+  source_draft_id?: string
+  source_packet_id?: string
+  mission_id?: string
+  result_id?: string
+  decided_at: string
+  decided_by: string
+  reason_preview?: string
+  error?: string
+  decision_hash: string
+  recommended_commands: ExecutorReviewProposalReviewDecisionCommandSummary[]
+}
+
+export type ExecutorReviewProposalReviewDecisionRecordSummary = {
+  decision_gate_id: string
+  status: string
+  decision: "approve" | "reject"
+  review_request_id: string
+  proposal_id?: string
+  request_gate_id?: string
+  create_id?: string
+  decided_at: string
+  summary_preview: string
+  decision_hash: string
+}
+
+export type ExecutorReviewProposalReviewDecisionState = {
+  preview?: ExecutorReviewProposalReviewDecisionPreviewSummary | null
+  latestResult?: ExecutorReviewProposalReviewDecisionResultSummary | null
+  records: ExecutorReviewProposalReviewDecisionRecordSummary[]
+  selected?: ExecutorReviewProposalReviewDecisionResultSummary | null
+  commandError?: string
+}
+
 export type OpenCodeHandoffFollowupStatus =
   | "sent"
   | "claimed"
@@ -3194,6 +3276,7 @@ export type UiState = {
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
   executorReviewProposalCreate?: ExecutorReviewProposalCreateState
   executorReviewProposalReviewRequest?: ExecutorReviewProposalReviewRequestState
+  executorReviewProposalReviewDecision?: ExecutorReviewProposalReviewDecisionState
   minimaxLiveValidation?: MiniMaxLiveValidationState
   opencodeFollowup?: OpenCodeHandoffFollowupState
   runtimeCheckpoints?: RuntimeCheckpointsState
