@@ -234,7 +234,7 @@ def test_user_narrow_applies_executor_review_proposal(sandbox) -> None:
     assert "screen=main" in result.stdout
     assert "Executor review proposal narrow apply" in result.stdout
     assert "note=narrow apply marks the proposal applied only and does not mutate missions, submit results, call provider, or launch OpenCode" in result.stdout
-    assert f"latest=executor_review_proposal_narrow_apply_" in result.stdout
+    assert "latest=executor_review_proposal_narrow_apply_" in result.stdout
     assert f"status=applied proposal={proposal_id} candidate=human_review risk=medium" in result.stdout
     assert "candidate=human_review risk=medium" in result.stdout
     assert "Command authority" in result.stdout
