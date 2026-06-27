@@ -56,6 +56,7 @@ export class OpenCodeSessionService {
     const sessionHash = sessionHashFor(preview)
     const existing = preview.existing_session_id ? await this.get(preview.existing_session_id) : null
     if (existing) return redactValue(existing)
+    if (!preview.can_create) throw new Error(preview.blockers[0] ?? "opencode session plan is blocked")
     const plan = planFromPreview(preview, {
       session_id: sessionId(sessionHash),
       created_at: createdAt,
@@ -63,7 +64,6 @@ export class OpenCodeSessionService {
       session_hash: sessionHash,
     })
     if (normalized.dry_run === true) return redactValue(plan)
-    if (!preview.can_create) throw new Error(preview.blockers[0] ?? "opencode session plan is blocked")
     return this.serializeCreate(async () => {
       const rebuilt = await this.buildPreview(normalized)
       const rebuiltExisting = rebuilt.existing_session_id ? await this.get(rebuilt.existing_session_id) : null
@@ -130,7 +130,8 @@ export class OpenCodeSessionService {
     if (input.review_request_id && source.review_request_id && input.review_request_id !== source.review_request_id) blockers.push("review_request_id does not match linked proposal")
     if (input.apply_id && !source.apply_id_matches) blockers.push("apply_id does not match durable narrow apply evidence")
     const hasLinkedSource = !!source.proposal_id || !!source.mission_id || !!source.apply_id
-    if (source.source_status && ["cancelled", "rejected", "failed"].includes(source.source_status) && (sourceKind !== "manual" || hasLinkedSource)) blockers.push(`source status ${source.source_status} is not plan-eligible`)
+    const terminalSourceStatus = source.source_statuses.find((status) => ["cancelled", "rejected", "failed"].includes(status))
+    if (terminalSourceStatus && (sourceKind !== "manual" || hasLinkedSource)) blockers.push(`source status ${terminalSourceStatus} is not plan-eligible`)
     if (objective.length < 12) warnings.push("objective is short; future launch may require clearer tactical scope")
     const maxContextBytes = boundedNumber(input.max_context_bytes, DEFAULT_MAX_CONTEXT_BYTES, 1_000, MAX_CONTEXT_BYTES)
     const sessionTimeoutPolicy = timeoutPolicy(input)
@@ -188,7 +189,7 @@ export class OpenCodeSessionService {
     objective?: string
     title?: string
     context?: string
-    source_status?: string
+    source_statuses: string[]
     proposal_found?: boolean
     mission_found?: boolean
     apply_id_matches?: boolean
@@ -196,17 +197,22 @@ export class OpenCodeSessionService {
     constraints: string[]
     link_blockers: string[]
   }> {
-    const proposal = input.proposal_id ? await this.options.proposalRegistry.getProposal(input.proposal_id) : null
     const apply = input.apply_id ? await this.findNarrowApply(input.apply_id) : undefined
     const applyProposalId = optional(apply?.proposal_id)
+    const proposalId = input.proposal_id ?? applyProposalId
+    const proposal = proposalId ? await this.options.proposalRegistry.getProposal(proposalId) : null
     const proposalMissionId = proposal?.mission_id
     const missionId = proposalMissionId ?? input.mission_id
     const mission = missionId ? await this.options.missionRegistry.getMission(missionId) : null
     const payload = isRecord(proposal?.action_payload) ? proposal.action_payload : {}
-    const sourceKind = input.source_kind ?? (proposal ? "proposal" : mission ? "mission" : apply ? "executor_review" : input.objective ? "manual" : "unknown")
+    const sourceKind = input.source_kind ?? (apply ? "executor_review" : proposal ? "proposal" : mission ? "mission" : input.objective ? "manual" : "unknown")
     const linkBlockers: string[] = []
     if (input.proposal_id && input.mission_id && proposalMissionId && input.mission_id !== proposalMissionId) linkBlockers.push("mission_id does not match linked proposal")
     if (input.apply_id && input.proposal_id && applyProposalId && input.proposal_id !== applyProposalId) linkBlockers.push("apply_id does not match linked proposal")
+    if (applyProposalId && !proposal) linkBlockers.push("apply_id linked proposal was not found")
+    const sourceStatuses: string[] = []
+    if (proposal?.status) sourceStatuses.push(proposal.status)
+    if (mission?.status) sourceStatuses.push(mission.status)
     return {
       source_kind: sourceKind,
       mission_id: mission?.mission_id ?? missionId,
@@ -216,7 +222,7 @@ export class OpenCodeSessionService {
       objective: input.objective ?? proposal?.summary ?? mission?.objective,
       title: input.title ?? proposal?.title ?? (mission ? `OpenCode session for ${mission.mission_id}` : undefined),
       context: proposal?.summary ?? mission?.objective ?? input.objective,
-      source_status: proposal?.status ?? mission?.status,
+      source_statuses: sourceStatuses,
       proposal_found: input.proposal_id ? !!proposal : undefined,
       mission_found: input.mission_id ? !!mission : undefined,
       apply_id_matches: input.apply_id ? !!apply : undefined,

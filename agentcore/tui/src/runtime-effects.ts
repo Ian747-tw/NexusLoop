@@ -11979,8 +11979,8 @@ function opencodeSessionEffect(type: "preview-opencode-session-plan" | "create-o
     else if (key === "apply") effect.applyId = value
     else throw new Error("OpenCode session arg is unsupported")
   }
-  if (requireSource && !effect.objective && !effect.proposalId && !effect.missionId) {
-    throw new Error("OpenCode session plan requires objective=<text>, proposal=<id>, or mission=<id>")
+  if (requireSource && !effect.objective && !effect.proposalId && !effect.missionId && !effect.applyId) {
+    throw new Error("OpenCode session plan requires objective=<text>, proposal=<id>, mission=<id>, or apply=<id>")
   }
   return effect
 }

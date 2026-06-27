@@ -4871,6 +4871,9 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/opencode-session-plan objective=stage command token=abc123"] })
     expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan-dry-run", args: ["apply=fake-missing-apply"] })
+    expect(state.opencodeSessions?.commandError).toContain("apply record not found")
+    expect(state.opencodeSessions?.commandError).not.toContain("requires objective")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: [] })
     expect(state.opencodeSessions?.commandError).toContain("requires objective")
 

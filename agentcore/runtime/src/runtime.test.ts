@@ -14381,6 +14381,91 @@ describe("OpenCode session planning", () => {
     await server.shutdown()
   })
 
+  test("dry-run and linked mission terminal status block uncreatable session plans", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      proposalId: "missing_proposal",
+      dryRun: true,
+    })).rejects.toThrow("objective or valid linked proposal/mission source is required")
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(0)
+
+    await server.start()
+    const submitted = await server.submitUserMessage("terminal mission behind nonterminal proposal")
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      actionKind: "other",
+      title: "proposal linked to terminal mission",
+      summary: "proposal remains pending while mission is terminal",
+      proposedBy: "commander",
+    }) as { proposal_id: string }
+    await server.command("runtime.cancel_mission", { missionId: submitted.missionId, reason: "terminal mission" })
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+    })).resolves.toMatchObject({
+      can_create: false,
+      blockers: expect.arrayContaining(["source status cancelled is not plan-eligible"]),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+    })).rejects.toThrow("source status cancelled is not plan-eligible")
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("apply-only session sources hydrate linked proposal context", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("apply-only source mission")
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      actionKind: "other",
+      title: "apply-only proposal title",
+      summary: "apply-only proposal objective",
+      proposedBy: "commander",
+      actionPayload: { constraints: ["hydrate linked proposal"] },
+    }) as { proposal_id: string }
+    await server.eventStore.append({
+      kind: "commander_executor_review_proposal_narrow_applied",
+      apply_id: "apply_linked_source",
+      proposal_id: proposal.proposal_id,
+      status: "applied",
+      candidate_kind: "generic_proposal",
+      reason_preview: "apply-only source",
+      applied_at: "2026-06-27T00:00:00.000Z",
+      applied_by: "test",
+      apply_hash: "hash_apply_linked_source",
+    } as JsonlEvent)
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      applyId: "apply_linked_source",
+    })).resolves.toMatchObject({
+      can_create: true,
+      source_kind: "executor_review",
+      proposal_id: proposal.proposal_id,
+      mission_id: submitted.missionId,
+      objective_preview: "apply-only proposal objective",
+      constraints: expect.arrayContaining(["hydrate linked proposal"]),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      applyId: "apply_linked_source",
+    })).resolves.toMatchObject({
+      status: "planned",
+      source_kind: "executor_review",
+      proposal_id: proposal.proposal_id,
+      apply_id: "apply_linked_source",
+      objective: "apply-only proposal objective",
+    })
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(1)
+    await server.shutdown()
+  })
+
   test("manual source kind cannot bypass terminal linked sources", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

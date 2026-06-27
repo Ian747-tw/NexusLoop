@@ -1633,17 +1633,20 @@ export class FakeRuntimeClient implements RuntimeClient {
     const missionId = optionalString(payload.missionId ?? payload.mission_id ?? payload.mission)
     const reviewRequestId = optionalString(payload.reviewRequestId ?? payload.review_request_id ?? payload.review)
     const applyId = optionalString(payload.applyId ?? payload.apply_id ?? payload.apply)
-    const proposal = proposalId ? this.proposals.find((item) => item.proposal_id === proposalId) : undefined
-    const mission = missionId ? this.missions.find((item) => item.mission_id === missionId) : undefined
+    const apply = applyId ? this.executorReviewProposalNarrowApplies.find((item) => item.apply_id === applyId && (!proposalId || item.proposal_id === proposalId)) : undefined
+    const linkedProposalId = proposalId ?? apply?.proposal_id
+    const proposal = linkedProposalId ? this.proposals.find((item) => item.proposal_id === linkedProposalId) : undefined
+    const linkedMissionId = proposal?.mission_id ?? missionId
+    const mission = linkedMissionId ? this.missions.find((item) => item.mission_id === linkedMissionId) : undefined
     const resolvedObjective = objective ?? proposal?.summary ?? mission?.objective
     const blockers = [
-      ...(resolvedObjective ? [] : ["OpenCode session plan requires objective=<text>, proposal=<id>, or mission=<id>"]),
       ...(proposalId && !proposal ? [`proposal not found: ${proposalId}`] : []),
       ...(missionId && !mission ? [`mission not found: ${missionId}`] : []),
       ...(reviewRequestId && proposal?.review_id && proposal.review_id !== reviewRequestId ? ["review_request_id does not match proposal linkage"] : []),
-      ...(applyId && !this.executorReviewProposalNarrowApplies.some((item) => item.apply_id === applyId && (!proposalId || item.proposal_id === proposalId)) ? [`apply record not found: ${applyId}`] : []),
+      ...(applyId && !apply ? [`apply record not found: ${applyId}`] : []),
+      ...(resolvedObjective ? [] : ["OpenCode session plan requires objective=<text>, proposal=<id>, mission=<id>, or apply=<id>"]),
     ]
-    const sourceKind = proposalId ? "proposal" : missionId ? "mission" : applyId ? "executor_review" : objective ? "manual" : "unknown"
+    const sourceKind = applyId ? "executor_review" : proposalId ? "proposal" : missionId ? "mission" : objective ? "manual" : "unknown"
     const safeObjective = preview(redactText(resolvedObjective ?? ""))
     const title = optionalString(payload.title) ?? (proposal?.title ?? mission?.objective ?? resolvedObjective ?? "Planned OpenCode session")
     const contextHash = createHash("sha256").update(`${safeObjective}:${proposalId ?? ""}:${missionId ?? ""}:${applyId ?? ""}`).digest("hex")
@@ -1651,8 +1654,8 @@ export class FakeRuntimeClient implements RuntimeClient {
       preview_id: `fake-opencode-session-preview-${contextHash.slice(0, 12)}`,
       can_create: blockers.length === 0,
       source_kind: sourceKind,
-      mission_id: mission?.mission_id ?? missionId,
-      proposal_id: proposal?.proposal_id ?? proposalId,
+      mission_id: mission?.mission_id ?? linkedMissionId,
+      proposal_id: proposal?.proposal_id ?? linkedProposalId,
       review_request_id: reviewRequestId ?? proposal?.review_id,
       apply_id: applyId,
       title_preview: preview(redactText(title)),
