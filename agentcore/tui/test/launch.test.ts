@@ -887,6 +887,8 @@ describe("TUI launch boundary", () => {
       { type: "submit" },
       { type: "insert", text: "/opencode-session-plan-dry-run objective=inspect session token=abc123" },
       { type: "submit" },
+      { type: "insert", text: "/opencode-session-plan objective=inspect session token=abc123" },
+      { type: "submit" },
       { type: "insert", text: "/opencode-sessions" },
       { type: "submit" },
       { type: "insert", text: "/opencode-session-summary" },

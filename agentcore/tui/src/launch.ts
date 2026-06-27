@@ -25,6 +25,7 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
   let state = initialState(projectDir)
   const commands = env.NXL_TUI_KEYS ? (JSON.parse(env.NXL_TUI_KEYS) as KeyCommand[]) : []
   const noStartInspectionScript = isNoStartInspectionScript(commands)
+  const needsExplicitRuntimeResume = noStartInspectionScript && hasNonDrySessionPlanCommand(commands)
   const iterator = runtime.stream()[Symbol.asyncIterator]()
   let sawEvent = false
   let idleTimedOut = false
@@ -51,7 +52,7 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
     else await close
   }
 
-  if (noStartInspectionScript && state.screen === "resume") {
+  if (noStartInspectionScript && !needsExplicitRuntimeResume && state.screen === "resume") {
     state = { ...state, screen: "main", focus: "message-box" }
   }
 
@@ -74,6 +75,15 @@ function isNoStartInspectionScript(commands: KeyCommand[]): boolean {
   const inserts = commands.filter((command): command is Extract<KeyCommand, { type: "insert" }> => command.type === "insert")
   if (inserts.length === 0) return false
   return inserts.every((command) => isNoStartInspectionText(command.text))
+}
+
+function hasNonDrySessionPlanCommand(commands: KeyCommand[]): boolean {
+  return commands.some((command) => command.type === "insert" && isNonDrySessionPlanText(command.text))
+}
+
+function isNonDrySessionPlanText(text: string): boolean {
+  const command = text.trim().split(/\s+/, 1)[0]
+  return command === "/opencode-session-plan" || command === "/session-plan" || command === "/opencode-plan"
 }
 
 function isNoStartInspectionText(text: string): boolean {
@@ -147,6 +157,9 @@ function isNoStartInspectionText(text: string): boolean {
     || trimmed.startsWith("/minimax-provider-validate")
     || trimmed.startsWith("/opencode-session-preview")
     || trimmed.startsWith("/session-preview")
+    || trimmed.startsWith("/opencode-session-plan")
+    || trimmed.startsWith("/session-plan")
+    || trimmed.startsWith("/opencode-plan")
     || trimmed.startsWith("/opencode-session-plan-dry-run")
     || trimmed.startsWith("/opencode-sessions")
     || trimmed.startsWith("/sessions")
