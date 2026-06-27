@@ -2091,6 +2091,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       ...(proposal && source.source !== "executor_review_proposal_create" ? ["proposal was not created by executor-review proposal creation gate"] : []),
       ...(proposal && (!optionalString(source.review_id) || !optionalString(source.draft_id)) ? ["executor-review proposal source metadata is incomplete"] : []),
       ...(proposal && ["cancelled", "applied"].includes(proposal.status) ? [`proposal status ${proposal.status} cannot be apply-ready`] : []),
+      ...(review?.status === "cancelled" ? ["review request is cancelled"] : []),
       ...(optionalString(payload.createId ?? payload.create_id ?? payload.create) && createRecord?.proposal_id !== proposal?.proposal_id ? ["create_id does not match the proposal source create record"] : []),
       ...(optionalString(payload.reviewRequestId ?? payload.review_request_id ?? payload.reviewId ?? payload.review_id ?? payload.review) && proposalId && proposal && reviewId !== proposal.review_id ? ["review_request_id does not match linked proposal review"] : []),
       ...(optionalString(payload.decisionGateId ?? payload.decision_gate_id ?? payload.decision) && decisionRecord?.proposal_id !== proposal?.proposal_id ? ["decision_gate_id does not match linked proposal review decision"] : []),

@@ -14975,7 +14975,7 @@ describe("RuntimeServerClient", () => {
       expect.objectContaining({ status: "ready", proposal_id: approveFixture.created.proposal_id }),
     ])
     expect(await readEventKinds(dir)).toEqual(beforeReadinessKinds)
-    for (let index = 0; index < 25; index += 1) {
+    for (let index = 0; index < 125; index += 1) {
       await server.command("runtime.create_commander_proposal", {
         actionKind: "other",
         title: `newer executor proposal ${index}`,
@@ -14994,6 +14994,9 @@ describe("RuntimeServerClient", () => {
       })
     }
     await expect(server.command("runtime.list_executor_review_proposal_apply_readiness", { status: "ready" })).resolves.toEqual([
+      expect.objectContaining({ status: "ready", proposal_id: approveFixture.created.proposal_id }),
+    ])
+    await expect(server.command("runtime.list_executor_review_proposal_apply_readiness", { proposal_id: approveFixture.created.proposal_id })).resolves.toEqual([
       expect.objectContaining({ status: "ready", proposal_id: approveFixture.created.proposal_id }),
     ])
     await expect(server.command("runtime.get_executor_review_proposal_apply_readiness", { readiness_id: readyByProposal.readiness_id })).resolves.toMatchObject({
@@ -15039,6 +15042,12 @@ describe("RuntimeServerClient", () => {
 	      error: "review request already approved",
 	    })
 	    await expect(server.reviewRegistry.cancelReviewRequest(cancelFixture.requested.review_request_id, "operator", "cancel before decision")).resolves.toMatchObject({ status: "cancelled" })
+	    await expect(server.command("runtime.preview_executor_review_proposal_apply_readiness", {
+	      proposal_id: cancelFixture.created.proposal_id,
+	    })).resolves.toMatchObject({
+	      status: "blocked",
+	      blockers: expect.arrayContaining(["review request is cancelled"]),
+	    })
 	    await expect(server.command("runtime.decide_executor_review_proposal_review", {
 	      review_request_id: cancelFixture.requested.review_request_id,
 	      decision: "approve",

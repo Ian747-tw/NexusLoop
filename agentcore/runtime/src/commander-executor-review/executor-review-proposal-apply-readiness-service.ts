@@ -68,7 +68,7 @@ export class ExecutorReviewProposalApplyReadinessService {
   }
 
   async list(input: { limit?: number; status?: ExecutorReviewProposalApplyReadinessStatus; candidate_kind?: ExecutorReviewProposalApplyCandidateKind; proposal_id?: string } = {}): Promise<ExecutorReviewProposalApplyReadinessRecord[]> {
-    return redactValue((await this.candidatePreviews(100))
+    return redactValue((await this.candidatePreviews())
       .filter((item) => !input.status || item.status === input.status)
       .filter((item) => !input.candidate_kind || item.candidate_kind === input.candidate_kind)
       .filter((item) => !input.proposal_id || item.proposal_id === input.proposal_id)
@@ -78,17 +78,18 @@ export class ExecutorReviewProposalApplyReadinessService {
 
   async get(readinessId: string): Promise<ExecutorReviewProposalApplyReadinessPreview | null> {
     const safeId = required(readinessId, "readiness_id")
-    return (await this.candidatePreviews(100)).find((item) => item.readiness_id === safeId) ?? null
+    return (await this.candidatePreviews()).find((item) => item.readiness_id === safeId) ?? null
   }
 
-  private async candidatePreviews(max: number): Promise<ExecutorReviewProposalApplyReadinessPreview[]> {
+  private async candidatePreviews(max?: number): Promise<ExecutorReviewProposalApplyReadinessPreview[]> {
     const proposals = await this.options.proposalRegistry.listAllProposals()
     const executorProposals = proposals.filter((proposal) => {
       const payload = isRecord(proposal.action_payload) ? proposal.action_payload : {}
       return payload.source === "executor_review_proposal_create"
     })
     const previews: ExecutorReviewProposalApplyReadinessPreview[] = []
-    for (const proposal of executorProposals.slice(0, Math.min(max, 100))) {
+    const candidates = typeof max === "number" ? executorProposals.slice(0, max) : executorProposals
+    for (const proposal of candidates) {
       previews.push(await this.buildPreview(await this.resolveChain({ proposal_id: proposal.proposal_id }), { proposal_id: proposal.proposal_id }))
     }
     return previews.sort((left, right) => right.generated_at.localeCompare(left.generated_at))
@@ -166,6 +167,7 @@ export class ExecutorReviewProposalApplyReadinessService {
     if (proposal && payload.source !== "executor_review_proposal_create") blockers.push("proposal was not created by executor-review proposal creation gate")
     if (proposal && (!optional(payload.review_id) || !optional(payload.draft_id))) blockers.push("executor-review proposal source metadata is incomplete")
     if (proposal && ["cancelled", "applied"].includes(proposal.status)) blockers.push(`proposal status ${proposal.status} cannot be apply-ready`)
+    if (chain.review?.status === "cancelled") blockers.push("review request is cancelled")
     if (input.create_id && (!chain.createRecord || chain.createRecord.proposal_id !== proposal?.proposal_id)) blockers.push("create_id does not match the proposal source create record")
     if (input.review_request_id && proposal && input.proposal_id && input.review_request_id !== proposal.review_id) blockers.push("review_request_id does not match linked proposal review")
     if (input.decision_gate_id && (!chain.decisionRecord || chain.decisionRecord.proposal_id !== proposal?.proposal_id)) blockers.push("decision_gate_id does not match linked proposal review decision")
