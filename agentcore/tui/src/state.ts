@@ -1197,6 +1197,7 @@ export type OpenCodeSessionPreviewSummary = {
   objective_preview: string
   commander_context_summary_preview: string
   opencode_context_seed_preview: string
+  max_context_bytes: number
   success_criteria: string[]
   constraints: string[]
   timeout_policy: OpenCodeSessionTimeoutPolicySummary
@@ -1223,6 +1224,7 @@ export type OpenCodeSessionPlanSummary = {
   commander_context_summary: string
   opencode_context_seed: string
   shared_context_summary: string
+  max_context_bytes: number
   success_criteria: string[]
   constraints: string[]
   artifact_expectations: string[]

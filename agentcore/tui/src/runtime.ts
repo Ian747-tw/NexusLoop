@@ -1649,6 +1649,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const sourceKind = applyId ? "executor_review" : proposalId ? "proposal" : missionId ? "mission" : objective ? "manual" : "unknown"
     const safeObjective = preview(redactText(resolvedObjective ?? ""))
     const title = optionalString(payload.title) ?? (proposal?.title ?? mission?.objective ?? resolvedObjective ?? "Planned OpenCode session")
+    const maxContextBytes = Math.max(1_000, Math.min(readNumber(payload.maxContextBytes ?? payload.max_context_bytes, 12_000), 48_000))
     const contextHash = createHash("sha256").update(`${safeObjective}:${proposalId ?? ""}:${missionId ?? ""}:${applyId ?? ""}`).digest("hex")
     return {
       preview_id: `fake-opencode-session-preview-${contextHash.slice(0, 12)}`,
@@ -1662,6 +1663,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       objective_preview: safeObjective,
       commander_context_summary_preview: preview(redactText(`Commander strategic context for ${title}`)),
       opencode_context_seed_preview: preview(redactText(`OpenCode tactical seed for ${safeObjective}`)),
+      max_context_bytes: maxContextBytes,
       success_criteria: ["report bounded execution findings", "preserve Commander/OpenCode context boundary"],
       constraints: ["do not launch OpenCode in session planning", "do not mutate missions", "do not call providers"],
       timeout_policy: {
@@ -1718,6 +1720,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       commander_context_summary: previewResult.commander_context_summary_preview,
       opencode_context_seed: previewResult.opencode_context_seed_preview,
       shared_context_summary: "Shared bounded session planning metadata only",
+      max_context_bytes: previewResult.max_context_bytes,
       success_criteria: previewResult.success_criteria,
       constraints: previewResult.constraints,
       artifact_expectations: ["bounded result summary", "durable event evidence"],

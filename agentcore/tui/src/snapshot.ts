@@ -583,6 +583,7 @@ function opencodeSessionLines(state: UiState): string[] {
     out.push(`  objective=${preview(redactText(item.objective_preview))}`)
     out.push(`  commander_context=${preview(redactText(item.commander_context_summary_preview))}`)
     out.push(`  opencode_context_seed=${preview(redactText(item.opencode_context_seed_preview))}`)
+    out.push(`  max_context_bytes=${item.max_context_bytes}`)
     out.push(`  timeout wall_ms=${item.timeout_policy.max_wall_time_ms ?? 1800000} no_progress_ms=${item.timeout_policy.max_no_progress_ms ?? 600000} heartbeat_ms=${item.timeout_policy.heartbeat_interval_ms ?? 60000}`)
     out.push(`  question_policy questions=${item.question_policy.allow_opencode_questions ?? true} max_pending=${item.question_policy.max_pending_questions ?? 3}`)
     out.push(`  human_control pause=${item.human_control_policy.allow_human_pause ?? true} stop=${item.human_control_policy.allow_human_stop ?? true} reason_required=${item.human_control_policy.require_reason_for_stop ?? true}`)
@@ -605,6 +606,7 @@ function opencodeSessionLines(state: UiState): string[] {
     out.push(`  latest=${plan.session_id} status=${plan.status} source=${plan.source_kind}`)
     out.push(`  latest_context commander=${preview(redactText(plan.commander_context_summary))}`)
     out.push(`  latest_context opencode=${preview(redactText(plan.opencode_context_seed))}`)
+    out.push(`  latest_context max_bytes=${plan.max_context_bytes}`)
   } else {
     out.push("  latest=none")
   }

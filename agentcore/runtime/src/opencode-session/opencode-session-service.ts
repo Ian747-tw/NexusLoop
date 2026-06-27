@@ -162,6 +162,7 @@ export class OpenCodeSessionService {
       objective_preview: objective,
       commander_context_summary_preview: commanderContext,
       opencode_context_seed_preview: opencodeSeed,
+      max_context_bytes: maxContextBytes,
       success_criteria: boundList(source.success_criteria.length ? source.success_criteria : ["Produce bounded progress evidence or a blocker report"]),
       constraints: boundList([
         "Do not mutate mission state from session planning",
@@ -207,7 +208,7 @@ export class OpenCodeSessionService {
     const payload = isRecord(proposal?.action_payload) ? proposal.action_payload : {}
     const sourceKind = input.source_kind ?? (apply ? "executor_review" : proposal ? "proposal" : mission ? "mission" : input.objective ? "manual" : "unknown")
     const linkBlockers: string[] = []
-    if (input.proposal_id && input.mission_id && proposalMissionId && input.mission_id !== proposalMissionId) linkBlockers.push("mission_id does not match linked proposal")
+    if (input.mission_id && proposalMissionId && input.mission_id !== proposalMissionId) linkBlockers.push("mission_id does not match linked proposal")
     if (input.apply_id && input.proposal_id && applyProposalId && input.proposal_id !== applyProposalId) linkBlockers.push("apply_id does not match linked proposal")
     if (applyProposalId && !proposal) linkBlockers.push("apply_id linked proposal was not found")
     const sourceStatuses: string[] = []
@@ -309,6 +310,7 @@ function planFromPreview(preview: OpenCodeSessionPreview, extra: { session_id: s
     commander_context_summary: preview.commander_context_summary_preview,
     opencode_context_seed: preview.opencode_context_seed_preview,
     shared_context_summary: bound(`Shared planning context for ${preview.source_kind}`),
+    max_context_bytes: preview.max_context_bytes,
     success_criteria: preview.success_criteria,
     constraints: preview.constraints,
     artifact_expectations: ["Bounded progress summary", "Blocking questions if tactical execution cannot proceed"],
@@ -335,6 +337,7 @@ function planFromEvent(event: JsonlEvent): OpenCodeSessionPlan {
     commander_context_summary: readEventString(event.commander_context_summary, "commander_context_summary"),
     opencode_context_seed: readEventString(event.opencode_context_seed, "opencode_context_seed"),
     shared_context_summary: readEventString(event.shared_context_summary, "shared_context_summary"),
+    max_context_bytes: boundedNumber(event.max_context_bytes, DEFAULT_MAX_CONTEXT_BYTES, 1_000, MAX_CONTEXT_BYTES),
     success_criteria: boundList(event.success_criteria),
     constraints: boundList(event.constraints),
     artifact_expectations: boundList(event.artifact_expectations),

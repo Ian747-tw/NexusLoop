@@ -14257,16 +14257,18 @@ describe("OpenCode session planning", () => {
     const adapter = new LongLivedAdapter()
     const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
 
-    await expect(server.command("runtime.preview_opencode_session_plan", { objective: "inspect training progress token=session-secret" })).resolves.toMatchObject({
+    await expect(server.command("runtime.preview_opencode_session_plan", { objective: "inspect training progress token=session-secret", maxContextBytes: 4096 })).resolves.toMatchObject({
       can_create: true,
       source_kind: "manual",
+      max_context_bytes: 4096,
       timeout_policy: expect.objectContaining({ forced_pause_enabled: true, report_required_on_timeout: true }),
       question_policy: expect.objectContaining({ allow_opencode_questions: true, max_pending_questions: 3 }),
       human_control_policy: expect.objectContaining({ allow_human_pause: true, require_reason_for_stop: true }),
     })
-    await expect(server.command("runtime.create_opencode_session_plan", { objective: "inspect training progress token=session-secret", dryRun: true })).resolves.toMatchObject({
+    await expect(server.command("runtime.create_opencode_session_plan", { objective: "inspect training progress token=session-secret", dryRun: true, maxContextBytes: 4096 })).resolves.toMatchObject({
       status: "planned",
       source_kind: "manual",
+      max_context_bytes: 4096,
     })
     expect(await readEventKinds(dir)).not.toContain("opencode_session_planned")
 
@@ -14276,15 +14278,18 @@ describe("OpenCode session planning", () => {
       objective: "inspect training progress token=session-secret",
       title: "Training progress inspection",
       createdBy: "operator token=session-secret",
-    }) as { session_id: string; session_hash: string; commander_context_summary: string; opencode_context_seed: string }
+      maxContextBytes: 4096,
+    }) as { session_id: string; session_hash: string; commander_context_summary: string; opencode_context_seed: string; max_context_bytes: number }
     expect(adapter.startCalls).toBe(1)
     expect(created.commander_context_summary).not.toEqual(created.opencode_context_seed)
+    expect(created.max_context_bytes).toBe(4096)
     await expect(server.command("runtime.list_opencode_sessions")).resolves.toEqual([
       expect.objectContaining({ session_id: created.session_id, status: "planned", source_kind: "manual" }),
     ])
     await expect(server.command("runtime.get_opencode_session", { sessionId: created.session_id })).resolves.toMatchObject({
       session_id: created.session_id,
       status: "planned",
+      max_context_bytes: 4096,
     })
     await expect(server.command("runtime.opencode_session_summary")).resolves.toMatchObject({
       total_sessions: 1,
@@ -14423,6 +14428,7 @@ describe("OpenCode session planning", () => {
 
     await server.start()
     const submitted = await server.submitUserMessage("apply-only source mission")
+    const other = await server.submitUserMessage("other apply-only source mission")
     const proposal = await server.command("runtime.create_commander_proposal", {
       missionId: submitted.missionId,
       actionKind: "other",
@@ -14445,21 +14451,37 @@ describe("OpenCode session planning", () => {
 
     await expect(server.command("runtime.preview_opencode_session_plan", {
       applyId: "apply_linked_source",
+      missionId: other.missionId,
+    })).resolves.toMatchObject({
+      can_create: false,
+      blockers: expect.arrayContaining(["mission_id does not match linked proposal"]),
+    })
+    await expect(server.command("runtime.create_opencode_session_plan", {
+      applyId: "apply_linked_source",
+      missionId: other.missionId,
+    })).rejects.toThrow("mission_id does not match linked proposal")
+
+    await expect(server.command("runtime.preview_opencode_session_plan", {
+      applyId: "apply_linked_source",
+      maxContextBytes: 2048,
     })).resolves.toMatchObject({
       can_create: true,
       source_kind: "executor_review",
       proposal_id: proposal.proposal_id,
       mission_id: submitted.missionId,
+      max_context_bytes: 2048,
       objective_preview: "apply-only proposal objective",
       constraints: expect.arrayContaining(["hydrate linked proposal"]),
     })
     await expect(server.command("runtime.create_opencode_session_plan", {
       applyId: "apply_linked_source",
+      maxContextBytes: 2048,
     })).resolves.toMatchObject({
       status: "planned",
       source_kind: "executor_review",
       proposal_id: proposal.proposal_id,
       apply_id: "apply_linked_source",
+      max_context_bytes: 2048,
       objective: "apply-only proposal objective",
     })
     expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(1)
