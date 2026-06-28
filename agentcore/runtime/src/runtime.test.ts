@@ -16757,6 +16757,21 @@ describe("Context budget registry", () => {
     expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "research_memory", inclusion_policy: "pointer_only" }))
     expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "raw_logs", inclusion_policy: "excluded_by_default" }))
 
+    const smallByteBudget = await server.command("runtime.preview_context_budget", {
+      purpose: "opencode_executor_session",
+      maxContextBytes: 1000,
+    }) as { budget: { max_context_bytes?: number; safety_margin_bytes?: number; allocations: Array<{ max_bytes?: number }> } }
+    expect(smallByteBudget.budget.max_context_bytes).toBe(1000)
+    expect(smallByteBudget.budget.safety_margin_bytes).toBeLessThanOrEqual(1000)
+    expect(sumDefined(smallByteBudget.budget.allocations.map((item) => item.max_bytes)) + (smallByteBudget.budget.safety_margin_bytes ?? 0)).toBeLessThanOrEqual(1000)
+
+    const unsupportedRole = await server.command("runtime.preview_context_budget", {
+      purpose: "opencode_executor_session",
+      providerKind: "minimax",
+      modelId: "minimax-validation-default",
+    }) as { blockers: string[] }
+    expect(unsupportedRole.blockers).toContain("selected model capability does not support requested role")
+
     const wake = await server.command("runtime.preview_context_budget", { purpose: "wake_supervisor" }) as { budget: { allocations: Array<{ section: string; priority: string }> } }
     expect(wake.budget.allocations).toContainEqual(expect.objectContaining({ section: "active_sessions", priority: "high" }))
     expect(wake.budget.allocations).toContainEqual(expect.objectContaining({ section: "executor_progress", priority: "high" }))

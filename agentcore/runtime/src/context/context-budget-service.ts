@@ -53,6 +53,9 @@ export class ContextBudgetService {
     const capability = this.options.registry.get({ provider_kind: providerKind, model_id: modelId })
     const blockers: string[] = []
     if (purpose === "unknown") blockers.push("context budget preview requires a supported purpose")
+    if (role !== "unknown" && !capability.role_support.includes(role) && !capability.role_support.includes("unknown")) {
+      blockers.push("selected model capability does not support requested role")
+    }
 
     const sessionId = optional(input.session_id)
     const session = sessionId && this.options.opencodeSessionService ? await this.options.opencodeSessionService.get(sessionId) : null
@@ -99,7 +102,9 @@ export class ContextBudgetService {
     const safetyMarginTokens = maxContextTokens
       ? Math.min(Math.max(1, Math.floor(maxContextTokens * capability.safety_margin_ratio)), Math.max(0, maxContextTokens - maxOutputTokens))
       : undefined
-    const safetyMarginBytes = maxContextBytes ? Math.max(1_024, Math.floor(maxContextBytes * capability.safety_margin_ratio)) : undefined
+    const safetyMarginBytes = maxContextBytes
+      ? Math.min(Math.max(1, Math.floor(maxContextBytes * capability.safety_margin_ratio), Math.min(1_024, maxContextBytes)), maxContextBytes)
+      : undefined
     const budget: ContextBudgetProfile = {
       budget_id: `context_budget_${hash(stableJson({ purpose, role, providerKind: capability.provider_kind, model: capability.model_id, sessionId, maxContextTokens, maxContextBytes })).slice(0, 16)}`,
       purpose,
