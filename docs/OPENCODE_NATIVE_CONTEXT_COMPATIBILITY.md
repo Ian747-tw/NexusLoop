@@ -1,0 +1,347 @@
+# OpenCode Native Context Compatibility Audit
+
+Branch: 9B0  
+Audit date: 2026-06-28  
+Baseline: Branch 9A merge `9d78faa620a86bae6dffa0711e330bb55ca40790`
+
+This audit is documentation only. It does not launch OpenCode, start a process, send prompts, call providers, call MCPs, mutate missions or proposals, compile context packets, or implement real launch.
+
+## Sources Inspected
+
+Local NexusLoop sources:
+
+- `agentcore/runtime/src/opencode/*`
+- `agentcore/runtime/src/opencode-session/*`
+- `agentcore/runtime/src/tui/runtime-server-client.ts`
+- `agentcore/runtime/src/server.ts`
+- `agentcore/runtime/src/authority/command-authority-registry.ts`
+- `tests/e2e_user/scenarios/test_opencode_*.py`
+- `docs/ARCHITECTURE.md`
+- `docs/TUI_UX.md`
+- `docs/SPEC_BACKEND.md`
+- `docs/RESEARCH_BACKEND.md`
+- `docs/TEST_STRATEGY.md`
+- `agentcore/adr/ADR-017-commander-opencode-context-memory.md`
+
+Vendored and installed OpenCode evidence:
+
+- Vendored package: `agentcore/upstream/packages/opencode/package.json`, version `1.14.22`.
+- Installed CLI: `/home/ianchen951011/.opencode/bin/opencode`, version `1.14.41`.
+- CLI help inspected only: `opencode --help`, `opencode run --help`, `opencode session --help`, `opencode serve --help`, `opencode agent --help`, and `opencode debug --help`.
+- Vendored implementation inspected under `agentcore/upstream/packages/opencode/src`, including config, instruction loading, session routes, question routes, run command, agent configuration, compaction, overflow, and sync/event code.
+
+Official online docs inspected on 2026-06-28:
+
+- `https://opencode.ai/docs/`
+- `https://opencode.ai/docs/config/`
+- `https://opencode.ai/docs/cli/`
+- `https://opencode.ai/docs/agents/`
+- `https://opencode.ai/docs/permissions/`
+- `https://opencode.ai/docs/sdk/`
+
+The official site is partly client-rendered in fetched HTML, so the strongest evidence in this audit comes from local vendored source and installed CLI help. The online docs corroborate that config, CLI, agents, permissions, SDK, server, providers, models, MCP servers, and `AGENTS.md` are public OpenCode concepts.
+
+## Executive Conclusion
+
+Build an upper layer over OpenCode; no rewrite needed.
+
+OpenCode already provides native conversation/session context, project instructions, configurable instruction files, provider/model selection, sessions, resume/fork controls, non-interactive `run`, server/SDK routes, questions, permissions, agents/subagents, step limits, and compaction. NexusLoop should reuse these as tactical executor mechanics.
+
+NexusLoop still needs a thin adapter extension before real launch. The current NexusLoop process adapter speaks a custom JSONL handoff contract and does not yet bind to OpenCode native session IDs, per-session config directories, `opencode run --format json`, server/SDK session routes, native abort, native questions, or native fork/resume. That gap does not justify rewriting OpenCode. It does mean Branch 9C/9D should adapt to OpenCode's native surfaces instead of expanding the custom protocol blindly.
+
+Forking OpenCode should remain a last resort, limited to cases where native surfaces cannot reliably support session-specific launch config, resume by session ID, structured progress/report extraction, stop/pause/report control, guidance injection, or durable artifact/log capture.
+
+## Current NexusLoop OpenCode Integration Inventory
+
+Current adapter kinds:
+
+- `FakeOpenCodeAdapter` is deterministic and test-oriented. It does not launch OpenCode.
+- `ProcessOpenCodeAdapter` starts a configured process with `spawn`, writes NexusLoop JSONL envelopes to stdin, reads stdout, and handles only the custom `nxl.executor_tool_call` output as actionable.
+
+Current real process path:
+
+- Configured by `NXL_OPENCODE_ADAPTER=process`, `NXL_OPENCODE_COMMAND`, `NXL_OPENCODE_ARGS_JSON`, and related timeout variables.
+- Sends `nxl.session_start`, `nxl.mission_packet`, and `nxl.executor_tool_result` envelopes.
+- Does not use native `opencode run`, native session IDs, native SDK routes, native config directories, or native progress events.
+- `pauseAtSafeBoundary` and `resumeWithMissionUpdate` are interface methods but throw "not implemented" in the real process adapter.
+
+Process smoke behavior:
+
+- `opencode-process-smoke-service` has preview and dry-run paths that do not launch.
+- Actual smoke execution is opt-in through `NXL_REAL_OPENCODE_SMOKE=1`.
+- The smoke path starts a process adapter only for explicit opt-in smoke verification and records bounded smoke metadata.
+
+Handoff readiness behavior:
+
+- Read-only readiness combines process smoke preview, authority profile, handoff preview, and follow-up evidence.
+- It does not launch OpenCode and reports whether handoff execution appears gated.
+
+Result packet behavior:
+
+- Result review packets are read-only projections over handoff, follow-up, mission, progress, result, proposal, and review evidence.
+- They do not consume native OpenCode logs or native progress streams.
+
+Existing no-start rules:
+
+- `RuntimeServerClient` has no-start handling for preview, list, get, summary, dry-run session planning, handoff readiness, smoke previews, and result review packets.
+- Non-dry planned-session creation does not auto-start OpenCode. It must fail cleanly unless runtime write gates are already active.
+
+Existing authority registry records:
+
+- OpenCode smoke, handoff, handoff readiness, result review packets, and session-planning slash commands are registered with explicit risk profiles.
+- `/opencode-session-plan` is a high-impact durable intent write, but its profile states that it creates only a planned session record and does not launch OpenCode.
+
+Existing E2E coverage:
+
+- Process smoke TUI scenarios.
+- Handoff and handoff readiness scenarios.
+- Result review packet and follow-up scenarios.
+- Branch 9A planned OpenCode session model scenarios.
+- Command authority inventory scenarios.
+
+Not implemented yet:
+
+- Native OpenCode launch.
+- Native session attach/resume/fork integration.
+- Session-specific OpenCode config writer.
+- Context packet compiler.
+- Research memory retrieval.
+- Progress polling or streaming ingestion.
+- Timeout/watchdog enforcement.
+- Commander guidance injection.
+- OpenCode asks Commander protocol.
+- Real pause/stop/resume semantics.
+- Result ingestion into typed research records.
+
+## OpenCode Native Memory And Context Features
+
+| Feature | Status | Evidence | Integration implication | Risk |
+| --- | --- | --- | --- | --- |
+| `AGENTS.md` or project instructions | Supported | `session/instruction.ts` loads `AGENTS.md`, `CLAUDE.md`, and `CONTEXT.md`; docs mention `AGENTS.md`. | Use for stable repo guidance only. | Putting long research history here would bloat every session. |
+| Configurable instruction files/globs | Supported | Config schema has `instructions`; instruction service resolves local globs and remote URLs. | Future session config can include generated tactical files. | Remote instruction URLs should be disabled or tightly governed for NexusLoop launches. |
+| Per-session config | Partially supported | `OPENCODE_CONFIG_DIR` and config loading exist; CLI/server do not expose a clear first-class per-session config field. | Prefer generated config directories per launched process or explicit server instance. | Shared server config may leak between sessions if not isolated. |
+| Per-session model/provider selection | Supported | CLI `--model`; config `model`; server prompt payload includes model fields. | Map executor model from NexusLoop session launch policy. | Commander and OpenCode may use different providers and context budgets. |
+| Compaction or summarization | Supported | `session/compaction.ts`, `session/overflow.ts`, `POST /session/:id/summarize`. | Reuse for tactical conversation management. | Native compaction is not authoritative research memory. |
+| Context pruning | Supported | Config `compaction.prune`, tail turns, preserve recent tokens, reserved buffer. | Let OpenCode prune tactical logs; keep durable NexusLoop summaries separately. | Pruned raw context may lose evidence if NexusLoop has not captured reports. |
+| Session persistence | Supported | Native `session list`, server session list/get, session DB/sync source. | Store native session ID on launched session records. | Native storage is not NexusLoop root authority. |
+| Session resume/continue | Supported | CLI `--continue`, `--session`; server `session.prompt`. | Use for `continue_same_session`. | Need verify ID stability and workspace isolation in real launch tests. |
+| Session IDs | Supported | CLI `--session`; server `/:sessionID` routes. | Link OpenCode native ID to NexusLoop session record. | Do not confuse native session ID with NexusLoop durable planned session ID. |
+| Server/API/SDK attach | Supported | `opencode serve`, `run --attach`, SDK docs link, server routes. | Prefer SDK/server for controlled launch and progress extraction. | Authentication, lifecycle, and multi-session isolation need tests. |
+| Subagents/agent modes | Supported | Config and agent source define primary/subagent/all modes. | Useful inside tactical execution, not for Commander authority. | Role confusion if Commander strategy is delegated to executor subagents. |
+| Step/iteration limits | Supported | Agent config has positive integer `steps`. | Use native steps as inner executor bound. | Wall-clock and no-progress timeouts still belong to NexusLoop. |
+| Permission controls | Supported | Permission config, `permission.asked`, server permission reply route. | Map NexusLoop launch authority into OpenCode permission profile. | Native permission approval must not bypass NexusLoop authority. |
+| Tool restrictions | Supported | Config `tools`; permission keys include read/edit/bash/task/question/search/MCP-related controls. | Disable or scope executor tools per session. | Over-broad tools can mutate outside intended tactical scope. |
+| Output logs | Supported | CLI `--print-logs`; run JSON events; native events/sync. | Capture bounded logs or progress reports, not raw dumps. | Raw logs can leak secrets and bloat events. |
+| Session summaries | Supported | Session summary fields and summarize route. | Use as one evidence source for progress report generation. | Summary is model-generated, not sufficient for authority. |
+| Event/progress stream | Supported | `opencode run --format json`; SDK event subscription in run implementation. | Candidate source for heartbeat/progress UI. | Needs schema pinning and redaction before durable ingestion. |
+| Stop/interrupt | Supported | Server abort route calls prompt cancel. | Map to future stop/pause controls carefully. | Abort is not the same as safe pause/report. |
+| Pause/resume | Unknown/partial | Native abort exists; no explicit safe pause route found. | Implement upper-layer paused/blocked state and resume/continue. | Killing a session may corrupt unreported progress. |
+| Non-interactive/headless run | Supported | `opencode run`, `opencode serve`, `run --attach`. | Good fit for real launch branch. | Headless run still calls providers; must be gated. |
+| Structured output mode | Partial | `run --format json` emits tool/step/text/reasoning/error events. | Use as transport for bounded extraction. | It is not a typed NexusLoop result schema. |
+| Current working directory isolation | Supported/partial | CLI `--dir`; session path records cwd/root. | Launch per workspace/session directory policy. | Multiple sessions in same worktree can conflict. |
+| Environment variable control | Supported/partial | `OPENCODE_CONFIG_DIR`, permission/config flags, NexusLoop adapter env. | Generate per-session env for launch. | Env inheritance can leak secrets or config. |
+
+## Compatibility Matrix
+
+| NexusLoop need | OpenCode native support | Proposed integration | Risk | Future branch |
+| --- | --- | --- | --- | --- |
+| Stable repo guidance | `AGENTS.md`, config instructions | Keep stable rules in repo/global instructions. | Bloat and stale policy if abused. | 9B3 |
+| Session-specific tactical context | Config `instructions`, CLI files, prompt input | Generate bounded session files and include them at launch. | No first-class per-session config on shared server yet. | 9B2, 9B3 |
+| Session resume | `--continue`, `--session`, server session routes | Store native session ID on launched record. | Need verify resume semantics across process/server restarts. | 9C |
+| Fork/patch/resume modes | `--fork`, session fork route | Map future launch modes to native fork/session plus NexusLoop metadata. | Patch/resume_from_checkpoint need NexusLoop policy. | 9C, 9D |
+| Context compaction | Native compaction and summarize | Reuse for tactical conversation only. | Compaction can hide raw details; store durable progress reports. | 9B2, 9E |
+| Step/time limits | Native agent `steps`; no wall-clock watchdog | Use native steps plus NexusLoop watchdog. | Native step limit is not enough for hung processes. | 9F |
+| Commander guidance injection | Prompt/command routes can send follow-up input | Inject bounded guidance on resume/continue, never raw Commander history. | Running-session guidance semantics need tests. | 9H |
+| OpenCode asks Commander | Native question routes exist | Prefer upper-layer `OpenCodeCommanderQuestion` records, possibly backed by native question tool. | Default run denies `question`; role/authority needs design. | 9G |
+| Progress reporting | JSON events, server events, summaries | Extract bounded progress reports from event stream or explicit report command. | Raw event stream is too noisy for authority. | 9E |
+| Timeout report | No direct forced report found | NexusLoop watchdog asks for report or aborts/resumes with report request. | Cannot guarantee report before abort. | 9F |
+| Pause/stop | Abort exists; safe pause unknown | Model pause as NexusLoop lifecycle plus native abort/continue where safe. | Workspace may be mid-change. | 9F, 9I |
+| Permissions | Native permission rules and replies | Derive OpenCode permission profile from runtime authority. | Native allow must not exceed NexusLoop authority. | 9C, 9D |
+| Provider/model switching | CLI/config/prompt model selection | Use model capability registry and per-session executor model. | Different models have different context/tool support. | 9B1 |
+| Local model support | Provider config model abstraction | Treat local models as provider capabilities. | Tool/schema/context differences may be large. | 9B1 |
+| Raw log/artifact capture | Logs, JSON events, diffs, messages | Capture bounded artifacts and summaries only. | Secret leakage and event bloat. | 9E, 9M |
+| `research.db` retrieval | Not native authority | Commander/NexusLoop retrieves, compiles bounded findings. | Dumping research history into executor context. | 9B4, 9L |
+| Wake scheduler supervision | Not native | Wake compiles supervisor packet and inspects NexusLoop records. | Silent high-impact mutation if authority gates are skipped. | 9J, 9K |
+
+## Proposed Layering
+
+OpenCode native layer owns:
+
+- conversation/session context
+- `AGENTS.md` and project instructions
+- config and instruction files
+- compaction/pruning
+- tactical tool execution
+- subagents, if useful for tactical execution
+- step limits, if configured
+- native permissions and permission prompts
+- provider/model execution
+
+NexusLoop upper layer owns:
+
+- approved spec
+- `research.db` memory
+- Commander strategy
+- planned and launched OpenCode session records
+- context packet compiler
+- session-specific instruction/config writer
+- progress reports
+- timeout/watchdog state
+- Commander questions and guidance
+- human pause/override records
+- proposal/review/apply authority
+- event rebuildability and projections
+
+Decision:
+
+NexusLoop should not rewrite OpenCode internals unless required for session-specific config launch, resume/continue by session ID, structured progress/report extraction, stop/pause/report control, guidance injection into a running session, or reliable artifact/log capture. The first implementation should be an upper-layer wrapper with a thin adapter extension.
+
+## Context Mapping Design
+
+Stable repo memory should map to:
+
+- `AGENTS.md` or equivalent project instructions.
+- Project rules, test commands, coding conventions, and durable execution constraints.
+- Long-lived permission and safety expectations.
+
+Session tactical memory should map to generated bounded files such as:
+
+- `.nxl/opencode/sessions/<session_id>/TASK.md`
+- `.nxl/opencode/sessions/<session_id>/CONTEXT.md`
+- `.nxl/opencode/sessions/<session_id>/GUIDANCE.md`
+- `.nxl/opencode/sessions/<session_id>/SESSION_MEMORY.md`
+
+Future launch should include those files through OpenCode config `instructions`, command file attachment, or SDK prompt parts, depending on the launch surface selected in 9C/9D.
+
+Durable memory remains:
+
+- `.nxl/events.jsonl`
+- approved spec backend state
+- `research.db`
+- planned and launched OpenCode session records
+- progress reports
+- `CommanderGuidance`
+- `OpenCodeCommanderQuestion`
+- `HumanIntervention`
+- artifact registry
+- proposal/review/apply records and checkpoints
+
+Rules:
+
+- Do not store long research history in `AGENTS.md`.
+- Do not inject the whole `research.db` into OpenCode.
+- Do not rely on OpenCode compaction as authoritative research memory.
+- Do not copy raw Commander chat into OpenCode context.
+- Do not treat native OpenCode session storage as NexusLoop root authority.
+
+## Session Continuity Model
+
+| Mode | OpenCode receives | Commander keeps | Runtime records | Must not inject |
+| --- | --- | --- | --- | --- |
+| `fresh` | Tactical task packet, generated session files, permission/model config. | Strategic rationale and research frontier. | Launched session record, native session ID, context hashes. | Full Commander history or full research DB. |
+| `continue_same_session` | Native session ID plus bounded new guidance/progress request. | Strategic state and why continuation is needed. | Continuation event, guidance hash, expected report policy. | Raw event log or all prior proposals. |
+| `fork_from_session` | Native fork source ID plus bounded fork reason and updated tactical context. | Branching rationale and alternative hypothesis. | Parent/child linkage and fork reason. | Unrelated previous runs. |
+| `patch_session` | Target native session plus bounded patch instructions. | Why patch is allowed and what authority approved it. | Patch intent, files/artifacts in scope, result expectation. | Global repo memory changes as a shortcut. |
+| `resume_from_checkpoint` | Checkpoint summary, relevant artifacts, and bounded task state. | Checkpoint selection rationale and research decision. | Checkpoint ID, replay basis, context hash. | Full checkpoint dump or unrelated artifacts. |
+
+## Timeout And Trying-Too-Long Implications
+
+Future launch should use dual control:
+
+- OpenCode native step/agent limits as inner executor bounds.
+- NexusLoop wall-clock timeout, no-progress timeout, heartbeat interval, and report-required policy as outer runtime supervision.
+- Bounded progress reports as durable evidence.
+- Forced pause/report behavior where safe.
+- Commander wake review for timeout or no-progress cases.
+
+Branch 9B0 does not implement timers, pause, abort, progress polling, or watchdog execution.
+
+## OpenCode Asks Commander Implications
+
+Native evidence:
+
+- Server question routes can list, reply to, and reject pending questions.
+- Permission routes can answer permission prompts.
+- The non-interactive `run` command has permission/question handling, and its default permission rules deny `question`, `plan_enter`, and `plan_exit`.
+
+Proposed upper-layer protocol:
+
+- `OpenCodeCommanderQuestion` records tactical blocker, question, urgency, related files, current session summary, and creation time.
+- `CommanderGuidance` records bounded answer/guidance, strategic rationale summary, constraints, and human escalation status.
+- Runtime can mark a session paused or blocked until guidance is available.
+- Guidance is injected only as bounded follow-up input on resume/continue.
+
+Branch 9B0 does not implement this protocol.
+
+## Provider And Model Support Implications
+
+- MiniMax is currently a validation provider, not the final assumption.
+- Future support includes multiple cloud providers and local models.
+- Context packets must be model-capability aware.
+- OpenCode native model config may be used for the executor model.
+- Commander provider and OpenCode provider may differ.
+- Do not assume Commander and OpenCode have the same context size, tool support, JSON schema support, MCP availability, or output budget.
+
+## Research-Memory Implications
+
+- Commander should search `research.db` before proposing serious research or training missions, or explicitly record why no relevant memory exists.
+- OpenCode should usually receive only bounded retrieved findings, Commander guidance, and tactical constraints.
+- Future `ResearchNoveltyCheck` should compare proposed work to prior trials/findings and explain why a run is not a duplicate.
+- MCP online research should route through Commander/research tooling. It should not be dumped directly into OpenCode tactical context.
+- OpenCode compaction can preserve executor continuity, but it cannot replace durable research records or proposal/review/apply authority.
+
+## Risks And Open Questions
+
+- Can NexusLoop reliably address and resume OpenCode sessions by ID across process and server boundaries?
+- Can NexusLoop inject guidance into an existing running session without role confusion or duplicate execution?
+- Can NexusLoop force a structured progress report before timeout or abort?
+- Can NexusLoop stop or pause without corrupting workspace state?
+- Can NexusLoop capture progress without raw-log bloat or secret leakage?
+- Can NexusLoop configure instructions per session without modifying global repo memory?
+- Can OpenCode compaction be controlled per session and model?
+- Can multiple sessions be isolated safely in one worktree?
+- Does NexusLoop need a thin OpenCode adapter extension for native SDK/server routes?
+- Does NexusLoop need a fork, or is the wrapper enough after native launch testing?
+- What is the stable schema contract for `opencode run --format json` and SDK event streams?
+- How should NexusLoop reconcile native OpenCode permission prompts with runtime authority gates?
+
+## Recommended Future Branch Plan
+
+- 9B1: model capability + context budget registry
+- 9B2: context packet compiler skeleton
+- 9B3: session-specific OpenCode config/instruction writer
+- 9B4: `research.db` retrieval + novelty-check planner
+- 9C: real OpenCode launch readiness
+- 9D: real OpenCode launch gate
+- 9E: progress report / heartbeat model
+- 9F: timeout watchdog / forced pause/report
+- 9G: OpenCode asks Commander
+- 9H: Commander guidance to OpenCode
+- 9I: human live pause/correction/override
+- 9J: wake supervisor preview
+- 9K: scheduled wake supervision execution
+- 9L: `research.db` search UI/API
+- 9M: session result -> typed research records
+- 9N: Commander research promotion gate
+- 9O: end-to-end supervised training demo
+
+## Branch 9B0 Explicit Out Of Scope
+
+Branch 9B0 does not:
+
+- launch OpenCode
+- start or attach an OpenCode process
+- send prompts to OpenCode
+- call MiniMax or any provider
+- call MCPs
+- mutate missions, proposals, reviews, or apply records
+- create new planned sessions beyond existing tests
+- compile full context packets
+- write session-specific OpenCode config
+- poll progress
+- enforce timeouts
+- execute pause, stop, resume, question, or guidance flows
+- query or write `research.db`
+- run wake supervision
+- create checkpoints
+- ingest results
