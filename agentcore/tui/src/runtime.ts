@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -434,6 +434,10 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.contextBudgetSummary()
       case "runtime.preview_context_budget":
         return this.previewContextBudget(payload)
+      case "runtime.preview_context_packet":
+        return this.previewContextPacket(payload)
+      case "runtime.context_packet_summary":
+        return this.contextPacketSummary()
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(payload)
       case "runtime.execute_commander_executor_review":
@@ -2011,6 +2015,135 @@ export class FakeRuntimeClient implements RuntimeClient {
       inclusion_policy: section === "raw_logs" || section === "tool_or_mcp_schema" ? "excluded_by_default" : section === "research_memory" && purpose === "opencode_executor_session" ? "pointer_only" : ["role_kernel", "reserved_output", "safety_margin"].includes(section) ? "always" : "if_relevant",
       notes: section === "raw_logs" ? "raw logs are excluded by default" : section === "research_memory" ? "no full research.db dump" : undefined,
     }))
+  }
+
+  private contextPacketSummary(): ContextPacketSummaryState {
+    return {
+      supported_purposes: ["commander_research_decision", "commander_executor_review", "opencode_executor_session", "wake_supervisor", "research_retrieval", "open_question_answer"],
+      supported_roles: ["commander", "executor", "wake_supervisor", "research"],
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private previewContextPacket(payload: Record<string, unknown>): ContextPacketPreviewSummary {
+    const purpose = optionalString(payload.purpose) ?? "unknown"
+    const budget = this.previewContextBudget(payload)
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const session = sessionId ? this.opencodeSessions.find((item) => item.session_id === sessionId) : undefined
+    const blockers = [
+      ...(purpose === "unknown" ? ["context packet preview requires a supported purpose"] : []),
+      ...(purpose === "opencode_executor_session" && sessionId && !session ? ["session_id was not found"] : []),
+      ...(session ? fakeSessionSourceConflictBlockers(session, payload) : []),
+      ...budget.blockers.filter((item) => !item.includes("context budget")),
+    ]
+    const sections = this.contextPacketSections(purpose, budget.budget.allocations, session)
+    const estimatedBytes = sections.filter((item) => item.status === "included" || item.status === "pointer_only").reduce((sum, item) => sum + (item.estimated_bytes ?? 0), 0)
+    const estimatedTokens = Math.ceil(estimatedBytes / 4)
+    const overBudget = (budget.budget.max_context_bytes !== undefined && estimatedBytes > budget.budget.max_context_bytes)
+      || (budget.budget.max_context_tokens !== undefined && estimatedTokens > budget.budget.max_context_tokens)
+    const hash = createHash("sha256").update(`${purpose}:${budget.budget.budget_id}:${sessionId ?? ""}:${sections.map((item) => `${item.section}:${item.status}`).join("|")}`).digest("hex")
+    const status = blockers.length > 0 ? "blocked" : sections.some((item) => item.status === "missing" || item.status === "omitted" || item.status === "pointer_only") ? "partial" : "ready"
+    return {
+      packet_id: `fake-context-packet-${hash.slice(0, 12)}`,
+      role: purpose === "opencode_executor_session" ? "executor" : purpose === "wake_supervisor" ? "wake_supervisor" : purpose === "research_retrieval" ? "research" : "commander",
+      purpose,
+      budget_id: budget.budget.budget_id,
+      provider_kind: budget.budget.provider_kind,
+      model_id: budget.budget.model_id,
+      session_id: session?.session_id ?? sessionId,
+      mission_id: session ? session.mission_id : optionalString(payload.missionId ?? payload.mission_id ?? payload.mission),
+      proposal_id: session ? session.proposal_id : optionalString(payload.proposalId ?? payload.proposal_id ?? payload.proposal),
+      review_request_id: session ? session.review_request_id : optionalString(payload.reviewRequestId ?? payload.review_request_id ?? payload.review),
+      apply_id: session ? session.apply_id : optionalString(payload.applyId ?? payload.apply_id ?? payload.apply),
+      packet_status: status,
+      can_compile_final_prompt: false,
+      sections,
+      included_source_refs: uniqueFakeRefs(sections.flatMap((item) => item.source_refs.filter((ref) => !ref.pointer_only))),
+      omitted_source_refs: uniqueFakeRefs(sections.flatMap((item) => item.source_refs.filter((ref) => ref.pointer_only || item.status !== "included"))),
+      budget_summary: {
+        max_context_tokens: budget.budget.max_context_tokens,
+        max_context_bytes: budget.budget.max_context_bytes,
+        max_output_tokens: budget.budget.max_output_tokens,
+        safety_margin_tokens: budget.budget.safety_margin_tokens,
+        safety_margin_bytes: budget.budget.safety_margin_bytes,
+        estimated_input_tokens: estimatedTokens,
+        estimated_input_bytes: estimatedBytes,
+        over_budget: overBudget,
+      },
+      blockers: blockers.map(redactText),
+      warnings: [
+        ...budget.warnings,
+        "packet preview does not compile executable prompts, call providers, launch OpenCode, query research.db, call MCPs, or decide research direction",
+        "token estimates are approximate; exact tokenizer integration is future work",
+      ].map(redactText),
+      recommended_commands: [
+        { label: "Context packet summary", command: "/context-packet-summary", command_type: "read" },
+        { label: "Context budget preview", command: `/context-budget-preview purpose=${purpose}`, command_type: "read" },
+        { label: "Show authority", command: "/authority-show /context-packet-preview", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `${purpose} packet skeleton with ${sections.length} bounded sections`,
+      packet_hash: hash,
+    }
+  }
+
+  private contextPacketSections(purpose: string, allocations: ContextBudgetAllocationSummary[], session?: OpenCodeSessionPlanSummary): ContextPacketSectionSummary[] {
+    const sections = allocations.map((allocation) => {
+      const status = fakeSectionStatus(purpose, allocation.section, session)
+      const refs = fakePacketRefs(allocation.section, session)
+      const summary = fakePacketSummary(purpose, allocation.section, status)
+      const estimatedBytes = status === "excluded" ? 0 : Buffer.byteLength(summary, "utf8") + refs.length * 80
+      return {
+        section: allocation.section,
+        status,
+        priority: allocation.priority,
+        inclusion_policy: allocation.inclusion_policy,
+        max_tokens: allocation.max_tokens,
+        max_bytes: allocation.max_bytes,
+        estimated_tokens: Math.ceil(estimatedBytes / 4),
+        estimated_bytes: estimatedBytes,
+        summary_preview: summary,
+        source_refs: refs,
+        omitted_reason: status === "excluded" ? "excluded by context packet policy" : status === "omitted" ? "future retrieval route is out of scope" : undefined,
+        warnings: status === "pointer_only" && allocation.section === "research_memory" ? ["research.db retrieval is future work"] : [],
+      }
+    })
+    if (!sections.some((item) => item.section === "tool_or_mcp_schema")) {
+      sections.push({
+        section: "tool_or_mcp_schema",
+        status: "excluded",
+        priority: "excluded",
+        inclusion_policy: "excluded_by_default",
+        max_tokens: undefined,
+        max_bytes: undefined,
+        estimated_tokens: 0,
+        estimated_bytes: 0,
+        summary_preview: "tool/MCP schemas are excluded until a future route selects specific tools",
+        source_refs: [{ source_kind: "unknown", source_id: "tool_schema_router_future", label: "tool schema router", summary_preview: "all tool/MCP schemas excluded by default", pointer_only: true }],
+        omitted_reason: "excluded by context packet policy",
+        warnings: [],
+      })
+    }
+    if (purpose === "open_question_answer" && !sections.some((item) => item.section === "open_question_answer")) {
+      const refs = fakePacketRefs("open_question_answer", session)
+      const summary = fakePacketSummary(purpose, "open_question_answer", "missing")
+      const estimatedBytes = Buffer.byteLength(summary, "utf8") + refs.length * 80
+      sections.push({
+        section: "open_question_answer",
+        status: "missing",
+        priority: "high",
+        inclusion_policy: "if_relevant",
+        max_tokens: undefined,
+        max_bytes: undefined,
+        estimated_tokens: Math.ceil(estimatedBytes / 4),
+        estimated_bytes: estimatedBytes,
+        summary_preview: summary,
+        source_refs: refs,
+        omitted_reason: "OpenCode asks Commander protocol is future work",
+        warnings: ["question protocol is future work"],
+      })
+    }
+    return sections
   }
 
   private previewCommanderExecutorReview(payload: Record<string, unknown>): CommanderExecutorReviewPreviewSummary {
@@ -5842,6 +5975,85 @@ export class FakeRuntimeClient implements RuntimeClient {
   }
 }
 
+function fakeSectionStatus(purpose: string, section: string, session?: OpenCodeSessionPlanSummary): ContextPacketSectionSummary["status"] {
+  if (section === "raw_logs" || section === "tool_or_mcp_schema" || section === "reserved_output" || section === "safety_margin") return "excluded"
+  if (section === "research_memory") return "pointer_only"
+  if (section === "external_research") return purpose === "research_retrieval" ? "omitted" : "pointer_only"
+  if (section === "approved_spec" || section === "recent_deltas" || section === "artifact_summaries") return "pointer_only"
+  if (section === "executor_progress" || section === "human_interventions") return "missing"
+  if (section === "commander_guidance") return session ? "pointer_only" : "missing"
+  if (section === "active_sessions") return session ? "included" : purpose === "wake_supervisor" ? "pointer_only" : "missing"
+  if (section === "mission_state") return session ? "included" : "missing"
+  if (section === "open_question_answer") return "missing"
+  return "included"
+}
+
+function fakePacketSummary(purpose: string, section: string, status: string): string {
+  if (section === "role_kernel") return `role kernel for ${purpose}; no research conclusion is selected`
+  if (section === "raw_logs") return "raw logs are excluded by default"
+  if (section === "tool_or_mcp_schema") return "tool/MCP schemas are excluded until a future route selects specific tools"
+  if (section === "research_memory") return "research memory is pointer-only in 9B2; full research.db is not included"
+  if (section === "external_research") return "external research is not fetched in 9B2"
+  if (section === "mission_state") return "mission/tactical objective section uses bounded pointers"
+  if (section === "commander_guidance") return "Commander guidance protocol is future work; planned session pointer only"
+  if (section === "open_question_answer") return "pending question and Commander guidance protocol are not implemented yet"
+  if (status === "missing") return `${section} model is not implemented yet`
+  if (status === "excluded") return `${section} is reserved or excluded by policy`
+  return `${section} skeleton is bounded by budget allocation`
+}
+
+function fakePacketRefs(section: string, session?: OpenCodeSessionPlanSummary): ContextPacketSectionSummary["source_refs"] {
+  if (section === "role_kernel") return [{ source_kind: "budget", source_id: "role_kernel_policy", label: "role kernel", summary_preview: "bounded role instructions", pointer_only: true }]
+  if (section === "approved_spec") return [{ source_kind: "spec", source_id: "approved_spec_current", label: "approved spec pointer", summary_preview: "bounded spec pointer only", pointer_only: true }]
+  if (section === "mission_state" && session) return [
+    { source_kind: "opencode_session", source_id: session.session_id, label: "planned session objective", summary_preview: session.objective, pointer_only: false },
+    { source_kind: "opencode_session", source_id: `${session.session_id}:timeout_policy`, label: "timeout/report policy pointer", summary_preview: "planned session timeout metadata only", pointer_only: true },
+    { source_kind: "opencode_session", source_id: `${session.session_id}:question_policy`, label: "question policy pointer", summary_preview: "planned session question metadata only", pointer_only: true },
+    { source_kind: "opencode_session", source_id: `${session.session_id}:human_control_policy`, label: "human control policy pointer", summary_preview: "planned session human-control metadata only", pointer_only: true },
+  ]
+  if (section === "active_sessions" && session) return [{ source_kind: "opencode_session", source_id: session.session_id, label: "planned OpenCode session", summary_preview: session.title, pointer_only: false }]
+  if (section === "commander_guidance" && session) return [
+    { source_kind: "opencode_session", source_id: session.session_id, label: "Commander context pointer", summary_preview: session.commander_context_summary, pointer_only: true },
+    { source_kind: "opencode_session", source_id: `${session.session_id}:timeout_policy`, label: "timeout/report policy pointer", summary_preview: "planned session timeout metadata only", pointer_only: true },
+    { source_kind: "opencode_session", source_id: `${session.session_id}:question_policy`, label: "question policy pointer", summary_preview: "planned session question metadata only", pointer_only: true },
+    { source_kind: "opencode_session", source_id: `${session.session_id}:human_control_policy`, label: "human control policy pointer", summary_preview: "planned session human-control metadata only", pointer_only: true },
+  ]
+  if (section === "research_memory") return [{ source_kind: "research_result", source_id: "research_db_retrieval_future", label: "research memory pointer", summary_preview: "full research.db is not included", pointer_only: true }]
+  if (section === "external_research") return [{ source_kind: "external_source", source_id: "external_research_future", label: "external research pointer", summary_preview: "MCP/external retrieval is not called", pointer_only: true }]
+  if (section === "recent_deltas") return [{ source_kind: "event", source_id: "events_jsonl_projection_pointer", label: "event projection pointer", summary_preview: "full event log is not included", pointer_only: true }]
+  if (section === "tool_or_mcp_schema") return [{ source_kind: "unknown", source_id: "tool_schema_router_future", label: "tool schema router", summary_preview: "all tool/MCP schemas excluded by default", pointer_only: true }]
+  if (section === "open_question_answer") return [{ source_kind: "unknown", source_id: "opencode_question_protocol_future", label: "question protocol pointer", summary_preview: "question protocol is future work", pointer_only: true }]
+  return []
+}
+
+function fakeSessionSourceConflictBlockers(session: OpenCodeSessionPlanSummary, payload: Record<string, unknown>): string[] {
+  return [
+    fakeSessionSourceConflictBlocker("mission_id", optionalString(payload.missionId ?? payload.mission_id ?? payload.mission), session.mission_id),
+    fakeSessionSourceConflictBlocker("proposal_id", optionalString(payload.proposalId ?? payload.proposal_id ?? payload.proposal), session.proposal_id),
+    fakeSessionSourceConflictBlocker("review_request_id", optionalString(payload.reviewRequestId ?? payload.review_request_id ?? payload.review), session.review_request_id),
+    fakeSessionSourceConflictBlocker("apply_id", optionalString(payload.applyId ?? payload.apply_id ?? payload.apply), session.apply_id),
+  ].filter((item): item is string => item !== undefined)
+}
+
+function fakeSessionSourceConflictBlocker(field: string, explicitId: string | undefined, sessionId: string | undefined): string | undefined {
+  if (!explicitId) return undefined
+  if (!sessionId) return `session_id has no linked ${field} to match explicit ${field}`
+  if (explicitId !== sessionId) return `session_id source chain conflicts with ${field}`
+  return undefined
+}
+
+function uniqueFakeRefs(refs: ContextPacketSectionSummary["source_refs"]): ContextPacketSectionSummary["source_refs"] {
+  const seen = new Set<string>()
+  const out: ContextPacketSectionSummary["source_refs"] = []
+  for (const ref of refs) {
+    const key = `${ref.source_kind}:${ref.source_id}:${ref.pointer_only}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(ref)
+  }
+  return out.slice(0, 20)
+}
+
 function readLimit(value: unknown, fallback: number): number {
   if (!Number.isInteger(value) || Number(value) < 1) return fallback
   return Math.min(Number(value), 100)
@@ -7511,6 +7723,20 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       aliases: ["/budget-preview"],
       notes: ["Previews bounded context budget metadata only; does not compile context packets, call providers, launch OpenCode, query research.db, or mutate missions."],
       out: ["context packet compilation", "provider calls", "OpenCode launch", "research.db retrieval", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/context-packet-preview", "runtime.preview_context_packet", "safe_read", "none", "runtime_status", {
+      reads: ["/context-packet-summary", "/context-budget-preview", "/model-capabilities"],
+      targeted: ["tests/e2e_user/scenarios/test_context_packet_compiler_tui.py"],
+      aliases: ["/packet-preview", "/compile-context-preview", "/context-compile-preview"],
+      notes: ["Previews a bounded context packet skeleton only; does not compile executable prompts, call providers, launch OpenCode, query research.db, call MCPs, or decide research direction."],
+      out: ["final prompt generation", "provider calls", "OpenCode launch", "research.db retrieval", "MCP calls", "mission/proposal/review/apply mutation", "scheduler/wake execution"],
+    }),
+    fakeCommandAuthorityRecord("/context-packet-summary", "runtime.context_packet_summary", "safe_read", "none", "runtime_status", {
+      reads: ["/context-packet-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_context_packet_compiler_tui.py"],
+      aliases: ["/context-packets"],
+      notes: ["Lists supported context packet purposes and roles only."],
+      out: ["final prompt generation", "provider calls", "OpenCode launch", "research.db retrieval", "MCP calls", "mission/proposal/review/apply mutation", "scheduler/wake execution"],
     }),
     fakeCommandAuthorityRecord("/executor-review-preview", "runtime.preview_commander_executor_review", "safe_read", "reasoning_provider_runtime", "commander_cycle", {
       reads: ["/result-review-packet", "/authority-show /executor-review"],

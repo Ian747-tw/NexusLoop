@@ -31,6 +31,7 @@ import type { OpenCodeResultReviewPacket, OpenCodeResultReviewPacketInput, OpenC
 import type { OpenCodeSessionCreateInput, OpenCodeSessionPlan, OpenCodeSessionPreview, OpenCodeSessionPreviewInput, OpenCodeSessionRecord, OpenCodeSessionSourceKind, OpenCodeSessionStatus, OpenCodeSessionSummary } from "../opencode-session/opencode-session-types"
 import type { ContextBudgetPreview, ContextBudgetPreviewInput, ContextBudgetSummary } from "../context/context-budget-types"
 import type { ModelCapability } from "../context/model-capability-types"
+import type { ContextPacketPreview, ContextPacketPreviewInput, ContextPacketSummary } from "../context/context-packet-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAssessmentRecord } from "../wake/wake-hook-types"
@@ -307,6 +308,21 @@ export interface RuntimeClient {
     maxContextTokens?: number
     maxContextBytes?: number
   }): Promise<ContextBudgetPreview>
+  command(name: "runtime.preview_context_packet", payload?: ContextPacketPreviewInput | {
+    purpose?: string
+    role?: string
+    providerKind?: string
+    providerId?: string
+    modelId?: string
+    sessionId?: string
+    missionId?: string
+    proposalId?: string
+    reviewRequestId?: string
+    applyId?: string
+    maxContextTokens?: number
+    maxContextBytes?: number
+  }): Promise<ContextPacketPreview>
+  command(name: "runtime.context_packet_summary", payload?: Record<string, never>): Promise<ContextPacketSummary>
   command(name: "runtime.preview_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewPreview>
   command(name: "runtime.execute_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewResult>
   command(name: "runtime.list_commander_executor_reviews", payload?: { limit?: number; packet_id?: string; packetId?: string; mission_id?: string; missionId?: string; handoff_id?: string; handoffId?: string }): Promise<CommanderExecutorReviewRecord[]>
@@ -549,6 +565,8 @@ export interface RuntimeCommandEnvelope {
     | "runtime.get_model_capability"
     | "runtime.context_budget_summary"
     | "runtime.preview_context_budget"
+    | "runtime.preview_context_packet"
+    | "runtime.context_packet_summary"
     | "runtime.preview_commander_executor_review"
     | "runtime.execute_commander_executor_review"
     | "runtime.list_commander_executor_reviews"

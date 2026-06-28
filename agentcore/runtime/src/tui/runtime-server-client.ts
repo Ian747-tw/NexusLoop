@@ -25,6 +25,8 @@ const noStartCommands = new Set([
   "runtime.get_model_capability",
   "runtime.context_budget_summary",
   "runtime.preview_context_budget",
+  "runtime.preview_context_packet",
+  "runtime.context_packet_summary",
   "runtime.preview_commander_executor_review",
   "runtime.execute_commander_executor_review",
   "runtime.list_commander_executor_reviews",

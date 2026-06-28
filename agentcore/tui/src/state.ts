@@ -1359,6 +1359,87 @@ export type ContextBudgetsState = {
   commandError?: string
 }
 
+export type ContextPacketSourceRefSummary = {
+  source_kind: string
+  source_id: string
+  label?: string
+  summary_preview?: string
+  event_kind?: string
+  pointer_only: boolean
+}
+
+export type ContextPacketSectionSummary = {
+  section: string
+  status: "included" | "pointer_only" | "omitted" | "missing" | "excluded" | string
+  priority: "required" | "high" | "medium" | "low" | "excluded" | string
+  inclusion_policy: "always" | "if_relevant" | "pointer_only" | "excluded_by_default" | string
+  max_tokens?: number
+  max_bytes?: number
+  estimated_tokens?: number
+  estimated_bytes?: number
+  summary_preview: string
+  source_refs: ContextPacketSourceRefSummary[]
+  omitted_reason?: string
+  warnings: string[]
+}
+
+export type ContextPacketBudgetSummaryState = {
+  max_context_tokens?: number
+  max_context_bytes?: number
+  max_output_tokens?: number
+  safety_margin_tokens?: number
+  safety_margin_bytes?: number
+  estimated_input_tokens?: number
+  estimated_input_bytes?: number
+  over_budget: boolean
+}
+
+export type ContextPacketCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type ContextPacketPreviewSummary = {
+  packet_id: string
+  role: string
+  purpose: string
+  budget_id: string
+  provider_kind?: string
+  model_id?: string
+  session_id?: string
+  mission_id?: string
+  proposal_id?: string
+  review_request_id?: string
+  apply_id?: string
+  packet_status: "ready" | "blocked" | "partial" | "unknown" | string
+  can_compile_final_prompt: false
+  sections: ContextPacketSectionSummary[]
+  included_source_refs: ContextPacketSourceRefSummary[]
+  omitted_source_refs: ContextPacketSourceRefSummary[]
+  budget_summary: ContextPacketBudgetSummaryState
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: ContextPacketCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  packet_hash: string
+}
+
+export type ContextPacketSummaryState = {
+  supported_purposes: string[]
+  supported_roles: string[]
+  generated_at: string
+}
+
+export type ContextPacketsState = {
+  preview?: ContextPacketPreviewSummary | null
+  summary?: ContextPacketSummaryState | null
+  commandError?: string
+}
+
 export type CommanderExecutorReviewCommandSummary = {
   label: string
   command: string
@@ -3638,6 +3719,7 @@ export type UiState = {
   opencodeResultReview?: OpenCodeResultReviewState
   opencodeSessions?: OpenCodeSessionsState
   contextBudgets?: ContextBudgetsState
+  contextPackets?: ContextPacketsState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
   executorReviewProposalCreate?: ExecutorReviewProposalCreateState

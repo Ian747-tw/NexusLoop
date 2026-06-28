@@ -45,7 +45,12 @@ Compiled context packets:
 - `WakeSupervisorContextPacket`
 - `ResearchDecisionContextPacket`
 
-Compiled packets are future Branch 9B work. Branch 9B0 audits OpenCode native context compatibility first; later 9B branches should make packets bounded, redacted, reproducible from durable memory plus explicit runtime state, and scoped to the recipient context window.
+Branch 9B0 audits OpenCode native context compatibility first. Branch 9B1 adds
+the read-only model capability and context budget registry used to answer what a
+model/context can afford. Branch 9B2 adds a read-only context packet compiler
+skeleton that previews bounded sections, source pointers, omissions, and
+warnings. It does not generate executable prompts, call providers, query
+`research.db`, call MCPs, or decide research direction.
 
 ## Commander Context Rules
 
@@ -222,4 +227,4 @@ Branch 9A does not:
 - create checkpoints
 - submit results
 
-Branch 9B0 builds on this contract with an OpenCode native context compatibility audit. Branch 9B1 adds the read-only model capability and context budget registry used to answer what a model/context can afford. Later 9B branches should add the context compiler, research retrieval, and explicit Commander/OpenCode/wake packet construction.
+Branch 9B0 builds on this contract with an OpenCode native context compatibility audit. Branch 9B1 adds the read-only model capability and context budget registry used to answer what a model/context can afford. Branch 9B2 adds the read-only context packet compiler skeleton for Commander, OpenCode executor, wake supervisor, research retrieval, and open-question contexts. Later 9B branches should add session-specific OpenCode config writing, real research retrieval, novelty checks, and executable prompt/config compilation.

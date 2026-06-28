@@ -85,6 +85,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeResultReviewLines(state))
   out.push(...opencodeSessionLines(state))
   out.push(...contextBudgetLines(state))
+  out.push(...contextPacketLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
   out.push(...executorReviewProposalCreateLines(state))
@@ -679,6 +680,54 @@ function contextBudgetLines(state: UiState): string[] {
   }
   if (budgets.commandError) out.push(`  command_error=${redactText(budgets.commandError)}`)
   out.push("  note=budget preview does not compile context, call providers, launch OpenCode, query research.db, or mutate missions")
+  return out
+}
+
+function contextPacketLines(state: UiState): string[] {
+  const packets = state.contextPackets
+  const out = ["Context packet compiler"]
+  if (!packets) {
+    out.push("  preview=none")
+    out.push("  note=packet preview does not compile executable prompts, call providers, launch OpenCode, query research.db, or decide research direction")
+    return out
+  }
+  if (packets.summary) {
+    out.push(`  supported_purposes=${packets.summary.supported_purposes.join(",") || "none"}`)
+    out.push(`  supported_roles=${packets.summary.supported_roles.join(",") || "none"}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (packets.preview) {
+    const item = packets.preview
+    out.push(`  preview=${item.packet_id} purpose=${item.purpose} role=${item.role} status=${item.packet_status} can_compile_final_prompt=${item.can_compile_final_prompt}`)
+    out.push(`  budget=${item.budget_id} provider=${item.provider_kind ?? "unknown"} model=${item.model_id ?? "unknown"}`)
+    out.push(`  session=${item.session_id ?? "none"} mission=${item.mission_id ?? "none"} proposal=${item.proposal_id ?? "none"} review=${item.review_request_id ?? "none"} apply=${item.apply_id ?? "none"}`)
+    out.push(`  estimated_input_tokens=${item.budget_summary.estimated_input_tokens ?? "unknown"} estimated_input_bytes=${item.budget_summary.estimated_input_bytes ?? "unknown"} over_budget=${item.budget_summary.over_budget}`)
+    out.push(`  max_context_tokens=${item.budget_summary.max_context_tokens ?? "unknown"} max_context_bytes=${item.budget_summary.max_context_bytes ?? "unknown"} max_output_tokens=${item.budget_summary.max_output_tokens ?? "unknown"}`)
+    out.push("  sections")
+    out.push(...item.sections.slice(0, 18).map((section) => `    - ${section.section} status=${section.status} priority=${section.priority} policy=${section.inclusion_policy} estimated_tokens=${section.estimated_tokens ?? "none"} max_tokens=${section.max_tokens ?? "none"}`))
+    out.push("  included_source_refs")
+    if (item.included_source_refs.length === 0) out.push("    - empty")
+    else out.push(...item.included_source_refs.slice(0, 10).map((ref) => `    - ${ref.source_kind}:${preview(redactText(ref.source_id))} pointer_only=${ref.pointer_only}${ref.label ? ` ${preview(redactText(ref.label))}` : ""}`))
+    out.push("  omitted_source_refs")
+    if (item.omitted_source_refs.length === 0) out.push("    - empty")
+    else out.push(...item.omitted_source_refs.slice(0, 10).map((ref) => `    - ${ref.source_kind}:${preview(redactText(ref.source_id))} pointer_only=${ref.pointer_only}${ref.label ? ` ${preview(redactText(ref.label))}` : ""}`))
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 12).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (packets.commandError) out.push(`  command_error=${redactText(packets.commandError)}`)
+  out.push("  note=packet preview does not compile executable prompts, call providers, launch OpenCode, query research.db, call MCPs, mutate missions, or decide research direction")
   return out
 }
 

@@ -278,6 +278,7 @@ Branch 9B0 does not implement this protocol.
 - MiniMax is currently a validation provider, not the final assumption.
 - Future support includes multiple cloud providers and local models.
 - Branch 9B1 implements the read-only model capability and context budget registry needed before packet compilation.
+- Branch 9B2 implements a read-only context packet compiler skeleton. It previews packet sections, source refs, omitted refs, budget estimates, blockers, and warnings only; it does not generate executable prompts, call providers, launch OpenCode, query `research.db`, call MCPs, mutate runtime authority records, or decide research direction.
 - Context packets must be model-capability aware.
 - OpenCode native model config may be used for the executor model.
 - Commander provider and OpenCode provider may differ.
@@ -309,7 +310,7 @@ Branch 9B0 does not implement this protocol.
 ## Recommended Future Branch Plan
 
 - 9B1: model capability + context budget registry (read-only planning surface)
-- 9B2: context packet compiler skeleton
+- 9B2: context packet compiler skeleton (read-only packet previews; no executable prompt compilation)
 - 9B3: session-specific OpenCode config/instruction writer
 - 9B4: `research.db` retrieval + novelty-check planner
 - 9C: real OpenCode launch readiness
