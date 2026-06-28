@@ -96,6 +96,7 @@ export class ContextPacketCompilerService {
     const sections = budgetPreview.budget.allocations.map((allocation) => sectionFromAllocation(allocation, sourceContext))
     if (!sections.some((section) => section.section === "raw_logs")) sections.push(excludedSyntheticSection("raw_logs", "raw logs are excluded by policy"))
     if (!sections.some((section) => section.section === "tool_or_mcp_schema")) sections.push(excludedSyntheticSection("tool_or_mcp_schema", "tool/MCP schemas are excluded until a future router selects specific tools"))
+    if (purpose === "open_question_answer" && !sections.some((section) => section.section === "open_question_answer")) sections.push(openQuestionAnswerSection(sourceContext))
 
     const missingRequired = sections.filter((section) => section.priority === "required" && (section.status === "missing" || section.status === "omitted"))
     for (const section of sections) {
@@ -315,6 +316,24 @@ function excludedSyntheticSection(section: string, reason: string): ContextPacke
     source_refs: [],
     omitted_reason: bound(reason),
     warnings: [],
+  }
+}
+
+function openQuestionAnswerSection(context: PacketSourceContext): ContextPacketSection {
+  const summary = "pending question and Commander guidance protocol are not implemented yet"
+  const refs = refsForSection("open_question_answer", context)
+  const estimatedBytes = estimateBytes(summary, refs)
+  return {
+    section: "open_question_answer",
+    status: "missing",
+    priority: "high",
+    inclusion_policy: "if_relevant",
+    estimated_tokens: Math.ceil(estimatedBytes / 4),
+    estimated_bytes: estimatedBytes,
+    summary_preview: bound(summary),
+    source_refs: refs,
+    omitted_reason: "OpenCode asks Commander protocol is future work",
+    warnings: ["question protocol is future work"],
   }
 }
 

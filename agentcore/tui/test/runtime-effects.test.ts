@@ -5015,6 +5015,16 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: ["purpose=research_retrieval"] })
     expect(state.contextPackets?.preview?.sections).toContainEqual(expect.objectContaining({ section: "external_research", status: "omitted" }))
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: ["purpose=opencode_executor_session"] })
+    expect(state.contextPackets?.preview?.sections).toContainEqual(expect.objectContaining({ section: "mission_state", status: "missing" }))
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: ["purpose=open_question_answer"] })
+    expect(state.contextPackets?.preview?.sections).toContainEqual(expect.objectContaining({
+      section: "open_question_answer",
+      status: "missing",
+      source_refs: expect.arrayContaining([expect.objectContaining({ source_id: "opencode_question_protocol_future", pointer_only: true })]),
+    }))
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=context", "packet", "session", "max_context_bytes=4096"] })
     const sessionId = state.opencodeSessions?.latestPlan?.session_id
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "packet-preview", args: ["purpose=opencode_executor_session", `session=${sessionId}`] })

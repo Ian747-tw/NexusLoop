@@ -2123,6 +2123,25 @@ export class FakeRuntimeClient implements RuntimeClient {
         warnings: [],
       })
     }
+    if (purpose === "open_question_answer" && !sections.some((item) => item.section === "open_question_answer")) {
+      const refs = fakePacketRefs("open_question_answer", session)
+      const summary = fakePacketSummary(purpose, "open_question_answer", "missing")
+      const estimatedBytes = Buffer.byteLength(summary, "utf8") + refs.length * 80
+      sections.push({
+        section: "open_question_answer",
+        status: "missing",
+        priority: "high",
+        inclusion_policy: "if_relevant",
+        max_tokens: undefined,
+        max_bytes: undefined,
+        estimated_tokens: Math.ceil(estimatedBytes / 4),
+        estimated_bytes: estimatedBytes,
+        summary_preview: summary,
+        source_refs: refs,
+        omitted_reason: "OpenCode asks Commander protocol is future work",
+        warnings: ["question protocol is future work"],
+      })
+    }
     return sections
   }
 
@@ -5963,7 +5982,8 @@ function fakeSectionStatus(purpose: string, section: string, session?: OpenCodeS
   if (section === "executor_progress" || section === "human_interventions") return "missing"
   if (section === "commander_guidance") return session ? "pointer_only" : "missing"
   if (section === "active_sessions") return session ? "included" : purpose === "wake_supervisor" ? "pointer_only" : "missing"
-  if (section === "mission_state") return session || purpose === "opencode_executor_session" ? "included" : "missing"
+  if (section === "mission_state") return session ? "included" : "missing"
+  if (section === "open_question_answer") return "missing"
   return "included"
 }
 
@@ -5975,6 +5995,7 @@ function fakePacketSummary(purpose: string, section: string, status: string): st
   if (section === "external_research") return "external research is not fetched in 9B2"
   if (section === "mission_state") return "mission/tactical objective section uses bounded pointers"
   if (section === "commander_guidance") return "Commander guidance protocol is future work; planned session pointer only"
+  if (section === "open_question_answer") return "pending question and Commander guidance protocol are not implemented yet"
   if (status === "missing") return `${section} model is not implemented yet`
   if (status === "excluded") return `${section} is reserved or excluded by policy`
   return `${section} skeleton is bounded by budget allocation`
@@ -6000,6 +6021,7 @@ function fakePacketRefs(section: string, session?: OpenCodeSessionPlanSummary): 
   if (section === "external_research") return [{ source_kind: "external_source", source_id: "external_research_future", label: "external research pointer", summary_preview: "MCP/external retrieval is not called", pointer_only: true }]
   if (section === "recent_deltas") return [{ source_kind: "event", source_id: "events_jsonl_projection_pointer", label: "event projection pointer", summary_preview: "full event log is not included", pointer_only: true }]
   if (section === "tool_or_mcp_schema") return [{ source_kind: "unknown", source_id: "tool_schema_router_future", label: "tool schema router", summary_preview: "all tool/MCP schemas excluded by default", pointer_only: true }]
+  if (section === "open_question_answer") return [{ source_kind: "unknown", source_id: "opencode_question_protocol_future", label: "question protocol pointer", summary_preview: "question protocol is future work", pointer_only: true }]
   return []
 }
 

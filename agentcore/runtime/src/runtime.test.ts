@@ -16902,8 +16902,13 @@ describe("Context budget registry", () => {
     expect(research.sections).toContainEqual(expect.objectContaining({ section: "research_memory", status: "pointer_only" }))
     expect(research.sections).toContainEqual(expect.objectContaining({ section: "external_research", status: "omitted" }))
 
-    const question = await server.command("runtime.preview_context_packet", { purpose: "open_question_answer" }) as { sections: Array<{ section: string; status: string }> }
+    const question = await server.command("runtime.preview_context_packet", { purpose: "open_question_answer" }) as { sections: Array<{ section: string; status: string; source_refs?: Array<{ source_id: string; pointer_only: boolean }> }> }
     expect(question.sections).toContainEqual(expect.objectContaining({ section: "commander_guidance", status: "missing" }))
+    expect(question.sections).toContainEqual(expect.objectContaining({
+      section: "open_question_answer",
+      status: "missing",
+      source_refs: expect.arrayContaining([expect.objectContaining({ source_id: "opencode_question_protocol_future", pointer_only: true })]),
+    }))
 
     const missingMission = await server.command("runtime.preview_context_packet", {
       purpose: "commander_research_decision",
