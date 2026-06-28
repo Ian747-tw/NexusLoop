@@ -77,6 +77,8 @@ import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilit
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
 import type { ModelCapability } from "./context/model-capability-types"
+import { ContextPacketCompilerService, readContextPacketPreviewInput } from "./context/context-packet-compiler-service"
+import type { ContextPacketPreview, ContextPacketSummary } from "./context/context-packet-types"
 import type { OpenCodeSpawn } from "./opencode/process-adapter"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
@@ -287,6 +289,7 @@ export class RuntimeServer {
   private opencodeResultReviewPacketServiceInstance: OpenCodeResultReviewPacketService | null = null
   private opencodeSessionServiceInstance: OpenCodeSessionService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
+  private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private commanderExecutorReviewServiceInstance: CommanderExecutorReviewService | null = null
   private executorReviewProposalDraftServiceInstance: ExecutorReviewProposalDraftService | null = null
   private executorReviewProposalCreateServiceInstance: ExecutorReviewProposalCreateService | null = null
@@ -827,6 +830,10 @@ export class RuntimeServer {
         return this.contextBudgetSummary()
       case "runtime.preview_context_budget":
         return this.previewContextBudget(readContextBudgetPreviewInput(payload))
+      case "runtime.preview_context_packet":
+        return this.previewContextPacket(readContextPacketPreviewInput(payload))
+      case "runtime.context_packet_summary":
+        return this.contextPacketSummary()
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(readCommanderExecutorReviewInput(payload))
       case "runtime.execute_commander_executor_review":
@@ -1677,6 +1684,14 @@ export class RuntimeServer {
 
   async previewContextBudget(input: Parameters<ContextBudgetService["preview"]>[0] = {}): Promise<ContextBudgetPreview> {
     return this.contextBudgetService().preview(input)
+  }
+
+  async previewContextPacket(input: Parameters<ContextPacketCompilerService["preview"]>[0] = {}): Promise<ContextPacketPreview> {
+    return this.contextPacketCompilerService().preview(input)
+  }
+
+  async contextPacketSummary(): Promise<ContextPacketSummary> {
+    return this.contextPacketCompilerService().summary()
   }
 
   async previewCommanderExecutorReview(input: Parameters<CommanderExecutorReviewService["preview"]>[0] = {}): Promise<CommanderExecutorReviewPreview> {
@@ -2704,6 +2719,16 @@ export class RuntimeServer {
       opencodeSessionService: this.opencodeSessionService(),
     })
     return this.contextBudgetServiceInstance
+  }
+
+  private contextPacketCompilerService(): ContextPacketCompilerService {
+    this.contextPacketCompilerServiceInstance ??= new ContextPacketCompilerService({
+      contextBudgetService: this.contextBudgetService(),
+      opencodeSessionService: this.opencodeSessionService(),
+      missionRegistry: this.missionRegistry,
+      proposalRegistry: this.proposalRegistry,
+    })
+    return this.contextPacketCompilerServiceInstance
   }
 
   private commanderExecutorReviewService(): CommanderExecutorReviewService {

@@ -42,6 +42,9 @@ import type {
   ContextBudgetProfileSummary,
   ContextBudgetSummaryState,
   ContextBudgetsState,
+  ContextPacketPreviewSummary,
+  ContextPacketSummaryState,
+  ContextPacketsState,
   CommanderExecutorReviewCommandSummary,
   CommanderExecutorReviewFindingSummary,
   CommanderExecutorReviewPreviewSummary,
@@ -378,6 +381,8 @@ export type RuntimeUiEffect =
   | { type: "load-model-capability"; capabilityId?: string; providerKind?: string; modelId?: string }
   | { type: "load-context-budget-summary" }
   | { type: "preview-context-budget"; purpose?: string; role?: string; providerKind?: string; modelId?: string; sessionId?: string; maxContextTokens?: number; maxContextBytes?: number }
+  | { type: "preview-context-packet"; purpose?: string; role?: string; providerKind?: string; modelId?: string; sessionId?: string; missionId?: string; proposalId?: string; reviewRequestId?: string; applyId?: string; maxContextTokens?: number; maxContextBytes?: number }
+  | { type: "load-context-packet-summary" }
   | { type: "preview-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string }
   | { type: "execute-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; dryRun?: boolean }
   | { type: "load-commander-executor-reviews"; limit?: number }
@@ -1128,6 +1133,22 @@ export async function applyRuntimeUiEffect(
           maxContextTokens: effect.maxContextTokens,
           maxContextBytes: effect.maxContextBytes,
         }))
+      case "preview-context-packet":
+        return applyContextPacketPreview(state, await runtime.command("runtime.preview_context_packet", {
+          purpose: effect.purpose,
+          role: effect.role,
+          providerKind: effect.providerKind,
+          modelId: effect.modelId,
+          sessionId: effect.sessionId,
+          missionId: effect.missionId,
+          proposalId: effect.proposalId,
+          reviewRequestId: effect.reviewRequestId,
+          applyId: effect.applyId,
+          maxContextTokens: effect.maxContextTokens,
+          maxContextBytes: effect.maxContextBytes,
+        }))
+      case "load-context-packet-summary":
+        return applyContextPacketSummary(state, await runtime.command("runtime.context_packet_summary"))
       case "preview-commander-executor-review":
         return applyCommanderExecutorReviewPreview(
           state,
@@ -1747,6 +1768,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeResultReviewEffect(effect)) return recordOpenCodeResultReviewCommandError(state, error)
     if (isOpenCodeSessionEffect(effect)) return recordOpenCodeSessionCommandError(state, error)
     if (isContextBudgetEffect(effect)) return recordContextBudgetCommandError(state, error)
+    if (isContextPacketEffect(effect)) return recordContextPacketCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
     if (isExecutorReviewProposalCreateEffect(effect)) return recordExecutorReviewProposalCreateCommandError(state, error)
@@ -2883,6 +2905,32 @@ function applyContextBudgetPreview(state: UiState, value: unknown): UiState {
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "context budget preview", detail: `purpose=${budgetPreview.purpose}`, status: budgetPreview.blockers.length ? "blocked" : "loaded" }].slice(-12),
+  }
+}
+
+function applyContextPacketPreview(state: UiState, value: unknown): UiState {
+  const packetPreview = readContextPacketPreview(value)
+  return {
+    ...state,
+    contextPackets: {
+      ...contextPacketsState(state),
+      preview: packetPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "context packet preview", detail: `purpose=${packetPreview.purpose}`, status: packetPreview.blockers.length ? "blocked" : "loaded" }].slice(-12),
+  }
+}
+
+function applyContextPacketSummary(state: UiState, value: unknown): UiState {
+  const summary = readContextPacketSummary(value)
+  return {
+    ...state,
+    contextPackets: {
+      ...contextPacketsState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "context packet summary", detail: `purposes=${summary.supported_purposes.length}`, status: "loaded" }].slice(-12),
   }
 }
 
@@ -4094,6 +4142,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeResultReviewCommands.has(command)) return state.opencodeResultReview?.commandError
   if (opencodeSessionCommands.has(command)) return state.opencodeSessions?.commandError
   if (contextBudgetCommands.has(command)) return state.contextBudgets?.commandError
+  if (contextPacketCommands.has(command)) return state.contextPackets?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
   if (executorReviewProposalCreateCommands.has(command)) return state.executorReviewProposalCreate?.commandError
@@ -4134,6 +4183,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeResultReviewCommands.has(command)) return { ...state, opencodeResultReview: { ...opencodeResultReviewState(state), commandError: undefined } }
   if (opencodeSessionCommands.has(command)) return { ...state, opencodeSessions: { ...opencodeSessionsState(state), commandError: undefined } }
   if (contextBudgetCommands.has(command)) return { ...state, contextBudgets: { ...contextBudgetsState(state), commandError: undefined } }
+  if (contextPacketCommands.has(command)) return { ...state, contextPackets: { ...contextPacketsState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
   if (executorReviewProposalCreateCommands.has(command)) return { ...state, executorReviewProposalCreate: { ...executorReviewProposalCreateState(state), commandError: undefined } }
@@ -4299,6 +4349,14 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "context-budget-preview":
     case "budget-preview":
       return applyRuntimeUiEffect(commandState, runtime, contextBudgetPreviewEffect(args))
+    case "context-packet-preview":
+    case "packet-preview":
+    case "compile-context-preview":
+    case "context-compile-preview":
+      return applyRuntimeUiEffect(commandState, runtime, contextPacketPreviewEffect(args))
+    case "context-packet-summary":
+    case "context-packets":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-context-packet-summary" })
     case "executor-review-preview":
     case "commander-executor-review-preview":
       return applyRuntimeUiEffect(commandState, runtime, commanderExecutorReviewEffect("preview-commander-executor-review", args))
@@ -5194,6 +5252,11 @@ function isContextBudgetEffect(effect: RuntimeUiEffect): boolean {
   return contextBudgetCommands.has(effect.command)
 }
 
+function isContextPacketEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return contextPacketEffectTypes.has(effect.type)
+  return contextPacketCommands.has(effect.command)
+}
+
 function isCommanderExecutorReviewEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return commanderExecutorReviewEffectTypes.has(effect.type)
   return commanderExecutorReviewCommands.has(effect.command)
@@ -5458,6 +5521,20 @@ const contextBudgetEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-model-capability",
   "load-context-budget-summary",
   "preview-context-budget",
+])
+
+const contextPacketCommands = new Set([
+  "context-packet-preview",
+  "packet-preview",
+  "compile-context-preview",
+  "context-compile-preview",
+  "context-packet-summary",
+  "context-packets",
+])
+
+const contextPacketEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-context-packet",
+  "load-context-packet-summary",
 ])
 
 const commanderExecutorReviewCommands = new Set([
@@ -6913,6 +6990,18 @@ function recordContextBudgetCommandError(state: UiState, error: unknown): UiStat
   }
 }
 
+function recordContextPacketCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    contextPackets: {
+      ...contextPacketsState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "context packet command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function recordCommanderExecutorReviewCommandError(state: UiState, error: unknown): UiState {
   const message = redactText(error instanceof Error ? error.message : String(error))
   return {
@@ -7974,6 +8063,99 @@ function readContextBudgetAllocations(value: unknown): ContextBudgetPreviewSumma
 }
 
 function readContextBudgetCommands(value: unknown): ContextBudgetPreviewSummary["recommended_commands"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readContextPacketSummary(value: unknown): ContextPacketSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.context_packet_summary returned invalid summary")
+  return {
+    supported_purposes: readStringList(value.supported_purposes, 12),
+    supported_roles: readStringList(value.supported_roles, 8),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readContextPacketPreview(value: unknown): ContextPacketPreviewSummary {
+  if (!isRecord(value) || typeof value.packet_id !== "string") throw new Error("runtime.preview_context_packet returned invalid preview")
+  return {
+    packet_id: redactText(value.packet_id),
+    role: readString(value.role, "unknown"),
+    purpose: readString(value.purpose, "unknown"),
+    budget_id: readString(value.budget_id, ""),
+    provider_kind: typeof value.provider_kind === "string" ? readString(value.provider_kind, "unknown") : undefined,
+    model_id: typeof value.model_id === "string" ? readString(value.model_id, "unknown") : undefined,
+    session_id: typeof value.session_id === "string" ? redactText(value.session_id) : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    proposal_id: typeof value.proposal_id === "string" ? redactText(value.proposal_id) : undefined,
+    review_request_id: typeof value.review_request_id === "string" ? redactText(value.review_request_id) : undefined,
+    apply_id: typeof value.apply_id === "string" ? redactText(value.apply_id) : undefined,
+    packet_status: readString(value.packet_status, "unknown"),
+    can_compile_final_prompt: false,
+    sections: readContextPacketSections(value.sections),
+    included_source_refs: readContextPacketSourceRefs(value.included_source_refs),
+    omitted_source_refs: readContextPacketSourceRefs(value.omitted_source_refs),
+    budget_summary: readContextPacketBudgetSummary(value.budget_summary),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 12).map(preview),
+    recommended_commands: readContextPacketCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    packet_hash: readString(value.packet_hash, ""),
+  }
+}
+
+function readContextPacketSections(value: unknown): ContextPacketPreviewSummary["sections"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 18).map((section) => ({
+    section: readString(section.section, "unknown"),
+    status: readString(section.status, "unknown"),
+    priority: readPriority(section.priority),
+    inclusion_policy: readInclusionPolicy(section.inclusion_policy),
+    max_tokens: typeof section.max_tokens === "number" ? readNumber(section.max_tokens, 0) : undefined,
+    max_bytes: typeof section.max_bytes === "number" ? readNumber(section.max_bytes, 0) : undefined,
+    estimated_tokens: typeof section.estimated_tokens === "number" ? readNumber(section.estimated_tokens, 0) : undefined,
+    estimated_bytes: typeof section.estimated_bytes === "number" ? readNumber(section.estimated_bytes, 0) : undefined,
+    summary_preview: preview(readString(section.summary_preview, "")),
+    source_refs: readContextPacketSourceRefs(section.source_refs),
+    omitted_reason: typeof section.omitted_reason === "string" ? preview(readString(section.omitted_reason, "")) : undefined,
+    warnings: readStringList(section.warnings, 6).map(preview),
+  }))
+}
+
+function readContextPacketSourceRefs(value: unknown): ContextPacketPreviewSummary["included_source_refs"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((ref) => ({
+    source_kind: readString(ref.source_kind, "unknown"),
+    source_id: redactText(readString(ref.source_id, "")),
+    label: typeof ref.label === "string" ? preview(readString(ref.label, "")) : undefined,
+    summary_preview: typeof ref.summary_preview === "string" ? preview(readString(ref.summary_preview, "")) : undefined,
+    event_kind: typeof ref.event_kind === "string" ? readString(ref.event_kind, "") : undefined,
+    pointer_only: ref.pointer_only === true,
+  }))
+}
+
+function readContextPacketBudgetSummary(value: unknown): ContextPacketPreviewSummary["budget_summary"] {
+  const record = isRecord(value) ? value : {}
+  return {
+    max_context_tokens: typeof record.max_context_tokens === "number" ? readNumber(record.max_context_tokens, 0) : undefined,
+    max_context_bytes: typeof record.max_context_bytes === "number" ? readNumber(record.max_context_bytes, 0) : undefined,
+    max_output_tokens: typeof record.max_output_tokens === "number" ? readNumber(record.max_output_tokens, 0) : undefined,
+    safety_margin_tokens: typeof record.safety_margin_tokens === "number" ? readNumber(record.safety_margin_tokens, 0) : undefined,
+    safety_margin_bytes: typeof record.safety_margin_bytes === "number" ? readNumber(record.safety_margin_bytes, 0) : undefined,
+    estimated_input_tokens: typeof record.estimated_input_tokens === "number" ? readNumber(record.estimated_input_tokens, 0) : undefined,
+    estimated_input_bytes: typeof record.estimated_input_bytes === "number" ? readNumber(record.estimated_input_bytes, 0) : undefined,
+    over_budget: record.over_budget === true,
+  }
+}
+
+function readContextPacketCommands(value: unknown): ContextPacketPreviewSummary["recommended_commands"] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -11438,6 +11620,10 @@ function contextBudgetsState(state: UiState): ContextBudgetsState {
   return state.contextBudgets ?? { capabilities: [], selectedCapability: null, preview: null, summary: null }
 }
 
+function contextPacketsState(state: UiState): ContextPacketsState {
+  return state.contextPackets ?? { preview: null, summary: null }
+}
+
 function commanderExecutorReviewState(state: UiState): CommanderExecutorReviewState {
   return state.commanderExecutorReview ?? { preview: null, latestResult: null, records: [], selected: null }
 }
@@ -12299,6 +12485,29 @@ function contextBudgetPreviewEffect(args: string[]): Extract<RuntimeUiEffect, { 
     else throw new Error("context budget preview arg is unsupported")
   }
   if (!effect.purpose) throw new Error("context budget preview requires purpose=<purpose>")
+  return effect
+}
+
+function contextPacketPreviewEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-context-packet" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-context-packet" }> = { type: "preview-context-packet" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("context packet preview args must use purpose=<purpose>, provider=<kind>, model=<id>, session=<id>, mission=<id>, proposal=<id>, review=<id>, apply=<id>, max_context_bytes=<n>, or max_context_tokens=<n>")
+    if (key === "purpose") effect.purpose = value
+    else if (key === "role") effect.role = value
+    else if (key === "provider") effect.providerKind = value
+    else if (key === "model") effect.modelId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "mission") effect.missionId = value
+    else if (key === "proposal") effect.proposalId = value
+    else if (key === "review") effect.reviewRequestId = value
+    else if (key === "apply") effect.applyId = value
+    else if (key === "max_context_bytes") effect.maxContextBytes = readPositiveInteger(value, "max_context_bytes", 512_000)
+    else if (key === "max_context_tokens") effect.maxContextTokens = readPositiveInteger(value, "max_context_tokens", 128_000)
+    else throw new Error("context packet preview arg is unsupported")
+  }
+  if (!effect.purpose) throw new Error("context packet preview requires purpose=<purpose>")
   return effect
 }
 

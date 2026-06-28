@@ -167,6 +167,30 @@ class TestRuntimeClient implements RuntimeClient {
       generated_at: "2026-06-20T00:00:00.000Z",
       redacted_summary_preview: "budget preview",
     }
+    if (name === "runtime.preview_context_packet") return {
+      packet_id: "packet-preview-test",
+      role: payload?.purpose === "opencode_executor_session" ? "executor" : "commander",
+      purpose: payload?.purpose ?? "unknown",
+      budget_id: "budget-test",
+      provider_kind: "local",
+      model_id: "local-small",
+      packet_status: "partial",
+      can_compile_final_prompt: false,
+      sections: [
+        { section: "role_kernel", status: "included", priority: "required", inclusion_policy: "always", estimated_tokens: 10, estimated_bytes: 40, summary_preview: "role kernel", source_refs: [], warnings: [] },
+        { section: "raw_logs", status: "excluded", priority: "excluded", inclusion_policy: "excluded_by_default", estimated_tokens: 0, estimated_bytes: 0, summary_preview: "raw logs excluded", source_refs: [], warnings: [] },
+      ],
+      included_source_refs: [],
+      omitted_source_refs: [],
+      budget_summary: { max_context_tokens: 4096, max_context_bytes: payload?.maxContextBytes ?? 16384, max_output_tokens: 1024, safety_margin_tokens: 1024, safety_margin_bytes: 4096, estimated_input_tokens: 10, estimated_input_bytes: 40, over_budget: false },
+      blockers: [],
+      warnings: ["packet preview does not compile executable prompts, call providers, launch OpenCode, query research.db, call MCPs, or decide research direction"],
+      recommended_commands: [],
+      generated_at: "2026-06-20T00:00:00.000Z",
+      redacted_summary_preview: "packet preview",
+      packet_hash: "hash",
+    }
+    if (name === "runtime.context_packet_summary") return { supported_purposes: ["commander_research_decision", "opencode_executor_session"], supported_roles: ["commander", "executor"], generated_at: "2026-06-20T00:00:00.000Z" }
     if (name === "runtime.command_authority_get") {
       return {
         authority_id: "authority_opencode_smoke",
@@ -955,6 +979,34 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.list_model_capabilities")
     expect(runtime.commandNames).toContain("runtime.context_budget_summary")
     expect(runtime.commandNames).toContain("runtime.preview_context_budget")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless context packet inspection scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/context-packet-preview purpose=commander_research_decision" },
+      { type: "submit" },
+      { type: "insert", text: "/packet-preview purpose=opencode_executor_session max_context_bytes=4096" },
+      { type: "submit" },
+      { type: "insert", text: "/context-packet-summary" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-context-packet-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Context packet compiler")
+    expect(runtime.commandNames).toContain("runtime.preview_context_packet")
+    expect(runtime.commandNames).toContain("runtime.context_packet_summary")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })

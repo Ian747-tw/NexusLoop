@@ -4989,4 +4989,60 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toEqual([])
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
+
+  test("context packet compiler slash commands render bounded packet previews", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: ["purpose=commander_research_decision", "provider=vendor-secret=abc123", "model=model-secret=abc123"] })
+    expect(state.contextPackets?.preview).toMatchObject({ purpose: "commander_research_decision", role: "commander", can_compile_final_prompt: false })
+    expect(state.contextPackets?.preview?.sections).toContainEqual(expect.objectContaining({ section: "raw_logs", status: "excluded" }))
+    expect(state.contextPackets?.preview?.sections).toContainEqual(expect.objectContaining({ section: "research_memory", status: "pointer_only" }))
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Context packet compiler")
+    expect(snapshot).toContain("purpose=commander_research_decision")
+    expect(snapshot).toContain("raw_logs status=excluded")
+    expect(snapshot).toContain("research_memory status=pointer_only")
+    expect(snapshot).toContain("tool_or_mcp_schema status=excluded")
+    expect(snapshot).toContain("can_compile_final_prompt=false")
+    expect(snapshot).toContain("does not compile executable prompts")
+    expect(snapshot).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: ["purpose=wake_supervisor"] })
+    expect(state.contextPackets?.preview?.sections).toContainEqual(expect.objectContaining({ section: "active_sessions" }))
+    expect(state.contextPackets?.preview?.sections).toContainEqual(expect.objectContaining({ section: "executor_progress", status: "missing" }))
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: ["purpose=research_retrieval"] })
+    expect(state.contextPackets?.preview?.sections).toContainEqual(expect.objectContaining({ section: "external_research", status: "omitted" }))
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=context", "packet", "session", "max_context_bytes=4096"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "packet-preview", args: ["purpose=opencode_executor_session", `session=${sessionId}`] })
+    expect(state.contextPackets?.preview).toMatchObject({ purpose: "opencode_executor_session", session_id: sessionId })
+    expect(state.contextPackets?.preview?.budget_summary.max_context_bytes).toBe(4096)
+    expect(state.contextPackets?.preview?.omitted_source_refs).toContainEqual(expect.objectContaining({ label: "timeout/report policy pointer" }))
+    expect(state.contextPackets?.preview?.omitted_source_refs).toContainEqual(expect.objectContaining({ label: "question policy pointer" }))
+    expect(state.contextPackets?.preview?.omitted_source_refs).toContainEqual(expect.objectContaining({ label: "human control policy pointer" }))
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-summary", args: [] })
+    expect(state.contextPackets?.summary?.supported_purposes).toContain("opencode_executor_session")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: [] })
+    expect(state.contextPackets?.commandError).toContain("requires purpose")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/context-packet-preview"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/context-packet-preview",
+      risk: "safe_read",
+      creates_external_process: false,
+      calls_provider: false,
+      mutates_events: false,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("does not compile executable prompts")
+
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("selected=/context-packet-preview risk=safe_read")
+    expect(runtime.sentCommands).toEqual([])
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
 })

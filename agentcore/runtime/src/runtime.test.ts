@@ -16860,6 +16860,134 @@ describe("Context budget registry", () => {
     expect(previewRecord?.notes.join(" ")).toContain("does not compile context packets")
     expect(previewRecord?.out_of_scope).toEqual(expect.arrayContaining(["provider calls", "OpenCode launch", "research.db retrieval"]))
   })
+
+  test("context packet previews build bounded skeletons from budget policies without events", async () => {
+    const dir = await tempProject()
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const beforeEvents = await server.eventStore.readAll()
+
+    const commander = await server.command("runtime.preview_context_packet", {
+      purpose: "commander_research_decision",
+      providerKind: "unknown",
+      modelId: "unknown-model",
+    }) as {
+      purpose: string
+      role: string
+      budget_id: string
+      can_compile_final_prompt: boolean
+      sections: Array<{ section: string; status: string; inclusion_policy: string }>
+      budget_summary: { estimated_input_bytes?: number; estimated_input_tokens?: number }
+      warnings: string[]
+    }
+    expect(commander).toMatchObject({
+      purpose: "commander_research_decision",
+      role: "commander",
+      can_compile_final_prompt: false,
+    })
+    expect(commander.budget_id).toMatch(/^context_budget_/)
+    expect(commander.sections).toContainEqual(expect.objectContaining({ section: "role_kernel", status: "included" }))
+    expect(commander.sections).toContainEqual(expect.objectContaining({ section: "approved_spec", status: "pointer_only" }))
+    expect(commander.sections).toContainEqual(expect.objectContaining({ section: "research_memory", status: "pointer_only" }))
+    expect(commander.sections).toContainEqual(expect.objectContaining({ section: "raw_logs", status: "excluded", inclusion_policy: "excluded_by_default" }))
+    expect(commander.sections).toContainEqual(expect.objectContaining({ section: "tool_or_mcp_schema", status: "excluded" }))
+    expect(JSON.stringify(commander)).not.toContain("next experiment")
+    expect(commander.warnings.join(" ")).toContain("does not compile executable prompts")
+    expect(commander.budget_summary.estimated_input_bytes).toBeGreaterThan(0)
+    expect(commander.budget_summary.estimated_input_tokens).toBeGreaterThan(0)
+    expect(await server.eventStore.readAll()).toEqual(beforeEvents)
+    expect(adapter.startCalls).toBe(0)
+
+    const research = await server.command("runtime.preview_context_packet", { purpose: "research_retrieval" }) as { sections: Array<{ section: string; status: string }> }
+    expect(research.sections).toContainEqual(expect.objectContaining({ section: "research_memory", status: "pointer_only" }))
+    expect(research.sections).toContainEqual(expect.objectContaining({ section: "external_research", status: "omitted" }))
+
+    const question = await server.command("runtime.preview_context_packet", { purpose: "open_question_answer" }) as { sections: Array<{ section: string; status: string }> }
+    expect(question.sections).toContainEqual(expect.objectContaining({ section: "commander_guidance", status: "missing" }))
+
+    const blocked = await server.command("runtime.preview_context_packet", {}) as { packet_status: string; blockers: string[] }
+    expect(blocked.packet_status).toBe("blocked")
+    expect(blocked.blockers).toContain("context packet preview requires a supported purpose")
+  })
+
+  test("opencode executor context packet uses planned session metadata and session max_context_bytes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", {
+      objective: "context packet executor session cap",
+      maxContextBytes: 4096,
+    }) as { session_id: string }
+    const beforeEvents = await server.eventStore.readAll()
+
+    const packet = await server.command("runtime.preview_context_packet", {
+      purpose: "opencode_executor_session",
+      sessionId: session.session_id,
+      providerKind: "unknown",
+      modelId: "cloud-long-context",
+    }) as {
+      session_id: string
+      budget_summary: { max_context_bytes?: number; max_context_tokens?: number }
+      sections: Array<{ section: string; status: string }>
+      included_source_refs: Array<{ source_kind: string; source_id: string }>
+      omitted_source_refs: Array<{ label?: string; source_id: string }>
+      warnings: string[]
+    }
+    expect(packet.session_id).toBe(session.session_id)
+    expect(packet.budget_summary.max_context_bytes).toBe(4096)
+    expect(packet.budget_summary.max_context_tokens).toBe(1024)
+    expect(packet.sections).toContainEqual(expect.objectContaining({ section: "mission_state", status: "included" }))
+    expect(packet.sections).toContainEqual(expect.objectContaining({ section: "commander_guidance", status: "pointer_only" }))
+    expect(packet.sections).toContainEqual(expect.objectContaining({ section: "research_memory", status: "pointer_only" }))
+    expect(packet.sections).toContainEqual(expect.objectContaining({ section: "raw_logs", status: "excluded" }))
+    expect(packet.included_source_refs).toContainEqual(expect.objectContaining({ source_kind: "opencode_session", source_id: session.session_id }))
+    expect(packet.omitted_source_refs).toContainEqual(expect.objectContaining({ label: "timeout/report policy pointer" }))
+    expect(packet.omitted_source_refs).toContainEqual(expect.objectContaining({ label: "question policy pointer" }))
+    expect(packet.omitted_source_refs).toContainEqual(expect.objectContaining({ label: "human control policy pointer" }))
+    expect(packet.warnings).toContain("planned session max_context_bytes constrains executor budget")
+
+    const missing = await server.command("runtime.preview_context_packet", { purpose: "opencode_executor_session", sessionId: "missing-session" }) as { packet_status: string; blockers: string[] }
+    expect(missing.packet_status).toBe("blocked")
+    expect(missing.blockers).toContain("session_id was not found")
+    expect(await server.eventStore.readAll()).toEqual(beforeEvents)
+    expect(adapter.startCalls).toBe(1)
+    await server.shutdown()
+  })
+
+  test("RuntimeServerClient no-start commands inspect context packets without starting runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.context_packet_summary")).resolves.toMatchObject({ supported_purposes: expect.arrayContaining(["opencode_executor_session"]) })
+    await expect(client.command("runtime.preview_context_packet", { purpose: "wake_supervisor" })).resolves.toMatchObject({ purpose: "wake_supervisor" })
+
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
+  test("authority registry includes context packet read-only commands", () => {
+    const previewRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/context-packet-preview")
+    const summaryRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/context-packet-summary")
+    expect(previewRecord).toMatchObject({
+      risk: "safe_read",
+      mutates_events: false,
+      creates_external_process: false,
+      calls_provider: false,
+      requires_active_runtime: false,
+    })
+    expect(previewRecord?.aliases).toEqual(expect.arrayContaining(["/packet-preview", "/compile-context-preview", "/context-compile-preview"]))
+    expect(previewRecord?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_context_packet_compiler_tui.py")
+    expect(previewRecord?.notes.join(" ")).toContain("does not compile executable prompts")
+    expect(previewRecord?.out_of_scope).toEqual(expect.arrayContaining(["provider calls", "OpenCode launch", "research.db retrieval", "MCP calls"]))
+    expect(summaryRecord).toMatchObject({ risk: "safe_read", mutates_events: false, calls_provider: false })
+    expect(summaryRecord?.aliases).toContain("/context-packets")
+  })
 })
 
 describe("OpenCode session contract", () => {
