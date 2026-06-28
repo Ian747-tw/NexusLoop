@@ -29,6 +29,8 @@ import type { OpenCodeProcessSmokePreview, OpenCodeProcessSmokeRecord, OpenCodeP
 import type { OpenCodeHandoffReadinessInput, OpenCodeHandoffReadinessPreview, OpenCodeHandoffReadinessSummary } from "../opencode/opencode-handoff-readiness-types"
 import type { OpenCodeResultReviewPacket, OpenCodeResultReviewPacketInput, OpenCodeResultReviewSummary } from "../opencode/opencode-result-review-packet-types"
 import type { OpenCodeSessionCreateInput, OpenCodeSessionPlan, OpenCodeSessionPreview, OpenCodeSessionPreviewInput, OpenCodeSessionRecord, OpenCodeSessionSourceKind, OpenCodeSessionStatus, OpenCodeSessionSummary } from "../opencode-session/opencode-session-types"
+import type { ContextBudgetPreview, ContextBudgetPreviewInput, ContextBudgetSummary } from "../context/context-budget-types"
+import type { ModelCapability } from "../context/model-capability-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAssessmentRecord } from "../wake/wake-hook-types"
@@ -292,6 +294,19 @@ export interface RuntimeClient {
   command(name: "runtime.list_opencode_sessions", payload?: { limit?: number; status?: OpenCodeSessionStatus; mission_id?: string; missionId?: string; proposal_id?: string; proposalId?: string; source_kind?: OpenCodeSessionSourceKind; sourceKind?: OpenCodeSessionSourceKind }): Promise<OpenCodeSessionRecord[]>
   command(name: "runtime.get_opencode_session", payload: { session_id: string } | { sessionId: string }): Promise<OpenCodeSessionPlan | null>
   command(name: "runtime.opencode_session_summary", payload?: Record<string, never>): Promise<OpenCodeSessionSummary>
+  command(name: "runtime.list_model_capabilities", payload?: { provider_kind?: string; providerKind?: string; provider?: string; role?: string; limit?: number }): Promise<ModelCapability[]>
+  command(name: "runtime.get_model_capability", payload?: { capability_id?: string; capabilityId?: string; provider_kind?: string; providerKind?: string; provider?: string; model_id?: string; modelId?: string; model?: string }): Promise<ModelCapability>
+  command(name: "runtime.context_budget_summary", payload?: Record<string, never>): Promise<ContextBudgetSummary>
+  command(name: "runtime.preview_context_budget", payload?: ContextBudgetPreviewInput | {
+    purpose?: string
+    role?: string
+    providerKind?: string
+    providerId?: string
+    modelId?: string
+    sessionId?: string
+    maxContextTokens?: number
+    maxContextBytes?: number
+  }): Promise<ContextBudgetPreview>
   command(name: "runtime.preview_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewPreview>
   command(name: "runtime.execute_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewResult>
   command(name: "runtime.list_commander_executor_reviews", payload?: { limit?: number; packet_id?: string; packetId?: string; mission_id?: string; missionId?: string; handoff_id?: string; handoffId?: string }): Promise<CommanderExecutorReviewRecord[]>
@@ -530,6 +545,10 @@ export interface RuntimeCommandEnvelope {
     | "runtime.list_opencode_sessions"
     | "runtime.get_opencode_session"
     | "runtime.opencode_session_summary"
+    | "runtime.list_model_capabilities"
+    | "runtime.get_model_capability"
+    | "runtime.context_budget_summary"
+    | "runtime.preview_context_budget"
     | "runtime.preview_commander_executor_review"
     | "runtime.execute_commander_executor_review"
     | "runtime.list_commander_executor_reviews"

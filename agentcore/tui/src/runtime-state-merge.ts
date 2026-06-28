@@ -30,6 +30,8 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     baseline === undefined || stableEqual(current.opencodeResultReview, baseline.opencodeResultReview)
   const canUpdateOpenCodeSessions =
     baseline === undefined || stableEqual(current.opencodeSessions, baseline.opencodeSessions)
+  const canUpdateContextBudgets =
+    baseline === undefined || stableEqual(current.contextBudgets, baseline.contextBudgets)
   const canUpdateCommanderExecutorReview =
     baseline === undefined || stableEqual(current.commanderExecutorReview, baseline.commanderExecutorReview)
   const canUpdateExecutorReviewProposalDrafts =
@@ -85,6 +87,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     opencodeHandoffReadiness: canUpdateOpenCodeHandoffReadiness ? next.opencodeHandoffReadiness : current.opencodeHandoffReadiness,
     opencodeResultReview: canUpdateOpenCodeResultReview ? next.opencodeResultReview : current.opencodeResultReview,
     opencodeSessions: canUpdateOpenCodeSessions ? next.opencodeSessions : current.opencodeSessions,
+    contextBudgets: canUpdateContextBudgets ? next.contextBudgets : current.contextBudgets,
     commanderExecutorReview: canUpdateCommanderExecutorReview ? next.commanderExecutorReview : current.commanderExecutorReview,
     executorReviewProposalDrafts: canUpdateExecutorReviewProposalDrafts ? next.executorReviewProposalDrafts : current.executorReviewProposalDrafts,
     executorReviewProposalCreate: canUpdateExecutorReviewProposalCreate ? next.executorReviewProposalCreate : current.executorReviewProposalCreate,

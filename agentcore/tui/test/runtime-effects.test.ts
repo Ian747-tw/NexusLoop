@@ -2785,6 +2785,14 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.staged?.command).toBe("/executor-review-proposal-create-preview review=missing-review [REDACTED]")
     expect(JSON.stringify(state)).not.toContain("raw-secret")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/context-budget-preview"] })
+    expect(state.operatorActions?.staged?.command).toBe("/context-budget-preview")
+    expect(state.operatorActions?.staged?.command_type).toBe("read")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/context-budget-preview", ok: false })
+    expect(state.operatorActions?.commandError).toContain("context budget preview requires purpose")
+    expect(state.operatorActions?.staged?.command).toBe("/context-budget-preview")
+
     for (const createCommand of ["/executor-review-proposal-create", "/executor-draft-create", "/commander-executor-proposal-create"]) {
       state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: [createCommand, "review=missing-review", "draft=missing-draft"] })
       expect(state.operatorActions?.staged).toMatchObject({
@@ -4920,5 +4928,65 @@ describe("runtime UI effects", () => {
     expect(state.opencodeSessions?.latestPlan?.session_id).not.toBe(firstSessionId)
     expect(state.opencodeSessions?.records).toHaveLength(2)
     expect(new Set(state.opencodeSessions?.records.map((record) => record.session_id)).size).toBe(2)
+  })
+
+  test("context budget registry slash commands render read-only budget metadata", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "model-capabilities", args: [] })
+    expect(state.contextBudgets?.capabilities.map((item) => item.capability_id)).toContain("fake-minimax-validation")
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Context budget registry")
+    expect(snapshot).toContain("fake-minimax-validation minimax/minimax-validation-default")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "model-capability", args: ["fake-local-small"] })
+    expect(state.contextBudgets?.selectedCapability).toMatchObject({ capability_id: "fake-local-small", provider_kind: "local" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-budget-summary", args: [] })
+    expect(state.contextBudgets?.summary).toMatchObject({ total_capabilities: 4, local_model_count: 1 })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-budget-preview", args: ["purpose=commander_research_decision", "provider=vendor-secret=abc123", "model=model-secret=abc123"] })
+    expect(state.contextBudgets?.preview).toMatchObject({ purpose: "commander_research_decision", role: "commander" })
+    expect(state.contextBudgets?.preview?.budget.allocations).toContainEqual(expect.objectContaining({ section: "raw_logs", inclusion_policy: "excluded_by_default", priority: "excluded" }))
+    expect(state.contextBudgets?.preview?.budget.allocations).toContainEqual(expect.objectContaining({ section: "research_memory" }))
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("preview=fake-context-budget-preview")
+    expect(snapshot).toContain("raw_logs priority=excluded policy=excluded_by_default")
+    expect(snapshot).toContain("safety_margin_tokens=")
+    expect(snapshot).toContain("note=budget preview does not compile context, call providers, launch OpenCode, query research.db, or mutate missions")
+    expect(snapshot).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-budget-preview", args: ["purpose=opencode_executor_session"] })
+    expect(state.contextBudgets?.preview?.budget.allocations).toContainEqual(expect.objectContaining({ section: "commander_guidance", priority: "high" }))
+    expect(state.contextBudgets?.preview?.budget.allocations).toContainEqual(expect.objectContaining({ section: "executor_progress", priority: "high" }))
+    expect(state.contextBudgets?.preview?.budget.allocations).toContainEqual(expect.objectContaining({ section: "research_memory", inclusion_policy: "pointer_only" }))
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=budget", "session", "cap", "max_context_bytes=4096"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-budget-preview", args: ["purpose=opencode_executor_session", `session=${sessionId}`] })
+    expect(state.contextBudgets?.preview).toMatchObject({
+      session_id: sessionId,
+      session_max_context_bytes: 4096,
+    })
+    expect(state.contextBudgets?.preview?.budget.max_context_bytes).toBe(4096)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-budget-preview", args: ["purpose=opencode_executor_session", "max_context_bytes=4096"] })
+    expect(state.contextBudgets?.preview?.budget.max_context_bytes).toBe(4096)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-budget-preview", args: [] })
+    expect(state.contextBudgets?.commandError).toContain("requires purpose")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/context-budget-preview"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/context-budget-preview",
+      risk: "safe_read",
+      creates_external_process: false,
+      calls_provider: false,
+      mutates_events: false,
+    })
+
+    expect(runtime.sentCommands).toEqual([])
+    expect(JSON.stringify(state)).not.toContain("abc123")
   })
 })

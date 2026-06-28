@@ -222,4 +222,4 @@ Branch 9A does not:
 - create checkpoints
 - submit results
 
-Branch 9B0 should build on this contract with an OpenCode native context compatibility audit. Later 9B branches should add the context compiler, model capability registry, context budgets, research retrieval, and explicit Commander/OpenCode/wake packet construction.
+Branch 9B0 builds on this contract with an OpenCode native context compatibility audit. Branch 9B1 adds the read-only model capability and context budget registry used to answer what a model/context can afford. Later 9B branches should add the context compiler, research retrieval, and explicit Commander/OpenCode/wake packet construction.

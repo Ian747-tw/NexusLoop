@@ -3,7 +3,7 @@ import { createHash } from "crypto"
 import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
-import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
+import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary } from "./state"
 
 export interface SubmitUserMessageResult {
@@ -426,6 +426,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.getOpenCodeSession(String(payload.sessionId ?? payload.session_id ?? ""))
       case "runtime.opencode_session_summary":
         return this.openCodeSessionSummary()
+      case "runtime.list_model_capabilities":
+        return this.listModelCapabilities(payload)
+      case "runtime.get_model_capability":
+        return this.getModelCapability(payload)
+      case "runtime.context_budget_summary":
+        return this.contextBudgetSummary()
+      case "runtime.preview_context_budget":
+        return this.previewContextBudget(payload)
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(payload)
       case "runtime.execute_commander_executor_review":
@@ -1795,6 +1803,214 @@ export class FakeRuntimeClient implements RuntimeClient {
       cancelled_count: this.opencodeSessions.filter((item) => item.status === "cancelled").length,
       generated_at: new Date(0).toISOString(),
     }
+  }
+
+  private modelCapabilities(): ModelCapabilitySummary[] {
+    return [
+      {
+        capability_id: "fake-minimax-validation",
+        provider_kind: "minimax",
+        provider_id: "minimax",
+        model_id: "minimax-validation-default",
+        display_name: "MiniMax validation placeholder",
+        role_support: ["commander", "research"],
+        max_context_bytes: 32768,
+        max_output_tokens: 4096,
+        supports_tools: "unknown",
+        supports_json_schema: "unknown",
+        supports_mcp: false,
+        supports_long_context: "unknown",
+        supports_streaming: "unknown",
+        supports_local_execution: false,
+        safety_margin_ratio: 0.18,
+        source: "default_registry",
+        warnings: ["MiniMax is validation metadata only"],
+        created_at: new Date(0).toISOString(),
+      },
+      {
+        capability_id: "fake-opencode-executor-unknown",
+        provider_kind: "opencode",
+        provider_id: "opencode",
+        model_id: "opencode-default",
+        display_name: "OpenCode executor default model",
+        role_support: ["executor"],
+        supports_tools: true,
+        supports_json_schema: "unknown",
+        supports_mcp: "unknown",
+        supports_long_context: "unknown",
+        supports_streaming: true,
+        supports_local_execution: "unknown",
+        safety_margin_ratio: 0.2,
+        source: "default_registry",
+        warnings: ["unknown context window; using conservative budget"],
+        created_at: new Date(0).toISOString(),
+      },
+      {
+        capability_id: "fake-local-small",
+        provider_kind: "local",
+        model_id: "local-small",
+        display_name: "Generic local small model",
+        role_support: ["commander", "executor", "research"],
+        max_context_tokens: 4096,
+        max_output_tokens: 1024,
+        max_context_bytes: 16384,
+        supports_tools: "unknown",
+        supports_json_schema: "unknown",
+        supports_mcp: false,
+        supports_long_context: false,
+        supports_streaming: "unknown",
+        supports_local_execution: true,
+        safety_margin_ratio: 0.25,
+        source: "default_registry",
+        warnings: ["generic local profile"],
+        created_at: new Date(0).toISOString(),
+      },
+      {
+        capability_id: "fake-cloud-long-context",
+        provider_kind: "unknown",
+        model_id: "cloud-long-context",
+        display_name: "Generic long-context cloud model",
+        role_support: ["commander", "executor", "research", "wake_supervisor"],
+        max_context_tokens: 128000,
+        max_output_tokens: 8192,
+        max_context_bytes: 512000,
+        supports_tools: "unknown",
+        supports_json_schema: "unknown",
+        supports_mcp: "unknown",
+        supports_long_context: true,
+        supports_streaming: "unknown",
+        supports_local_execution: false,
+        safety_margin_ratio: 0.15,
+        source: "default_registry",
+        warnings: ["generic cloud profile; verify provider before launch"],
+        created_at: new Date(0).toISOString(),
+      },
+    ]
+  }
+
+  private listModelCapabilities(payload: Record<string, unknown>): ModelCapabilitySummary[] {
+    const provider = optionalString(payload.providerKind ?? payload.provider_kind ?? payload.provider)
+    const role = optionalString(payload.role)
+    return this.modelCapabilities()
+      .filter((item) => !provider || item.provider_kind === provider)
+      .filter((item) => !role || item.role_support.includes(role))
+      .slice(0, readLimit(payload.limit, 20))
+  }
+
+  private getModelCapability(payload: Record<string, unknown>): ModelCapabilitySummary {
+    const id = optionalString(payload.capabilityId ?? payload.capability_id)
+    const provider = optionalString(payload.providerKind ?? payload.provider_kind ?? payload.provider)
+    const model = optionalString(payload.modelId ?? payload.model_id ?? payload.model)
+    const found = this.modelCapabilities().find((item) => id ? item.capability_id === id : item.provider_kind === provider && item.model_id === model)
+    if (found) return found
+    const modelId = preview(redactText(model ?? id ?? "unknown"))
+    return {
+      capability_id: `fake-fallback-${createHash("sha256").update(`${provider ?? "unknown"}:${modelId}`).digest("hex").slice(0, 12)}`,
+      provider_kind: provider ?? "unknown",
+      model_id: modelId,
+      display_name: `Unknown model ${modelId}`,
+      role_support: ["unknown"],
+      supports_tools: "unknown",
+      supports_json_schema: "unknown",
+      supports_mcp: "unknown",
+      supports_long_context: "unknown",
+      supports_streaming: "unknown",
+      supports_local_execution: provider === "local" || provider === "ollama" || provider === "lmstudio" ? true : "unknown",
+      safety_margin_ratio: 0.25,
+      source: "unknown",
+      warnings: ["unknown context window; using conservative budget"],
+      created_at: new Date(0).toISOString(),
+    }
+  }
+
+  private contextBudgetSummary(): ContextBudgetSummaryState {
+    const capabilities = this.modelCapabilities()
+    const localKinds = new Set(["local", "ollama", "lmstudio"])
+    return {
+      total_capabilities: capabilities.length,
+      known_context_count: capabilities.filter((item) => item.max_context_tokens || item.max_context_bytes).length,
+      unknown_context_count: capabilities.filter((item) => !item.max_context_tokens && !item.max_context_bytes).length,
+      local_model_count: capabilities.filter((item) => localKinds.has(item.provider_kind)).length,
+      cloud_model_count: capabilities.filter((item) => !localKinds.has(item.provider_kind)).length,
+      long_context_count: capabilities.filter((item) => item.supports_long_context === true).length,
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private previewContextBudget(payload: Record<string, unknown>): ContextBudgetPreviewSummary {
+    const purpose = optionalString(payload.purpose) ?? "unknown"
+    const provider = optionalString(payload.providerKind ?? payload.provider_kind ?? payload.provider) ?? (purpose === "opencode_executor_session" ? "opencode" : "unknown")
+    const model = optionalString(payload.modelId ?? payload.model_id ?? payload.model) ?? (provider === "opencode" ? "opencode-default" : "unknown")
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const session = sessionId ? this.opencodeSessions.find((item) => item.session_id === sessionId) : undefined
+    const capability = this.getModelCapability({ providerKind: provider, modelId: model })
+    const requestedBytes = readNumber(payload.maxContextBytes ?? payload.max_context_bytes, capability.max_context_bytes ?? 12000)
+    const capabilityBytes = capability.max_context_bytes ?? 12000
+    const sessionBytes = session?.max_context_bytes
+    const maxBytes = Math.max(1000, Math.min(requestedBytes, capabilityBytes, sessionBytes ?? 512000, 512000))
+    const warnings = [
+      ...capability.warnings,
+      ...(sessionBytes && sessionBytes <= maxBytes ? ["planned session max_context_bytes constrains executor budget"] : []),
+      "budget preview does not compile context, call providers, launch OpenCode, query research.db, or mutate runtime state",
+    ].map(redactText)
+    const maxTokens = capability.max_context_tokens ?? Math.max(1000, Math.floor(maxBytes / 4))
+    const outputTokens = capability.max_output_tokens ?? Math.max(512, Math.floor(maxTokens * 0.12))
+    const safetyBytes = Math.max(1024, Math.floor(maxBytes * capability.safety_margin_ratio))
+    const safetyTokens = Math.max(256, Math.floor(maxTokens * capability.safety_margin_ratio))
+    const allocations = this.contextBudgetAllocations(purpose, maxTokens, maxBytes, outputTokens, safetyTokens, safetyBytes)
+    const budget: ContextBudgetProfileSummary = {
+      budget_id: `fake-context-budget-${createHash("sha256").update(`${purpose}:${provider}:${model}:${sessionId ?? ""}:${maxBytes}`).digest("hex").slice(0, 12)}`,
+      purpose,
+      provider_kind: capability.provider_kind,
+      model_id: capability.model_id,
+      session_id: sessionId,
+      max_context_tokens: maxTokens,
+      max_context_bytes: maxBytes,
+      max_output_tokens: outputTokens,
+      safety_margin_tokens: safetyTokens,
+      safety_margin_bytes: safetyBytes,
+      allocations,
+      warnings,
+      generated_at: new Date(0).toISOString(),
+    }
+    const blockers = purpose === "unknown" ? ["context budget preview requires purpose=<purpose>"] : sessionId && !session ? ["session_id was not found"] : []
+    return {
+      preview_id: `fake-context-budget-preview-${budget.budget_id.slice(-12)}`,
+      purpose,
+      role: purpose === "opencode_executor_session" ? "executor" : purpose === "wake_supervisor" ? "wake_supervisor" : purpose === "research_retrieval" ? "research" : "commander",
+      capability,
+      session_id: sessionId,
+      session_max_context_bytes: sessionBytes,
+      budget,
+      blockers: blockers.map(redactText),
+      warnings,
+      recommended_commands: [
+        { label: "List model capabilities", command: "/model-capabilities", command_type: "read" },
+        { label: "Context budget summary", command: "/context-budget-summary", command_type: "read" },
+        { label: "Show authority", command: "/authority-show /context-budget-preview", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `${purpose} budget preview for ${provider}/${model}`,
+    }
+  }
+
+  private contextBudgetAllocations(purpose: string, maxTokens: number, maxBytes: number, outputTokens: number, safetyTokens: number, safetyBytes: number): ContextBudgetAllocationSummary[] {
+    const sections = purpose === "opencode_executor_session"
+      ? ["role_kernel", "approved_spec", "mission_state", "commander_guidance", "executor_progress", "artifact_summaries", "research_memory", "raw_logs", "reserved_output", "safety_margin"]
+      : purpose === "wake_supervisor"
+        ? ["role_kernel", "active_sessions", "executor_progress", "human_interventions", "recent_deltas", "research_memory", "raw_logs", "reserved_output", "safety_margin"]
+        : ["role_kernel", "approved_spec", "mission_state", "research_memory", "external_research", "active_sessions", "recent_deltas", "tool_or_mcp_schema", "raw_logs", "reserved_output", "safety_margin"]
+    const weighted = sections.filter((section) => !["raw_logs", "reserved_output", "safety_margin", "tool_or_mcp_schema"].includes(section))
+    const availableTokens = Math.max(0, maxTokens - outputTokens - safetyTokens)
+    const availableBytes = Math.max(0, maxBytes - safetyBytes)
+    return sections.map((section) => ({
+      section,
+      max_tokens: weighted.includes(section) ? Math.max(64, Math.floor(availableTokens / weighted.length)) : undefined,
+      max_bytes: weighted.includes(section) ? Math.max(256, Math.floor(availableBytes / weighted.length)) : undefined,
+      priority: section === "raw_logs" ? "excluded" : ["role_kernel", "reserved_output", "safety_margin"].includes(section) ? "required" : ["mission_state", "research_memory", "active_sessions", "executor_progress", "commander_guidance"].includes(section) ? "high" : "medium",
+      inclusion_policy: section === "raw_logs" || section === "tool_or_mcp_schema" ? "excluded_by_default" : section === "research_memory" && purpose === "opencode_executor_session" ? "pointer_only" : ["role_kernel", "reserved_output", "safety_margin"].includes(section) ? "always" : "if_relevant",
+      notes: section === "raw_logs" ? "raw logs are excluded by default" : section === "research_memory" ? "no full research.db dump" : undefined,
+    }))
   }
 
   private previewCommanderExecutorReview(payload: Record<string, unknown>): CommanderExecutorReviewPreviewSummary {
@@ -7268,6 +7484,33 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
     fakeCommandAuthorityRecord("/opencode-session-summary", "runtime.opencode_session_summary", "safe_read", "none", "opencode_handoff", {
       reads: ["/opencode-sessions"],
       targeted: ["tests/e2e_user/scenarios/test_opencode_session_model_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/model-capabilities", "runtime.list_model_capabilities", "safe_read", "none", "runtime_status", {
+      reads: ["/context-budget-summary", "/context-budget-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_context_budget_registry_tui.py"],
+      aliases: ["/models"],
+      notes: ["Read-only model capability registry inspection; does not call providers or launch OpenCode."],
+      out: ["provider calls", "OpenCode launch", "research.db retrieval", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/model-capability", "runtime.get_model_capability", "safe_read", "none", "runtime_status", {
+      reads: ["/model-capabilities"],
+      targeted: ["tests/e2e_user/scenarios/test_context_budget_registry_tui.py"],
+      notes: ["Read-only model capability inspection; does not call providers."],
+      out: ["provider calls", "OpenCode launch", "research.db retrieval", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/context-budget-summary", "runtime.context_budget_summary", "safe_read", "none", "runtime_status", {
+      reads: ["/model-capabilities", "/context-budget-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_context_budget_registry_tui.py"],
+      aliases: ["/model-budget", "/context-budget"],
+      notes: ["Read-only context budget summary; does not compile context packets."],
+      out: ["context packet compilation", "provider calls", "OpenCode launch", "research.db retrieval", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/context-budget-preview", "runtime.preview_context_budget", "safe_read", "none", "runtime_status", {
+      reads: ["/model-capabilities", "/context-budget-summary"],
+      targeted: ["tests/e2e_user/scenarios/test_context_budget_registry_tui.py"],
+      aliases: ["/budget-preview"],
+      notes: ["Previews bounded context budget metadata only; does not compile context packets, call providers, launch OpenCode, query research.db, or mutate missions."],
+      out: ["context packet compilation", "provider calls", "OpenCode launch", "research.db retrieval", "mission mutation"],
     }),
     fakeCommandAuthorityRecord("/executor-review-preview", "runtime.preview_commander_executor_review", "safe_read", "reasoning_provider_runtime", "commander_cycle", {
       reads: ["/result-review-packet", "/authority-show /executor-review"],

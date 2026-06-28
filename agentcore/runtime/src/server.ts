@@ -73,6 +73,10 @@ import { OpenCodeResultReviewPacketService, readOpenCodeResultReviewPacketInput 
 import type { OpenCodeResultReviewPacket, OpenCodeResultReviewSummary } from "./opencode/opencode-result-review-packet-types"
 import { OpenCodeSessionService, readOpenCodeSessionCreateInput, readOpenCodeSessionPreviewInput } from "./opencode-session/opencode-session-service"
 import type { OpenCodeSessionPlan, OpenCodeSessionPreview, OpenCodeSessionRecord, OpenCodeSessionSourceKind, OpenCodeSessionStatus, OpenCodeSessionSummary } from "./opencode-session/opencode-session-types"
+import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
+import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
+import { ModelCapabilityRegistry } from "./context/model-capability-registry"
+import type { ModelCapability } from "./context/model-capability-types"
 import type { OpenCodeSpawn } from "./opencode/process-adapter"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
@@ -238,6 +242,7 @@ export class RuntimeServer {
   private readonly externalApiNow?: () => Date
   private readonly externalApiRequestId?: () => string
   private readonly reasoningProviderConfig: ReasoningProviderConfig
+  private readonly modelCapabilityRegistry: ModelCapabilityRegistry
   private readonly researchSynthesisProvider: ResearchSynthesisProvider
   private readonly researchSynthesisNow?: () => Date
   private readonly researchSynthesisId?: () => string
@@ -281,6 +286,7 @@ export class RuntimeServer {
   private opencodeHandoffReadinessServiceInstance: OpenCodeHandoffReadinessService | null = null
   private opencodeResultReviewPacketServiceInstance: OpenCodeResultReviewPacketService | null = null
   private opencodeSessionServiceInstance: OpenCodeSessionService | null = null
+  private contextBudgetServiceInstance: ContextBudgetService | null = null
   private commanderExecutorReviewServiceInstance: CommanderExecutorReviewService | null = null
   private executorReviewProposalDraftServiceInstance: ExecutorReviewProposalDraftService | null = null
   private executorReviewProposalCreateServiceInstance: ExecutorReviewProposalCreateService | null = null
@@ -342,6 +348,7 @@ export class RuntimeServer {
     this.externalApiNow = options.externalApiNow
     this.externalApiRequestId = options.externalApiRequestId
     this.reasoningProviderConfig = validateReasoningProviderConfig(options.reasoningProviderConfig ?? defaultReasoningProviderConfig())
+    this.modelCapabilityRegistry = new ModelCapabilityRegistry({ reasoningProviderConfig: this.reasoningProviderConfig })
     const minimaxProvider = this.reasoningProviderConfig.kind === "minimax" ? this.createMiniMaxReasoningProvider() : null
     this.researchSynthesisProvider = options.researchSynthesisProvider ?? (minimaxProvider ?? new FakeResearchSynthesisProvider())
     this.researchSynthesisNow = options.researchSynthesisNow
@@ -812,6 +819,14 @@ export class RuntimeServer {
         return this.getOpenCodeSession(requiredString(payload.sessionId ?? payload.session_id, "sessionId"))
       case "runtime.opencode_session_summary":
         return this.openCodeSessionSummary()
+      case "runtime.list_model_capabilities":
+        return this.listModelCapabilities(readModelCapabilityListInput(payload))
+      case "runtime.get_model_capability":
+        return this.getModelCapability(readModelCapabilityGetInput(payload))
+      case "runtime.context_budget_summary":
+        return this.contextBudgetSummary()
+      case "runtime.preview_context_budget":
+        return this.previewContextBudget(readContextBudgetPreviewInput(payload))
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(readCommanderExecutorReviewInput(payload))
       case "runtime.execute_commander_executor_review":
@@ -1646,6 +1661,22 @@ export class RuntimeServer {
 
   async openCodeSessionSummary(): Promise<OpenCodeSessionSummary> {
     return this.opencodeSessionService().summary()
+  }
+
+  async listModelCapabilities(input: Parameters<ContextBudgetService["listModelCapabilities"]>[0] = {}): Promise<ModelCapability[]> {
+    return this.contextBudgetService().listModelCapabilities(input)
+  }
+
+  async getModelCapability(input: Parameters<ContextBudgetService["getModelCapability"]>[0] = {}): Promise<ModelCapability> {
+    return this.contextBudgetService().getModelCapability(input)
+  }
+
+  async contextBudgetSummary(): Promise<ContextBudgetSummary> {
+    return this.contextBudgetService().summary()
+  }
+
+  async previewContextBudget(input: Parameters<ContextBudgetService["preview"]>[0] = {}): Promise<ContextBudgetPreview> {
+    return this.contextBudgetService().preview(input)
   }
 
   async previewCommanderExecutorReview(input: Parameters<CommanderExecutorReviewService["preview"]>[0] = {}): Promise<CommanderExecutorReviewPreview> {
@@ -2665,6 +2696,14 @@ export class RuntimeServer {
       proposalRegistry: this.proposalRegistry,
     })
     return this.opencodeSessionServiceInstance
+  }
+
+  private contextBudgetService(): ContextBudgetService {
+    this.contextBudgetServiceInstance ??= new ContextBudgetService({
+      registry: this.modelCapabilityRegistry,
+      opencodeSessionService: this.opencodeSessionService(),
+    })
+    return this.contextBudgetServiceInstance
   }
 
   private commanderExecutorReviewService(): CommanderExecutorReviewService {
