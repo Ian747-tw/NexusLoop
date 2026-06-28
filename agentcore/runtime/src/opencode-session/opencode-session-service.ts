@@ -161,7 +161,6 @@ export class OpenCodeSessionService {
       source_kind: sourceKind,
       mission_id: source.mission_id,
       proposal_id: source.proposal_id,
-      review_request_id: source.review_request_id,
       apply_id: source.apply_id,
       objective: rawObjective,
     }))

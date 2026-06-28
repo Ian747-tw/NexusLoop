@@ -14357,6 +14357,46 @@ describe("OpenCode session planning", () => {
     await server.shutdown()
   })
 
+  test("proposal session identity is stable when review metadata is added later", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+
+    await server.start()
+    const submitted = await server.submitUserMessage("review metadata should not fork planned sessions")
+    const proposal = await server.command("runtime.create_commander_proposal", {
+      missionId: submitted.missionId,
+      actionKind: "other",
+      title: "stable review metadata proposal",
+      summary: "inspect proposal execution after review metadata changes",
+      proposedBy: "commander",
+    }) as { proposal_id: string }
+    const plannedBeforeReview = await server.command("runtime.create_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+    }) as { session_id: string; session_hash: string; review_request_id?: string }
+
+    expect(plannedBeforeReview.review_request_id).toBeUndefined()
+    const review = await server.command("runtime.request_proposal_review", { proposalId: proposal.proposal_id, requestedBy: "operator" }) as { review_id: string }
+    const previewAfterReview = await server.command("runtime.preview_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+    }) as { can_create: boolean; existing_session_id?: string; review_request_id?: string; blockers: string[] }
+    expect(previewAfterReview).toMatchObject({
+      can_create: false,
+      existing_session_id: plannedBeforeReview.session_id,
+      review_request_id: review.review_id,
+      blockers: expect.arrayContaining(["matching active planned OpenCode session already exists"]),
+    })
+    const duplicateAfterReview = await server.command("runtime.create_opencode_session_plan", {
+      proposalId: proposal.proposal_id,
+    }) as { session_id: string; session_hash: string; review_request_id?: string }
+
+    expect(duplicateAfterReview.session_id).toBe(plannedBeforeReview.session_id)
+    expect(duplicateAfterReview.session_hash).toBe(plannedBeforeReview.session_hash)
+    expect(duplicateAfterReview.review_request_id).toBeUndefined()
+    expect((await readEventKinds(dir)).filter((kind) => kind === "opencode_session_planned")).toHaveLength(1)
+    await server.shutdown()
+  })
+
   test("RuntimeServerClient never auto-starts planned session creation", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
