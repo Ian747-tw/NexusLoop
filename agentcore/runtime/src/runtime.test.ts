@@ -16905,6 +16905,19 @@ describe("Context budget registry", () => {
     const question = await server.command("runtime.preview_context_packet", { purpose: "open_question_answer" }) as { sections: Array<{ section: string; status: string }> }
     expect(question.sections).toContainEqual(expect.objectContaining({ section: "commander_guidance", status: "missing" }))
 
+    const missingMission = await server.command("runtime.preview_context_packet", {
+      purpose: "commander_research_decision",
+      missionId: "mission_typo",
+    }) as { packet_status: string; sections: Array<{ section: string; status: string; source_refs: Array<{ source_id: string; pointer_only: boolean }> }>; warnings: string[] }
+    expect(missingMission.packet_status).toBe("partial")
+    expect(missingMission.sections).toContainEqual(expect.objectContaining({
+      section: "mission_state",
+      status: "missing",
+      source_refs: expect.arrayContaining([expect.objectContaining({ source_id: "mission_typo", pointer_only: true })]),
+    }))
+    expect(missingMission.sections).not.toContainEqual(expect.objectContaining({ section: "mission_state", status: "included" }))
+    expect(missingMission.warnings).toContain("mission_id was not found; mission_state remains missing")
+
     const blocked = await server.command("runtime.preview_context_packet", {}) as { packet_status: string; blockers: string[] }
     expect(blocked.packet_status).toBe("blocked")
     expect(blocked.blockers).toContain("context packet preview requires a supported purpose")

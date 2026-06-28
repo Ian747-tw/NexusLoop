@@ -235,7 +235,7 @@ function sectionFromAllocation(allocation: ContextBudgetAllocation, context: Pac
     status = context.session ? "included" : context.purpose === "wake_supervisor" ? "pointer_only" : "missing"
     summary = context.session ? "active/planned session pointer included" : "active session projection is not available in this skeleton"
   } else if (allocation.section === "mission_state") {
-    status = context.session || context.mission || context.missionId || context.proposal ? "included" : "missing"
+    status = context.session || context.mission || context.proposal ? "included" : "missing"
     summary = context.session
       ? "tactical objective comes from the planned OpenCode session"
       : context.mission
