@@ -16749,9 +16749,11 @@ describe("Context budget registry", () => {
       providerKind: "opencode",
       modelId: "opencode-default",
       maxContextBytes: 4096,
-    }) as { budget: { allocations: Array<{ section: string; inclusion_policy: string; priority: string; max_bytes?: number }>; max_context_bytes?: number; safety_margin_bytes?: number }; warnings: string[] }
+    }) as { budget: { allocations: Array<{ section: string; inclusion_policy: string; priority: string; max_bytes?: number; max_tokens?: number }>; max_context_bytes?: number; max_context_tokens?: number; safety_margin_bytes?: number }; warnings: string[] }
     expect(executor.budget.max_context_bytes).toBe(4096)
+    expect(executor.budget.max_context_tokens).toBeUndefined()
     expect(sumDefined(executor.budget.allocations.map((item) => item.max_bytes))).toBeLessThanOrEqual(4096 - (executor.budget.safety_margin_bytes ?? 0))
+    expect(sumDefined(executor.budget.allocations.map((item) => item.max_tokens))).toBe(0)
     expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "commander_guidance", priority: "high" }))
     expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "executor_progress", priority: "high" }))
     expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "research_memory", inclusion_policy: "pointer_only" }))
@@ -16801,10 +16803,12 @@ describe("Context budget registry", () => {
       providerKind: "unknown",
       modelId: "cloud-long-context",
       sessionId: session.session_id,
-    }) as { session_max_context_bytes?: number; budget: { max_context_bytes?: number; allocations: Array<{ section: string; inclusion_policy: string }> }; warnings: string[] }
+    }) as { session_max_context_bytes?: number; budget: { max_context_bytes?: number; max_context_tokens?: number; allocations: Array<{ section: string; inclusion_policy: string }> }; warnings: string[] }
     expect(previewResult.session_max_context_bytes).toBe(4096)
     expect(previewResult.budget.max_context_bytes).toBe(4096)
+    expect(previewResult.budget.max_context_tokens).toBe(1024)
     expect(previewResult.warnings).toContain("planned session max_context_bytes constrains executor budget")
+    expect(previewResult.warnings).toContain("planned session max_context_bytes constrains executor token budget")
     expect(previewResult.budget.allocations).toContainEqual(expect.objectContaining({ section: "raw_logs", inclusion_policy: "excluded_by_default" }))
 
     const missing = await server.command("runtime.preview_context_budget", {

@@ -53,7 +53,7 @@ export class ContextBudgetService {
     const capability = this.options.registry.get({ provider_kind: providerKind, model_id: modelId })
     const blockers: string[] = []
     if (purpose === "unknown") blockers.push("context budget preview requires a supported purpose")
-    if (role !== "unknown" && !capability.role_support.includes(role) && !capability.role_support.includes("unknown")) {
+    if (!capabilitySupportsRole(capability, role)) {
       blockers.push("selected model capability does not support requested role")
     }
 
@@ -88,7 +88,10 @@ export class ContextBudgetService {
     if (purpose === "opencode_executor_session" && sessionMaxContextBytes) {
       if (!maxContextBytes || sessionMaxContextBytes < maxContextBytes) {
         maxContextBytes = sessionMaxContextBytes
+        const sessionDerivedTokens = Math.max(1, Math.floor(sessionMaxContextBytes / 4))
+        maxContextTokens = maxContextTokens ? Math.min(maxContextTokens, sessionDerivedTokens) : sessionDerivedTokens
         warnings.add("planned session max_context_bytes constrains executor budget")
+        warnings.add("planned session max_context_bytes constrains executor token budget")
       } else if (sessionMaxContextBytes > maxContextBytes) {
         warnings.add("model capability is lower than session max_context_bytes; model budget wins")
       }
@@ -183,8 +186,8 @@ function allocateSections(
   safetyBytes: number | undefined,
 ): ContextBudgetAllocation[] {
   const rules = sectionRules(purpose)
-  const availableTokens = Math.max(0, (maxTokens ?? CONSERVATIVE_CONTEXT_TOKENS) - outputTokens - (safetyTokens ?? 0))
-  const availableBytes = Math.max(0, (maxBytes ?? CONSERVATIVE_CONTEXT_BYTES) - (safetyBytes ?? 0))
+  const availableTokens = maxTokens === undefined ? undefined : Math.max(0, maxTokens - outputTokens - (safetyTokens ?? 0))
+  const availableBytes = maxBytes === undefined ? undefined : Math.max(0, maxBytes - (safetyBytes ?? 0))
   const tokenCaps = distributeCaps(rules, availableTokens, 64)
   const byteCaps = distributeCaps(rules, availableBytes, 256)
   return rules.map((rule) => ({
@@ -275,11 +278,16 @@ function defaultProviderForPurpose(purpose: ContextBudgetPurpose): string {
   return "unknown"
 }
 
-function distributeCaps<T extends { weight: number }>(rules: T[], available: number, floor: number): Map<T, number> {
+function capabilitySupportsRole(capability: ModelCapability, role: ModelCapabilityRole): boolean {
+  if (role === "unknown") return true
+  return capability.role_support.includes(role) || capability.role_support.includes("unknown")
+}
+
+function distributeCaps<T extends { weight: number }>(rules: T[], available: number | undefined, floor: number): Map<T, number> {
   const caps = new Map<T, number>()
   const weighted = rules.filter((rule) => rule.weight > 0)
   const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0)
-  if (!weighted.length || available <= 0 || totalWeight <= 0) return caps
+  if (available === undefined || !weighted.length || available <= 0 || totalWeight <= 0) return caps
   const canApplyFloor = available >= weighted.length * floor
   let remaining = Math.floor(available)
   let remainingWeight = totalWeight

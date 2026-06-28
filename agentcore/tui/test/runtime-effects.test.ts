@@ -2785,6 +2785,14 @@ describe("runtime UI effects", () => {
     expect(state.operatorActions?.staged?.command).toBe("/executor-review-proposal-create-preview review=missing-review [REDACTED]")
     expect(JSON.stringify(state)).not.toContain("raw-secret")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/context-budget-preview"] })
+    expect(state.operatorActions?.staged?.command).toBe("/context-budget-preview")
+    expect(state.operatorActions?.staged?.command_type).toBe("read")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+    expect(state.operatorActions?.lastResult).toMatchObject({ command: "/context-budget-preview", ok: false })
+    expect(state.operatorActions?.commandError).toContain("context budget preview requires purpose")
+    expect(state.operatorActions?.staged?.command).toBe("/context-budget-preview")
+
     for (const createCommand of ["/executor-review-proposal-create", "/executor-draft-create", "/commander-executor-proposal-create"]) {
       state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: [createCommand, "review=missing-review", "draft=missing-draft"] })
       expect(state.operatorActions?.staged).toMatchObject({

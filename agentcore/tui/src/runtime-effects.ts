@@ -4093,6 +4093,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeHandoffReadinessCommands.has(command)) return state.opencodeHandoffReadiness?.commandError
   if (opencodeResultReviewCommands.has(command)) return state.opencodeResultReview?.commandError
   if (opencodeSessionCommands.has(command)) return state.opencodeSessions?.commandError
+  if (contextBudgetCommands.has(command)) return state.contextBudgets?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
   if (executorReviewProposalCreateCommands.has(command)) return state.executorReviewProposalCreate?.commandError
@@ -4132,6 +4133,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeHandoffReadinessCommands.has(command)) return { ...state, opencodeHandoffReadiness: { ...opencodeHandoffReadinessState(state), commandError: undefined } }
   if (opencodeResultReviewCommands.has(command)) return { ...state, opencodeResultReview: { ...opencodeResultReviewState(state), commandError: undefined } }
   if (opencodeSessionCommands.has(command)) return { ...state, opencodeSessions: { ...opencodeSessionsState(state), commandError: undefined } }
+  if (contextBudgetCommands.has(command)) return { ...state, contextBudgets: { ...contextBudgetsState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
   if (executorReviewProposalCreateCommands.has(command)) return { ...state, executorReviewProposalCreate: { ...executorReviewProposalCreateState(state), commandError: undefined } }
