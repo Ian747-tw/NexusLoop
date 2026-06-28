@@ -215,6 +215,8 @@ export class OpenCodeSessionInstructionPackService {
     const packHash = hash(stableJson({
       session_id: sessionId,
       packet_hash: packet?.packet_hash,
+      include_manifest: input.include_manifest !== false,
+      include_opencode_config: input.include_opencode_config !== false,
       files: files.filter((file) => file.file_kind !== "manifest").map((file) => [file.relative_path, file.sha256]),
     }))
     const status = blockers.length > 0 ? "blocked" : "ready"
@@ -376,6 +378,8 @@ function buildFiles(
   const packHash = hash(stableJson({
     session_id: session.session_id,
     packet_hash: packet.packet_hash,
+    include_manifest: options.includeManifest,
+    include_opencode_config: options.includeOpenCodeConfig,
     files: provisional.map((file) => [file.relative_path, file.sha256]),
   }))
   const packId = packIdFor(packHash)

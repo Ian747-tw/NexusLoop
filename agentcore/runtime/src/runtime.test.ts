@@ -17146,6 +17146,34 @@ describe("OpenCode session instruction packs", () => {
     await server.shutdown()
   })
 
+  test("manifest selection participates in instruction pack identity", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "manifest option instruction pack" }) as { session_id: string }
+
+    const withoutManifest = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      includeManifest: false,
+    }) as { pack_id: string; status: string; files: Array<{ relative_path: string }> }
+    expect(withoutManifest.status).toBe("written")
+    expect(withoutManifest.files.map((file) => file.relative_path)).not.toContain("MANIFEST.json")
+
+    const withManifest = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+    }) as { pack_id: string; status: string; files: Array<{ relative_path: string }> }
+    expect(withManifest.status).toBe("written")
+    expect(withManifest.pack_id).not.toBe(withoutManifest.pack_id)
+    expect(withManifest.files.map((file) => file.relative_path)).toContain("MANIFEST.json")
+
+    const manifest = JSON.parse(await readFile(join(dir, ".nxl", "opencode", "sessions", session.session_id, "MANIFEST.json"), "utf8"))
+    expect(manifest.pack_id).toBe(withManifest.pack_id)
+    const packEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")
+    expect(packEvents.map((event) => event.pack_id)).toEqual([withoutManifest.pack_id, withManifest.pack_id])
+    await server.shutdown()
+  })
+
   test("RuntimeServerClient no-start covers instruction-pack preview list get and dry-run write", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
