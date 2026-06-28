@@ -76,6 +76,9 @@ const WRITE_COMMANDS = new Set([
   "executor-draft-narrow-apply",
   "commander-executor-proposal-narrow-apply",
   "proposal-narrow-apply",
+  "opencode-session-plan",
+  "session-plan",
+  "opencode-plan",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

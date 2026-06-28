@@ -28,6 +28,7 @@ import type { OpenCodeHandoffFollowup, OpenCodeHandoffFollowupQueue, OpenCodeHan
 import type { OpenCodeProcessSmokePreview, OpenCodeProcessSmokeRecord, OpenCodeProcessSmokeResult } from "../opencode/opencode-process-smoke-types"
 import type { OpenCodeHandoffReadinessInput, OpenCodeHandoffReadinessPreview, OpenCodeHandoffReadinessSummary } from "../opencode/opencode-handoff-readiness-types"
 import type { OpenCodeResultReviewPacket, OpenCodeResultReviewPacketInput, OpenCodeResultReviewSummary } from "../opencode/opencode-result-review-packet-types"
+import type { OpenCodeSessionCreateInput, OpenCodeSessionPlan, OpenCodeSessionPreview, OpenCodeSessionPreviewInput, OpenCodeSessionRecord, OpenCodeSessionSourceKind, OpenCodeSessionStatus, OpenCodeSessionSummary } from "../opencode-session/opencode-session-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAssessmentRecord } from "../wake/wake-hook-types"
@@ -259,6 +260,38 @@ export interface RuntimeClient {
     staleAfterMs?: number
   }): Promise<OpenCodeResultReviewPacket>
   command(name: "runtime.opencode_result_review_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number; limit?: number }): Promise<OpenCodeResultReviewSummary>
+  command(name: "runtime.preview_opencode_session_plan", payload?: OpenCodeSessionPreviewInput | {
+    missionId?: string
+    proposalId?: string
+    reviewRequestId?: string
+    applyId?: string
+    objective?: string
+    title?: string
+    sourceKind?: OpenCodeSessionSourceKind
+    maxContextBytes?: number
+    maxWallTimeMs?: number
+    maxNoProgressMs?: number
+    heartbeatIntervalMs?: number
+    createdBy?: string
+  }): Promise<OpenCodeSessionPreview>
+  command(name: "runtime.create_opencode_session_plan", payload?: OpenCodeSessionCreateInput | {
+    missionId?: string
+    proposalId?: string
+    reviewRequestId?: string
+    applyId?: string
+    objective?: string
+    title?: string
+    sourceKind?: OpenCodeSessionSourceKind
+    maxContextBytes?: number
+    maxWallTimeMs?: number
+    maxNoProgressMs?: number
+    heartbeatIntervalMs?: number
+    createdBy?: string
+    dryRun?: boolean
+  }): Promise<OpenCodeSessionPlan>
+  command(name: "runtime.list_opencode_sessions", payload?: { limit?: number; status?: OpenCodeSessionStatus; mission_id?: string; missionId?: string; proposal_id?: string; proposalId?: string; source_kind?: OpenCodeSessionSourceKind; sourceKind?: OpenCodeSessionSourceKind }): Promise<OpenCodeSessionRecord[]>
+  command(name: "runtime.get_opencode_session", payload: { session_id: string } | { sessionId: string }): Promise<OpenCodeSessionPlan | null>
+  command(name: "runtime.opencode_session_summary", payload?: Record<string, never>): Promise<OpenCodeSessionSummary>
   command(name: "runtime.preview_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewPreview>
   command(name: "runtime.execute_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewResult>
   command(name: "runtime.list_commander_executor_reviews", payload?: { limit?: number; packet_id?: string; packetId?: string; mission_id?: string; missionId?: string; handoff_id?: string; handoffId?: string }): Promise<CommanderExecutorReviewRecord[]>
@@ -492,6 +525,11 @@ export interface RuntimeCommandEnvelope {
     | "runtime.opencode_handoff_readiness_summary"
     | "runtime.preview_opencode_result_review_packet"
     | "runtime.opencode_result_review_summary"
+    | "runtime.preview_opencode_session_plan"
+    | "runtime.create_opencode_session_plan"
+    | "runtime.list_opencode_sessions"
+    | "runtime.get_opencode_session"
+    | "runtime.opencode_session_summary"
     | "runtime.preview_commander_executor_review"
     | "runtime.execute_commander_executor_review"
     | "runtime.list_commander_executor_reviews"

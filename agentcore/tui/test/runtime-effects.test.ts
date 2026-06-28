@@ -4826,4 +4826,99 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("abc123")
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
+
+  test("opencode session plan commands render planned session metadata without launching execution", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-preview", args: ["objective=inspect", "training", "progress", "token=abc123"] })
+    expect(state.opencodeSessions?.preview).toMatchObject({
+      can_create: true,
+      source_kind: "manual",
+      timeout_policy: expect.objectContaining({ forced_pause_enabled: true, report_required_on_timeout: true }),
+      question_policy: expect.objectContaining({ allow_opencode_questions: true, max_pending_questions: 3 }),
+      human_control_policy: expect.objectContaining({ allow_human_pause: true, require_reason_for_stop: true }),
+    })
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode sessions")
+    expect(snapshot).toContain("commander_context=")
+    expect(snapshot).toContain("opencode_context_seed=")
+    expect(snapshot).toContain("max_context_bytes=12000")
+    expect(snapshot).toContain("timeout wall_ms=")
+    expect(snapshot).toContain("question_policy questions=true")
+    expect(snapshot).toContain("human_control pause=true")
+    expect(snapshot).toContain("note=session planning does not launch OpenCode or mutate missions")
+    expect(snapshot).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-preview", args: ["objective=triage", "proposal=fake-missing-proposal"] })
+    expect(state.opencodeSessions?.preview).toMatchObject({
+      can_create: false,
+      source_kind: "proposal",
+      objective_preview: "triage",
+      blockers: expect.arrayContaining(["proposal not found: fake-missing-proposal"]),
+    })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan-dry-run", args: ["objective=inspect", "training", "progress", "token=abc123"] })
+    expect(state.opencodeSessions?.latestPlan).toMatchObject({ status: "planned", source_kind: "manual" })
+    expect(state.opencodeSessions?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=inspect", "training", "progress", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    expect(state.opencodeSessions?.records).toHaveLength(1)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=inspect", "training", "progress", "token=abc123"] })
+    expect(state.opencodeSessions?.records).toHaveLength(1)
+    await expect(runtime.command("runtime.create_opencode_session_plan", {
+      objective: "inspect training progress token=abc123",
+      maxContextBytes: 4096,
+    })).rejects.toThrow("different boundary or policy metadata")
+    expect(state.opencodeSessions?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-sessions", args: [] })
+    expect(state.opencodeSessions?.records.map((record) => record.session_id)).toContain(sessionId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-show", args: [sessionId!] })
+    expect(state.opencodeSessions?.selected?.session_id).toBe(sessionId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-summary", args: [] })
+    expect(state.opencodeSessions?.summary).toMatchObject({ total_sessions: 1, planned_count: 1, running_count: 0 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-session-plan"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/opencode-session-plan", risk: "high_impact_write", creates_external_process: false })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/opencode-session-plan objective=stage command token=abc123"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan-dry-run", args: ["apply=fake-missing-apply"] })
+    expect(state.opencodeSessions?.commandError).toContain("apply record not found")
+    expect(state.opencodeSessions?.commandError).not.toContain("requires objective")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: [] })
+    expect(state.opencodeSessions?.commandError).toContain("requires objective")
+
+    expect(runtime.sentCommands).toEqual([])
+    expect(state.opencodeHandoff?.lastResult).toBeNull()
+    expect(state.opencodeProcessSmoke?.latestResult).toBeNull()
+    expect(state.missionExecution?.selectedResultId).toBeUndefined()
+    expect(state.missionExecution?.results).toEqual([])
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("latest=fake-opencode-session")
+    expect(snapshot).toContain("latest_context max_bytes=12000")
+    expect(snapshot).toContain("summary total=1 planned=1")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
+
+  test("fake opencode session identity uses raw long objectives instead of rendered previews", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    const sharedPrefix = "inspect training configuration ".repeat(12)
+    const firstObjective = `${sharedPrefix}variant alpha`
+    const secondObjective = `${sharedPrefix}variant beta`
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: [`objective=${firstObjective}`] })
+    const firstSessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(firstSessionId).toBeTruthy()
+    expect(state.opencodeSessions?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: [`objective=${secondObjective}`] })
+    expect(state.opencodeSessions?.latestPlan?.session_id).not.toBe(firstSessionId)
+    expect(state.opencodeSessions?.records).toHaveLength(2)
+    expect(new Set(state.opencodeSessions?.records.map((record) => record.session_id)).size).toBe(2)
+  })
 })

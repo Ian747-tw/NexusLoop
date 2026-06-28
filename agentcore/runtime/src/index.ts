@@ -52,6 +52,8 @@ export { ExecutorReviewProposalReviewRequestService } from "./commander-executor
 export { ExecutorReviewProposalReviewDecisionService } from "./commander-executor-review/executor-review-proposal-review-decision-service"
 export { ExecutorReviewProposalApplyReadinessService } from "./commander-executor-review/executor-review-proposal-apply-readiness-service"
 export { ExecutorReviewProposalNarrowApplyService } from "./commander-executor-review/executor-review-proposal-narrow-apply-service"
+export { OpenCodeSessionService } from "./opencode-session/opencode-session-service"
+export * from "./opencode-session/opencode-session-types"
 export { FakeExternalApiTransport, FetchExternalApiTransport } from "./external-api/api-transport"
 export { COMMANDER_PLAYBOOK_CATALOG, draftCommanderPlaybook, getCommanderPlaybook, listCommanderPlaybooks } from "./missions/commander-playbooks"
 export { MissionToolRouter } from "./missions/mission-tool-router"
