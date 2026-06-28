@@ -75,8 +75,18 @@ export class ContextPacketCompilerService {
 
     const session = input.session_id ? await this.options.opencodeSessionService.get(input.session_id) : null
     if (purpose === "opencode_executor_session" && input.session_id && !session) blockers.add("session_id was not found")
-    const missionId = optional(input.mission_id) ?? session?.mission_id
-    const proposalId = optional(input.proposal_id) ?? session?.proposal_id
+    const explicitMissionId = optional(input.mission_id)
+    const explicitProposalId = optional(input.proposal_id)
+    const explicitReviewRequestId = optional(input.review_request_id)
+    const explicitApplyId = optional(input.apply_id)
+    if (session) addSessionSourceConflictBlockers(blockers, session, {
+      mission_id: explicitMissionId,
+      proposal_id: explicitProposalId,
+      review_request_id: explicitReviewRequestId,
+      apply_id: explicitApplyId,
+    })
+    const missionId = session ? session.mission_id : explicitMissionId
+    const proposalId = session ? session.proposal_id : explicitProposalId
     const mission = missionId ? await this.options.missionRegistry.getMission(missionId) : null
     const proposal = proposalId ? await this.options.proposalRegistry.getProposal(proposalId) : null
     if (input.mission_id && !mission) warnings.add("mission_id was not found; mission_state remains missing")
@@ -90,8 +100,8 @@ export class ContextPacketCompilerService {
       proposal,
       missionId,
       proposalId,
-      reviewRequestId: optional(input.review_request_id) ?? session?.review_request_id ?? proposal?.review_id,
-      applyId: optional(input.apply_id) ?? session?.apply_id,
+      reviewRequestId: session ? session.review_request_id : explicitReviewRequestId ?? proposal?.review_id,
+      applyId: session ? session.apply_id : explicitApplyId,
     }
     const sections = budgetPreview.budget.allocations.map((allocation) => sectionFromAllocation(allocation, sourceContext))
     if (!sections.some((section) => section.section === "raw_logs")) sections.push(excludedSyntheticSection("raw_logs", "raw logs are excluded by policy"))
@@ -196,6 +206,26 @@ type PacketSourceContext = {
   proposalId?: string
   reviewRequestId?: string
   applyId?: string
+}
+
+function addSessionSourceConflictBlockers(
+  blockers: Set<string>,
+  session: NonNullable<PacketSourceContext["session"]>,
+  explicit: { mission_id?: string; proposal_id?: string; review_request_id?: string; apply_id?: string },
+): void {
+  addSessionSourceConflictBlocker(blockers, "mission_id", explicit.mission_id, session.mission_id)
+  addSessionSourceConflictBlocker(blockers, "proposal_id", explicit.proposal_id, session.proposal_id)
+  addSessionSourceConflictBlocker(blockers, "review_request_id", explicit.review_request_id, session.review_request_id)
+  addSessionSourceConflictBlocker(blockers, "apply_id", explicit.apply_id, session.apply_id)
+}
+
+function addSessionSourceConflictBlocker(blockers: Set<string>, field: string, explicitId: string | undefined, sessionId: string | undefined): void {
+  if (!explicitId) return
+  if (!sessionId) {
+    blockers.add(`session_id has no linked ${field} to match explicit ${field}`)
+    return
+  }
+  if (explicitId !== sessionId) blockers.add(`session_id source chain conflicts with ${field}`)
 }
 
 function sectionFromAllocation(allocation: ContextBudgetAllocation, context: PacketSourceContext): ContextPacketSection {

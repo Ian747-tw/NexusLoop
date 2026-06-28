@@ -16966,6 +16966,15 @@ describe("Context budget registry", () => {
     expect(packet.omitted_source_refs).toContainEqual(expect.objectContaining({ label: "human control policy pointer" }))
     expect(packet.warnings).toContain("planned session max_context_bytes constrains executor budget")
 
+    const mismatched = await server.command("runtime.preview_context_packet", {
+      purpose: "opencode_executor_session",
+      sessionId: session.session_id,
+      missionId: "mission_conflict",
+    }) as { packet_status: string; mission_id?: string; blockers: string[] }
+    expect(mismatched.packet_status).toBe("blocked")
+    expect(mismatched.blockers).toContain("session_id has no linked mission_id to match explicit mission_id")
+    expect(mismatched.mission_id).toBeUndefined()
+
     const missing = await server.command("runtime.preview_context_packet", { purpose: "opencode_executor_session", sessionId: "missing-session" }) as { packet_status: string; blockers: string[] }
     expect(missing.packet_status).toBe("blocked")
     expect(missing.blockers).toContain("session_id was not found")

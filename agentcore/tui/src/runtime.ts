@@ -2033,6 +2033,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const blockers = [
       ...(purpose === "unknown" ? ["context packet preview requires a supported purpose"] : []),
       ...(purpose === "opencode_executor_session" && sessionId && !session ? ["session_id was not found"] : []),
+      ...(session ? fakeSessionSourceConflictBlockers(session, payload) : []),
       ...budget.blockers.filter((item) => !item.includes("context budget")),
     ]
     const sections = this.contextPacketSections(purpose, budget.budget.allocations, session)
@@ -2050,10 +2051,10 @@ export class FakeRuntimeClient implements RuntimeClient {
       provider_kind: budget.budget.provider_kind,
       model_id: budget.budget.model_id,
       session_id: session?.session_id ?? sessionId,
-      mission_id: session?.mission_id ?? optionalString(payload.missionId ?? payload.mission_id ?? payload.mission),
-      proposal_id: session?.proposal_id ?? optionalString(payload.proposalId ?? payload.proposal_id ?? payload.proposal),
-      review_request_id: session?.review_request_id ?? optionalString(payload.reviewRequestId ?? payload.review_request_id ?? payload.review),
-      apply_id: session?.apply_id ?? optionalString(payload.applyId ?? payload.apply_id ?? payload.apply),
+      mission_id: session ? session.mission_id : optionalString(payload.missionId ?? payload.mission_id ?? payload.mission),
+      proposal_id: session ? session.proposal_id : optionalString(payload.proposalId ?? payload.proposal_id ?? payload.proposal),
+      review_request_id: session ? session.review_request_id : optionalString(payload.reviewRequestId ?? payload.review_request_id ?? payload.review),
+      apply_id: session ? session.apply_id : optionalString(payload.applyId ?? payload.apply_id ?? payload.apply),
       packet_status: status,
       can_compile_final_prompt: false,
       sections,
@@ -6023,6 +6024,22 @@ function fakePacketRefs(section: string, session?: OpenCodeSessionPlanSummary): 
   if (section === "tool_or_mcp_schema") return [{ source_kind: "unknown", source_id: "tool_schema_router_future", label: "tool schema router", summary_preview: "all tool/MCP schemas excluded by default", pointer_only: true }]
   if (section === "open_question_answer") return [{ source_kind: "unknown", source_id: "opencode_question_protocol_future", label: "question protocol pointer", summary_preview: "question protocol is future work", pointer_only: true }]
   return []
+}
+
+function fakeSessionSourceConflictBlockers(session: OpenCodeSessionPlanSummary, payload: Record<string, unknown>): string[] {
+  return [
+    fakeSessionSourceConflictBlocker("mission_id", optionalString(payload.missionId ?? payload.mission_id ?? payload.mission), session.mission_id),
+    fakeSessionSourceConflictBlocker("proposal_id", optionalString(payload.proposalId ?? payload.proposal_id ?? payload.proposal), session.proposal_id),
+    fakeSessionSourceConflictBlocker("review_request_id", optionalString(payload.reviewRequestId ?? payload.review_request_id ?? payload.review), session.review_request_id),
+    fakeSessionSourceConflictBlocker("apply_id", optionalString(payload.applyId ?? payload.apply_id ?? payload.apply), session.apply_id),
+  ].filter((item): item is string => item !== undefined)
+}
+
+function fakeSessionSourceConflictBlocker(field: string, explicitId: string | undefined, sessionId: string | undefined): string | undefined {
+  if (!explicitId) return undefined
+  if (!sessionId) return `session_id has no linked ${field} to match explicit ${field}`
+  if (explicitId !== sessionId) return `session_id source chain conflicts with ${field}`
+  return undefined
 }
 
 function uniqueFakeRefs(refs: ContextPacketSectionSummary["source_refs"]): ContextPacketSectionSummary["source_refs"] {

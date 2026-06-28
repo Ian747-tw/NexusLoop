@@ -5034,6 +5034,11 @@ describe("runtime UI effects", () => {
     expect(state.contextPackets?.preview?.omitted_source_refs).toContainEqual(expect.objectContaining({ label: "question policy pointer" }))
     expect(state.contextPackets?.preview?.omitted_source_refs).toContainEqual(expect.objectContaining({ label: "human control policy pointer" }))
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "packet-preview", args: ["purpose=opencode_executor_session", `session=${sessionId}`, "mission=mission_conflict"] })
+    expect(state.contextPackets?.preview?.packet_status).toBe("blocked")
+    expect(state.contextPackets?.preview?.blockers).toContain("session_id has no linked mission_id to match explicit mission_id")
+    expect(state.contextPackets?.preview?.mission_id).toBeUndefined()
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-summary", args: [] })
     expect(state.contextPackets?.summary?.supported_purposes).toContain("opencode_executor_session")
 
