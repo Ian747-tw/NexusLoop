@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import type { ContextPacketCompilerService } from "../context/context-packet-compiler-service"
 import type { ContextPacketPreview, ContextPacketSection, ContextPacketSourceRef } from "../context/context-packet-types"
@@ -24,6 +24,15 @@ const MAX_TEXT = 280
 const MAX_FILE_BYTES = 16_000
 const MAX_TOTAL_BYTES = 64_000
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._-]+$/
+const GENERATED_FILE_PATHS = [
+  "TASK.md",
+  "CONTEXT.md",
+  "GUIDANCE.md",
+  "SESSION_MEMORY.md",
+  "POLICY.md",
+  "MANIFEST.json",
+  "opencode-session-config.json",
+]
 
 export type OpenCodeSessionInstructionPackServiceOptions = {
   projectDir: string
@@ -83,6 +92,13 @@ export class OpenCodeSessionInstructionPackService {
       const rebuiltPackId = packIdFor(rebuilt.preview.pack_hash)
       if (!rebuilt.preview.can_write) return blockedResult(rebuilt.preview, writtenAt, writtenBy)
       const targetDir = targetDirFor(this.options.projectDir, rebuilt.preview.session_id)
+      const symlinkPath = await symlinkedPathComponent(this.options.projectDir, targetDir)
+      if (symlinkPath) {
+        return {
+          ...blockedResult(rebuilt.preview, writtenAt, writtenBy),
+          error: `session instruction-pack target path contains a symlink: ${symlinkPath}`,
+        }
+      }
       const existing = await this.findExisting(rebuilt.preview.pack_hash)
       if (existing) {
         const matchingFiles = await existingFilesMatch(targetDir, rebuilt.files)
@@ -115,7 +131,14 @@ export class OpenCodeSessionInstructionPackService {
           error: `existing file differs: ${conflict}`,
         }
       }
-      await writeFilesAtomically(targetDir, rebuilt.files)
+      const staleFile = await staleGeneratedFile(targetDir, rebuilt.files)
+      if (staleFile) {
+        return {
+          ...blockedResult(rebuilt.preview, writtenAt, writtenBy),
+          error: `existing generated instruction-pack file is not part of requested pack: ${staleFile}; inspect target directory before rewriting`,
+        }
+      }
+      await writeFilesAtomically(this.options.projectDir, targetDir, rebuilt.files)
       await this.options.eventStore.append(redactValue({
         kind: "opencode_session_instruction_pack_written",
         pack_id: rebuiltPackId,
@@ -666,7 +689,8 @@ function readFileKind(value: unknown): OpenCodeSessionInstructionPackFileKind {
   return "context"
 }
 
-async function writeFilesAtomically(targetDir: string, files: GeneratedFile[]): Promise<void> {
+async function writeFilesAtomically(projectDir: string, targetDir: string, files: GeneratedFile[]): Promise<void> {
+  await rejectSymlinkedPath(projectDir, targetDir)
   await mkdir(targetDir, { recursive: true })
   for (const file of files) {
     const filePath = resolve(targetDir, file.relative_path)
@@ -679,6 +703,32 @@ async function writeFilesAtomically(targetDir: string, files: GeneratedFile[]): 
       throw error
     })
   }
+}
+
+async function rejectSymlinkedPath(projectDir: string, targetDir: string): Promise<void> {
+  const symlinkPath = await symlinkedPathComponent(projectDir, targetDir)
+  if (symlinkPath) throw new Error(`session instruction-pack target path contains a symlink: ${symlinkPath}`)
+}
+
+async function symlinkedPathComponent(projectDir: string, targetDir: string): Promise<string | null> {
+  const projectRoot = resolve(projectDir)
+  const resolvedTarget = resolve(targetDir)
+  ensureChildPath(projectRoot, resolvedTarget)
+  const segments = relative(projectRoot, resolvedTarget).split(sep).filter(Boolean)
+  let current = projectRoot
+  for (const segment of segments) {
+    current = resolve(current, segment)
+    try {
+      const stat = await lstat(current)
+      if (stat.isSymbolicLink()) {
+        return relative(projectRoot, current)
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
+      throw error
+    }
+  }
+  return null
 }
 
 async function existingFilesMatch(targetDir: string, files: GeneratedFile[]): Promise<boolean> {
@@ -703,6 +753,23 @@ async function conflictingExistingFile(targetDir: string, files: GeneratedFile[]
     try {
       const text = await readFile(filePath, "utf8")
       if (hash(text) !== file.sha256) return file.relative_path
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
+      throw error
+    }
+  }
+  return null
+}
+
+async function staleGeneratedFile(targetDir: string, files: GeneratedFile[]): Promise<string | null> {
+  const requested = new Set(files.map((file) => file.relative_path))
+  for (const relativePath of GENERATED_FILE_PATHS) {
+    if (requested.has(relativePath)) continue
+    const filePath = resolve(targetDir, relativePath)
+    ensureChildPath(targetDir, filePath)
+    try {
+      await lstat(filePath)
+      return relativePath
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
       throw error

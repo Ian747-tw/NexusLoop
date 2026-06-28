@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
@@ -17171,6 +17171,51 @@ describe("OpenCode session instruction packs", () => {
     expect(manifest.pack_id).toBe(withManifest.pack_id)
     const packEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")
     expect(packEvents.map((event) => event.pack_id)).toEqual([withoutManifest.pack_id, withManifest.pack_id])
+    await server.shutdown()
+  })
+
+  test("optional generated files from a prior pack block narrower rewrites", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "stale optional instruction pack" }) as { session_id: string }
+
+    const defaultPack = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+    }) as { pack_id: string; status: string }
+    expect(defaultPack.status).toBe("written")
+
+    const narrowerPack = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      includeManifest: false,
+    }) as { status: string; error?: string }
+    expect(narrowerPack.status).toBe("blocked")
+    expect(narrowerPack.error).toContain("existing generated instruction-pack file is not part of requested pack: MANIFEST.json")
+
+    const packEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")
+    expect(packEvents.map((event) => event.pack_id)).toEqual([defaultPack.pack_id])
+    await server.shutdown()
+  })
+
+  test("symlinked session instruction-pack target directories are rejected before writes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "symlink instruction pack" }) as { session_id: string }
+    const externalTarget = await mkdtemp(join(tmpdir(), "nxl-pack-target-"))
+    await mkdir(join(dir, ".nxl", "opencode", "sessions"), { recursive: true })
+    await symlink(externalTarget, join(dir, ".nxl", "opencode", "sessions", session.session_id), "dir")
+
+    const result = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+    }) as { status: string; error?: string }
+    expect(result.status).toBe("blocked")
+    expect(result.error).toContain("session instruction-pack target path contains a symlink")
+    expect(existsSync(join(externalTarget, "TASK.md"))).toBe(false)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")).toHaveLength(0)
+    await rm(externalTarget, { recursive: true, force: true })
     await server.shutdown()
   })
 
