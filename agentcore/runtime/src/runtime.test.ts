@@ -17092,6 +17092,7 @@ describe("OpenCode session instruction packs", () => {
     }
     const manifest = JSON.parse(await readFile(join(targetDir, "MANIFEST.json"), "utf8"))
     expect(manifest).toMatchObject({
+      pack_id: result.pack_id,
       session_id: session.session_id,
       packet_id: expect.stringMatching(/^context_packet_/),
       launch_ready: false,
@@ -17132,6 +17133,10 @@ describe("OpenCode session instruction packs", () => {
       status: "blocked",
       blockers: expect.arrayContaining(["session_id contains unsafe path characters"]),
     })
+    await expect(server.command("runtime.write_opencode_session_instruction_pack", { sessionId: "../escape", dryRun: true })).resolves.toMatchObject({
+      status: "blocked",
+      error: "session_id contains unsafe path characters",
+    })
     await mkdir(join(dir, ".nxl", "opencode", "sessions", session.session_id), { recursive: true })
     await writeFile(join(dir, ".nxl", "opencode", "sessions", session.session_id, "TASK.md"), "different\n")
     const result = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id }) as { status: string; error?: string }
@@ -17149,7 +17154,7 @@ describe("OpenCode session instruction packs", () => {
     const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
 
     await expect(client.command("runtime.preview_opencode_session_instruction_pack", { sessionId: "missing" })).resolves.toMatchObject({ can_write: false })
-    await expect(client.command("runtime.write_opencode_session_instruction_pack", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "dry_run" })
+    await expect(client.command("runtime.write_opencode_session_instruction_pack", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
     await expect(client.command("runtime.list_opencode_session_instruction_packs")).resolves.toEqual([])
     await expect(client.command("runtime.get_opencode_session_instruction_pack", { packId: "missing" })).resolves.toBeNull()
     await expect(client.command("runtime.write_opencode_session_instruction_pack", { sessionId: "missing" })).rejects.toThrow("runtime must be started before proposal writes")

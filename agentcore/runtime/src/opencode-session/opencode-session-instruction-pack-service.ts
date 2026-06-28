@@ -59,6 +59,7 @@ export class OpenCodeSessionInstructionPackService {
     const writtenAt = this.now().toISOString()
     const writtenBy = bound(input.written_by ?? "operator")
     const packId = packIdFor(built.preview.pack_hash)
+    if (!built.preview.can_write) return blockedResult(built.preview, writtenAt, writtenBy)
     if (input.dry_run === true) {
       return redactValue({
         pack_id: packId,
@@ -76,7 +77,6 @@ export class OpenCodeSessionInstructionPackService {
         recommended_commands: built.preview.recommended_commands,
       })
     }
-    if (!built.preview.can_write) return blockedResult(built.preview, writtenAt, writtenBy)
 
     return this.serializeWrite(async () => {
       const rebuilt = await this.build(input)
@@ -215,7 +215,7 @@ export class OpenCodeSessionInstructionPackService {
     const packHash = hash(stableJson({
       session_id: sessionId,
       packet_hash: packet?.packet_hash,
-      files: files.map((file) => [file.relative_path, file.sha256]),
+      files: files.filter((file) => file.file_kind !== "manifest").map((file) => [file.relative_path, file.sha256]),
     }))
     const status = blockers.length > 0 ? "blocked" : "ready"
     const previewResult: OpenCodeSessionInstructionPackPreview = {

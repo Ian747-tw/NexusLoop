@@ -2145,23 +2145,6 @@ export class FakeRuntimeClient implements RuntimeClient {
     const previewResult = this.previewOpenCodeSessionInstructionPack(payload)
     const packId = `fake-opencode-instruction-pack-${previewResult.pack_hash.slice(0, 12)}`
     const writtenBy = redactText(String(payload.writtenBy ?? payload.written_by ?? "operator"))
-    if (payload.dryRun === true || payload.dry_run === true) {
-      return {
-        pack_id: packId,
-        status: "dry_run",
-        session_id: previewResult.session_id,
-        packet_id: previewResult.packet_id,
-        packet_hash: previewResult.packet_hash,
-        budget_id: previewResult.budget_id,
-        target_dir: previewResult.target_dir,
-        files: previewResult.files.map((file) => ({ ...file, would_write: false })),
-        total_size_bytes: previewResult.total_size_bytes,
-        written_at: new Date(0).toISOString(),
-        written_by: writtenBy,
-        pack_hash: previewResult.pack_hash,
-        recommended_commands: previewResult.recommended_commands,
-      }
-    }
     if (!previewResult.can_write) {
       return {
         pack_id: packId,
@@ -2176,6 +2159,23 @@ export class FakeRuntimeClient implements RuntimeClient {
         written_at: new Date(0).toISOString(),
         written_by: writtenBy,
         error: previewResult.blockers[0] ?? "instruction pack write is blocked",
+        pack_hash: previewResult.pack_hash,
+        recommended_commands: previewResult.recommended_commands,
+      }
+    }
+    if (payload.dryRun === true || payload.dry_run === true) {
+      return {
+        pack_id: packId,
+        status: "dry_run",
+        session_id: previewResult.session_id,
+        packet_id: previewResult.packet_id,
+        packet_hash: previewResult.packet_hash,
+        budget_id: previewResult.budget_id,
+        target_dir: previewResult.target_dir,
+        files: previewResult.files.map((file) => ({ ...file, would_write: false })),
+        total_size_bytes: previewResult.total_size_bytes,
+        written_at: new Date(0).toISOString(),
+        written_by: writtenBy,
         pack_hash: previewResult.pack_hash,
         recommended_commands: previewResult.recommended_commands,
       }

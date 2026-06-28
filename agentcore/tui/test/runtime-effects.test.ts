@@ -5067,6 +5067,9 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-preview", args: [] })
     expect(state.opencodeSessionInstructionPacks?.commandError).toContain("requires session")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-dry-run", args: ["session=missing-session-does-not-exist-999999"] })
+    expect(state.opencodeSessionInstructionPacks?.latestResult?.status).toBe("blocked")
+    expect(state.opencodeSessionInstructionPacks?.commandError).toContain("planned OpenCode session was not found")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=instruction", "pack", "test", "token=abc123", "max_context_bytes=4096"] })
     const sessionId = state.opencodeSessions?.latestPlan?.session_id
