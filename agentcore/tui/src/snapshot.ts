@@ -84,6 +84,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeHandoffReadinessLines(state))
   out.push(...opencodeResultReviewLines(state))
   out.push(...opencodeSessionLines(state))
+  out.push(...contextBudgetLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
   out.push(...executorReviewProposalCreateLines(state))
@@ -625,6 +626,59 @@ function opencodeSessionLines(state: UiState): string[] {
   if (sessions.commandError) out.push(`  command_error=${redactText(sessions.commandError)}`)
   out.push("  note=session planning does not launch OpenCode or mutate missions")
   out.push("  note=session planning does not launch OpenCode, call providers, create checkpoints, or mutate missions")
+  return out
+}
+
+function contextBudgetLines(state: UiState): string[] {
+  const budgets = state.contextBudgets
+  const out = ["Context budget registry"]
+  if (!budgets) {
+    out.push("  capabilities=0")
+    out.push("  preview=none")
+    out.push("  note=budget preview does not compile context, call providers, launch OpenCode, or query research.db")
+    return out
+  }
+  if (budgets.summary) {
+    const summary = budgets.summary
+    out.push(`  summary total=${summary.total_capabilities} known=${summary.known_context_count} unknown=${summary.unknown_context_count} local=${summary.local_model_count} cloud=${summary.cloud_model_count} long_context=${summary.long_context_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  out.push(`  capabilities=${budgets.capabilities.length}`)
+  if (budgets.capabilities.length > 0) {
+    out.push("  model_capabilities")
+    out.push(...budgets.capabilities.slice(0, 10).map((capability) => `    - ${capability.capability_id} ${capability.provider_kind}/${capability.model_id} roles=${capability.role_support.join(",") || "none"} context_tokens=${capability.max_context_tokens ?? "unknown"} context_bytes=${capability.max_context_bytes ?? "unknown"}`))
+  }
+  if (budgets.selectedCapability) {
+    const capability = budgets.selectedCapability
+    out.push(`  selected=${capability.capability_id} provider=${capability.provider_kind} model=${capability.model_id} source=${capability.source}`)
+    out.push(`  selected_support tools=${capability.supports_tools} json_schema=${capability.supports_json_schema} mcp=${capability.supports_mcp} local=${capability.supports_local_execution}`)
+    if (capability.warnings.length > 0) out.push(`  selected_warnings=${capability.warnings.slice(0, 3).map((warning) => preview(redactText(warning))).join(" | ")}`)
+  }
+  if (budgets.preview) {
+    const item = budgets.preview
+    out.push(`  preview=${item.preview_id} purpose=${item.purpose} role=${item.role}`)
+    out.push(`  provider=${item.budget.provider_kind} model=${item.budget.model_id} session=${item.session_id ?? "none"} session_max_context_bytes=${item.session_max_context_bytes ?? "none"}`)
+    out.push(`  max_context_tokens=${item.budget.max_context_tokens ?? "unknown"} max_context_bytes=${item.budget.max_context_bytes ?? "unknown"} max_output_tokens=${item.budget.max_output_tokens ?? "unknown"}`)
+    out.push(`  safety_margin_tokens=${item.budget.safety_margin_tokens ?? "unknown"} safety_margin_bytes=${item.budget.safety_margin_bytes ?? "unknown"}`)
+    out.push("  allocations")
+    out.push(...item.budget.allocations.slice(0, 14).map((allocation) => `    - ${allocation.section} priority=${allocation.priority} policy=${allocation.inclusion_policy} tokens=${allocation.max_tokens ?? "none"} bytes=${allocation.max_bytes ?? "none"}`))
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (budgets.commandError) out.push(`  command_error=${redactText(budgets.commandError)}`)
+  out.push("  note=budget preview does not compile context, call providers, launch OpenCode, query research.db, or mutate missions")
   return out
 }
 

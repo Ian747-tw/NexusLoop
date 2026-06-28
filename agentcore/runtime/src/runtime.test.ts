@@ -16634,6 +16634,159 @@ describe("RuntimeServerClient", () => {
   })
 })
 
+describe("Context budget registry", () => {
+  test("default capability registry exposes validation local cloud and fallback profiles", async () => {
+    const dir = await tempProject()
+    const server = new RuntimeServer({ projectDir: dir, researchProjectionMode: "disabled" })
+
+    const capabilities = await server.command("runtime.list_model_capabilities", { limit: 20 }) as Array<Record<string, unknown>>
+    expect(capabilities.map((item) => item.capability_id)).toEqual(expect.arrayContaining([
+      "default-minimax-validation",
+      "default-opencode-executor-unknown",
+      "default-local-small",
+      "default-local-medium",
+      "default-cloud-long-context",
+      "fallback-e771e26e1ef56f0a",
+    ]))
+    expect(capabilities.find((item) => item.capability_id === "default-minimax-validation")).toMatchObject({
+      provider_kind: "minimax",
+      source: "default_registry",
+      warnings: expect.arrayContaining(["MiniMax is a validation provider profile, not a product-wide model assumption"]),
+    })
+    await expect(server.command("runtime.get_model_capability", { capabilityId: "default-local-small" })).resolves.toMatchObject({
+      provider_kind: "local",
+      model_id: "local-small",
+      supports_local_execution: true,
+    })
+    await expect(server.command("runtime.get_model_capability", { providerKind: "local", modelId: "local-medium" })).resolves.toMatchObject({
+      capability_id: "default-local-medium",
+      max_context_tokens: 16384,
+    })
+    await expect(server.command("runtime.get_model_capability", { providerKind: "vendor-secret=abc123", modelId: "model-secret=abc123" })).resolves.toMatchObject({
+      source: "unknown",
+      warnings: expect.arrayContaining(["unknown context window; using conservative budget"]),
+    })
+    expect(JSON.stringify(await server.command("runtime.get_model_capability", { providerKind: "vendor-secret=abc123", modelId: "model-secret=abc123" }))).not.toContain("abc123")
+  })
+
+  test("budget previews enforce purpose policies and conservative unknown context defaults", async () => {
+    const dir = await tempProject()
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const beforeEvents = await server.eventStore.readAll()
+
+    const commander = await server.command("runtime.preview_context_budget", {
+      purpose: "commander_research_decision",
+      providerKind: "unknown",
+      modelId: "unknown-model",
+    }) as { budget: { allocations: Array<{ section: string; inclusion_policy: string; priority: string }>; max_context_bytes?: number; safety_margin_bytes?: number; max_output_tokens?: number }; warnings: string[]; blockers: string[] }
+    expect(commander.blockers).toEqual([])
+    expect(commander.warnings).toContain("unknown context window; using conservative budget")
+    expect(commander.budget.max_context_bytes).toBe(12000)
+    expect(commander.budget.safety_margin_bytes).toBeGreaterThan(0)
+    expect(commander.budget.max_output_tokens).toBeGreaterThan(0)
+    expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "raw_logs", inclusion_policy: "excluded_by_default", priority: "excluded" }))
+    expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "research_memory", inclusion_policy: "if_relevant" }))
+    expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "tool_or_mcp_schema", inclusion_policy: "excluded_by_default" }))
+
+    const executor = await server.command("runtime.preview_context_budget", {
+      purpose: "opencode_executor_session",
+      providerKind: "opencode",
+      modelId: "opencode-default",
+      maxContextBytes: 4096,
+    }) as { budget: { allocations: Array<{ section: string; inclusion_policy: string; priority: string }>; max_context_bytes?: number }; warnings: string[] }
+    expect(executor.budget.max_context_bytes).toBe(4096)
+    expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "commander_guidance", priority: "high" }))
+    expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "executor_progress", priority: "high" }))
+    expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "research_memory", inclusion_policy: "pointer_only" }))
+    expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "raw_logs", inclusion_policy: "excluded_by_default" }))
+
+    const wake = await server.command("runtime.preview_context_budget", { purpose: "wake_supervisor" }) as { budget: { allocations: Array<{ section: string; priority: string }> } }
+    expect(wake.budget.allocations).toContainEqual(expect.objectContaining({ section: "active_sessions", priority: "high" }))
+    expect(wake.budget.allocations).toContainEqual(expect.objectContaining({ section: "executor_progress", priority: "high" }))
+    expect(wake.budget.allocations).toContainEqual(expect.objectContaining({ section: "human_interventions", priority: "high" }))
+    expect(wake.budget.allocations).toContainEqual(expect.objectContaining({ section: "recent_deltas", priority: "high" }))
+
+    const blocked = await server.command("runtime.preview_context_budget", {}) as { blockers: string[] }
+    expect(blocked.blockers).toEqual(["context budget preview requires a supported purpose"])
+    expect(await server.eventStore.readAll()).toEqual(beforeEvents)
+    expect(adapter.startCalls).toBe(0)
+  })
+
+  test("planned session max_context_bytes constrains executor budget without appending events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", {
+      objective: "context budget session cap",
+      maxContextBytes: 4096,
+    }) as { session_id: string }
+    const beforeEvents = await server.eventStore.readAll()
+
+    const previewResult = await server.command("runtime.preview_context_budget", {
+      purpose: "opencode_executor_session",
+      providerKind: "unknown",
+      modelId: "cloud-long-context",
+      sessionId: session.session_id,
+    }) as { session_max_context_bytes?: number; budget: { max_context_bytes?: number; allocations: Array<{ section: string; inclusion_policy: string }> }; warnings: string[] }
+    expect(previewResult.session_max_context_bytes).toBe(4096)
+    expect(previewResult.budget.max_context_bytes).toBe(4096)
+    expect(previewResult.warnings).toContain("planned session max_context_bytes constrains executor budget")
+    expect(previewResult.budget.allocations).toContainEqual(expect.objectContaining({ section: "raw_logs", inclusion_policy: "excluded_by_default" }))
+
+    const missing = await server.command("runtime.preview_context_budget", {
+      purpose: "opencode_executor_session",
+      sessionId: "missing-session",
+    }) as { blockers: string[] }
+    expect(missing.blockers).toContain("session_id was not found")
+    expect(await server.eventStore.readAll()).toEqual(beforeEvents)
+    expect(adapter.startCalls).toBe(1)
+    await server.shutdown()
+  })
+
+  test("RuntimeServerClient no-start commands inspect budgets without starting runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.list_model_capabilities")).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ capability_id: "default-minimax-validation" }),
+    ]))
+    await expect(client.command("runtime.get_model_capability", { capabilityId: "default-local-small" })).resolves.toMatchObject({ provider_kind: "local" })
+    await expect(client.command("runtime.context_budget_summary")).resolves.toMatchObject({ total_capabilities: expect.any(Number) })
+    await expect(client.command("runtime.preview_context_budget", { purpose: "commander_research_decision" })).resolves.toMatchObject({ purpose: "commander_research_decision" })
+
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
+  test("authority registry includes context budget read-only commands", () => {
+    const commands = COMMAND_AUTHORITY_REGISTRY.filter((record) => record.slash_command.includes("budget") || record.slash_command.includes("model-capabil") || record.aliases.some((alias) => alias.includes("budget") || alias === "/models"))
+    expect(commands.map((record) => record.slash_command)).toEqual(expect.arrayContaining([
+      "/model-capabilities",
+      "/model-capability",
+      "/context-budget-summary",
+      "/context-budget-preview",
+    ]))
+    for (const record of commands) {
+      expect(record.risk).toBe("safe_read")
+      expect(record.mutates_events).toBe(false)
+      expect(record.creates_external_process).toBe(false)
+      expect(record.calls_provider).toBe(false)
+      expect(record.requires_active_runtime).toBe(false)
+      expect(record.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_context_budget_registry_tui.py")
+    }
+    const previewRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/context-budget-preview")
+    expect(previewRecord?.notes.join(" ")).toContain("does not compile context packets")
+    expect(previewRecord?.out_of_scope).toEqual(expect.arrayContaining(["provider calls", "OpenCode launch", "research.db retrieval"]))
+  })
+})
+
 describe("OpenCode session contract", () => {
   test("includes all supported mission tool names", () => {
     const contract = buildOpenCodeSessionContract({ projectDir: "/tmp/demo", objective: "demo objective" })

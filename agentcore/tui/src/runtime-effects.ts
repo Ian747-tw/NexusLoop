@@ -37,6 +37,11 @@ import type {
   OpenCodeSessionRecordSummary,
   OpenCodeSessionsState,
   OpenCodeSessionSummary,
+  ModelCapabilitySummary,
+  ContextBudgetPreviewSummary,
+  ContextBudgetProfileSummary,
+  ContextBudgetSummaryState,
+  ContextBudgetsState,
   CommanderExecutorReviewCommandSummary,
   CommanderExecutorReviewFindingSummary,
   CommanderExecutorReviewPreviewSummary,
@@ -364,11 +369,15 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-handoff-readiness-summary"; maxSmokeAgeMs?: number }
   | { type: "preview-opencode-result-review-packet"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; staleAfterMs?: number }
   | { type: "load-opencode-result-review-summary"; staleAfterMs?: number; limit?: number }
-  | { type: "preview-opencode-session-plan"; objective?: string; proposalId?: string; missionId?: string; reviewRequestId?: string; applyId?: string; title?: string }
-  | { type: "create-opencode-session-plan"; objective?: string; proposalId?: string; missionId?: string; reviewRequestId?: string; applyId?: string; title?: string; dryRun?: boolean }
+  | { type: "preview-opencode-session-plan"; objective?: string; proposalId?: string; missionId?: string; reviewRequestId?: string; applyId?: string; title?: string; maxContextBytes?: number }
+  | { type: "create-opencode-session-plan"; objective?: string; proposalId?: string; missionId?: string; reviewRequestId?: string; applyId?: string; title?: string; maxContextBytes?: number; dryRun?: boolean }
   | { type: "load-opencode-sessions"; limit?: number }
   | { type: "load-opencode-session"; sessionId: string }
   | { type: "load-opencode-session-summary" }
+  | { type: "load-model-capabilities"; providerKind?: string; role?: string; limit?: number }
+  | { type: "load-model-capability"; capabilityId?: string; providerKind?: string; modelId?: string }
+  | { type: "load-context-budget-summary" }
+  | { type: "preview-context-budget"; purpose?: string; role?: string; providerKind?: string; modelId?: string; sessionId?: string; maxContextTokens?: number; maxContextBytes?: number }
   | { type: "preview-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string }
   | { type: "execute-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; dryRun?: boolean }
   | { type: "load-commander-executor-reviews"; limit?: number }
@@ -1081,6 +1090,7 @@ export async function applyRuntimeUiEffect(
           reviewRequestId: effect.reviewRequestId,
           applyId: effect.applyId,
           title: effect.title,
+          maxContextBytes: effect.maxContextBytes,
         }))
       case "create-opencode-session-plan": {
         const next = applyOpenCodeSessionPlan(state, await runtime.command("runtime.create_opencode_session_plan", {
@@ -1090,6 +1100,7 @@ export async function applyRuntimeUiEffect(
           reviewRequestId: effect.reviewRequestId,
           applyId: effect.applyId,
           title: effect.title,
+          maxContextBytes: effect.maxContextBytes,
           dryRun: effect.dryRun === true,
           createdBy: "operator",
         }))
@@ -1101,6 +1112,22 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeSessionSelected(state, await runtime.command("runtime.get_opencode_session", { sessionId: effect.sessionId }), effect.sessionId)
       case "load-opencode-session-summary":
         return applyOpenCodeSessionSummary(state, await runtime.command("runtime.opencode_session_summary"))
+      case "load-model-capabilities":
+        return applyContextBudgetCapabilities(state, await runtime.command("runtime.list_model_capabilities", { providerKind: effect.providerKind, role: effect.role, limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "load-model-capability":
+        return applyContextBudgetSelectedCapability(state, await runtime.command("runtime.get_model_capability", { capabilityId: effect.capabilityId, providerKind: effect.providerKind, modelId: effect.modelId }))
+      case "load-context-budget-summary":
+        return applyContextBudgetSummary(state, await runtime.command("runtime.context_budget_summary"))
+      case "preview-context-budget":
+        return applyContextBudgetPreview(state, await runtime.command("runtime.preview_context_budget", {
+          purpose: effect.purpose,
+          role: effect.role,
+          providerKind: effect.providerKind,
+          modelId: effect.modelId,
+          sessionId: effect.sessionId,
+          maxContextTokens: effect.maxContextTokens,
+          maxContextBytes: effect.maxContextBytes,
+        }))
       case "preview-commander-executor-review":
         return applyCommanderExecutorReviewPreview(
           state,
@@ -1719,6 +1746,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeHandoffReadinessEffect(effect)) return recordOpenCodeHandoffReadinessCommandError(state, error)
     if (isOpenCodeResultReviewEffect(effect)) return recordOpenCodeResultReviewCommandError(state, error)
     if (isOpenCodeSessionEffect(effect)) return recordOpenCodeSessionCommandError(state, error)
+    if (isContextBudgetEffect(effect)) return recordContextBudgetCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
     if (isExecutorReviewProposalCreateEffect(effect)) return recordExecutorReviewProposalCreateCommandError(state, error)
@@ -2802,6 +2830,59 @@ function applyOpenCodeSessionSummary(state: UiState, value: unknown): UiState {
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "opencode session summary", detail: `planned=${summary.planned_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyContextBudgetCapabilities(state: UiState, value: unknown): UiState {
+  const capabilities = readModelCapabilities(value)
+  return {
+    ...state,
+    contextBudgets: {
+      ...contextBudgetsState(state),
+      capabilities,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "context budget capabilities", detail: `capabilities=${capabilities.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyContextBudgetSelectedCapability(state: UiState, value: unknown): UiState {
+  const selectedCapability = readModelCapability(value)
+  return {
+    ...state,
+    contextBudgets: {
+      ...contextBudgetsState(state),
+      selectedCapability,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "model capability selected", detail: `${selectedCapability.provider_kind}/${selectedCapability.model_id}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyContextBudgetSummary(state: UiState, value: unknown): UiState {
+  const summary = readContextBudgetSummary(value)
+  return {
+    ...state,
+    contextBudgets: {
+      ...contextBudgetsState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "context budget summary", detail: `capabilities=${summary.total_capabilities}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyContextBudgetPreview(state: UiState, value: unknown): UiState {
+  const budgetPreview = readContextBudgetPreview(value)
+  return {
+    ...state,
+    contextBudgets: {
+      ...contextBudgetsState(state),
+      preview: budgetPreview,
+      selectedCapability: budgetPreview.capability ?? contextBudgetsState(state).selectedCapability,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "context budget preview", detail: `purpose=${budgetPreview.purpose}`, status: budgetPreview.blockers.length ? "blocked" : "loaded" }].slice(-12),
   }
 }
 
@@ -4204,6 +4285,18 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-session", sessionId: requiredArg(args, 0, "sessionId") })
     case "opencode-session-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-session-summary" })
+    case "model-capabilities":
+    case "models":
+      return applyRuntimeUiEffect(commandState, runtime, contextCapabilityListEffect(args))
+    case "model-capability":
+      return applyRuntimeUiEffect(commandState, runtime, contextCapabilityGetEffect(args))
+    case "context-budget-summary":
+    case "model-budget":
+    case "context-budget":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-context-budget-summary" })
+    case "context-budget-preview":
+    case "budget-preview":
+      return applyRuntimeUiEffect(commandState, runtime, contextBudgetPreviewEffect(args))
     case "executor-review-preview":
     case "commander-executor-review-preview":
       return applyRuntimeUiEffect(commandState, runtime, commanderExecutorReviewEffect("preview-commander-executor-review", args))
@@ -5094,6 +5187,11 @@ function isOpenCodeSessionEffect(effect: RuntimeUiEffect): boolean {
   return opencodeSessionCommands.has(effect.command)
 }
 
+function isContextBudgetEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return contextBudgetEffectTypes.has(effect.type)
+  return contextBudgetCommands.has(effect.command)
+}
+
 function isCommanderExecutorReviewEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return commanderExecutorReviewEffectTypes.has(effect.type)
   return commanderExecutorReviewCommands.has(effect.command)
@@ -5340,6 +5438,24 @@ const opencodeSessionEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-opencode-sessions",
   "load-opencode-session",
   "load-opencode-session-summary",
+])
+
+const contextBudgetCommands = new Set([
+  "model-capabilities",
+  "models",
+  "model-capability",
+  "context-budget-summary",
+  "model-budget",
+  "context-budget",
+  "context-budget-preview",
+  "budget-preview",
+])
+
+const contextBudgetEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-model-capabilities",
+  "load-model-capability",
+  "load-context-budget-summary",
+  "preview-context-budget",
 ])
 
 const commanderExecutorReviewCommands = new Set([
@@ -6783,6 +6899,18 @@ function recordOpenCodeSessionCommandError(state: UiState, error: unknown): UiSt
   }
 }
 
+function recordContextBudgetCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    contextBudgets: {
+      ...contextBudgetsState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "context budget command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function recordCommanderExecutorReviewCommandError(state: UiState, error: unknown): UiState {
   const message = redactText(error instanceof Error ? error.message : String(error))
   return {
@@ -7748,6 +7876,122 @@ function readOpenCodeSessionCommands(value: unknown): OpenCodeSessionPreviewSumm
     requires_active_runtime: command.requires_active_runtime === true,
     notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
   }))
+}
+
+function readModelCapabilities(value: unknown): ModelCapabilitySummary[] {
+  if (!Array.isArray(value)) throw new Error("runtime.list_model_capabilities returned invalid capabilities")
+  return value.filter(isRecord).slice(0, HANDOFF_LIMIT).map(readModelCapability)
+}
+
+function readModelCapability(value: unknown): ModelCapabilitySummary {
+  if (!isRecord(value) || typeof value.capability_id !== "string") throw new Error("runtime.get_model_capability returned invalid capability")
+  return {
+    capability_id: redactText(value.capability_id),
+    provider_kind: readString(value.provider_kind, "unknown"),
+    provider_id: typeof value.provider_id === "string" ? redactText(value.provider_id) : undefined,
+    model_id: readString(value.model_id, "unknown"),
+    display_name: preview(readString(value.display_name, "")),
+    role_support: readStringList(value.role_support, 8),
+    max_context_tokens: typeof value.max_context_tokens === "number" ? readNumber(value.max_context_tokens, 0) : undefined,
+    max_output_tokens: typeof value.max_output_tokens === "number" ? readNumber(value.max_output_tokens, 0) : undefined,
+    max_context_bytes: typeof value.max_context_bytes === "number" ? readNumber(value.max_context_bytes, 0) : undefined,
+    supports_tools: readTriState(value.supports_tools),
+    supports_json_schema: readTriState(value.supports_json_schema),
+    supports_mcp: readTriState(value.supports_mcp),
+    supports_long_context: readTriState(value.supports_long_context),
+    supports_streaming: readTriState(value.supports_streaming),
+    supports_local_execution: readTriState(value.supports_local_execution),
+    default_temperature: typeof value.default_temperature === "number" ? value.default_temperature : undefined,
+    safety_margin_ratio: typeof value.safety_margin_ratio === "number" ? value.safety_margin_ratio : 0.2,
+    source: readString(value.source, "unknown"),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    created_at: typeof value.created_at === "string" ? readString(value.created_at, "") : undefined,
+  }
+}
+
+function readContextBudgetSummary(value: unknown): ContextBudgetSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.context_budget_summary returned invalid summary")
+  return {
+    total_capabilities: readNumber(value.total_capabilities, 0),
+    known_context_count: readNumber(value.known_context_count, 0),
+    unknown_context_count: readNumber(value.unknown_context_count, 0),
+    local_model_count: readNumber(value.local_model_count, 0),
+    cloud_model_count: readNumber(value.cloud_model_count, 0),
+    long_context_count: readNumber(value.long_context_count, 0),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readContextBudgetPreview(value: unknown): ContextBudgetPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_context_budget returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    purpose: readString(value.purpose, "unknown"),
+    role: readString(value.role, "unknown"),
+    capability: isRecord(value.capability) ? readModelCapability(value.capability) : undefined,
+    session_id: typeof value.session_id === "string" ? redactText(value.session_id) : undefined,
+    session_max_context_bytes: typeof value.session_max_context_bytes === "number" ? readNumber(value.session_max_context_bytes, 0) : undefined,
+    budget: readContextBudgetProfile(value.budget),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 10).map(preview),
+    recommended_commands: readContextBudgetCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
+function readContextBudgetProfile(value: unknown): ContextBudgetProfileSummary {
+  const record = isRecord(value) ? value : {}
+  return {
+    budget_id: readString(record.budget_id, ""),
+    purpose: readString(record.purpose, "unknown"),
+    provider_kind: readString(record.provider_kind, "unknown"),
+    model_id: readString(record.model_id, "unknown"),
+    session_id: typeof record.session_id === "string" ? redactText(record.session_id) : undefined,
+    max_context_tokens: typeof record.max_context_tokens === "number" ? readNumber(record.max_context_tokens, 0) : undefined,
+    max_context_bytes: typeof record.max_context_bytes === "number" ? readNumber(record.max_context_bytes, 0) : undefined,
+    max_output_tokens: typeof record.max_output_tokens === "number" ? readNumber(record.max_output_tokens, 0) : undefined,
+    safety_margin_tokens: typeof record.safety_margin_tokens === "number" ? readNumber(record.safety_margin_tokens, 0) : undefined,
+    safety_margin_bytes: typeof record.safety_margin_bytes === "number" ? readNumber(record.safety_margin_bytes, 0) : undefined,
+    allocations: readContextBudgetAllocations(record.allocations),
+    warnings: readStringList(record.warnings, 10).map(preview),
+    generated_at: readString(record.generated_at, ""),
+  }
+}
+
+function readContextBudgetAllocations(value: unknown): ContextBudgetPreviewSummary["budget"]["allocations"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 18).map((allocation) => ({
+    section: readString(allocation.section, "unknown"),
+    max_tokens: typeof allocation.max_tokens === "number" ? readNumber(allocation.max_tokens, 0) : undefined,
+    max_bytes: typeof allocation.max_bytes === "number" ? readNumber(allocation.max_bytes, 0) : undefined,
+    priority: readPriority(allocation.priority),
+    inclusion_policy: readInclusionPolicy(allocation.inclusion_policy),
+    notes: typeof allocation.notes === "string" ? preview(readString(allocation.notes, "")) : undefined,
+  }))
+}
+
+function readContextBudgetCommands(value: unknown): ContextBudgetPreviewSummary["recommended_commands"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readTriState(value: unknown): boolean | "unknown" {
+  return typeof value === "boolean" ? value : "unknown"
+}
+
+function readPriority(value: unknown): "required" | "high" | "medium" | "low" | "excluded" {
+  return value === "required" || value === "high" || value === "medium" || value === "low" || value === "excluded" ? value : "medium"
+}
+
+function readInclusionPolicy(value: unknown): "always" | "if_relevant" | "pointer_only" | "excluded_by_default" {
+  return value === "always" || value === "if_relevant" || value === "pointer_only" || value === "excluded_by_default" ? value : "if_relevant"
 }
 
 function readCommanderExecutorReviewPreview(value: unknown): CommanderExecutorReviewPreviewSummary {
@@ -11188,6 +11432,10 @@ function opencodeSessionsState(state: UiState): OpenCodeSessionsState {
   return state.opencodeSessions ?? { preview: null, latestPlan: null, records: [], selected: null, summary: null }
 }
 
+function contextBudgetsState(state: UiState): ContextBudgetsState {
+  return state.contextBudgets ?? { capabilities: [], selectedCapability: null, preview: null, summary: null }
+}
+
 function commanderExecutorReviewState(state: UiState): CommanderExecutorReviewState {
   return state.commanderExecutorReview ?? { preview: null, latestResult: null, records: [], selected: null }
 }
@@ -11987,6 +12235,7 @@ function opencodeSessionEffect(type: "preview-opencode-session-plan" | "create-o
     else if (key === "mission") effect.missionId = value
     else if (key === "review") effect.reviewRequestId = value
     else if (key === "apply") effect.applyId = value
+    else if (key === "max_context_bytes") effect.maxContextBytes = readPositiveInteger(value, "max_context_bytes", 48_000)
     else throw new Error("OpenCode session arg is unsupported")
   }
   if (requireSource && !effect.objective && !effect.proposalId && !effect.missionId && !effect.applyId) {
@@ -11999,7 +12248,56 @@ function looksLikeKeyValueArg(value: string): boolean {
   const separator = value.indexOf("=")
   if (separator <= 0) return false
   const key = value.slice(0, separator).trim()
-  return ["objective", "title", "proposal", "mission", "review", "apply"].includes(key)
+  return ["objective", "title", "proposal", "mission", "review", "apply", "max_context_bytes"].includes(key)
+}
+
+function contextCapabilityListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-model-capabilities" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-model-capabilities" }> = { type: "load-model-capabilities", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("model capabilities args must use provider=<kind>, role=<role>, or limit=<n>")
+    if (key === "provider") effect.providerKind = value
+    else if (key === "role") effect.role = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("model capabilities arg is unsupported")
+  }
+  return effect
+}
+
+function contextCapabilityGetEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-model-capability" }> {
+  if (args.length === 1 && !args[0]!.includes("=")) return { type: "load-model-capability", capabilityId: args[0] }
+  const effect: Extract<RuntimeUiEffect, { type: "load-model-capability" }> = { type: "load-model-capability" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("model capability args must use capability=<id> or provider=<kind> model=<id>")
+    if (key === "capability") effect.capabilityId = value
+    else if (key === "provider") effect.providerKind = value
+    else if (key === "model") effect.modelId = value
+    else throw new Error("model capability arg is unsupported")
+  }
+  if (!effect.capabilityId && (!effect.providerKind || !effect.modelId)) throw new Error("model capability requires capability=<id> or provider=<kind> model=<id>")
+  return effect
+}
+
+function contextBudgetPreviewEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-context-budget" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-context-budget" }> = { type: "preview-context-budget" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("context budget preview args must use purpose=<purpose>, provider=<kind>, model=<id>, session=<id>, max_context_bytes=<n>, or max_context_tokens=<n>")
+    if (key === "purpose") effect.purpose = value
+    else if (key === "role") effect.role = value
+    else if (key === "provider") effect.providerKind = value
+    else if (key === "model") effect.modelId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "max_context_bytes") effect.maxContextBytes = readPositiveInteger(value, "max_context_bytes", 512_000)
+    else if (key === "max_context_tokens") effect.maxContextTokens = readPositiveInteger(value, "max_context_tokens", 128_000)
+    else throw new Error("context budget preview arg is unsupported")
+  }
+  if (!effect.purpose) throw new Error("context budget preview requires purpose=<purpose>")
+  return effect
 }
 
 function checkpointEffect(type: "preview-runtime-checkpoint" | "create-runtime-checkpoint", args: string[]): Extract<RuntimeUiEffect, { type: "preview-runtime-checkpoint" | "create-runtime-checkpoint" }> {

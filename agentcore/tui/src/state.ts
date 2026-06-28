@@ -1270,6 +1270,95 @@ export type OpenCodeSessionsState = {
   commandError?: string
 }
 
+export type ModelCapabilitySummary = {
+  capability_id: string
+  provider_kind: string
+  provider_id?: string
+  model_id: string
+  display_name: string
+  role_support: string[]
+  max_context_tokens?: number
+  max_output_tokens?: number
+  max_context_bytes?: number
+  supports_tools: boolean | "unknown"
+  supports_json_schema: boolean | "unknown"
+  supports_mcp: boolean | "unknown"
+  supports_long_context: boolean | "unknown"
+  supports_streaming: boolean | "unknown"
+  supports_local_execution: boolean | "unknown"
+  default_temperature?: number
+  safety_margin_ratio: number
+  source: string
+  warnings: string[]
+  created_at?: string
+}
+
+export type ContextBudgetCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type ContextBudgetAllocationSummary = {
+  section: string
+  max_tokens?: number
+  max_bytes?: number
+  priority: "required" | "high" | "medium" | "low" | "excluded"
+  inclusion_policy: "always" | "if_relevant" | "pointer_only" | "excluded_by_default"
+  notes?: string
+}
+
+export type ContextBudgetProfileSummary = {
+  budget_id: string
+  purpose: string
+  provider_kind: string
+  model_id: string
+  session_id?: string
+  max_context_tokens?: number
+  max_context_bytes?: number
+  max_output_tokens?: number
+  safety_margin_tokens?: number
+  safety_margin_bytes?: number
+  allocations: ContextBudgetAllocationSummary[]
+  warnings: string[]
+  generated_at: string
+}
+
+export type ContextBudgetPreviewSummary = {
+  preview_id: string
+  purpose: string
+  role: string
+  capability?: ModelCapabilitySummary
+  session_id?: string
+  session_max_context_bytes?: number
+  budget: ContextBudgetProfileSummary
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: ContextBudgetCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+}
+
+export type ContextBudgetSummaryState = {
+  total_capabilities: number
+  known_context_count: number
+  unknown_context_count: number
+  local_model_count: number
+  cloud_model_count: number
+  long_context_count: number
+  generated_at: string
+}
+
+export type ContextBudgetsState = {
+  capabilities: ModelCapabilitySummary[]
+  selectedCapability?: ModelCapabilitySummary | null
+  preview?: ContextBudgetPreviewSummary | null
+  summary?: ContextBudgetSummaryState | null
+  commandError?: string
+}
+
 export type CommanderExecutorReviewCommandSummary = {
   label: string
   command: string
@@ -3548,6 +3637,7 @@ export type UiState = {
   opencodeHandoffReadiness?: OpenCodeHandoffReadinessState
   opencodeResultReview?: OpenCodeResultReviewState
   opencodeSessions?: OpenCodeSessionsState
+  contextBudgets?: ContextBudgetsState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
   executorReviewProposalCreate?: ExecutorReviewProposalCreateState

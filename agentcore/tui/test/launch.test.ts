@@ -152,6 +152,21 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "runtime.list_opencode_sessions") return []
     if (name === "runtime.get_opencode_session") return null
     if (name === "runtime.opencode_session_summary") return { total_sessions: 0, planned_count: 0, running_count: 0, paused_count: 0, blocked_count: 0, completed_count: 0, failed_count: 0, cancelled_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
+    if (name === "runtime.list_model_capabilities") return [{ capability_id: "capability-test", provider_kind: "local", model_id: "local-small", display_name: "Local small", role_support: ["commander"], max_context_tokens: 4096, max_context_bytes: 16384, supports_tools: "unknown", supports_json_schema: "unknown", supports_mcp: false, supports_long_context: false, supports_streaming: "unknown", supports_local_execution: true, safety_margin_ratio: 0.25, source: "default_registry", warnings: [] }]
+    if (name === "runtime.get_model_capability") return { capability_id: "capability-test", provider_kind: "local", model_id: "local-small", display_name: "Local small", role_support: ["commander"], max_context_tokens: 4096, max_context_bytes: 16384, supports_tools: "unknown", supports_json_schema: "unknown", supports_mcp: false, supports_long_context: false, supports_streaming: "unknown", supports_local_execution: true, safety_margin_ratio: 0.25, source: "default_registry", warnings: [] }
+    if (name === "runtime.context_budget_summary") return { total_capabilities: 1, known_context_count: 1, unknown_context_count: 0, local_model_count: 1, cloud_model_count: 0, long_context_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
+    if (name === "runtime.preview_context_budget") return {
+      preview_id: "budget-preview-test",
+      purpose: payload?.purpose ?? "unknown",
+      role: payload?.purpose === "opencode_executor_session" ? "executor" : "commander",
+      capability: { capability_id: "capability-test", provider_kind: "local", model_id: "local-small", display_name: "Local small", role_support: ["commander"], max_context_tokens: 4096, max_context_bytes: 16384, supports_tools: "unknown", supports_json_schema: "unknown", supports_mcp: false, supports_long_context: false, supports_streaming: "unknown", supports_local_execution: true, safety_margin_ratio: 0.25, source: "default_registry", warnings: [] },
+      budget: { budget_id: "budget-test", purpose: payload?.purpose ?? "unknown", provider_kind: "local", model_id: "local-small", max_context_tokens: 4096, max_context_bytes: payload?.maxContextBytes ?? 16384, max_output_tokens: 1024, safety_margin_tokens: 1024, safety_margin_bytes: 4096, allocations: [{ section: "raw_logs", priority: "excluded", inclusion_policy: "excluded_by_default" }, { section: "reserved_output", priority: "required", inclusion_policy: "always" }, { section: "safety_margin", priority: "required", inclusion_policy: "always" }], warnings: [], generated_at: "2026-06-20T00:00:00.000Z" },
+      blockers: [],
+      warnings: [],
+      recommended_commands: [],
+      generated_at: "2026-06-20T00:00:00.000Z",
+      redacted_summary_preview: "budget preview",
+    }
     if (name === "runtime.command_authority_get") {
       return {
         authority_id: "authority_opencode_smoke",
@@ -909,6 +924,37 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.create_opencode_session_plan")
     expect(runtime.commandNames).toContain("runtime.list_opencode_sessions")
     expect(runtime.commandNames).toContain("runtime.opencode_session_summary")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless context budget inspection scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/model-capabilities" },
+      { type: "submit" },
+      { type: "insert", text: "/context-budget-summary" },
+      { type: "submit" },
+      { type: "insert", text: "/context-budget-preview purpose=commander_research_decision" },
+      { type: "submit" },
+      { type: "insert", text: "/budget-preview purpose=opencode_executor_session max_context_bytes=4096" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-context-budget-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Context budget registry")
+    expect(runtime.commandNames).toContain("runtime.list_model_capabilities")
+    expect(runtime.commandNames).toContain("runtime.context_budget_summary")
+    expect(runtime.commandNames).toContain("runtime.preview_context_budget")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })
