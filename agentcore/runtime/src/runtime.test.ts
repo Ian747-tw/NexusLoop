@@ -107,6 +107,12 @@ async function readJsonlEvents(dir: string): Promise<Record<string, unknown>[]> 
   }
 }
 
+function sumDefined(values: Array<number | undefined>): number {
+  let sum = 0
+  for (const value of values) sum += value ?? 0
+  return sum
+}
+
 function testStableStringify(value: unknown): string {
   return JSON.stringify(testSortValue(value))
 }
@@ -16713,17 +16719,28 @@ describe("Context budget registry", () => {
       providerKind: "local",
       modelId: "local-small",
       maxContextTokens: 128000,
-    }) as { budget: { max_context_tokens?: number }; warnings: string[] }
+    }) as { budget: { max_context_tokens?: number; max_output_tokens?: number; safety_margin_tokens?: number; allocations: Array<{ max_tokens?: number }> }; warnings: string[] }
     expect(tokenCapped.budget.max_context_tokens).toBe(4096)
     expect(tokenCapped.warnings).toContain("model capability is lower than requested max_context_tokens; model budget wins")
+    expect(sumDefined(tokenCapped.budget.allocations.map((item) => item.max_tokens))).toBeLessThanOrEqual(4096 - (tokenCapped.budget.max_output_tokens ?? 0) - (tokenCapped.budget.safety_margin_tokens ?? 0))
+
+    const defaultExecutor = await server.command("runtime.preview_context_budget", {
+      purpose: "opencode_executor_session",
+    }) as { capability?: { capability_id?: string; provider_kind?: string; model_id?: string }; budget: { provider_kind?: string; model_id?: string } }
+    expect(defaultExecutor.capability).toMatchObject({
+      capability_id: "default-opencode-executor-unknown",
+      provider_kind: "opencode",
+      model_id: "opencode-default",
+    })
 
     const executor = await server.command("runtime.preview_context_budget", {
       purpose: "opencode_executor_session",
       providerKind: "opencode",
       modelId: "opencode-default",
       maxContextBytes: 4096,
-    }) as { budget: { allocations: Array<{ section: string; inclusion_policy: string; priority: string }>; max_context_bytes?: number }; warnings: string[] }
+    }) as { budget: { allocations: Array<{ section: string; inclusion_policy: string; priority: string; max_bytes?: number }>; max_context_bytes?: number; safety_margin_bytes?: number }; warnings: string[] }
     expect(executor.budget.max_context_bytes).toBe(4096)
+    expect(sumDefined(executor.budget.allocations.map((item) => item.max_bytes))).toBeLessThanOrEqual(4096 - (executor.budget.safety_margin_bytes ?? 0))
     expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "commander_guidance", priority: "high" }))
     expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "executor_progress", priority: "high" }))
     expect(executor.budget.allocations).toContainEqual(expect.objectContaining({ section: "research_memory", inclusion_policy: "pointer_only" }))
