@@ -91,8 +91,14 @@ export class ContextBudgetService {
       }
     }
 
-    const maxOutputTokens = capability.max_output_tokens ?? Math.max(MIN_OUTPUT_TOKENS, Math.floor((maxContextTokens ?? CONSERVATIVE_CONTEXT_TOKENS) * 0.12))
-    const safetyMarginTokens = maxContextTokens ? Math.max(256, Math.floor(maxContextTokens * capability.safety_margin_ratio)) : undefined
+    const requestedOutputTokens = capability.max_output_tokens ?? Math.max(MIN_OUTPUT_TOKENS, Math.floor((maxContextTokens ?? CONSERVATIVE_CONTEXT_TOKENS) * 0.12))
+    const maxOutputTokens = maxContextTokens
+      ? Math.max(1, Math.min(requestedOutputTokens, Math.floor(maxContextTokens * 0.25)))
+      : requestedOutputTokens
+    if (maxOutputTokens < requestedOutputTokens) warnings.add("output reserve reduced to fit selected max_context_tokens")
+    const safetyMarginTokens = maxContextTokens
+      ? Math.min(Math.max(1, Math.floor(maxContextTokens * capability.safety_margin_ratio)), Math.max(0, maxContextTokens - maxOutputTokens))
+      : undefined
     const safetyMarginBytes = maxContextBytes ? Math.max(1_024, Math.floor(maxContextBytes * capability.safety_margin_ratio)) : undefined
     const budget: ContextBudgetProfile = {
       budget_id: `context_budget_${hash(stableJson({ purpose, role, providerKind: capability.provider_kind, model: capability.model_id, sessionId, maxContextTokens, maxContextBytes })).slice(0, 16)}`,

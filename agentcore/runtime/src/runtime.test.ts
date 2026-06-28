@@ -16724,6 +16724,17 @@ describe("Context budget registry", () => {
     expect(tokenCapped.warnings).toContain("model capability is lower than requested max_context_tokens; model budget wins")
     expect(sumDefined(tokenCapped.budget.allocations.map((item) => item.max_tokens))).toBeLessThanOrEqual(4096 - (tokenCapped.budget.max_output_tokens ?? 0) - (tokenCapped.budget.safety_margin_tokens ?? 0))
 
+    const smallTokenBudget = await server.command("runtime.preview_context_budget", {
+      purpose: "commander_research_decision",
+      providerKind: "local",
+      modelId: "local-medium",
+      maxContextTokens: 1000,
+    }) as { budget: { max_context_tokens?: number; max_output_tokens?: number; safety_margin_tokens?: number; allocations: Array<{ max_tokens?: number }> }; warnings: string[] }
+    expect(smallTokenBudget.budget.max_context_tokens).toBe(1000)
+    expect(smallTokenBudget.budget.max_output_tokens).toBeLessThanOrEqual(250)
+    expect(smallTokenBudget.warnings).toContain("output reserve reduced to fit selected max_context_tokens")
+    expect(sumDefined(smallTokenBudget.budget.allocations.map((item) => item.max_tokens)) + (smallTokenBudget.budget.max_output_tokens ?? 0) + (smallTokenBudget.budget.safety_margin_tokens ?? 0)).toBeLessThanOrEqual(1000)
+
     const defaultExecutor = await server.command("runtime.preview_context_budget", {
       purpose: "opencode_executor_session",
     }) as { capability?: { capability_id?: string; provider_kind?: string; model_id?: string }; budget: { provider_kind?: string; model_id?: string } }
