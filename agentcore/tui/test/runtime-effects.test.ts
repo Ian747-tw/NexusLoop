@@ -5060,4 +5060,86 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toEqual([])
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
+
+  test("opencode session instruction pack commands render bounded pack previews and writes", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-preview", args: [] })
+    expect(state.opencodeSessionInstructionPacks?.commandError).toContain("requires session")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=instruction", "pack", "test", "token=abc123", "max_context_bytes=4096"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-preview", args: [`session=${sessionId}`] })
+    expect(state.opencodeSessionInstructionPacks?.preview).toMatchObject({
+      status: "ready",
+      can_write: true,
+      session_id: sessionId,
+      target_dir: `.nxl/opencode/sessions/${sessionId}`,
+    })
+    expect(state.opencodeSessionInstructionPacks?.preview?.files.map((file) => file.relative_path)).toEqual(expect.arrayContaining([
+      "TASK.md",
+      "CONTEXT.md",
+      "GUIDANCE.md",
+      "SESSION_MEMORY.md",
+      "POLICY.md",
+      "MANIFEST.json",
+      "opencode-session-config.json",
+    ]))
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode session instruction packs")
+    expect(snapshot).toContain("TASK.md")
+    expect(snapshot).toContain("CONTEXT.md")
+    expect(snapshot).toContain("GUIDANCE.md")
+    expect(snapshot).toContain("SESSION_MEMORY.md")
+    expect(snapshot).toContain("POLICY.md")
+    expect(snapshot).toContain("MANIFEST.json")
+    expect(snapshot).toContain("note=instruction-pack writing does not launch OpenCode")
+    expect(snapshot).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-dry-run", args: [`session=${sessionId}`] })
+    expect(state.opencodeSessionInstructionPacks?.latestResult).toMatchObject({ status: "dry_run", session_id: sessionId })
+    expect(state.opencodeSessionInstructionPacks?.latestResult?.files.every((file) => file.would_write === false)).toBe(true)
+    expect(state.opencodeSessionInstructionPacks?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    const packId = state.opencodeSessionInstructionPacks?.latestResult?.pack_id
+    expect(packId).toBeTruthy()
+    expect(state.opencodeSessionInstructionPacks?.latestResult).toMatchObject({ status: "written", session_id: sessionId })
+    expect(state.opencodeSessionInstructionPacks?.records).toHaveLength(1)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    expect(state.opencodeSessionInstructionPacks?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-packs", args: [] })
+    expect(state.opencodeSessionInstructionPacks?.records.map((record) => record.pack_id)).toContain(packId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-show", args: [packId!] })
+    expect(state.opencodeSessionInstructionPacks?.selected?.pack_id).toBe(packId)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-preview", args: ["session=../escape"] })
+    expect(state.opencodeSessionInstructionPacks?.preview?.status).toBe("blocked")
+    expect(state.opencodeSessionInstructionPacks?.preview?.blockers).toContain("session_id contains unsafe path characters")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/opencode-session-instruction-pack-write session=missing-session-does-not-exist-999999"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged", args: [] })
+    expect(state.operatorActions?.lastResult?.ok).toBe(false)
+    expect(state.operatorActions?.commandError).toContain("planned OpenCode session was not found")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-session-instruction-pack-write"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/opencode-session-instruction-pack-write",
+      risk: "high_impact_write",
+      creates_external_process: false,
+      calls_provider: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("does not launch OpenCode")
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("selected=/opencode-session-instruction-pack-write risk=high_impact_write")
+    expect(snapshot).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
 })

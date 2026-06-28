@@ -45,6 +45,10 @@ import type {
   ContextPacketPreviewSummary,
   ContextPacketSummaryState,
   ContextPacketsState,
+  OpenCodeSessionInstructionPackPreviewSummary,
+  OpenCodeSessionInstructionPackRecordSummary,
+  OpenCodeSessionInstructionPackResultSummary,
+  OpenCodeSessionInstructionPacksState,
   CommanderExecutorReviewCommandSummary,
   CommanderExecutorReviewFindingSummary,
   CommanderExecutorReviewPreviewSummary,
@@ -383,6 +387,10 @@ export type RuntimeUiEffect =
   | { type: "preview-context-budget"; purpose?: string; role?: string; providerKind?: string; modelId?: string; sessionId?: string; maxContextTokens?: number; maxContextBytes?: number }
   | { type: "preview-context-packet"; purpose?: string; role?: string; providerKind?: string; modelId?: string; sessionId?: string; missionId?: string; proposalId?: string; reviewRequestId?: string; applyId?: string; maxContextTokens?: number; maxContextBytes?: number }
   | { type: "load-context-packet-summary" }
+  | { type: "preview-opencode-session-instruction-pack"; sessionId?: string; providerKind?: string; modelId?: string; maxContextTokens?: number; maxContextBytes?: number; includeOpenCodeConfig?: boolean; includeManifest?: boolean }
+  | { type: "write-opencode-session-instruction-pack"; sessionId?: string; providerKind?: string; modelId?: string; maxContextTokens?: number; maxContextBytes?: number; includeOpenCodeConfig?: boolean; includeManifest?: boolean; dryRun?: boolean }
+  | { type: "load-opencode-session-instruction-packs"; sessionId?: string; status?: string; limit?: number }
+  | { type: "load-opencode-session-instruction-pack"; packId: string }
   | { type: "preview-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string }
   | { type: "execute-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; dryRun?: boolean }
   | { type: "load-commander-executor-reviews"; limit?: number }
@@ -1149,6 +1157,35 @@ export async function applyRuntimeUiEffect(
         }))
       case "load-context-packet-summary":
         return applyContextPacketSummary(state, await runtime.command("runtime.context_packet_summary"))
+      case "preview-opencode-session-instruction-pack":
+        return applyOpenCodeSessionInstructionPackPreview(state, await runtime.command("runtime.preview_opencode_session_instruction_pack", {
+          sessionId: effect.sessionId,
+          providerKind: effect.providerKind,
+          modelId: effect.modelId,
+          maxContextTokens: effect.maxContextTokens,
+          maxContextBytes: effect.maxContextBytes,
+          includeOpenCodeConfig: effect.includeOpenCodeConfig,
+          includeManifest: effect.includeManifest,
+        }))
+      case "write-opencode-session-instruction-pack": {
+        const next = applyOpenCodeSessionInstructionPackResult(state, await runtime.command("runtime.write_opencode_session_instruction_pack", {
+          sessionId: effect.sessionId,
+          providerKind: effect.providerKind,
+          modelId: effect.modelId,
+          maxContextTokens: effect.maxContextTokens,
+          maxContextBytes: effect.maxContextBytes,
+          includeOpenCodeConfig: effect.includeOpenCodeConfig,
+          includeManifest: effect.includeManifest,
+          dryRun: effect.dryRun === true,
+          writtenBy: "operator",
+        }))
+        if (next.opencodeSessionInstructionPacks?.commandError) return next
+        return effect.dryRun === true ? next : applyOpenCodeSessionInstructionPackRecords(next, await runtime.command("runtime.list_opencode_session_instruction_packs", { limit: HANDOFF_LIMIT }))
+      }
+      case "load-opencode-session-instruction-packs":
+        return applyOpenCodeSessionInstructionPackRecords(state, await runtime.command("runtime.list_opencode_session_instruction_packs", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, status: effect.status }))
+      case "load-opencode-session-instruction-pack":
+        return applyOpenCodeSessionInstructionPackSelected(state, await runtime.command("runtime.get_opencode_session_instruction_pack", { packId: effect.packId }), effect.packId)
       case "preview-commander-executor-review":
         return applyCommanderExecutorReviewPreview(
           state,
@@ -1769,6 +1806,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeSessionEffect(effect)) return recordOpenCodeSessionCommandError(state, error)
     if (isContextBudgetEffect(effect)) return recordContextBudgetCommandError(state, error)
     if (isContextPacketEffect(effect)) return recordContextPacketCommandError(state, error)
+    if (isOpenCodeSessionInstructionPackEffect(effect)) return recordOpenCodeSessionInstructionPackCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
     if (isExecutorReviewProposalCreateEffect(effect)) return recordExecutorReviewProposalCreateCommandError(state, error)
@@ -2934,6 +2972,60 @@ function applyContextPacketSummary(state: UiState, value: unknown): UiState {
   }
 }
 
+function applyOpenCodeSessionInstructionPackPreview(state: UiState, value: unknown): UiState {
+  const packPreview = readOpenCodeSessionInstructionPackPreview(value)
+  return {
+    ...state,
+    opencodeSessionInstructionPacks: {
+      ...opencodeSessionInstructionPacksState(state),
+      preview: packPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode instruction pack preview", detail: `session=${packPreview.session_id || "missing"}`, status: packPreview.can_write ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeSessionInstructionPackResult(state: UiState, value: unknown): UiState {
+  const result = readOpenCodeSessionInstructionPackResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? result.status : undefined
+  return {
+    ...state,
+    opencodeSessionInstructionPacks: {
+      ...opencodeSessionInstructionPacksState(state),
+      latestResult: result,
+      selected: result.status === "written" ? result : opencodeSessionInstructionPacksState(state).selected,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode instruction pack write", detail: `session=${result.session_id || "missing"}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeSessionInstructionPackRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeSessionInstructionPackRecords(value)
+  return {
+    ...state,
+    opencodeSessionInstructionPacks: {
+      ...opencodeSessionInstructionPacksState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode instruction packs", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeSessionInstructionPackSelected(state: UiState, value: unknown, packId: string): UiState {
+  const selected = value === null ? null : readOpenCodeSessionInstructionPackResult(value)
+  return {
+    ...state,
+    opencodeSessionInstructionPacks: {
+      ...opencodeSessionInstructionPacksState(state),
+      selected,
+      commandError: selected ? undefined : `instruction pack not found: ${redactText(packId)}`,
+    },
+    systemActions: [...state.systemActions, { title: "opencode instruction pack selected", detail: `pack=${redactText(packId)}`, status: selected ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
 function applyOpenCodeHandoffFollowup(state: UiState, value: unknown, handoffId?: string): UiState {
   const result = readOpenCodeHandoffFollowup(value)
   if (!result && value !== null) throw new Error("runtime.get_opencode_handoff_followup returned invalid follow-up")
@@ -4038,6 +4130,10 @@ async function runStagedOperatorCommand(state: UiState, runtime: RuntimeClient):
   try {
     const executionState = clearCommandErrorFor(parsed.command, state)
     const executedRaw = await applyNamedRuntimeCommand(executionState, runtime, parsed.command, parsed.args)
+    const immediateError = commandErrorFor(parsed.command, executedRaw)
+    if (immediateError) {
+      return applyOperatorExecutionFailure(executedRaw, staged, immediateError, executedAt)
+    }
     const executed = shouldRefreshAfterCommand(parsed.command)
       ? await refreshRuntimeRecordsOrRecordError(executedRaw, runtime)
       : executedRaw
@@ -4143,6 +4239,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeSessionCommands.has(command)) return state.opencodeSessions?.commandError
   if (contextBudgetCommands.has(command)) return state.contextBudgets?.commandError
   if (contextPacketCommands.has(command)) return state.contextPackets?.commandError
+  if (opencodeSessionInstructionPackCommands.has(command)) return state.opencodeSessionInstructionPacks?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
   if (executorReviewProposalCreateCommands.has(command)) return state.executorReviewProposalCreate?.commandError
@@ -4184,6 +4281,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeSessionCommands.has(command)) return { ...state, opencodeSessions: { ...opencodeSessionsState(state), commandError: undefined } }
   if (contextBudgetCommands.has(command)) return { ...state, contextBudgets: { ...contextBudgetsState(state), commandError: undefined } }
   if (contextPacketCommands.has(command)) return { ...state, contextPackets: { ...contextPacketsState(state), commandError: undefined } }
+  if (opencodeSessionInstructionPackCommands.has(command)) return { ...state, opencodeSessionInstructionPacks: { ...opencodeSessionInstructionPacksState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
   if (executorReviewProposalCreateCommands.has(command)) return { ...state, executorReviewProposalCreate: { ...executorReviewProposalCreateState(state), commandError: undefined } }
@@ -4357,6 +4455,23 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "context-packet-summary":
     case "context-packets":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-context-packet-summary" })
+    case "opencode-session-instruction-pack-preview":
+    case "session-instruction-pack-preview":
+    case "opencode-context-pack-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeSessionInstructionPackEffect("preview-opencode-session-instruction-pack", args, true))
+    case "opencode-session-instruction-pack-dry-run":
+    case "session-instruction-pack-dry-run": {
+      const effect = opencodeSessionInstructionPackEffect("write-opencode-session-instruction-pack", args, true) as Extract<RuntimeUiEffect, { type: "write-opencode-session-instruction-pack" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-session-instruction-pack-write":
+    case "session-instruction-pack-write":
+    case "opencode-context-pack-write":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeSessionInstructionPackEffect("write-opencode-session-instruction-pack", args, true))
+    case "opencode-session-instruction-packs":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeSessionInstructionPackListEffect(args))
+    case "opencode-session-instruction-pack-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-session-instruction-pack", packId: requiredArg(args, 0, "packId") })
     case "executor-review-preview":
     case "commander-executor-review-preview":
       return applyRuntimeUiEffect(commandState, runtime, commanderExecutorReviewEffect("preview-commander-executor-review", args))
@@ -5257,6 +5372,11 @@ function isContextPacketEffect(effect: RuntimeUiEffect): boolean {
   return contextPacketCommands.has(effect.command)
 }
 
+function isOpenCodeSessionInstructionPackEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return opencodeSessionInstructionPackEffectTypes.has(effect.type)
+  return opencodeSessionInstructionPackCommands.has(effect.command)
+}
+
 function isCommanderExecutorReviewEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return commanderExecutorReviewEffectTypes.has(effect.type)
   return commanderExecutorReviewCommands.has(effect.command)
@@ -5535,6 +5655,26 @@ const contextPacketCommands = new Set([
 const contextPacketEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "preview-context-packet",
   "load-context-packet-summary",
+])
+
+const opencodeSessionInstructionPackCommands = new Set([
+  "opencode-session-instruction-pack-preview",
+  "session-instruction-pack-preview",
+  "opencode-context-pack-preview",
+  "opencode-session-instruction-pack-dry-run",
+  "session-instruction-pack-dry-run",
+  "opencode-session-instruction-pack-write",
+  "session-instruction-pack-write",
+  "opencode-context-pack-write",
+  "opencode-session-instruction-packs",
+  "opencode-session-instruction-pack-show",
+])
+
+const opencodeSessionInstructionPackEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-opencode-session-instruction-pack",
+  "write-opencode-session-instruction-pack",
+  "load-opencode-session-instruction-packs",
+  "load-opencode-session-instruction-pack",
 ])
 
 const commanderExecutorReviewCommands = new Set([
@@ -7002,6 +7142,18 @@ function recordContextPacketCommandError(state: UiState, error: unknown): UiStat
   }
 }
 
+function recordOpenCodeSessionInstructionPackCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    opencodeSessionInstructionPacks: {
+      ...opencodeSessionInstructionPacksState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "opencode instruction pack command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function recordCommanderExecutorReviewCommandError(state: UiState, error: unknown): UiState {
   const message = redactText(error instanceof Error ? error.message : String(error))
   return {
@@ -8156,6 +8308,95 @@ function readContextPacketBudgetSummary(value: unknown): ContextPacketPreviewSum
 }
 
 function readContextPacketCommands(value: unknown): ContextPacketPreviewSummary["recommended_commands"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readOpenCodeSessionInstructionPackPreview(value: unknown): OpenCodeSessionInstructionPackPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_session_instruction_pack returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "unknown"),
+    can_write: value.can_write === true,
+    session_id: redactText(readString(value.session_id, "")),
+    packet_id: typeof value.packet_id === "string" ? redactText(value.packet_id) : undefined,
+    packet_hash: typeof value.packet_hash === "string" ? redactText(value.packet_hash) : undefined,
+    budget_id: typeof value.budget_id === "string" ? redactText(value.budget_id) : undefined,
+    source_kind: typeof value.source_kind === "string" ? readString(value.source_kind, "unknown") : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    proposal_id: typeof value.proposal_id === "string" ? redactText(value.proposal_id) : undefined,
+    review_request_id: typeof value.review_request_id === "string" ? redactText(value.review_request_id) : undefined,
+    apply_id: typeof value.apply_id === "string" ? redactText(value.apply_id) : undefined,
+    target_dir: readString(value.target_dir, ""),
+    files: readOpenCodeSessionInstructionPackFiles(value.files),
+    total_size_bytes: readNumber(value.total_size_bytes, 0),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 12).map(preview),
+    recommended_commands: readOpenCodeSessionInstructionPackCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    pack_hash: readString(value.pack_hash, ""),
+  }
+}
+
+function readOpenCodeSessionInstructionPackResult(value: unknown): OpenCodeSessionInstructionPackResultSummary {
+  if (!isRecord(value) || typeof value.pack_id !== "string") throw new Error("runtime.write_opencode_session_instruction_pack returned invalid result")
+  return {
+    pack_id: redactText(value.pack_id),
+    status: readString(value.status, "unknown"),
+    session_id: redactText(readString(value.session_id, "")),
+    packet_id: typeof value.packet_id === "string" ? redactText(value.packet_id) : undefined,
+    packet_hash: typeof value.packet_hash === "string" ? redactText(value.packet_hash) : undefined,
+    budget_id: typeof value.budget_id === "string" ? redactText(value.budget_id) : undefined,
+    target_dir: readString(value.target_dir, ""),
+    files: readOpenCodeSessionInstructionPackFiles(value.files),
+    total_size_bytes: readNumber(value.total_size_bytes, 0),
+    written_at: readString(value.written_at, ""),
+    written_by: readString(value.written_by, ""),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    pack_hash: readString(value.pack_hash, ""),
+    recommended_commands: readOpenCodeSessionInstructionPackCommands(value.recommended_commands),
+  }
+}
+
+function readOpenCodeSessionInstructionPackRecords(value: unknown): OpenCodeSessionInstructionPackRecordSummary[] {
+  if (!Array.isArray(value)) throw new Error("runtime.list_opencode_session_instruction_packs returned invalid records")
+  return value.filter(isRecord).slice(0, HANDOFF_LIMIT).map((record) => ({
+    pack_id: redactText(readString(record.pack_id, "")),
+    status: readString(record.status, "unknown"),
+    session_id: redactText(readString(record.session_id, "")),
+    packet_id: typeof record.packet_id === "string" ? redactText(record.packet_id) : undefined,
+    target_dir: readString(record.target_dir, ""),
+    file_count: readNumber(record.file_count, 0),
+    total_size_bytes: readNumber(record.total_size_bytes, 0),
+    written_at: readString(record.written_at, ""),
+    summary_preview: preview(readString(record.summary_preview, "")),
+    pack_hash: readString(record.pack_hash, ""),
+  }))
+}
+
+function readOpenCodeSessionInstructionPackFiles(value: unknown): OpenCodeSessionInstructionPackPreviewSummary["files"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((file) => ({
+    file_kind: readString(file.file_kind, "unknown"),
+    relative_path: readString(file.relative_path, ""),
+    would_write: file.would_write === true,
+    size_bytes: readNumber(file.size_bytes, 0),
+    sha256: readString(file.sha256, ""),
+    summary_preview: preview(readString(file.summary_preview, "")),
+    sections_used: readStringList(file.sections_used, 12),
+    source_refs: readStringList(file.source_refs, 20),
+    warnings: readStringList(file.warnings, 8).map(preview),
+  }))
+}
+
+function readOpenCodeSessionInstructionPackCommands(value: unknown): OpenCodeSessionInstructionPackPreviewSummary["recommended_commands"] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -11624,6 +11865,10 @@ function contextPacketsState(state: UiState): ContextPacketsState {
   return state.contextPackets ?? { preview: null, summary: null }
 }
 
+function opencodeSessionInstructionPacksState(state: UiState): OpenCodeSessionInstructionPacksState {
+  return state.opencodeSessionInstructionPacks ?? { preview: null, latestResult: null, records: [], selected: null }
+}
+
 function commanderExecutorReviewState(state: UiState): CommanderExecutorReviewState {
   return state.commanderExecutorReview ?? { preview: null, latestResult: null, records: [], selected: null }
 }
@@ -12508,6 +12753,39 @@ function contextPacketPreviewEffect(args: string[]): Extract<RuntimeUiEffect, { 
     else throw new Error("context packet preview arg is unsupported")
   }
   if (!effect.purpose) throw new Error("context packet preview requires purpose=<purpose>")
+  return effect
+}
+
+function opencodeSessionInstructionPackEffect(type: "preview-opencode-session-instruction-pack" | "write-opencode-session-instruction-pack", args: string[], requireSession: boolean): Extract<RuntimeUiEffect, { type: "preview-opencode-session-instruction-pack" | "write-opencode-session-instruction-pack" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-session-instruction-pack" | "write-opencode-session-instruction-pack" }> = { type }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode instruction pack args must use session=<id>, provider=<kind>, model=<id>, max_context_bytes=<n>, or max_context_tokens=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "provider") effect.providerKind = value
+    else if (key === "model") effect.modelId = value
+    else if (key === "max_context_bytes") effect.maxContextBytes = readPositiveInteger(value, "max_context_bytes", 512_000)
+    else if (key === "max_context_tokens") effect.maxContextTokens = readPositiveInteger(value, "max_context_tokens", 128_000)
+    else if (key === "include_opencode_config") effect.includeOpenCodeConfig = value !== "false"
+    else if (key === "include_manifest") effect.includeManifest = value !== "false"
+    else throw new Error("OpenCode instruction pack arg is unsupported")
+  }
+  if (requireSession && !effect.sessionId) throw new Error("OpenCode instruction pack requires session=<id>")
+  return effect
+}
+
+function opencodeSessionInstructionPackListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-opencode-session-instruction-packs" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-opencode-session-instruction-packs" }> = { type: "load-opencode-session-instruction-packs", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode instruction pack list args must use session=<id>, status=<status>, or limit=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "status") effect.status = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode instruction pack list arg is unsupported")
+  }
   return effect
 }
 

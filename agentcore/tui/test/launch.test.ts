@@ -191,6 +191,10 @@ class TestRuntimeClient implements RuntimeClient {
       packet_hash: "hash",
     }
     if (name === "runtime.context_packet_summary") return { supported_purposes: ["commander_research_decision", "opencode_executor_session"], supported_roles: ["commander", "executor"], generated_at: "2026-06-20T00:00:00.000Z" }
+    if (name === "runtime.preview_opencode_session_instruction_pack") return opencodeSessionInstructionPackPreview(payload, "ready")
+    if (name === "runtime.write_opencode_session_instruction_pack") return opencodeSessionInstructionPackResult(payload, payload?.dry_run === true || payload?.dryRun === true ? "dry_run" : "blocked")
+    if (name === "runtime.list_opencode_session_instruction_packs") return []
+    if (name === "runtime.get_opencode_session_instruction_pack") return null
     if (name === "runtime.command_authority_get") {
       return {
         authority_id: "authority_opencode_smoke",
@@ -296,6 +300,52 @@ function opencodeSessionPlan(payload: Record<string, unknown> | undefined, statu
     created_at: "2026-06-20T00:00:00.000Z",
     created_by: "operator",
     session_hash: `hash-${status}`,
+  }
+}
+
+function opencodeSessionInstructionPackPreview(payload: Record<string, unknown> | undefined, status: "ready" | "blocked") {
+  const sessionId = String(payload?.session_id ?? payload?.sessionId ?? "session_plan_test")
+  const canWrite = status === "ready"
+  return {
+    preview_id: "instruction_pack_preview_test",
+    status,
+    can_write: canWrite,
+    session_id: sessionId,
+    packet_id: "packet-preview-test",
+    packet_hash: "hash",
+    budget_id: "budget-test",
+    target_dir: `.nxl/opencode/sessions/${sessionId}`,
+    files: canWrite ? [
+      { file_kind: "task", relative_path: "TASK.md", would_write: true, size_bytes: 120, sha256: "hash-task", summary_preview: "TASK.md preview", sections_used: ["mission_state"], source_refs: [sessionId], warnings: [] },
+      { file_kind: "context", relative_path: "CONTEXT.md", would_write: true, size_bytes: 140, sha256: "hash-context", summary_preview: "CONTEXT.md preview", sections_used: ["role_kernel"], source_refs: [sessionId], warnings: [] },
+      { file_kind: "manifest", relative_path: "MANIFEST.json", would_write: true, size_bytes: 160, sha256: "hash-manifest", summary_preview: "MANIFEST.json preview", sections_used: ["manifest"], source_refs: [sessionId], warnings: [] },
+    ] : [],
+    total_size_bytes: canWrite ? 420 : 0,
+    blockers: canWrite ? [] : ["planned OpenCode session was not found"],
+    warnings: ["instruction-pack writing does not launch OpenCode"],
+    recommended_commands: [],
+    generated_at: "2026-06-20T00:00:00.000Z",
+    redacted_summary_preview: canWrite ? "instruction pack preview" : "instruction pack blocked",
+  }
+}
+
+function opencodeSessionInstructionPackResult(payload: Record<string, unknown> | undefined, status: "dry_run" | "blocked") {
+  const preview = opencodeSessionInstructionPackPreview(payload, status === "dry_run" ? "ready" : "blocked")
+  return {
+    pack_id: "instruction_pack_test",
+    status,
+    session_id: preview.session_id,
+    packet_id: preview.packet_id,
+    packet_hash: preview.packet_hash,
+    budget_id: preview.budget_id,
+    target_dir: preview.target_dir,
+    files: preview.files.map((file) => ({ ...file, would_write: false })),
+    total_size_bytes: preview.total_size_bytes,
+    written_at: "2026-06-20T00:00:00.000Z",
+    written_by: "operator",
+    error: status === "blocked" ? "planned OpenCode session was not found" : undefined,
+    pack_hash: "hash-pack",
+    recommended_commands: [],
   }
 }
 
@@ -1007,6 +1057,38 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("Context packet compiler")
     expect(runtime.commandNames).toContain("runtime.preview_context_packet")
     expect(runtime.commandNames).toContain("runtime.context_packet_summary")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless OpenCode session instruction pack inspection scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/opencode-session-instruction-pack-preview session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/session-instruction-pack-dry-run session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-session-instruction-packs" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-session-instruction-pack-show missing-pack" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-opencode-session-instruction-pack-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("OpenCode session instruction packs")
+    expect(runtime.commandNames).toContain("runtime.preview_opencode_session_instruction_pack")
+    expect(runtime.commandNames).toContain("runtime.write_opencode_session_instruction_pack")
+    expect(runtime.commandNames).toContain("runtime.list_opencode_session_instruction_packs")
+    expect(runtime.commandNames).toContain("runtime.get_opencode_session_instruction_pack")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })

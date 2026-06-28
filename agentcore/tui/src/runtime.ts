@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -52,6 +52,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly opencodeHandoffs: OpenCodeHandoffResultSummary[] = []
   private readonly opencodeProcessSmokes: OpenCodeProcessSmokeResultSummary[] = []
   private readonly opencodeSessions: OpenCodeSessionPlanSummary[] = []
+  private readonly opencodeSessionInstructionPacks: OpenCodeSessionInstructionPackResultSummary[] = []
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly executorReviewProposalCreates: ExecutorReviewProposalCreateResultSummary[] = []
   private readonly executorReviewProposalReviewRequests: ExecutorReviewProposalReviewRequestResultSummary[] = []
@@ -438,6 +439,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.previewContextPacket(payload)
       case "runtime.context_packet_summary":
         return this.contextPacketSummary()
+      case "runtime.preview_opencode_session_instruction_pack":
+        return this.previewOpenCodeSessionInstructionPack(payload)
+      case "runtime.write_opencode_session_instruction_pack":
+        return this.writeOpenCodeSessionInstructionPack(payload)
+      case "runtime.list_opencode_session_instruction_packs":
+        return this.listOpenCodeSessionInstructionPacks(payload)
+      case "runtime.get_opencode_session_instruction_pack":
+        return this.getOpenCodeSessionInstructionPack(String(payload.packId ?? payload.pack_id ?? ""))
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(payload)
       case "runtime.execute_commander_executor_review":
@@ -2085,6 +2094,167 @@ export class FakeRuntimeClient implements RuntimeClient {
       redacted_summary_preview: blockers[0] ?? `${purpose} packet skeleton with ${sections.length} bounded sections`,
       packet_hash: hash,
     }
+  }
+
+  private previewOpenCodeSessionInstructionPack(payload: Record<string, unknown>): OpenCodeSessionInstructionPackPreviewSummary {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const blockers = [
+      ...(sessionId ? [] : ["session=<id> is required"]),
+      ...(sessionId && !isSafeFakeSessionId(sessionId) ? ["session_id contains unsafe path characters"] : []),
+    ]
+    const session = sessionId ? this.opencodeSessions.find((item) => item.session_id === sessionId) : undefined
+    if (sessionId && !session) blockers.push("planned OpenCode session was not found")
+    const packet = session ? this.previewContextPacket({ ...payload, purpose: "opencode_executor_session", sessionId }) : undefined
+    if (packet?.packet_status === "blocked") blockers.push(packet.blockers[0] ?? "context packet preview is blocked")
+    const files = session && packet ? this.fakeInstructionPackFiles(session, packet) : []
+    const total = files.reduce((sum, file) => sum + file.size_bytes, 0)
+    const hash = createHash("sha256").update(`${sessionId ?? ""}:${packet?.packet_hash ?? ""}:${files.map((file) => `${file.relative_path}:${file.sha256}`).join("|")}`).digest("hex")
+    return {
+      preview_id: `fake-opencode-instruction-pack-preview-${hash.slice(0, 12)}`,
+      status: blockers.length > 0 ? "blocked" : "ready",
+      can_write: blockers.length === 0,
+      session_id: sessionId ?? "",
+      packet_id: packet?.packet_id,
+      packet_hash: packet?.packet_hash,
+      budget_id: packet?.budget_id,
+      source_kind: session?.source_kind,
+      mission_id: session?.mission_id,
+      proposal_id: session?.proposal_id,
+      review_request_id: session?.review_request_id,
+      apply_id: session?.apply_id,
+      target_dir: sessionId ? `.nxl/opencode/sessions/${sessionId}` : ".nxl/opencode/sessions/<session_id>",
+      files,
+      total_size_bytes: total,
+      blockers: blockers.map(redactText),
+      warnings: [
+        "instruction-pack preview does not launch OpenCode, call providers, query research.db, call MCPs, or mutate missions",
+        ...(packet?.warnings ?? []),
+      ].map(redactText),
+      recommended_commands: [
+        { label: "Preview context packet", command: sessionId ? `/context-packet-preview purpose=opencode_executor_session session=${sessionId}` : "/context-packet-preview purpose=opencode_executor_session", command_type: "read" },
+        { label: "List instruction packs", command: "/opencode-session-instruction-packs", command_type: "read" },
+        { label: "Show authority", command: "/authority-show /opencode-session-instruction-pack-write", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `instruction pack preview for ${sessionId}`,
+      pack_hash: hash,
+    }
+  }
+
+  private writeOpenCodeSessionInstructionPack(payload: Record<string, unknown>): OpenCodeSessionInstructionPackResultSummary {
+    const previewResult = this.previewOpenCodeSessionInstructionPack(payload)
+    const packId = `fake-opencode-instruction-pack-${previewResult.pack_hash.slice(0, 12)}`
+    const writtenBy = redactText(String(payload.writtenBy ?? payload.written_by ?? "operator"))
+    if (payload.dryRun === true || payload.dry_run === true) {
+      return {
+        pack_id: packId,
+        status: "dry_run",
+        session_id: previewResult.session_id,
+        packet_id: previewResult.packet_id,
+        packet_hash: previewResult.packet_hash,
+        budget_id: previewResult.budget_id,
+        target_dir: previewResult.target_dir,
+        files: previewResult.files.map((file) => ({ ...file, would_write: false })),
+        total_size_bytes: previewResult.total_size_bytes,
+        written_at: new Date(0).toISOString(),
+        written_by: writtenBy,
+        pack_hash: previewResult.pack_hash,
+        recommended_commands: previewResult.recommended_commands,
+      }
+    }
+    if (!previewResult.can_write) {
+      return {
+        pack_id: packId,
+        status: "blocked",
+        session_id: previewResult.session_id,
+        packet_id: previewResult.packet_id,
+        packet_hash: previewResult.packet_hash,
+        budget_id: previewResult.budget_id,
+        target_dir: previewResult.target_dir,
+        files: previewResult.files.map((file) => ({ ...file, would_write: false })),
+        total_size_bytes: previewResult.total_size_bytes,
+        written_at: new Date(0).toISOString(),
+        written_by: writtenBy,
+        error: previewResult.blockers[0] ?? "instruction pack write is blocked",
+        pack_hash: previewResult.pack_hash,
+        recommended_commands: previewResult.recommended_commands,
+      }
+    }
+    const existing = this.opencodeSessionInstructionPacks.find((item) => item.pack_hash === previewResult.pack_hash)
+    if (existing) return existing
+    const result: OpenCodeSessionInstructionPackResultSummary = {
+      pack_id: packId,
+      status: "written",
+      session_id: previewResult.session_id,
+      packet_id: previewResult.packet_id,
+      packet_hash: previewResult.packet_hash,
+      budget_id: previewResult.budget_id,
+      target_dir: previewResult.target_dir,
+      files: previewResult.files,
+      total_size_bytes: previewResult.total_size_bytes,
+      written_at: new Date(0).toISOString(),
+      written_by: writtenBy,
+      pack_hash: previewResult.pack_hash,
+      recommended_commands: [
+        ...previewResult.recommended_commands,
+        { label: "Show instruction pack", command: `/opencode-session-instruction-pack-show ${packId}`, command_type: "read" },
+      ],
+    }
+    this.opencodeSessionInstructionPacks.unshift(result)
+    return result
+  }
+
+  private listOpenCodeSessionInstructionPacks(payload: Record<string, unknown>): OpenCodeSessionInstructionPackRecordSummary[] {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const status = optionalString(payload.status)
+    return this.opencodeSessionInstructionPacks
+      .filter((item) => !sessionId || item.session_id === sessionId)
+      .filter((item) => !status || item.status === status)
+      .slice(0, readLimit(payload.limit, 20))
+      .map((item) => ({
+        pack_id: item.pack_id,
+        status: item.status,
+        session_id: item.session_id,
+        packet_id: item.packet_id,
+        target_dir: item.target_dir,
+        file_count: item.files.length,
+        total_size_bytes: item.total_size_bytes,
+        written_at: item.written_at,
+        summary_preview: `instruction pack for ${item.session_id}`,
+        pack_hash: item.pack_hash,
+      }))
+  }
+
+  private getOpenCodeSessionInstructionPack(packId: string): OpenCodeSessionInstructionPackResultSummary | null {
+    const id = requiredString(packId, "packId")
+    return this.opencodeSessionInstructionPacks.find((item) => item.pack_id === id) ?? null
+  }
+
+  private fakeInstructionPackFiles(session: OpenCodeSessionPlanSummary, packet: ContextPacketPreviewSummary): OpenCodeSessionInstructionPackFilePreviewSummary[] {
+    const targetDir = `.nxl/opencode/sessions/${session.session_id}`
+    const base = [
+      { kind: "task", path: "TASK.md", sections: ["role_kernel", "mission_state"], summary: "tactical objective, success criteria, constraints, and source links" },
+      { kind: "context", path: "CONTEXT.md", sections: packet.sections.filter((item) => item.status === "included" || item.status === "pointer_only").map((item) => item.section), summary: "bounded executor context sections; raw_logs excluded; full research.db not included" },
+      { kind: "guidance", path: "GUIDANCE.md", sections: ["commander_guidance"], summary: "CommanderGuidance placeholder; guidance protocol is future work" },
+      { kind: "session_memory", path: "SESSION_MEMORY.md", sections: ["active_sessions", "executor_progress"], summary: "planned session memory and timeout/question/human policy metadata" },
+      { kind: "policy", path: "POLICY.md", sections: ["role_kernel"], summary: "executor role policy; Commander owns strategy; runtime owns authority" },
+      { kind: "manifest", path: "MANIFEST.json", sections: ["manifest"], summary: "hashes, source refs, omitted refs, launch_ready=false" },
+      { kind: "opencode_config", path: "opencode-session-config.json", sections: ["opencode_config"], summary: "future launch config hint with launch_ready=false and no credentials" },
+    ]
+    return base.map((file) => {
+      const content = redactText(`${file.path}\n${session.session_id}\n${packet.packet_id}\n${file.summary}\nlaunch_ready=false\nno raw_logs\nno full research.db\n`)
+      return {
+        file_kind: file.kind,
+        relative_path: file.path,
+        would_write: true,
+        size_bytes: Buffer.byteLength(content, "utf8"),
+        sha256: createHash("sha256").update(content).digest("hex"),
+        summary_preview: file.summary,
+        sections_used: file.sections.slice(0, 12),
+        source_refs: [session.session_id, packet.packet_id, ...packet.included_source_refs.slice(0, 4).map((ref) => `${ref.source_kind}:${ref.source_id}`)],
+        warnings: file.kind === "context" ? ["raw logs, full research.db, full event log, provider output, and Commander chat are excluded"] : [],
+      }
+    })
   }
 
   private contextPacketSections(purpose: string, allocations: ContextBudgetAllocationSummary[], session?: OpenCodeSessionPlanSummary): ContextPacketSectionSummary[] {
@@ -7738,6 +7908,40 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       notes: ["Lists supported context packet purposes and roles only."],
       out: ["final prompt generation", "provider calls", "OpenCode launch", "research.db retrieval", "MCP calls", "mission/proposal/review/apply mutation", "scheduler/wake execution"],
     }),
+    fakeCommandAuthorityRecord("/opencode-session-instruction-pack-preview", "runtime.preview_opencode_session_instruction_pack", "safe_read", "none", "opencode_handoff", {
+      reads: ["/context-packet-preview", "/opencode-session-show"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_instruction_pack_tui.py"],
+      aliases: ["/session-instruction-pack-preview", "/opencode-context-pack-preview"],
+      notes: ["Previews bounded per-session instruction/config files only; writes no files, appends no events, and does not launch OpenCode."],
+      out: ["OpenCode launch", "provider calls", "MCP calls", "research.db retrieval", "mission/proposal/review/apply mutation", "scheduler/wake execution", "AGENTS.md mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-session-instruction-pack-dry-run", "runtime.write_opencode_session_instruction_pack", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-session-instruction-pack-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_instruction_pack_tui.py"],
+      aliases: ["/session-instruction-pack-dry-run"],
+      notes: ["Dry-run instruction-pack write returns bounded file previews without writing files or appending events."],
+      out: ["OpenCode launch", "provider calls", "MCP calls", "research.db retrieval", "mission/proposal/review/apply mutation", "scheduler/wake execution", "AGENTS.md mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-session-instruction-pack-write", "runtime.write_opencode_session_instruction_pack", "high_impact_write", "opencode_runtime", "opencode_handoff", {
+      mutates: true,
+      active: true,
+      lock: true,
+      blocked: true,
+      events: ["opencode_session_instruction_pack_written"],
+      reads: ["/opencode-session-instruction-pack-preview", "/context-packet-preview", "/opencode-session-instruction-packs"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_instruction_pack_tui.py"],
+      aliases: ["/session-instruction-pack-write", "/opencode-context-pack-write"],
+      notes: ["Writes bounded per-session instruction/config artifacts only; does not launch OpenCode, call providers, query research.db, or mutate missions."],
+      out: ["OpenCode launch", "OpenCode process start", "provider calls", "MCP calls", "research.db retrieval", "mission/proposal/review/apply mutation", "checkpoint creation", "scheduler/wake execution", "AGENTS.md mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-session-instruction-packs", "runtime.list_opencode_session_instruction_packs", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-session-instruction-pack-show"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_instruction_pack_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-session-instruction-pack-show", "runtime.get_opencode_session_instruction_pack", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-session-instruction-packs"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_session_instruction_pack_tui.py"],
+    }),
     fakeCommandAuthorityRecord("/executor-review-preview", "runtime.preview_commander_executor_review", "safe_read", "reasoning_provider_runtime", "commander_cycle", {
       reads: ["/result-review-packet", "/authority-show /executor-review"],
       targeted: ["tests/e2e_user/scenarios/test_commander_executor_review_tui.py"],
@@ -8066,6 +8270,10 @@ function fakeCommandAuthorityProfile(targeted: string[]): CommandAuthorityValida
 function fakeNormalizeAuthorityCommand(value: string): string | undefined {
   const match = /^\/([a-z][a-z-]*)(?:\s|$)/i.exec(redactText(value).trim())
   return match ? `/${match[1].toLowerCase()}` : undefined
+}
+
+function isSafeFakeSessionId(value: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(value) && !value.includes("..") && !value.includes("/") && !value.includes("\\") && !value.includes("\0")
 }
 
 function fakeCountBy(records: CommandAuthorityRecordSummary[], key: "risk" | "gate" | "owner"): Record<string, number> {
