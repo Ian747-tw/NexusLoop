@@ -170,7 +170,7 @@ export function defaultCapabilities(): ModelCapability[] {
 function runtimeConfigCapabilities(config?: ReasoningProviderConfig): ModelCapability[] {
   if (!config || config.kind === "fake") return []
   const providerKind = normalizeProviderKind(config.kind)
-  const modelId = optional((config as { model_id?: string }).model_id) ?? `${providerKind}-runtime-config`
+  const modelId = optional(config.model ?? (config as { model_id?: string }).model_id) ?? `${providerKind}-runtime-config`
   return [{
     capability_id: `runtime-${hash(`${providerKind}:${modelId}`).slice(0, 16)}`,
     provider_kind: providerKind,

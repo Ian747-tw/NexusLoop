@@ -16662,6 +16662,25 @@ describe("Context budget registry", () => {
       capability_id: "default-local-medium",
       max_context_tokens: 16384,
     })
+    const configured = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-runtime",
+        connector_id: "minimax-connector",
+        model: "configured-minimax-model",
+        max_input_bytes: 24576,
+        max_output_bytes: 8192,
+        enabled_for: ["research_synthesis"],
+      },
+    })
+    await expect(configured.command("runtime.get_model_capability", { providerKind: "minimax", modelId: "configured-minimax-model" })).resolves.toMatchObject({
+      provider_kind: "minimax",
+      model_id: "configured-minimax-model",
+      max_context_bytes: 24576,
+      source: "runtime_config",
+    })
     await expect(server.command("runtime.get_model_capability", { providerKind: "vendor-secret=abc123", modelId: "model-secret=abc123" })).resolves.toMatchObject({
       source: "unknown",
       warnings: expect.arrayContaining(["unknown context window; using conservative budget"]),
@@ -16688,6 +16707,15 @@ describe("Context budget registry", () => {
     expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "raw_logs", inclusion_policy: "excluded_by_default", priority: "excluded" }))
     expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "research_memory", inclusion_policy: "if_relevant" }))
     expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "tool_or_mcp_schema", inclusion_policy: "excluded_by_default" }))
+
+    const tokenCapped = await server.command("runtime.preview_context_budget", {
+      purpose: "commander_research_decision",
+      providerKind: "local",
+      modelId: "local-small",
+      maxContextTokens: 128000,
+    }) as { budget: { max_context_tokens?: number }; warnings: string[] }
+    expect(tokenCapped.budget.max_context_tokens).toBe(4096)
+    expect(tokenCapped.warnings).toContain("model capability is lower than requested max_context_tokens; model budget wins")
 
     const executor = await server.command("runtime.preview_context_budget", {
       purpose: "opencode_executor_session",

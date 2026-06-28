@@ -74,6 +74,10 @@ export class ContextBudgetService {
     }
     if (maxContextTokens) maxContextTokens = Math.min(maxContextTokens, MAX_CONTEXT_TOKENS)
     if (maxContextBytes) maxContextBytes = Math.min(maxContextBytes, MAX_CONTEXT_BYTES)
+    if (explicitTokens && capability.max_context_tokens && explicitTokens > capability.max_context_tokens) {
+      maxContextTokens = capability.max_context_tokens
+      warnings.add("model capability is lower than requested max_context_tokens; model budget wins")
+    }
     if (explicitBytes && capability.max_context_bytes && explicitBytes > capability.max_context_bytes) {
       maxContextBytes = capability.max_context_bytes
       warnings.add("model capability is lower than requested max_context_bytes; model budget wins")
