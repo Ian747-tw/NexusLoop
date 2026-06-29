@@ -17660,6 +17660,19 @@ describe("OpenCode session instruction packs", () => {
       created_at: "2026-06-29T00:00:00.000Z",
       updated_at: "2026-06-29T00:00:00.000Z",
     }
+    const lateTrial: Trial = {
+      trial_id: "zz_latecap_trial",
+      hypothesis_id: null,
+      candidate_id: null,
+      trial_kind: "latecap trial needle",
+      status: "planned",
+      config: { route: "newest" },
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
     const lateRun: TrainingRun = {
       training_run_id: "zz_latecap_training",
       candidate_id: null,
@@ -17686,6 +17699,7 @@ describe("OpenCode session instruction packs", () => {
     }
     const seenOrders: Array<string | undefined> = []
     const seenCandidateOrders: Array<string | undefined> = []
+    const seenTrialOrders: Array<string | undefined> = []
     const seenTrainingOrders: Array<string | undefined> = []
     const service = new ResearchMemoryService({
       now: () => new Date("2026-06-29T00:00:00.000Z"),
@@ -17700,6 +17714,10 @@ describe("OpenCode session instruction packs", () => {
           seenCandidateOrders.push(options?.order)
           return options?.order === "newest" ? [lateCandidate] : []
         },
+        searchTrials: (options) => {
+          seenTrialOrders.push(options?.order)
+          return options?.order === "newest" ? [lateTrial] : []
+        },
         searchTrainingRuns: (options) => {
           seenTrainingOrders.push(options?.order)
           return options?.order === "newest" ? [lateRun] : []
@@ -17707,12 +17725,13 @@ describe("OpenCode session instruction packs", () => {
       }),
     })
 
-    const preview = service.preview({ query: "latecap needle", limit: 3 })
+    const preview = service.preview({ query: "latecap needle", limit: 4 })
     expect(seenOrders).toEqual(["newest"])
     expect(seenCandidateOrders).toEqual(["newest"])
+    expect(seenTrialOrders).toEqual(["newest"])
     expect(seenTrainingOrders).toEqual(["newest"])
     expect(preview.status).toBe("ready")
-    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_candidate", "zz_latecap_finding", "zz_latecap_training"])
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_candidate", "zz_latecap_finding", "zz_latecap_training", "zz_latecap_trial"])
   })
 
   test("research memory mission scope loads known linked ids without global candidate caps", () => {

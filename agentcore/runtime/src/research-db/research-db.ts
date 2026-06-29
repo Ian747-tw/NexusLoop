@@ -460,6 +460,7 @@ export interface SearchTrialsOptions extends SearchOptions {
   trial_id?: string
   candidate_id?: string
   hypothesis_id?: string
+  order?: "oldest" | "newest"
 }
 
 export interface SearchTrainingRunsOptions extends SearchOptions {
@@ -1523,7 +1524,8 @@ export class ResearchDb {
     }
     params.push(cleanLimit(options.limit))
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
-    return (this.db.query(`SELECT * FROM trials ${where} ORDER BY created_at, trial_id LIMIT ?`).all(...params) as TrialRow[]).map((row) =>
+    const orderBy = options.order === "newest" ? "created_at DESC, trial_id DESC" : "created_at, trial_id"
+    return (this.db.query(`SELECT * FROM trials ${where} ORDER BY ${orderBy} LIMIT ?`).all(...params) as TrialRow[]).map((row) =>
       this.trialFromRow(row),
     )
   }

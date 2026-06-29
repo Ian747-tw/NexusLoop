@@ -188,7 +188,7 @@ export class ResearchMemoryService {
             ...Array.from(missionTrialIds).flatMap((trialId) => adapter.searchTrials?.({ limit: 1, trial_id: trialId }) ?? []),
             ...Array.from(missionCandidateIds).flatMap((candidateId) => adapter.searchTrials?.({ limit: SCAN_LIMIT, candidate_id: candidateId }) ?? []),
           ]
-        : adapter.searchTrials?.({ limit: SCAN_LIMIT }) ?? []
+        : adapter.searchTrials?.({ limit: SCAN_LIMIT, order: "newest" }) ?? []
       for (const trial of trials) {
         out.push(candidateFromTrial(trial, input.mission_id))
       }
