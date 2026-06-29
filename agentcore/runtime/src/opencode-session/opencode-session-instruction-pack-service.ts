@@ -69,6 +69,14 @@ export class OpenCodeSessionInstructionPackService {
     const writtenBy = bound(input.written_by ?? "operator")
     const packId = packIdFor(built.preview.pack_hash)
     if (!built.preview.can_write) return blockedResult(built.preview, writtenAt, writtenBy)
+    const targetDir = targetDirFor(this.options.projectDir, built.preview.session_id)
+    const preflightError = await validateTargetForPack(this.options.projectDir, targetDir, built.files)
+    if (preflightError) {
+      return {
+        ...blockedResult(built.preview, writtenAt, writtenBy),
+        error: preflightError,
+      }
+    }
     if (input.dry_run === true) {
       return redactValue({
         pack_id: packId,
@@ -92,13 +100,6 @@ export class OpenCodeSessionInstructionPackService {
       const rebuiltPackId = packIdFor(rebuilt.preview.pack_hash)
       if (!rebuilt.preview.can_write) return blockedResult(rebuilt.preview, writtenAt, writtenBy)
       const targetDir = targetDirFor(this.options.projectDir, rebuilt.preview.session_id)
-      const symlinkPath = await symlinkedPathComponent(this.options.projectDir, targetDir)
-      if (symlinkPath) {
-        return {
-          ...blockedResult(rebuilt.preview, writtenAt, writtenBy),
-          error: `session instruction-pack target path contains a symlink: ${symlinkPath}`,
-        }
-      }
       const existing = await this.findExisting(rebuilt.preview.pack_hash)
       if (existing) {
         const matchingFiles = await existingFilesMatch(targetDir, rebuilt.files)
@@ -124,18 +125,11 @@ export class OpenCodeSessionInstructionPackService {
           error: "existing instruction pack event was found but files differ; inspect target directory before rewriting",
         }
       }
-      const conflict = await conflictingExistingFile(targetDir, rebuilt.files)
-      if (conflict) {
+      const rebuiltPreflightError = await validateTargetForPack(this.options.projectDir, targetDir, rebuilt.files)
+      if (rebuiltPreflightError) {
         return {
           ...blockedResult(rebuilt.preview, writtenAt, writtenBy),
-          error: `existing file differs: ${conflict}`,
-        }
-      }
-      const staleFile = await staleGeneratedFile(targetDir, rebuilt.files)
-      if (staleFile) {
-        return {
-          ...blockedResult(rebuilt.preview, writtenAt, writtenBy),
-          error: `existing generated instruction-pack file is not part of requested pack: ${staleFile}; inspect target directory before rewriting`,
+          error: rebuiltPreflightError,
         }
       }
       await writeFilesAtomically(this.options.projectDir, targetDir, rebuilt.files)
@@ -422,7 +416,7 @@ function buildFiles(
 }
 
 function finalizeFile(file: Omit<GeneratedFile, "size_bytes" | "sha256" | "summary_preview"> & { summary: string }): GeneratedFile {
-  const content = redactText(file.content).slice(0, MAX_FILE_BYTES)
+  const content = redactText(file.content)
   return {
     file_kind: file.file_kind,
     relative_path: file.relative_path,
@@ -708,6 +702,16 @@ async function writeFilesAtomically(projectDir: string, targetDir: string, files
 async function rejectSymlinkedPath(projectDir: string, targetDir: string): Promise<void> {
   const symlinkPath = await symlinkedPathComponent(projectDir, targetDir)
   if (symlinkPath) throw new Error(`session instruction-pack target path contains a symlink: ${symlinkPath}`)
+}
+
+async function validateTargetForPack(projectDir: string, targetDir: string, files: GeneratedFile[]): Promise<string | null> {
+  const symlinkPath = await symlinkedPathComponent(projectDir, targetDir)
+  if (symlinkPath) return `session instruction-pack target path contains a symlink: ${symlinkPath}`
+  const conflict = await conflictingExistingFile(targetDir, files)
+  if (conflict) return `existing file differs: ${conflict}`
+  const staleFile = await staleGeneratedFile(targetDir, files)
+  if (staleFile) return `existing generated instruction-pack file is not part of requested pack: ${staleFile}; inspect target directory before rewriting`
+  return null
 }
 
 async function symlinkedPathComponent(projectDir: string, targetDir: string): Promise<string | null> {
