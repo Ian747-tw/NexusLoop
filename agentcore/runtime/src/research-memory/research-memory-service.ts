@@ -153,11 +153,22 @@ export class ResearchMemoryService {
   private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[] }): RawCandidate[] {
     const out: RawCandidate[] = []
     const missionRuns = input.mission_id ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, mission_id: input.mission_id }) ?? [] : []
+    const missionRunIds = new Set(missionRuns.map((run) => run.training_run_id))
     const missionCandidateIds = new Set(missionRuns.map((run) => run.candidate_id).filter((id): id is string => !!id))
     const missionTrialIds = new Set(missionRuns.map((run) => run.trial_id).filter((id): id is string => !!id))
     if (!input.source_kind || input.source_kind === "research_db") {
-      for (const result of adapter.searchResearchResults?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? []) {
-        out.push(candidateFromResearchResult(result, adapter, input.include_artifacts !== false))
+      const directResults = adapter.searchResearchResults?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? []
+      const latestResults = input.mission_id ? adapter.searchResearchResults?.({ limit: SCAN_LIMIT, order: "newest" }) ?? [] : []
+      const resultRows = input.mission_id ? [...directResults, ...latestResults] : directResults
+      for (const result of resultRows) {
+        const linkedToMission =
+          !input.mission_id ||
+          result.mission_id === input.mission_id ||
+          (!!result.candidate_id && missionCandidateIds.has(result.candidate_id)) ||
+          (!!result.trial_id && missionTrialIds.has(result.trial_id)) ||
+          (!!result.training_run_id && missionRunIds.has(result.training_run_id))
+        if (!linkedToMission) continue
+        out.push(candidateFromResearchResult(result, adapter, input.include_artifacts !== false, input.mission_id && linkedToMission ? input.mission_id : undefined))
       }
     }
     if (!input.source_kind || input.source_kind === "research_db") {
@@ -196,7 +207,7 @@ export function readResearchMemoryRetrievalInput(value: unknown): ResearchMemory
   }
 }
 
-function candidateFromResearchResult(result: ResearchResult, adapter: ResearchMemoryReadAdapter, includeArtifacts: boolean): RawCandidate {
+function candidateFromResearchResult(result: ResearchResult, adapter: ResearchMemoryReadAdapter, includeArtifacts: boolean, missionId?: string): RawCandidate {
   const citations = adapter.listResultCitations?.(result.result_id) ?? []
   const artifacts = includeArtifacts ? adapter.listResultArtifacts?.(result.result_id) ?? [] : []
   const label = labelForResearchResult(result)
@@ -216,7 +227,7 @@ function candidateFromResearchResult(result: ResearchResult, adapter: ResearchMe
     metric_preview: previewUnknown(result.metrics),
     confidence: result.confidence,
     status: result.status,
-    source_mission_id: result.mission_id ?? undefined,
+    source_mission_id: missionId ?? result.mission_id ?? undefined,
     artifact_ids: artifacts.map((artifact) => bound(artifact.id, 160)),
     citation_ids: citations.map((citation) => bound(citation.citation_id, 160)),
     related_event_ids: [],

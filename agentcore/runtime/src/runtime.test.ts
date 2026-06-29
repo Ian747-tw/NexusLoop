@@ -17563,6 +17563,28 @@ describe("OpenCode session instruction packs", () => {
       label: "probe",
       reproduction: { objective: "mission scoped adapter timeout" },
     })
+    db.proposeResearchResult({
+      result_id: "result_mission_in_linked",
+      result_type: "finding",
+      title: "mission scoped adapter timeout linked result",
+      summary: "mission result linked through candidate trial and training run",
+      confidence: "high",
+      candidate_id: "candidate_mission_in",
+      trial_id: "trial_mission_in",
+      training_run_id: "training_mission_in",
+      created_by: "commander",
+    })
+    db.proposeResearchResult({
+      result_id: "result_mission_out_linked",
+      result_type: "finding",
+      title: "mission scoped adapter timeout linked result",
+      summary: "out of scope mission result linked through candidate trial and training run",
+      confidence: "high",
+      candidate_id: "candidate_mission_out",
+      trial_id: "trial_mission_out",
+      training_run_id: "training_mission_out",
+      created_by: "commander",
+    })
     db.close()
     const beforeEvents = await readJsonlEvents(dir)
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
@@ -17591,8 +17613,10 @@ describe("OpenCode session instruction packs", () => {
     expect(missionScoped.status).toBe("ready")
     expect(missionScoped.candidates.map((candidate) => candidate.result_id)).toContain("candidate_mission_in")
     expect(missionScoped.candidates.map((candidate) => candidate.result_id)).toContain("trial_mission_in")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).toContain("result_mission_in_linked")
     expect(missionScoped.candidates.map((candidate) => candidate.result_id)).not.toContain("candidate_mission_out")
     expect(missionScoped.candidates.map((candidate) => candidate.result_id)).not.toContain("trial_mission_out")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).not.toContain("result_mission_out_linked")
     expect(missionScoped.candidates.every((candidate) => candidate.source_mission_id === "mission_in")).toBe(true)
 
     const sessionScoped = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog", session_id: "opencode_session_missing" }) as { status: string; candidates: Array<{ source_session_id?: string }>; warnings: string[] }
