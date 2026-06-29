@@ -2299,7 +2299,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const top = nearest[0]
     const duplicateRisk = blockers.length ? "unknown" : fakeNoveltyRisk(top)
     const repetitionRequiresJustification = (duplicateRisk === "high" || duplicateRisk === "medium") && !reason
-    const missingMemoryWarning = retrieval.status === "empty"
+    const missingMemoryWarning = retrieval.retrieval_policy === "empty_projection"
     const hash = fakeStableHash(JSON.stringify({ question, method, config, reason, duplicateRisk, nearest: nearest.map((item) => item.result_id) }))
     return {
       preview_id: `fake-research-novelty-${hash.slice(0, 12)}`,
@@ -2310,7 +2310,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       nearest_prior_results: nearest,
       duplicate_risk: duplicateRisk,
       novelty_score: fakeNoveltyScore(duplicateRisk, !!reason, missingMemoryWarning),
-      difference_summary_preview: top ? (reason ? `repetition reason supplied: ${reason}` : `nearest prior result ${top.result_id} risk=${duplicateRisk}`) : "no internal prior result found; Commander may proceed with caution",
+      difference_summary_preview: top ? (reason ? `repetition reason supplied: ${reason}` : `nearest prior result ${top.result_id} risk=${duplicateRisk}`) : "no matching internal prior result found; duplicate risk is low",
       repetition_requires_justification: repetitionRequiresJustification,
       acceptable_repetition_reasons: ["changed_model", "changed_dataset", "changed_method", "changed_hyperparameter_or_config", "bug_fix", "replication", "previous_result_inconclusive", "new_external_evidence", "human_directed_repeat"],
       suggested_reason_not_duplicate: reason,

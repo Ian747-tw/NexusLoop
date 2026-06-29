@@ -5183,6 +5183,16 @@ describe("runtime UI effects", () => {
     expect(state.researchMemory?.noveltyPreview?.repetition_requires_justification).toBe(false)
     expect(state.researchMemory?.noveltyPreview?.suggested_reason_not_duplicate).toBe("replication")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-novelty-preview", args: ["question=spectral", "normalization", "method=orthogonalization", "config=large-margin"] })
+    expect(state.researchMemory?.noveltyPreview).toMatchObject({
+      duplicate_risk: "low",
+      novelty_score: 0.85,
+      missing_memory_warning: false,
+      external_research_recommended: false,
+    })
+    expect(state.researchMemory?.noveltyPreview?.nearest_prior_results).toEqual([])
+    expect(state.researchMemory?.noveltyPreview?.warnings.join(" ")).not.toContain("empty or unavailable")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-search", args: [] })
     expect(state.researchMemory?.commandError).toContain("requires query")
 
