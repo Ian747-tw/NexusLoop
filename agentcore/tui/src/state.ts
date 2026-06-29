@@ -1440,6 +1440,88 @@ export type ContextPacketsState = {
   commandError?: string
 }
 
+export type OpenCodeSessionInstructionPackCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeSessionInstructionPackFilePreviewSummary = {
+  file_kind: string
+  relative_path: string
+  would_write: boolean
+  size_bytes: number
+  sha256: string
+  summary_preview: string
+  sections_used: string[]
+  source_refs: string[]
+  warnings: string[]
+}
+
+export type OpenCodeSessionInstructionPackPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | "written" | "failed" | "dry_run" | string
+  can_write: boolean
+  session_id: string
+  packet_id?: string
+  packet_hash?: string
+  budget_id?: string
+  source_kind?: string
+  mission_id?: string
+  proposal_id?: string
+  review_request_id?: string
+  apply_id?: string
+  target_dir: string
+  files: OpenCodeSessionInstructionPackFilePreviewSummary[]
+  total_size_bytes: number
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeSessionInstructionPackCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  pack_hash: string
+}
+
+export type OpenCodeSessionInstructionPackResultSummary = {
+  pack_id: string
+  status: "written" | "blocked" | "failed" | "dry_run" | string
+  session_id: string
+  packet_id?: string
+  packet_hash?: string
+  budget_id?: string
+  target_dir: string
+  files: OpenCodeSessionInstructionPackFilePreviewSummary[]
+  total_size_bytes: number
+  written_at: string
+  written_by: string
+  error?: string
+  pack_hash: string
+  recommended_commands: OpenCodeSessionInstructionPackCommandSummary[]
+}
+
+export type OpenCodeSessionInstructionPackRecordSummary = {
+  pack_id: string
+  status: string
+  session_id: string
+  packet_id?: string
+  target_dir: string
+  file_count: number
+  total_size_bytes: number
+  written_at: string
+  summary_preview: string
+  pack_hash: string
+}
+
+export type OpenCodeSessionInstructionPacksState = {
+  preview?: OpenCodeSessionInstructionPackPreviewSummary | null
+  latestResult?: OpenCodeSessionInstructionPackResultSummary | null
+  records: OpenCodeSessionInstructionPackRecordSummary[]
+  selected?: OpenCodeSessionInstructionPackResultSummary | null
+  commandError?: string
+}
+
 export type CommanderExecutorReviewCommandSummary = {
   label: string
   command: string
@@ -3720,6 +3802,7 @@ export type UiState = {
   opencodeSessions?: OpenCodeSessionsState
   contextBudgets?: ContextBudgetsState
   contextPackets?: ContextPacketsState
+  opencodeSessionInstructionPacks?: OpenCodeSessionInstructionPacksState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
   executorReviewProposalCreate?: ExecutorReviewProposalCreateState

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { RuntimeServer } from "./server"
@@ -36,6 +36,7 @@ import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
 import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCodeAdapterConfig, validateOpenCodeAdapterConfig } from "./opencode/adapter-config"
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
+import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
 import type { ExecutorToolHandler, ExecutorToolHandlerAdapter, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
@@ -17014,6 +17015,461 @@ describe("Context budget registry", () => {
     expect(previewRecord?.out_of_scope).toEqual(expect.arrayContaining(["provider calls", "OpenCode launch", "research.db retrieval", "MCP calls"]))
     expect(summaryRecord).toMatchObject({ risk: "safe_read", mutates_events: false, calls_provider: false })
     expect(summaryRecord?.aliases).toContain("/context-packets")
+  })
+})
+
+describe("OpenCode session instruction packs", () => {
+  test("preview, dry-run, write, duplicate, list, and get use bounded session packet artifacts", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+
+    await expect(server.command("runtime.preview_opencode_session_instruction_pack", {})).resolves.toMatchObject({
+      status: "blocked",
+      can_write: false,
+      blockers: expect.arrayContaining(["session_id is required"]),
+    })
+
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", {
+      objective: "instruction pack test token=pack-secret",
+      maxContextBytes: 4096,
+    }) as { session_id: string }
+    const eventsAfterPlan = await server.eventStore.readAll()
+
+    const previewResult = await server.command("runtime.preview_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      maxContextBytes: 4096,
+    }) as {
+      status: string
+      can_write: boolean
+      session_id: string
+      target_dir: string
+      files: Array<{ relative_path: string; file_kind: string; sha256: string; size_bytes: number }>
+      total_size_bytes: number
+    }
+    expect(previewResult).toMatchObject({
+      status: "ready",
+      can_write: true,
+      session_id: session.session_id,
+      target_dir: `.nxl/opencode/sessions/${session.session_id}`,
+    })
+    expect(previewResult.files.map((file) => file.relative_path)).toEqual(expect.arrayContaining([
+      "TASK.md",
+      "CONTEXT.md",
+      "GUIDANCE.md",
+      "SESSION_MEMORY.md",
+      "POLICY.md",
+      "MANIFEST.json",
+      "opencode-session-config.json",
+    ]))
+    expect(JSON.stringify(previewResult)).not.toContain("pack-secret")
+    expect(previewResult.total_size_bytes).toBeGreaterThan(0)
+    expect(previewResult.total_size_bytes).toBeLessThanOrEqual(64_000)
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterPlan)
+
+    const dryRun = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      dryRun: true,
+    }) as { status: string; files: Array<{ would_write: boolean }> }
+    expect(dryRun.status).toBe("dry_run")
+    expect(dryRun.files.every((file) => file.would_write === false)).toBe(true)
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterPlan)
+
+    const result = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      writtenBy: "operator token=pack-secret",
+    }) as { pack_id: string; status: string; files: Array<{ relative_path: string; sha256: string }>; pack_hash: string }
+    expect(result.status).toBe("written")
+    const targetDir = join(dir, ".nxl", "opencode", "sessions", session.session_id)
+    for (const file of result.files) {
+      const content = await readFile(join(targetDir, file.relative_path), "utf8")
+      expect(createHash("sha256").update(content).digest("hex")).toBe(file.sha256)
+      expect(content).not.toContain("pack-secret")
+      expect(content).not.toContain("token=pack-secret")
+      expect(content).not.toContain("raw provider output: included")
+      expect(content).not.toContain("raw_logs status=included")
+    }
+    const manifest = JSON.parse(await readFile(join(targetDir, "MANIFEST.json"), "utf8"))
+    expect(manifest).toMatchObject({
+      pack_id: result.pack_id,
+      session_id: session.session_id,
+      packet_id: expect.stringMatching(/^context_packet_/),
+      launch_ready: false,
+      generated_for_future_launch: true,
+    })
+    const config = JSON.parse(await readFile(join(targetDir, "opencode-session-config.json"), "utf8"))
+    expect(config).toMatchObject({ launch_ready: false, generated_for_future_launch: true, session_id: session.session_id })
+    expect(config).not.toHaveProperty("launch_command")
+
+    const duplicate = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id }) as { pack_id: string; status: string }
+    expect(duplicate).toMatchObject({ pack_id: result.pack_id, status: "written" })
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "opencode_session_instruction_pack_written")).toHaveLength(1)
+    expect(JSON.stringify(events)).not.toContain("pack-secret")
+    expect(events.map((event) => event.kind)).not.toContain("opencode_process_smoke_started")
+    expect(events.map((event) => event.kind)).not.toContain("mission_progress_recorded")
+    expect(events.map((event) => event.kind)).not.toContain("mission_result_submitted")
+    await expect(server.command("runtime.list_opencode_session_instruction_packs")).resolves.toEqual([
+      expect.objectContaining({ pack_id: result.pack_id, session_id: session.session_id, file_count: 7 }),
+    ])
+    await expect(server.command("runtime.get_opencode_session_instruction_pack", { packId: result.pack_id })).resolves.toMatchObject({
+      pack_id: result.pack_id,
+      status: "written",
+      session_id: session.session_id,
+    })
+    expect(adapter.startCalls).toBe(1)
+    await server.shutdown()
+  })
+
+  test("unsafe session IDs and conflicting existing files block without writing events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "conflict instruction pack" }) as { session_id: string }
+
+    await expect(server.command("runtime.preview_opencode_session_instruction_pack", { sessionId: "../escape" })).resolves.toMatchObject({
+      status: "blocked",
+      blockers: expect.arrayContaining(["session_id contains unsafe path characters"]),
+    })
+    await expect(server.command("runtime.write_opencode_session_instruction_pack", { sessionId: "../escape", dryRun: true })).resolves.toMatchObject({
+      status: "blocked",
+      error: "session_id contains unsafe path characters",
+    })
+    await expect(server.command("runtime.preview_opencode_session_instruction_pack", { sessionId: "." })).resolves.toMatchObject({
+      status: "blocked",
+      blockers: expect.arrayContaining(["session_id contains unsafe path characters"]),
+    })
+    await expect(server.command("runtime.write_opencode_session_instruction_pack", { sessionId: ".", dryRun: true })).resolves.toMatchObject({
+      status: "blocked",
+      error: "session_id contains unsafe path characters",
+    })
+    const directorySession = await server.command("runtime.create_opencode_session_plan", { objective: "directory conflict instruction pack" }) as { session_id: string }
+    await mkdir(join(dir, ".nxl", "opencode", "sessions", directorySession.session_id, "TASK.md"), { recursive: true })
+    const directoryResult = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: directorySession.session_id, dryRun: true }) as { status: string; error?: string }
+    expect(directoryResult.status).toBe("blocked")
+    expect(directoryResult.error).toContain("existing file differs: TASK.md")
+    const fileTargetSession = await server.command("runtime.create_opencode_session_plan", { objective: "file target instruction pack" }) as { session_id: string }
+    await mkdir(join(dir, ".nxl", "opencode", "sessions"), { recursive: true })
+    await writeFile(join(dir, ".nxl", "opencode", "sessions", fileTargetSession.session_id), "not a directory\n")
+    const fileTargetResult = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: fileTargetSession.session_id, dryRun: true }) as { status: string; error?: string }
+    expect(fileTargetResult.status).toBe("blocked")
+    expect(fileTargetResult.error).toContain("existing file differs: TASK.md")
+    await mkdir(join(dir, ".nxl", "opencode", "sessions", session.session_id), { recursive: true })
+    await writeFile(join(dir, ".nxl", "opencode", "sessions", session.session_id, "TASK.md"), "different\n")
+    const result = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id }) as { status: string; error?: string }
+    expect(result.status).toBe("blocked")
+    expect(result.error).toContain("existing file differs")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("manifest selection participates in instruction pack identity", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "manifest option instruction pack" }) as { session_id: string }
+
+    const withoutManifest = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      includeManifest: false,
+    }) as { pack_id: string; status: string; files: Array<{ relative_path: string }> }
+    expect(withoutManifest.status).toBe("written")
+    expect(withoutManifest.files.map((file) => file.relative_path)).not.toContain("MANIFEST.json")
+
+    const withManifest = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+    }) as { pack_id: string; status: string; files: Array<{ relative_path: string }> }
+    expect(withManifest.status).toBe("written")
+    expect(withManifest.pack_id).not.toBe(withoutManifest.pack_id)
+    expect(withManifest.files.map((file) => file.relative_path)).toContain("MANIFEST.json")
+
+    const manifest = JSON.parse(await readFile(join(dir, ".nxl", "opencode", "sessions", session.session_id, "MANIFEST.json"), "utf8"))
+    expect(manifest.pack_id).toBe(withManifest.pack_id)
+    const packEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written") as Array<{ pack_id: string; omitted_refs_summary?: string }>
+    expect(packEvents.map((event) => event.pack_id)).toEqual([withoutManifest.pack_id, withManifest.pack_id])
+    expect(packEvents[0].omitted_refs_summary).toBe("omitted refs are available through context packet pointers; MANIFEST.json was not requested")
+    expect(packEvents[1].omitted_refs_summary).toBe("omitted refs are stored in MANIFEST.json as bounded pointers only")
+
+    const duplicateWithoutManifest = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      includeManifest: false,
+    }) as { status: string; error?: string }
+    expect(duplicateWithoutManifest.status).toBe("blocked")
+    expect(duplicateWithoutManifest.error).toContain("existing generated instruction-pack file is not part of requested pack: MANIFEST.json")
+    const eventsAfterDuplicate = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")
+    expect(eventsAfterDuplicate.map((event) => event.pack_id)).toEqual([withoutManifest.pack_id, withManifest.pack_id])
+    await server.shutdown()
+  })
+
+  test("optional generated files from a prior pack block narrower rewrites", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "stale optional instruction pack" }) as { session_id: string }
+
+    const defaultPack = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+    }) as { pack_id: string; status: string }
+    expect(defaultPack.status).toBe("written")
+
+    const narrowerPack = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      includeManifest: false,
+    }) as { status: string; error?: string }
+    expect(narrowerPack.status).toBe("blocked")
+    expect(narrowerPack.error).toContain("existing generated instruction-pack file is not part of requested pack: MANIFEST.json")
+
+    const packEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")
+    expect(packEvents.map((event) => event.pack_id)).toEqual([defaultPack.pack_id])
+    await server.shutdown()
+  })
+
+  test("dry-run pack writes run the same filesystem safety preflight", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const conflictSession = await server.command("runtime.create_opencode_session_plan", { objective: "dry run conflict instruction pack" }) as { session_id: string }
+    await mkdir(join(dir, ".nxl", "opencode", "sessions", conflictSession.session_id), { recursive: true })
+    await writeFile(join(dir, ".nxl", "opencode", "sessions", conflictSession.session_id, "TASK.md"), "different\n")
+
+    const conflictDryRun = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: conflictSession.session_id,
+      dryRun: true,
+    }) as { status: string; error?: string }
+    expect(conflictDryRun.status).toBe("blocked")
+    expect(conflictDryRun.error).toContain("existing file differs: TASK.md")
+
+    const symlinkSession = await server.command("runtime.create_opencode_session_plan", { objective: "dry run symlink instruction pack" }) as { session_id: string }
+    const externalTarget = await mkdtemp(join(tmpdir(), "nxl-pack-dry-run-target-"))
+    await symlink(externalTarget, join(dir, ".nxl", "opencode", "sessions", symlinkSession.session_id), "dir")
+    const symlinkDryRun = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: symlinkSession.session_id,
+      dryRun: true,
+    }) as { status: string; error?: string }
+    expect(symlinkDryRun.status).toBe("blocked")
+    expect(symlinkDryRun.error).toContain("session instruction-pack target path contains a symlink")
+    expect(existsSync(join(externalTarget, "TASK.md"))).toBe(false)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")).toHaveLength(0)
+    await rm(externalTarget, { recursive: true, force: true })
+    await server.shutdown()
+  })
+
+  test("symlinked session instruction-pack target directories are rejected before writes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "symlink instruction pack" }) as { session_id: string }
+    const externalTarget = await mkdtemp(join(tmpdir(), "nxl-pack-target-"))
+    await mkdir(join(dir, ".nxl", "opencode", "sessions"), { recursive: true })
+    await symlink(externalTarget, join(dir, ".nxl", "opencode", "sessions", session.session_id), "dir")
+
+    const result = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+    }) as { status: string; error?: string }
+    expect(result.status).toBe("blocked")
+    expect(result.error).toContain("session instruction-pack target path contains a symlink")
+    expect(existsSync(join(externalTarget, "TASK.md"))).toBe(false)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")).toHaveLength(0)
+    await rm(externalTarget, { recursive: true, force: true })
+    await server.shutdown()
+  })
+
+  test("oversized generated files block instead of being truncated", async () => {
+    const dir = await tempProject()
+    const session = {
+      session_id: "session_oversized_pack",
+      status: "planned",
+      title: "Oversized pack",
+      source_kind: "manual",
+      objective: "oversized packet instruction pack",
+      commander_context_summary: "commander summary",
+      opencode_context_seed: "executor seed",
+      shared_context_summary: "shared summary",
+      success_criteria: ["block oversized generated files"],
+      constraints: ["no truncation"],
+      artifact_expectations: ["blocked preview"],
+      timeout_policy: {
+        max_wall_time_ms: 1_800_000,
+        max_no_progress_ms: 600_000,
+        heartbeat_interval_ms: 60_000,
+        forced_pause_enabled: true,
+        report_required_on_timeout: true,
+        timeout_policy_hash: "timeout_hash",
+      },
+      question_policy: {
+        allow_opencode_questions: true,
+        commander_answer_required_for_blockers: true,
+        human_escalation_allowed: true,
+        max_pending_questions: 3,
+        question_policy_hash: "question_hash",
+      },
+      human_control_policy: {
+        allow_human_pause: true,
+        allow_human_override: true,
+        allow_human_stop: true,
+        allow_human_guidance_note: true,
+        require_reason_for_stop: true,
+        human_policy_hash: "human_hash",
+      },
+      created_at: "2026-06-29T00:00:00.000Z",
+      created_by: "operator",
+      session_hash: "session_hash",
+      max_context_bytes: 48_000,
+      commander_context_hash: "commander_hash",
+      opencode_context_hash: "opencode_hash",
+    }
+    const hugeSummary = "bounded-summary ".repeat(1_500)
+    const packet = {
+      packet_id: "context_packet_oversized",
+      role: "executor",
+      purpose: "opencode_executor_session",
+      budget_id: "context_budget_oversized",
+      session_id: session.session_id,
+      packet_status: "ready",
+      can_compile_final_prompt: false,
+      sections: [{
+        section: "mission_state",
+        status: "included",
+        priority: "required",
+        inclusion_policy: "always",
+        estimated_bytes: hugeSummary.length,
+        max_bytes: 48_000,
+        summary_preview: hugeSummary,
+        source_refs: [],
+        warnings: [],
+      }],
+      included_source_refs: [],
+      omitted_source_refs: [],
+      budget_summary: { max_context_bytes: 48_000, over_budget: false },
+      blockers: [],
+      warnings: [],
+      recommended_commands: [],
+      generated_at: "2026-06-29T00:00:00.000Z",
+      redacted_summary_preview: "oversized packet",
+      packet_hash: "packet_hash_oversized",
+    }
+    const service = new OpenCodeSessionInstructionPackService({
+      projectDir: dir,
+      eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")),
+      opencodeSessionService: { get: async () => session } as never,
+      contextPacketCompilerService: { preview: async () => packet } as never,
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+    })
+
+    const preview = await service.preview({ session_id: session.session_id })
+    const contextFile = preview.files.find((file) => file.relative_path === "CONTEXT.md")
+    expect(contextFile?.size_bytes).toBeGreaterThan(16_000)
+    expect(preview.status).toBe("blocked")
+    expect(preview.blockers).toContain("one or more instruction-pack files exceed the per-file size cap")
+    const dryRun = await service.write({ session_id: session.session_id, dry_run: true })
+    expect(dryRun.status).toBe("blocked")
+    expect(await new EventStore(join(dir, ".nxl", "events.jsonl")).readAll()).toEqual([])
+  })
+
+  test("instruction pack write uses temporary run lock without starting adapter", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const sessionId = "session_pack_prelaunch"
+    await new EventStore(join(dir, ".nxl", "events.jsonl")).append({
+      kind: "opencode_session_planned",
+      session_id: sessionId,
+      status: "planned",
+      source_kind: "manual",
+      title: "Prelaunch instruction pack",
+      objective: "write instruction pack before OpenCode launch",
+      commander_context_summary: "Commander summary pointer",
+      opencode_context_seed: "OpenCode executor seed",
+      shared_context_summary: "Shared bounded summary",
+      commander_context_hash: "commander_context_hash",
+      opencode_context_hash: "opencode_context_hash",
+      max_context_bytes: 4096,
+      success_criteria: ["write bounded files"],
+      constraints: ["do not launch OpenCode"],
+      artifact_expectations: ["instruction pack files"],
+      timeout_policy: {
+        max_wall_time_ms: 1_800_000,
+        max_no_progress_ms: 600_000,
+        heartbeat_interval_ms: 60_000,
+        forced_pause_enabled: true,
+        report_required_on_timeout: true,
+        timeout_policy_hash: "timeout_policy_hash",
+      },
+      question_policy: {
+        allow_opencode_questions: true,
+        commander_answer_required_for_blockers: true,
+        human_escalation_allowed: true,
+        max_pending_questions: 3,
+        question_policy_hash: "question_policy_hash",
+      },
+      human_control_policy: {
+        allow_human_pause: true,
+        allow_human_override: true,
+        allow_human_stop: true,
+        allow_human_guidance_note: true,
+        require_reason_for_stop: true,
+        human_policy_hash: "human_policy_hash",
+      },
+      created_at: "2026-06-29T00:00:00.000Z",
+      created_by: "operator",
+      session_hash: "session_hash_prelaunch",
+    })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+
+    const result = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId }) as { status: string; session_id: string }
+    expect(result).toMatchObject({ status: "written", session_id: sessionId })
+    expect(existsSync(join(dir, ".nxl", "opencode", "sessions", sessionId, "TASK.md"))).toBe(true)
+    const eventKinds = await readEventKinds(dir)
+    expect(eventKinds.filter((kind) => kind === "opencode_session_instruction_pack_written")).toHaveLength(1)
+    expect(eventKinds).not.toContain("runtime_started")
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
+  test("RuntimeServerClient no-start covers instruction-pack preview list get and dry-run write", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_session_instruction_pack", { sessionId: "missing" })).resolves.toMatchObject({ can_write: false })
+    await expect(client.command("runtime.write_opencode_session_instruction_pack", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_opencode_session_instruction_packs")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_session_instruction_pack", { packId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.write_opencode_session_instruction_pack", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(await readEventKinds(dir)).not.toContain("opencode_session_instruction_pack_written")
+    await client.shutdown()
+  })
+
+  test("authority registry includes instruction-pack read and write commands", () => {
+    const previewRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/opencode-session-instruction-pack-preview")
+    const dryRunRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/opencode-session-instruction-pack-dry-run")
+    const writeRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/opencode-session-instruction-pack-write")
+    expect(previewRecord).toMatchObject({ risk: "safe_read", mutates_events: false, creates_external_process: false, calls_provider: false, requires_active_runtime: false })
+    expect(dryRunRecord).toMatchObject({ risk: "safe_read", mutates_events: false, requires_active_runtime: false })
+    expect(writeRecord).toMatchObject({
+      risk: "high_impact_write",
+      mutates_events: true,
+      creates_external_process: false,
+      calls_provider: false,
+      requires_active_runtime: false,
+      requires_run_lock: true,
+      expected_event_kinds: ["opencode_session_instruction_pack_written"],
+    })
+    expect(writeRecord?.aliases).toEqual(expect.arrayContaining(["/session-instruction-pack-write", "/opencode-context-pack-write"]))
+    expect(writeRecord?.notes.join(" ")).toContain("does not launch OpenCode")
+    expect(writeRecord?.out_of_scope).toEqual(expect.arrayContaining(["OpenCode launch", "provider calls", "research.db retrieval", "AGENTS.md mutation"]))
   })
 })
 

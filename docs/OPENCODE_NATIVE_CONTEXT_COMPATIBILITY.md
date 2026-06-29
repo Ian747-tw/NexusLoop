@@ -210,8 +210,11 @@ Session tactical memory should map to generated bounded files such as:
 - `.nxl/opencode/sessions/<session_id>/CONTEXT.md`
 - `.nxl/opencode/sessions/<session_id>/GUIDANCE.md`
 - `.nxl/opencode/sessions/<session_id>/SESSION_MEMORY.md`
+- `.nxl/opencode/sessions/<session_id>/POLICY.md`
+- `.nxl/opencode/sessions/<session_id>/MANIFEST.json`
+- `.nxl/opencode/sessions/<session_id>/opencode-session-config.json`
 
-Future launch should include those files through OpenCode config `instructions`, command file attachment, or SDK prompt parts, depending on the launch surface selected in 9C/9D.
+Branch 9B3 writes these files as bounded, per-session future-launch artifacts with `launch_ready=false`. It does not launch OpenCode, mutate `AGENTS.md`, mutate global OpenCode config, call providers, call MCPs, or query `research.db`. Future launch should include those files through OpenCode config `instructions`, command file attachment, or SDK prompt parts, depending on the launch surface selected in 9C/9D.
 
 Durable memory remains:
 
@@ -311,7 +314,7 @@ Branch 9B0 does not implement this protocol.
 
 - 9B1: model capability + context budget registry (read-only planning surface)
 - 9B2: context packet compiler skeleton (read-only packet previews; no executable prompt compilation)
-- 9B3: session-specific OpenCode config/instruction writer
+- 9B3: session-specific OpenCode config/instruction writer (bounded artifact writer only; no launch)
 - 9B4: `research.db` retrieval + novelty-check planner
 - 9C: real OpenCode launch readiness
 - 9D: real OpenCode launch gate

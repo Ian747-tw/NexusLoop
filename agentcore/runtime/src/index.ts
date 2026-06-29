@@ -54,6 +54,8 @@ export { ExecutorReviewProposalApplyReadinessService } from "./commander-executo
 export { ExecutorReviewProposalNarrowApplyService } from "./commander-executor-review/executor-review-proposal-narrow-apply-service"
 export { OpenCodeSessionService } from "./opencode-session/opencode-session-service"
 export * from "./opencode-session/opencode-session-types"
+export { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
+export * from "./opencode-session/opencode-session-instruction-pack-types"
 export { ContextBudgetService } from "./context/context-budget-service"
 export { ModelCapabilityRegistry } from "./context/model-capability-registry"
 export { ContextPacketCompilerService } from "./context/context-packet-compiler-service"

@@ -86,6 +86,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeSessionLines(state))
   out.push(...contextBudgetLines(state))
   out.push(...contextPacketLines(state))
+  out.push(...opencodeSessionInstructionPackLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
   out.push(...executorReviewProposalCreateLines(state))
@@ -728,6 +729,61 @@ function contextPacketLines(state: UiState): string[] {
   }
   if (packets.commandError) out.push(`  command_error=${redactText(packets.commandError)}`)
   out.push("  note=packet preview does not compile executable prompts, call providers, launch OpenCode, query research.db, call MCPs, mutate missions, or decide research direction")
+  return out
+}
+
+function opencodeSessionInstructionPackLines(state: UiState): string[] {
+  const packs = state.opencodeSessionInstructionPacks
+  const out = ["OpenCode session instruction packs"]
+  if (!packs) {
+    out.push("  preview=none")
+    out.push("  latest=none")
+    out.push("  records=0")
+    out.push("  note=instruction-pack writing does not launch OpenCode, call providers, query research.db, or mutate missions")
+    return out
+  }
+  if (packs.preview) {
+    const item = packs.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_write=${item.can_write}`)
+    out.push(`  session=${item.session_id || "none"} packet=${item.packet_id ?? "none"} packet_hash=${item.packet_hash ?? "none"} budget=${item.budget_id ?? "none"}`)
+    out.push(`  target_dir=${preview(redactText(item.target_dir))}`)
+    out.push(`  total_size_bytes=${item.total_size_bytes}`)
+    out.push("  file_previews")
+    if (item.files.length === 0) out.push("    - empty")
+    else out.push(...item.files.slice(0, 10).map((file) => `    - ${file.relative_path} kind=${file.file_kind} would_write=${file.would_write} bytes=${file.size_bytes} sha=${preview(redactText(file.sha256))}: ${preview(redactText(file.summary_preview))}`))
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (packs.latestResult) {
+    const result = packs.latestResult
+    out.push(`  latest=${result.pack_id} status=${result.status} session=${result.session_id} files=${result.files.length} bytes=${result.total_size_bytes}`)
+    out.push(`  latest_target=${preview(redactText(result.target_dir))}`)
+    if (result.error) out.push(`  latest_error=${preview(redactText(result.error))}`)
+  } else {
+    out.push("  latest=none")
+  }
+  out.push(`  records=${packs.records.length}`)
+  if (packs.records.length > 0) {
+    out.push("  instruction_packs")
+    out.push(...packs.records.slice(0, 10).map((record) => `    - ${record.pack_id} status=${record.status} session=${record.session_id} files=${record.file_count} bytes=${record.total_size_bytes}: ${preview(redactText(record.summary_preview))}`))
+  }
+  if (packs.selected) {
+    const selected = packs.selected
+    out.push(`  selected=${selected.pack_id} status=${selected.status} session=${selected.session_id}`)
+  }
+  if (packs.commandError) out.push(`  command_error=${redactText(packs.commandError)}`)
+  out.push("  note=instruction-pack writing does not launch OpenCode, call providers, query research.db, call MCPs, mutate missions, or compile executable prompts")
   return out
 }
 

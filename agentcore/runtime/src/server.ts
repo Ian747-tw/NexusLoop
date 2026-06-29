@@ -73,6 +73,8 @@ import { OpenCodeResultReviewPacketService, readOpenCodeResultReviewPacketInput 
 import type { OpenCodeResultReviewPacket, OpenCodeResultReviewSummary } from "./opencode/opencode-result-review-packet-types"
 import { OpenCodeSessionService, readOpenCodeSessionCreateInput, readOpenCodeSessionPreviewInput } from "./opencode-session/opencode-session-service"
 import type { OpenCodeSessionPlan, OpenCodeSessionPreview, OpenCodeSessionRecord, OpenCodeSessionSourceKind, OpenCodeSessionStatus, OpenCodeSessionSummary } from "./opencode-session/opencode-session-types"
+import { OpenCodeSessionInstructionPackService, readOpenCodeSessionInstructionPackPreviewInput, readOpenCodeSessionInstructionPackWriteInput } from "./opencode-session/opencode-session-instruction-pack-service"
+import type { OpenCodeSessionInstructionPackPreview, OpenCodeSessionInstructionPackRecord, OpenCodeSessionInstructionPackResult } from "./opencode-session/opencode-session-instruction-pack-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -288,6 +290,7 @@ export class RuntimeServer {
   private opencodeHandoffReadinessServiceInstance: OpenCodeHandoffReadinessService | null = null
   private opencodeResultReviewPacketServiceInstance: OpenCodeResultReviewPacketService | null = null
   private opencodeSessionServiceInstance: OpenCodeSessionService | null = null
+  private opencodeSessionInstructionPackServiceInstance: OpenCodeSessionInstructionPackService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private commanderExecutorReviewServiceInstance: CommanderExecutorReviewService | null = null
@@ -834,6 +837,18 @@ export class RuntimeServer {
         return this.previewContextPacket(readContextPacketPreviewInput(payload))
       case "runtime.context_packet_summary":
         return this.contextPacketSummary()
+      case "runtime.preview_opencode_session_instruction_pack":
+        return this.previewOpenCodeSessionInstructionPack(readOpenCodeSessionInstructionPackPreviewInput(payload))
+      case "runtime.write_opencode_session_instruction_pack":
+        return this.writeOpenCodeSessionInstructionPack(readOpenCodeSessionInstructionPackWriteInput(payload))
+      case "runtime.list_opencode_session_instruction_packs":
+        return this.listOpenCodeSessionInstructionPacks({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          status: optionalString(payload.status, "status"),
+        })
+      case "runtime.get_opencode_session_instruction_pack":
+        return this.getOpenCodeSessionInstructionPack(requiredString(payload.packId ?? payload.pack_id, "packId"))
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(readCommanderExecutorReviewInput(payload))
       case "runtime.execute_commander_executor_review":
@@ -1692,6 +1707,23 @@ export class RuntimeServer {
 
   async contextPacketSummary(): Promise<ContextPacketSummary> {
     return this.contextPacketCompilerService().summary()
+  }
+
+  async previewOpenCodeSessionInstructionPack(input: Parameters<OpenCodeSessionInstructionPackService["preview"]>[0] = {}): Promise<OpenCodeSessionInstructionPackPreview> {
+    return this.opencodeSessionInstructionPackService().preview(input)
+  }
+
+  async writeOpenCodeSessionInstructionPack(input: Parameters<OpenCodeSessionInstructionPackService["write"]>[0] = {}): Promise<OpenCodeSessionInstructionPackResult> {
+    if (input.dry_run === true) return this.opencodeSessionInstructionPackService().write(input)
+    return this.withInstructionPackWriteLock(() => this.opencodeSessionInstructionPackService().write(input))
+  }
+
+  async listOpenCodeSessionInstructionPacks(input: Parameters<OpenCodeSessionInstructionPackService["list"]>[0] = {}): Promise<OpenCodeSessionInstructionPackRecord[]> {
+    return this.opencodeSessionInstructionPackService().list(input)
+  }
+
+  async getOpenCodeSessionInstructionPack(packId: string): Promise<OpenCodeSessionInstructionPackResult | null> {
+    return this.opencodeSessionInstructionPackService().get(packId)
   }
 
   async previewCommanderExecutorReview(input: Parameters<CommanderExecutorReviewService["preview"]>[0] = {}): Promise<CommanderExecutorReviewPreview> {
@@ -2584,6 +2616,16 @@ export class RuntimeServer {
     }
   }
 
+  private async withInstructionPackWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.runLock.isHeld()) return operation()
+    await this.runLock.acquire()
+    try {
+      return await operation()
+    } finally {
+      await this.runLock.release()
+    }
+  }
+
   private requireOpenCodeHandoffRuntime(commandName: string): void {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before opencode handoff writes")
@@ -2729,6 +2771,16 @@ export class RuntimeServer {
       proposalRegistry: this.proposalRegistry,
     })
     return this.contextPacketCompilerServiceInstance
+  }
+
+  private opencodeSessionInstructionPackService(): OpenCodeSessionInstructionPackService {
+    this.opencodeSessionInstructionPackServiceInstance ??= new OpenCodeSessionInstructionPackService({
+      projectDir: this.projectDir,
+      eventStore: this.eventStore,
+      opencodeSessionService: this.opencodeSessionService(),
+      contextPacketCompilerService: this.contextPacketCompilerService(),
+    })
+    return this.opencodeSessionInstructionPackServiceInstance
   }
 
   private commanderExecutorReviewService(): CommanderExecutorReviewService {
