@@ -17523,6 +17523,44 @@ describe("OpenCode session instruction packs", () => {
       confidence: "low",
       created_by: "commander",
     })
+    for (let i = 0; i < 205; i += 1) {
+      db.proposeResearchResult({
+        result_id: `old_unrelated_${String(i).padStart(3, "0")}`,
+        result_type: "finding",
+        title: `old unrelated filler ${i}`,
+        summary: "legacy filler result that should not hide later matching memory",
+        confidence: "low",
+        created_by: "commander",
+      })
+    }
+    db.proposeResearchResult({
+      result_id: "zz_latecap_finding",
+      result_type: "finding",
+      title: "latecap needle result",
+      summary: "latecap lexical match should survive backend scan before preview limit",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.createCandidate({ candidate_id: "candidate_mission_in", claim: "mission scoped adapter timeout candidate", source: "commander" })
+    db.createCandidate({ candidate_id: "candidate_mission_out", claim: "mission scoped adapter timeout candidate", source: "commander" })
+    db.planTrial({ trial_id: "trial_mission_in", candidate_id: "candidate_mission_in", trial_kind: "mission scoped adapter timeout trial", config: { watchdog: "short" } })
+    db.planTrial({ trial_id: "trial_mission_out", candidate_id: "candidate_mission_out", trial_kind: "mission scoped adapter timeout trial", config: { watchdog: "short" } })
+    db.planTrainingRun({
+      training_run_id: "training_mission_in",
+      candidate_id: "candidate_mission_in",
+      trial_id: "trial_mission_in",
+      mission_id: "mission_in",
+      label: "probe",
+      reproduction: { objective: "mission scoped adapter timeout" },
+    })
+    db.planTrainingRun({
+      training_run_id: "training_mission_out",
+      candidate_id: "candidate_mission_out",
+      trial_id: "trial_mission_out",
+      mission_id: "mission_out",
+      label: "probe",
+      reproduction: { objective: "mission scoped adapter timeout" },
+    })
     db.close()
     const beforeEvents = await readJsonlEvents(dir)
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
@@ -17546,6 +17584,18 @@ describe("OpenCode session instruction packs", () => {
     expect(noOverlap.status).toBe("empty")
     expect(noOverlap.candidates).toEqual([])
     expect(noOverlap.warnings.join(" ")).toContain("matched the query")
+
+    const lateCap = await server.command("runtime.preview_research_memory_retrieval", { query: "latecap needle", limit: 3 }) as { status: string; candidates: Array<{ result_id: string }> }
+    expect(lateCap.status).toBe("ready")
+    expect(lateCap.candidates.map((candidate) => candidate.result_id)).toContain("zz_latecap_finding")
+
+    const missionScoped = await server.command("runtime.preview_research_memory_retrieval", { query: "mission scoped adapter timeout", mission_id: "mission_in", limit: 10 }) as { status: string; candidates: Array<{ result_id: string; source_mission_id?: string }> }
+    expect(missionScoped.status).toBe("ready")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).toContain("candidate_mission_in")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).toContain("trial_mission_in")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).not.toContain("candidate_mission_out")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).not.toContain("trial_mission_out")
+    expect(missionScoped.candidates.every((candidate) => candidate.source_mission_id === "mission_in")).toBe(true)
 
     const sessionScoped = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog", session_id: "opencode_session_missing" }) as { status: string; candidates: Array<{ source_session_id?: string }>; warnings: string[] }
     expect(sessionScoped.status).toBe("empty")

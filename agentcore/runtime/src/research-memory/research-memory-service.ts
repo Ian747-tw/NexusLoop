@@ -24,7 +24,7 @@ import type {
 const MAX_TEXT = 240
 const DEFAULT_LIMIT = 8
 const MAX_LIMIT = 20
-const SCAN_LIMIT = 200
+const SCAN_LIMIT = 500
 const STOP_WORDS = new Set([
   "a",
   "an",
@@ -150,21 +150,33 @@ export class ResearchMemoryService {
 
   private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[] }): RawCandidate[] {
     const out: RawCandidate[] = []
+    const missionRuns = input.mission_id ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, mission_id: input.mission_id }) ?? [] : []
+    const missionCandidateIds = new Set(missionRuns.map((run) => run.candidate_id).filter((id): id is string => !!id))
+    const missionTrialIds = new Set(missionRuns.map((run) => run.trial_id).filter((id): id is string => !!id))
     if (!input.source_kind || input.source_kind === "research_db") {
       for (const result of adapter.searchResearchResults?.({ limit: SCAN_LIMIT, mission_id: input.mission_id }) ?? []) {
         out.push(candidateFromResearchResult(result, adapter, input.include_artifacts !== false))
       }
     }
     if (!input.source_kind || input.source_kind === "research_db") {
-      for (const candidate of adapter.searchCandidates?.({ limit: SCAN_LIMIT }) ?? []) out.push(candidateFromCandidate(candidate))
-      for (const trial of adapter.searchTrials?.({ limit: SCAN_LIMIT }) ?? []) out.push(candidateFromTrial(trial))
-      for (const run of adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, mission_id: input.mission_id }) ?? []) out.push(candidateFromTrainingRun(run))
+      for (const candidate of adapter.searchCandidates?.({ limit: SCAN_LIMIT }) ?? []) {
+        if (input.mission_id && !missionCandidateIds.has(candidate.candidate_id)) continue
+        out.push(candidateFromCandidate(candidate, input.mission_id))
+      }
+      for (const trial of adapter.searchTrials?.({ limit: SCAN_LIMIT }) ?? []) {
+        const linkedToMission = missionTrialIds.has(trial.trial_id) || (!!trial.candidate_id && missionCandidateIds.has(trial.candidate_id))
+        if (input.mission_id && !linkedToMission) continue
+        out.push(candidateFromTrial(trial, input.mission_id))
+      }
+      const runs = input.mission_id ? missionRuns : adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT }) ?? []
+      for (const run of runs) out.push(candidateFromTrainingRun(run))
     }
     const filtered = out
       .filter((candidate) => input.include_failures !== false || candidate.label !== "failure")
+      .filter((candidate) => !input.mission_id || candidate.source_mission_id === input.mission_id)
       .filter((candidate) => !input.session_id || candidate.source_session_id === input.session_id)
       .filter((candidate) => !input.labels?.length || input.labels.includes(candidate.label))
-    return uniqueRawCandidates(filtered).slice(0, SCAN_LIMIT)
+    return uniqueRawCandidates(filtered)
   }
 }
 
@@ -211,7 +223,7 @@ function candidateFromResearchResult(result: ResearchResult, adapter: ResearchMe
   })
 }
 
-function candidateFromCandidate(candidate: Candidate): RawCandidate {
+function candidateFromCandidate(candidate: Candidate, missionId?: string): RawCandidate {
   return baseCandidate({
     result_id: candidate.candidate_id,
     label: candidate.status === "rejected" ? "failure" : "finding",
@@ -222,6 +234,7 @@ function candidateFromCandidate(candidate: Candidate): RawCandidate {
     outcome_preview: candidate.rank_reason ?? candidate.status,
     metric_preview: candidate.commander_score === null ? undefined : String(candidate.commander_score),
     status: candidate.status,
+    source_mission_id: missionId,
     artifact_ids: [],
     citation_ids: [],
     related_event_ids: [],
@@ -230,7 +243,7 @@ function candidateFromCandidate(candidate: Candidate): RawCandidate {
   })
 }
 
-function candidateFromTrial(trial: Trial): RawCandidate {
+function candidateFromTrial(trial: Trial, missionId?: string): RawCandidate {
   return baseCandidate({
     result_id: trial.trial_id,
     label: trial.status === "failed" || trial.status === "cancelled" ? "failure" : "trial",
@@ -240,6 +253,7 @@ function candidateFromTrial(trial: Trial): RawCandidate {
     config_preview: previewUnknown(trial.config),
     outcome_preview: trial.status,
     status: trial.status,
+    source_mission_id: missionId,
     artifact_ids: [],
     citation_ids: [],
     related_event_ids: [],
