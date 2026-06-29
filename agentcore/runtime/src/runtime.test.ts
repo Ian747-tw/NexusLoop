@@ -17138,6 +17138,14 @@ describe("OpenCode session instruction packs", () => {
       status: "blocked",
       error: "session_id contains unsafe path characters",
     })
+    await expect(server.command("runtime.preview_opencode_session_instruction_pack", { sessionId: "." })).resolves.toMatchObject({
+      status: "blocked",
+      blockers: expect.arrayContaining(["session_id contains unsafe path characters"]),
+    })
+    await expect(server.command("runtime.write_opencode_session_instruction_pack", { sessionId: ".", dryRun: true })).resolves.toMatchObject({
+      status: "blocked",
+      error: "session_id contains unsafe path characters",
+    })
     await mkdir(join(dir, ".nxl", "opencode", "sessions", session.session_id), { recursive: true })
     await writeFile(join(dir, ".nxl", "opencode", "sessions", session.session_id, "TASK.md"), "different\n")
     const result = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id }) as { status: string; error?: string }

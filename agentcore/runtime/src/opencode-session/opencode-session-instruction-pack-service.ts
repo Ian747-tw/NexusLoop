@@ -806,7 +806,7 @@ function relativeProjectPath(target: string, projectDir: string): string {
 }
 
 function isSafeSessionId(value: string): boolean {
-  return SESSION_ID_PATTERN.test(value) && !value.includes("..") && !value.includes("/") && !value.includes("\\") && !value.includes("\0")
+  return value !== "." && SESSION_ID_PATTERN.test(value) && !value.includes("..") && !value.includes("/") && !value.includes("\\") && !value.includes("\0")
 }
 
 function recommendedCommands(sessionId: string, packId?: string): OpenCodeSessionInstructionPackCommand[] {
