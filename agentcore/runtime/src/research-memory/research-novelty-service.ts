@@ -56,7 +56,7 @@ export class ResearchNoveltyService {
     ])
     const nearest = blockers.length === 0 ? retrieval.candidates.slice(0, Math.max(1, Math.min(input.limit ?? 5, 8))) : []
     const top = nearest[0]
-    const duplicateRisk = blockers.length > 0 ? "unknown" : riskFor(top, method, config, retrieval.status)
+    const duplicateRisk = blockers.length > 0 ? "unknown" : riskFor(top, method, config, retrieval.status, retrieval.retrieval_policy)
     const hasReason = !!repetitionReason
     const repetitionRequiresJustification = (duplicateRisk === "high" || duplicateRisk === "medium") && !hasReason
     if (repetitionRequiresJustification) warnings.add("similar prior work was found; repetition needs an explicit justification")
@@ -118,8 +118,9 @@ export function readResearchNoveltyInput(value: unknown): ResearchNoveltyInput {
 
 export { ACCEPTABLE_REPETITION_REASONS }
 
-function riskFor(top: ResearchMemoryCandidate | undefined, method: string | undefined, config: string | undefined, retrievalStatus: string): ResearchNoveltyRisk {
-  if (retrievalStatus === "empty" || retrievalStatus === "blocked") return retrievalStatus === "empty" ? "unknown" : "unknown"
+function riskFor(top: ResearchMemoryCandidate | undefined, method: string | undefined, config: string | undefined, retrievalStatus: string, retrievalPolicy: string): ResearchNoveltyRisk {
+  if (retrievalStatus === "blocked") return "unknown"
+  if (retrievalStatus === "empty") return retrievalPolicy === "empty_projection" ? "unknown" : "low"
   if (!top) return "low"
   const methodOverlap = method ? tokenOverlap(method, [top.method_preview, top.config_preview].join(" ")) : 0
   const configOverlap = config ? tokenOverlap(config, top.config_preview ?? "") : 0

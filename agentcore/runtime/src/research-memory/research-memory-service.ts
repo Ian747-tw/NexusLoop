@@ -112,6 +112,7 @@ export class ResearchMemoryService {
           include_failures: input.include_failures !== false,
           include_artifacts: input.include_artifacts !== false,
           mission_id: input.mission_id,
+          session_id: input.session_id,
           source_kind: input.source_kind,
           labels,
         })
@@ -119,11 +120,13 @@ export class ResearchMemoryService {
     const queryTokens = tokenize([query].join(" "))
     const scored = rawCandidates
       .map((candidate) => scoreCandidate(candidate, queryTokens))
+      .filter((candidate) => queryTokens.length > 0 && candidate.matched_terms.length > 0)
       .filter((candidate) => labels.length === 0 || labels.includes(candidate.label))
       .sort(candidateSort)
     const candidates = blockers.length === 0 ? scored.slice(0, limit) : []
     const omittedCount = Math.max(0, scored.length - candidates.length)
     if (adapter.available && blockers.length === 0 && candidates.length === 0) warnings.add("no internal research memory candidates matched the query")
+    if (adapter.available && blockers.length === 0 && input.session_id && candidates.length === 0) warnings.add("no internal research memory candidates matched the requested session scope")
     if (!adapter.available && blockers.length === 0) warnings.add("empty memory does not block Commander; it only means no internal prior work was found")
     const retrievalHash = hash(stableJson({ query, labels, limit, candidates: candidates.map((candidate) => candidate.result_id), policy: adapter.policy }))
     const status = blockers.length > 0 ? "blocked" : candidates.length > 0 ? "ready" : adapter.available ? "empty" : "empty"
@@ -145,7 +148,7 @@ export class ResearchMemoryService {
     })
   }
 
-  private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; source_kind?: string; labels?: string[] }): RawCandidate[] {
+  private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[] }): RawCandidate[] {
     const out: RawCandidate[] = []
     if (!input.source_kind || input.source_kind === "research_db") {
       for (const result of adapter.searchResearchResults?.({ limit: SCAN_LIMIT, mission_id: input.mission_id }) ?? []) {
@@ -159,6 +162,7 @@ export class ResearchMemoryService {
     }
     const filtered = out
       .filter((candidate) => input.include_failures !== false || candidate.label !== "failure")
+      .filter((candidate) => !input.session_id || candidate.source_session_id === input.session_id)
       .filter((candidate) => !input.labels?.length || input.labels.includes(candidate.label))
     return uniqueRawCandidates(filtered).slice(0, SCAN_LIMIT)
   }

@@ -17541,6 +17541,16 @@ describe("OpenCode session instruction packs", () => {
     expect(retrieval.candidates.flatMap((candidate) => candidate.source_refs).every((ref) => ref.pointer_only)).toBe(true)
     expect(JSON.stringify(retrieval)).not.toContain("bounded report")
     expect(JSON.stringify(retrieval)).not.toContain("abc123")
+
+    const noOverlap = await server.command("runtime.preview_research_memory_retrieval", { query: "spectral normalization curriculum", limit: 3 }) as { status: string; candidates: Array<{ result_id: string; matched_terms: string[] }>; warnings: string[] }
+    expect(noOverlap.status).toBe("empty")
+    expect(noOverlap.candidates).toEqual([])
+    expect(noOverlap.warnings.join(" ")).toContain("matched the query")
+
+    const sessionScoped = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog", session_id: "opencode_session_missing" }) as { status: string; candidates: Array<{ source_session_id?: string }>; warnings: string[] }
+    expect(sessionScoped.status).toBe("empty")
+    expect(sessionScoped.candidates).toEqual([])
+    expect(sessionScoped.warnings.join(" ")).toContain("session scope")
     expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
     await server.shutdown()
   })
@@ -17587,9 +17597,10 @@ describe("OpenCode session instruction packs", () => {
       question: "spectral normalization curriculum",
       method: "new model",
       config: "fresh dataset",
-    }) as { duplicate_risk: string; repetition_requires_justification: boolean }
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean; nearest_prior_results: unknown[] }
     expect(unrelated.duplicate_risk).toBe("low")
     expect(unrelated.repetition_requires_justification).toBe(false)
+    expect(unrelated.nearest_prior_results).toEqual([])
     expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
     await server.shutdown()
   })

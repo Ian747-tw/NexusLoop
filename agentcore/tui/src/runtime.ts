@@ -2259,6 +2259,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       : fakeResearchMemoryCandidates(query)
         .filter((candidate) => labels.length === 0 || labels.includes(candidate.label))
         .map((candidate) => fakeScoreResearchCandidate(candidate, queryTokens))
+        .filter((candidate) => queryTokens.length > 0 && candidate.matched_terms.length > 0)
         .sort((left, right) => right.relevance_score - left.relevance_score || left.result_id.localeCompare(right.result_id))
     const selected = candidates.slice(0, limit)
     const hash = fakeStableHash(JSON.stringify({ query, labels, selected: selected.map((candidate) => candidate.result_id) }))
@@ -6548,7 +6549,7 @@ function fakeResearchTokens(value: string): string[] {
 }
 
 function fakeNoveltyRisk(candidate: ResearchMemoryCandidateSummary | undefined): "low" | "medium" | "high" | "unknown" {
-  if (!candidate) return "unknown"
+  if (!candidate) return "low"
   if (candidate.duplicate_similarity_score >= 0.75) return "high"
   if (candidate.duplicate_similarity_score >= 0.35) return "medium"
   return "low"
