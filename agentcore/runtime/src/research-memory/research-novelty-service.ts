@@ -55,7 +55,7 @@ export class ResearchNoveltyService {
       ...retrieval.warnings,
     ])
     const nearest = blockers.length === 0 ? retrieval.candidates.slice(0, Math.max(1, Math.min(input.limit ?? 5, 8))) : []
-    const top = nearest[0]
+    const top = selectRiskCandidate(nearest, method, config) ?? nearest[0]
     const duplicateRisk = blockers.length > 0 ? "unknown" : riskFor(top, method, config, retrieval.status, retrieval.retrieval_policy)
     const hasReason = !!repetitionReason
     const repetitionRequiresJustification = (duplicateRisk === "high" || duplicateRisk === "medium") && !hasReason
@@ -125,9 +125,31 @@ function riskFor(top: ResearchMemoryCandidate | undefined, method: string | unde
   const methodOverlap = method ? tokenOverlap(method, [top.method_preview, top.config_preview].join(" ")) : 0
   const configOverlap = config ? tokenOverlap(config, top.config_preview ?? "") : 0
   const score = top.duplicate_similarity_score
+  if (methodOverlap >= 0.75 && configOverlap >= 0.75) return "high"
   if (score >= 0.75) return "high"
+  if (methodOverlap >= 0.5 || configOverlap >= 0.5) return "medium"
   if (score >= 0.35) return "medium"
   return "low"
+}
+
+function selectRiskCandidate(candidates: ResearchMemoryCandidate[], method: string | undefined, config: string | undefined): ResearchMemoryCandidate | undefined {
+  let selected: ResearchMemoryCandidate | undefined
+  let selectedRank = -1
+  for (const candidate of candidates) {
+    const rank = riskRank(riskFor(candidate, method, config, "ready", "projection_read"))
+    if (rank > selectedRank) {
+      selected = candidate
+      selectedRank = rank
+    }
+  }
+  return selected
+}
+
+function riskRank(risk: ResearchNoveltyRisk): number {
+  if (risk === "high") return 3
+  if (risk === "medium") return 2
+  if (risk === "low") return 1
+  return 0
 }
 
 function noveltyScoreFor(risk: ResearchNoveltyRisk, hasReason: boolean, missingMemory: boolean): number {

@@ -814,7 +814,10 @@ function researchMemoryLines(state: UiState): string[] {
     out.push(`  candidates=${item.candidates.length}`)
     if (item.candidates.length > 0) {
       out.push("  retrieval_candidates")
-      out.push(...item.candidates.slice(0, 10).map((candidate) => `    - ${candidate.result_id} label=${candidate.label} source=${candidate.source_kind} relevance=${candidate.relevance_score} duplicate=${candidate.duplicate_similarity_score} terms=${candidate.matched_terms.join(",") || "none"}: ${preview(redactText(candidate.question_preview))}`))
+      out.push(...item.candidates.slice(0, 10).flatMap((candidate) => [
+        `    - ${candidate.result_id} label=${candidate.label} source=${candidate.source_kind} relevance=${candidate.relevance_score} duplicate=${candidate.duplicate_similarity_score} terms=${candidate.matched_terms.join(",") || "none"}: ${preview(redactText(candidate.question_preview))}`,
+        `      refs=${candidate.source_refs.length ? candidate.source_refs.slice(0, 4).map((ref) => `${ref.source_kind}:${preview(redactText(ref.source_id))}`).join(",") : "none"} artifacts=${candidate.artifact_ids.slice(0, 4).map((item) => preview(redactText(item))).join(",") || "none"} citations=${candidate.citation_ids.slice(0, 4).map((item) => preview(redactText(item))).join(",") || "none"}`,
+      ]))
     }
     if (item.blockers.length > 0) {
       out.push("  retrieval_blockers")

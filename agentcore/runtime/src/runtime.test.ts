@@ -17652,6 +17652,8 @@ describe("OpenCode session instruction packs", () => {
       confidence: "high",
       created_by: "commander",
     })
+    db.createCandidate({ candidate_id: "candidate_timeout_trial", claim: "adapter timeout watchdog trial candidate", source: "commander" })
+    db.planTrial({ trial_id: "trial_timeout_config", candidate_id: "candidate_timeout_trial", trial_kind: "watchdog", config: { interval: "short" } })
     db.close()
     const beforeEvents = await readJsonlEvents(dir)
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
@@ -17677,6 +17679,15 @@ describe("OpenCode session instruction packs", () => {
     expect(justified.repetition_requires_justification).toBe(false)
     expect(justified.suggested_reason_not_duplicate).toBe("replication")
     expect(justified.warnings.join(" ")).toContain("Commander/human may justify")
+
+    const verboseSameMethod = await server.command("runtime.preview_research_novelty_check", {
+      question: "investigate executor behavior across policy boundaries and unrelated phrasing that would otherwise dilute lexical matching",
+      method: "watchdog",
+      config: "short interval",
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean; warnings: string[] }
+    expect(verboseSameMethod.duplicate_risk).toBe("high")
+    expect(verboseSameMethod.repetition_requires_justification).toBe(true)
+    expect(verboseSameMethod.warnings.join(" ")).toContain("repetition needs")
 
     const unrelated = await server.command("runtime.preview_research_novelty_check", {
       question: "spectral normalization curriculum",

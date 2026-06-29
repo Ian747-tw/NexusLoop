@@ -5167,6 +5167,9 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("Research memory and novelty")
     expect(snapshot).toContain("retrieval=fake-research-memory")
     expect(snapshot).toContain("retrieval_candidates")
+    expect(snapshot).toContain("refs=research_db:fake-finding-timeout")
+    expect(snapshot).toContain("artifacts=fake-artifact-timeout")
+    expect(snapshot).toContain("citations=fake-citation-timeout")
     expect(snapshot).toContain("note=previews do not include raw research records, full research.db")
     expect(snapshot).not.toContain("abc123")
 
