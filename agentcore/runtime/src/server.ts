@@ -1714,8 +1714,8 @@ export class RuntimeServer {
   }
 
   async writeOpenCodeSessionInstructionPack(input: Parameters<OpenCodeSessionInstructionPackService["write"]>[0] = {}): Promise<OpenCodeSessionInstructionPackResult> {
-    if (input.dry_run !== true) this.requireProposalWriteRuntime("runtime.write_opencode_session_instruction_pack")
-    return this.opencodeSessionInstructionPackService().write(input)
+    if (input.dry_run === true) return this.opencodeSessionInstructionPackService().write(input)
+    return this.withInstructionPackWriteLock(() => this.opencodeSessionInstructionPackService().write(input))
   }
 
   async listOpenCodeSessionInstructionPacks(input: Parameters<OpenCodeSessionInstructionPackService["list"]>[0] = {}): Promise<OpenCodeSessionInstructionPackRecord[]> {
@@ -2607,6 +2607,16 @@ export class RuntimeServer {
   }
 
   private async withMiniMaxLiveValidationWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.runLock.isHeld()) return operation()
+    await this.runLock.acquire()
+    try {
+      return await operation()
+    } finally {
+      await this.runLock.release()
+    }
+  }
+
+  private async withInstructionPackWriteLock<T>(operation: () => Promise<T>): Promise<T> {
     if (this.runLock.isHeld()) return operation()
     await this.runLock.acquire()
     try {

@@ -17343,6 +17343,67 @@ describe("OpenCode session instruction packs", () => {
     expect(await new EventStore(join(dir, ".nxl", "events.jsonl")).readAll()).toEqual([])
   })
 
+  test("instruction pack write uses temporary run lock without starting adapter", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const sessionId = "session_pack_prelaunch"
+    await new EventStore(join(dir, ".nxl", "events.jsonl")).append({
+      kind: "opencode_session_planned",
+      session_id: sessionId,
+      status: "planned",
+      source_kind: "manual",
+      title: "Prelaunch instruction pack",
+      objective: "write instruction pack before OpenCode launch",
+      commander_context_summary: "Commander summary pointer",
+      opencode_context_seed: "OpenCode executor seed",
+      shared_context_summary: "Shared bounded summary",
+      commander_context_hash: "commander_context_hash",
+      opencode_context_hash: "opencode_context_hash",
+      max_context_bytes: 4096,
+      success_criteria: ["write bounded files"],
+      constraints: ["do not launch OpenCode"],
+      artifact_expectations: ["instruction pack files"],
+      timeout_policy: {
+        max_wall_time_ms: 1_800_000,
+        max_no_progress_ms: 600_000,
+        heartbeat_interval_ms: 60_000,
+        forced_pause_enabled: true,
+        report_required_on_timeout: true,
+        timeout_policy_hash: "timeout_policy_hash",
+      },
+      question_policy: {
+        allow_opencode_questions: true,
+        commander_answer_required_for_blockers: true,
+        human_escalation_allowed: true,
+        max_pending_questions: 3,
+        question_policy_hash: "question_policy_hash",
+      },
+      human_control_policy: {
+        allow_human_pause: true,
+        allow_human_override: true,
+        allow_human_stop: true,
+        allow_human_guidance_note: true,
+        require_reason_for_stop: true,
+        human_policy_hash: "human_policy_hash",
+      },
+      created_at: "2026-06-29T00:00:00.000Z",
+      created_by: "operator",
+      session_hash: "session_hash_prelaunch",
+    })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+
+    const result = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId }) as { status: string; session_id: string }
+    expect(result).toMatchObject({ status: "written", session_id: sessionId })
+    expect(existsSync(join(dir, ".nxl", "opencode", "sessions", sessionId, "TASK.md"))).toBe(true)
+    const eventKinds = await readEventKinds(dir)
+    expect(eventKinds.filter((kind) => kind === "opencode_session_instruction_pack_written")).toHaveLength(1)
+    expect(eventKinds).not.toContain("runtime_started")
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect(adapter.startCalls).toBe(0)
+    await server.shutdown()
+  })
+
   test("RuntimeServerClient no-start covers instruction-pack preview list get and dry-run write", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -17354,7 +17415,7 @@ describe("OpenCode session instruction packs", () => {
     await expect(client.command("runtime.write_opencode_session_instruction_pack", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
     await expect(client.command("runtime.list_opencode_session_instruction_packs")).resolves.toEqual([])
     await expect(client.command("runtime.get_opencode_session_instruction_pack", { packId: "missing" })).resolves.toBeNull()
-    await expect(client.command("runtime.write_opencode_session_instruction_pack", { sessionId: "missing" })).rejects.toThrow("runtime must be started before proposal writes")
+    await expect(client.command("runtime.write_opencode_session_instruction_pack", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
     expect(adapter.startCalls).toBe(0)
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
     expect(await readEventKinds(dir)).not.toContain("opencode_session_instruction_pack_written")
@@ -17372,7 +17433,8 @@ describe("OpenCode session instruction packs", () => {
       mutates_events: true,
       creates_external_process: false,
       calls_provider: false,
-      requires_active_runtime: true,
+      requires_active_runtime: false,
+      requires_run_lock: true,
       expected_event_kinds: ["opencode_session_instruction_pack_written"],
     })
     expect(writeRecord?.aliases).toEqual(expect.arrayContaining(["/session-instruction-pack-write", "/opencode-context-pack-write"]))
