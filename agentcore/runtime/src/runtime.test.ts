@@ -17151,6 +17151,12 @@ describe("OpenCode session instruction packs", () => {
     const directoryResult = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: directorySession.session_id, dryRun: true }) as { status: string; error?: string }
     expect(directoryResult.status).toBe("blocked")
     expect(directoryResult.error).toContain("existing file differs: TASK.md")
+    const fileTargetSession = await server.command("runtime.create_opencode_session_plan", { objective: "file target instruction pack" }) as { session_id: string }
+    await mkdir(join(dir, ".nxl", "opencode", "sessions"), { recursive: true })
+    await writeFile(join(dir, ".nxl", "opencode", "sessions", fileTargetSession.session_id), "not a directory\n")
+    const fileTargetResult = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: fileTargetSession.session_id, dryRun: true }) as { status: string; error?: string }
+    expect(fileTargetResult.status).toBe("blocked")
+    expect(fileTargetResult.error).toContain("existing file differs: TASK.md")
     await mkdir(join(dir, ".nxl", "opencode", "sessions", session.session_id), { recursive: true })
     await writeFile(join(dir, ".nxl", "opencode", "sessions", session.session_id, "TASK.md"), "different\n")
     const result = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id }) as { status: string; error?: string }

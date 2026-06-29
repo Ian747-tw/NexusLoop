@@ -752,7 +752,8 @@ async function existingFilesMatch(targetDir: string, files: GeneratedFile[]): Pr
       const text = await readFile(filePath, "utf8")
       if (hash(text) !== file.sha256) return false
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === "ENOENT" || code === "ENOTDIR") return false
       throw error
     }
   }
@@ -769,7 +770,9 @@ async function conflictingExistingFile(targetDir: string, files: GeneratedFile[]
       const text = await readFile(filePath, "utf8")
       if (hash(text) !== file.sha256) return file.relative_path
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === "ENOENT") continue
+      if (code === "ENOTDIR") return file.relative_path
       throw error
     }
   }
