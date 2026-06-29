@@ -17765,13 +17765,39 @@ describe("OpenCode session instruction packs", () => {
       created_at: "2026-06-29T00:00:00.000Z",
       updated_at: "2026-06-29T00:00:00.000Z",
     }
+    const missionResult: ResearchResult = {
+      result_id: "mission_result_linked_scope",
+      result_type: "finding",
+      label: null,
+      title: "mission scope result needle",
+      summary: "result linked through mission candidate trial and training run",
+      status: "proposed",
+      confidence: "high",
+      mission_id: null,
+      candidate_id: "mission_candidate_scope",
+      hypothesis_id: null,
+      trial_id: "mission_trial_scope",
+      training_run_id: "mission_training_scope",
+      metrics: null,
+      reproduction: null,
+      created_by: "commander",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
     const candidateQueries: Array<string | undefined> = []
+    const resultQueries: Array<string | undefined> = []
     const trainingOrders: Array<string | undefined> = []
     const service = new ResearchMemoryService({
       now: () => new Date("2026-06-29T00:00:00.000Z"),
       readAdapter: () => ({
         available: true,
         policy: "projection_read",
+        searchResearchResults: (options) => {
+          resultQueries.push(options?.candidate_id ?? options?.trial_id ?? options?.training_run_id ?? options?.mission_id)
+          return options?.candidate_id === "mission_candidate_scope" || options?.trial_id === "mission_trial_scope" || options?.training_run_id === "mission_training_scope"
+            ? [missionResult]
+            : []
+        },
         searchTrainingRuns: (options) => {
           trainingOrders.push(options?.order)
           return options?.mission_id === "mission_scope" && options?.order === "newest" ? [missionRun] : []
@@ -17790,9 +17816,13 @@ describe("OpenCode session instruction packs", () => {
     const preview = service.preview({ query: "mission scope needle", mission_id: "mission_scope", limit: 5 })
     expect(trainingOrders).toContain("newest")
     expect(candidateQueries).toEqual(["mission_candidate_scope"])
+    expect(resultQueries).toContain("mission_candidate_scope")
+    expect(resultQueries).toContain("mission_trial_scope")
+    expect(resultQueries).toContain("mission_training_scope")
     expect(preview.status).toBe("ready")
     expect(preview.candidates.map((candidate) => candidate.result_id)).toContain("mission_candidate_scope")
     expect(preview.candidates.map((candidate) => candidate.result_id)).toContain("mission_trial_scope")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toContain("mission_result_linked_scope")
     expect(preview.candidates.every((candidate) => candidate.source_mission_id === "mission_scope")).toBe(true)
   })
 

@@ -157,9 +157,14 @@ export class ResearchMemoryService {
     const missionCandidateIds = new Set(missionRuns.map((run) => run.candidate_id).filter((id): id is string => !!id))
     const missionTrialIds = new Set(missionRuns.map((run) => run.trial_id).filter((id): id is string => !!id))
     if (!input.source_kind || input.source_kind === "research_db") {
-      const directResults = adapter.searchResearchResults?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? []
-      const latestResults = input.mission_id ? adapter.searchResearchResults?.({ limit: SCAN_LIMIT, order: "newest" }) ?? [] : []
-      const resultRows = input.mission_id ? [...directResults, ...latestResults] : directResults
+      const resultRows = input.mission_id
+        ? [
+            ...(adapter.searchResearchResults?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? []),
+            ...Array.from(missionCandidateIds).flatMap((candidateId) => adapter.searchResearchResults?.({ limit: SCAN_LIMIT, candidate_id: candidateId, order: "newest" }) ?? []),
+            ...Array.from(missionTrialIds).flatMap((trialId) => adapter.searchResearchResults?.({ limit: SCAN_LIMIT, trial_id: trialId, order: "newest" }) ?? []),
+            ...Array.from(missionRunIds).flatMap((runId) => adapter.searchResearchResults?.({ limit: SCAN_LIMIT, training_run_id: runId, order: "newest" }) ?? []),
+          ]
+        : adapter.searchResearchResults?.({ limit: SCAN_LIMIT, order: "newest" }) ?? []
       for (const result of resultRows) {
         const linkedToMission =
           !input.mission_id ||

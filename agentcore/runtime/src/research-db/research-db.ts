@@ -434,6 +434,9 @@ export interface SearchResearchResultsOptions extends SearchOptions {
   result_type?: ResearchResultType
   status?: ResearchResultStatus
   mission_id?: string
+  candidate_id?: string
+  trial_id?: string
+  training_run_id?: string
   order?: "oldest" | "newest"
 }
 
@@ -1081,6 +1084,18 @@ export class ResearchDb {
     if (options.mission_id !== undefined) {
       filters.push("mission_id = ?")
       params.push(cleanId(options.mission_id))
+    }
+    if (options.candidate_id !== undefined) {
+      filters.push("candidate_id = ?")
+      params.push(cleanId(options.candidate_id))
+    }
+    if (options.trial_id !== undefined) {
+      filters.push("trial_id = ?")
+      params.push(cleanId(options.trial_id))
+    }
+    if (options.training_run_id !== undefined) {
+      filters.push("training_run_id = ?")
+      params.push(cleanId(options.training_run_id))
     }
     params.push(cleanLimit(options.limit))
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
