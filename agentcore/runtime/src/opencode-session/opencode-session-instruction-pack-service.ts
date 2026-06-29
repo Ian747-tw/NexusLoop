@@ -139,6 +139,9 @@ export class OpenCodeSessionInstructionPackService {
           error: rebuiltPreflightError,
         }
       }
+      const omittedRefsSummary = rebuilt.preview.files.some((file) => file.relative_path === "MANIFEST.json")
+        ? "omitted refs are stored in MANIFEST.json as bounded pointers only"
+        : "omitted refs are available through context packet pointers; MANIFEST.json was not requested"
       await writeFilesAtomically(this.options.projectDir, targetDir, rebuilt.files)
       await this.options.eventStore.append(redactValue({
         kind: "opencode_session_instruction_pack_written",
@@ -160,7 +163,7 @@ export class OpenCodeSessionInstructionPackService {
         written_by: writtenBy,
         pack_hash: rebuilt.preview.pack_hash,
         source_refs_summary: rebuilt.preview.redacted_summary_preview,
-        omitted_refs_summary: "omitted refs are stored in MANIFEST.json as bounded pointers only",
+        omitted_refs_summary: omittedRefsSummary,
         redaction_policy: "bounded NexusLoop-generated session instruction pack; raw logs, full research.db, full event log, raw provider output, and Commander chat are excluded",
         launch_ready: false,
       }) as JsonlEvent)

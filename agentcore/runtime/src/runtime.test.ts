@@ -17189,8 +17189,10 @@ describe("OpenCode session instruction packs", () => {
 
     const manifest = JSON.parse(await readFile(join(dir, ".nxl", "opencode", "sessions", session.session_id, "MANIFEST.json"), "utf8"))
     expect(manifest.pack_id).toBe(withManifest.pack_id)
-    const packEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")
+    const packEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written") as Array<{ pack_id: string; omitted_refs_summary?: string }>
     expect(packEvents.map((event) => event.pack_id)).toEqual([withoutManifest.pack_id, withManifest.pack_id])
+    expect(packEvents[0].omitted_refs_summary).toBe("omitted refs are available through context packet pointers; MANIFEST.json was not requested")
+    expect(packEvents[1].omitted_refs_summary).toBe("omitted refs are stored in MANIFEST.json as bounded pointers only")
 
     const duplicateWithoutManifest = await server.command("runtime.write_opencode_session_instruction_pack", {
       sessionId: session.session_id,
