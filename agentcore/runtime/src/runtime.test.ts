@@ -17146,6 +17146,11 @@ describe("OpenCode session instruction packs", () => {
       status: "blocked",
       error: "session_id contains unsafe path characters",
     })
+    const directorySession = await server.command("runtime.create_opencode_session_plan", { objective: "directory conflict instruction pack" }) as { session_id: string }
+    await mkdir(join(dir, ".nxl", "opencode", "sessions", directorySession.session_id, "TASK.md"), { recursive: true })
+    const directoryResult = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: directorySession.session_id, dryRun: true }) as { status: string; error?: string }
+    expect(directoryResult.status).toBe("blocked")
+    expect(directoryResult.error).toContain("existing file differs: TASK.md")
     await mkdir(join(dir, ".nxl", "opencode", "sessions", session.session_id), { recursive: true })
     await writeFile(join(dir, ".nxl", "opencode", "sessions", session.session_id, "TASK.md"), "different\n")
     const result = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id }) as { status: string; error?: string }

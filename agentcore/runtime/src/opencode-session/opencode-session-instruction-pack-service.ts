@@ -747,6 +747,8 @@ async function existingFilesMatch(targetDir: string, files: GeneratedFile[]): Pr
     const filePath = resolve(targetDir, file.relative_path)
     ensureChildPath(targetDir, filePath)
     try {
+      const stat = await lstat(filePath)
+      if (!stat.isFile()) return false
       const text = await readFile(filePath, "utf8")
       if (hash(text) !== file.sha256) return false
     } catch (error) {
@@ -762,6 +764,8 @@ async function conflictingExistingFile(targetDir: string, files: GeneratedFile[]
     const filePath = resolve(targetDir, file.relative_path)
     ensureChildPath(targetDir, filePath)
     try {
+      const stat = await lstat(filePath)
+      if (!stat.isFile()) return file.relative_path
       const text = await readFile(filePath, "utf8")
       if (hash(text) !== file.sha256) return file.relative_path
     } catch (error) {
