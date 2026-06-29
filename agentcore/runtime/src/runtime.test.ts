@@ -17523,7 +17523,7 @@ describe("OpenCode session instruction packs", () => {
       confidence: "low",
       created_by: "commander",
     })
-    for (let i = 0; i < 205; i += 1) {
+    for (let i = 0; i < 505; i += 1) {
       db.proposeResearchResult({
         result_id: `old_unrelated_${String(i).padStart(3, "0")}`,
         result_type: "finding",
@@ -17540,6 +17540,22 @@ describe("OpenCode session instruction packs", () => {
       summary: "latecap lexical match should survive backend scan before preview limit",
       confidence: "high",
       created_by: "commander",
+    })
+    db.proposeResearchResult({
+      result_id: "finding_timeout_recent",
+      result_type: "finding",
+      title: "adapter timeout watchdog recent",
+      summary: "recent short interval watchdog improved timeout reporting",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.proposeResearchResult({
+      result_id: "failure_timeout_recent",
+      result_type: "negative_finding",
+      title: "adapter timeout watchdog recent failure",
+      summary: "recent short interval failed because heartbeat was missing",
+      confidence: "medium",
+      created_by: "executor",
     })
     db.createCandidate({ candidate_id: "candidate_mission_in", claim: "mission scoped adapter timeout candidate", source: "commander" })
     db.createCandidate({ candidate_id: "candidate_mission_out", claim: "mission scoped adapter timeout candidate", source: "commander" })
@@ -17572,8 +17588,8 @@ describe("OpenCode session instruction packs", () => {
     expect(summary.label_counts.failure).toBeGreaterThanOrEqual(1)
     const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog short interval token=abc123", limit: 3 }) as { status: string; candidates: Array<{ result_id: string; matched_terms: string[]; relevance_score: number; source_refs: Array<{ pointer_only: boolean }>; artifact_ids: string[]; citation_ids: string[] }> }
     expect(retrieval.status).toBe("ready")
-    expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("finding_timeout")
-    expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("failure_timeout")
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("finding_timeout_recent")
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("failure_timeout_recent")
     expect(retrieval.candidates[0]?.matched_terms).toContain("adapter")
     expect(retrieval.candidates[0]?.relevance_score).toBeGreaterThan(0)
     expect(retrieval.candidates.flatMap((candidate) => candidate.source_refs).every((ref) => ref.pointer_only)).toBe(true)
@@ -17598,9 +17614,9 @@ describe("OpenCode session instruction packs", () => {
     expect(missionScoped.candidates.every((candidate) => candidate.source_mission_id === "mission_in")).toBe(true)
 
     const sessionScoped = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog", session_id: "opencode_session_missing" }) as { status: string; candidates: Array<{ source_session_id?: string }>; warnings: string[] }
-    expect(sessionScoped.status).toBe("empty")
-    expect(sessionScoped.candidates).toEqual([])
-    expect(sessionScoped.warnings.join(" ")).toContain("session scope")
+    expect(sessionScoped.status).toBe("ready")
+    expect(sessionScoped.candidates.length).toBeGreaterThan(0)
+    expect(sessionScoped.warnings.join(" ")).toContain("session-scoped research memory is not available yet")
     expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
     await server.shutdown()
   })

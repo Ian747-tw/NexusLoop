@@ -434,6 +434,7 @@ export interface SearchResearchResultsOptions extends SearchOptions {
   result_type?: ResearchResultType
   status?: ResearchResultStatus
   mission_id?: string
+  order?: "oldest" | "newest"
 }
 
 export interface SearchCitationsOptions extends SearchOptions {
@@ -1079,7 +1080,8 @@ export class ResearchDb {
     }
     params.push(cleanLimit(options.limit))
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
-    return (this.db.query(`SELECT * FROM research_results ${where} ORDER BY created_at, result_id LIMIT ?`).all(...params) as ResearchResultRow[]).map((row) =>
+    const order = options.order === "newest" ? "created_at DESC, result_id DESC" : "created_at, result_id"
+    return (this.db.query(`SELECT * FROM research_results ${where} ORDER BY ${order} LIMIT ?`).all(...params) as ResearchResultRow[]).map((row) =>
       this.researchResultFromRow(row),
     )
   }

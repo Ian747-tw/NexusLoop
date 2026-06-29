@@ -117,6 +117,8 @@ export class ResearchMemoryService {
           labels,
         })
       : []
+    const sessionScopeUnsupported = !!input.session_id && rawCandidates.length > 0 && rawCandidates.every((candidate) => !candidate.source_session_id)
+    if (sessionScopeUnsupported) warnings.add("session-scoped research memory is not available yet; using global internal memory preview")
     const queryTokens = tokenize([query].join(" "))
     const scored = rawCandidates
       .map((candidate) => scoreCandidate(candidate, queryTokens))
@@ -126,7 +128,7 @@ export class ResearchMemoryService {
     const candidates = blockers.length === 0 ? scored.slice(0, limit) : []
     const omittedCount = Math.max(0, scored.length - candidates.length)
     if (adapter.available && blockers.length === 0 && candidates.length === 0) warnings.add("no internal research memory candidates matched the query")
-    if (adapter.available && blockers.length === 0 && input.session_id && candidates.length === 0) warnings.add("no internal research memory candidates matched the requested session scope")
+    if (adapter.available && blockers.length === 0 && input.session_id && !sessionScopeUnsupported && candidates.length === 0) warnings.add("no internal research memory candidates matched the requested session scope")
     if (!adapter.available && blockers.length === 0) warnings.add("empty memory does not block Commander; it only means no internal prior work was found")
     const retrievalHash = hash(stableJson({ query, labels, limit, candidates: candidates.map((candidate) => candidate.result_id), policy: adapter.policy }))
     const status = blockers.length > 0 ? "blocked" : candidates.length > 0 ? "ready" : adapter.available ? "empty" : "empty"
@@ -154,7 +156,7 @@ export class ResearchMemoryService {
     const missionCandidateIds = new Set(missionRuns.map((run) => run.candidate_id).filter((id): id is string => !!id))
     const missionTrialIds = new Set(missionRuns.map((run) => run.trial_id).filter((id): id is string => !!id))
     if (!input.source_kind || input.source_kind === "research_db") {
-      for (const result of adapter.searchResearchResults?.({ limit: SCAN_LIMIT, mission_id: input.mission_id }) ?? []) {
+      for (const result of adapter.searchResearchResults?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? []) {
         out.push(candidateFromResearchResult(result, adapter, input.include_artifacts !== false))
       }
     }
@@ -174,7 +176,7 @@ export class ResearchMemoryService {
     const filtered = out
       .filter((candidate) => input.include_failures !== false || candidate.label !== "failure")
       .filter((candidate) => !input.mission_id || candidate.source_mission_id === input.mission_id)
-      .filter((candidate) => !input.session_id || candidate.source_session_id === input.session_id)
+      .filter((candidate, _index, candidates) => !input.session_id || !candidates.some((item) => !!item.source_session_id) || candidate.source_session_id === input.session_id)
       .filter((candidate) => !input.labels?.length || input.labels.includes(candidate.label))
     return uniqueRawCandidates(filtered)
   }
