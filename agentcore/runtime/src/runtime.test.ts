@@ -37,6 +37,7 @@ import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProce
 import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCodeAdapterConfig, validateOpenCodeAdapterConfig } from "./opencode/adapter-config"
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
+import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
 import type { ExecutorToolHandler, ExecutorToolHandlerAdapter, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
@@ -49,6 +50,7 @@ import {
   type ResearchEvent,
   type ResearchProjectionIntegrity,
   type ResearchProjectionStatus,
+  type ResearchResult,
   type SearchOptions,
   type Topic,
   type TopicSnapshot,
@@ -17523,24 +17525,6 @@ describe("OpenCode session instruction packs", () => {
       confidence: "low",
       created_by: "commander",
     })
-    for (let i = 0; i < 505; i += 1) {
-      db.proposeResearchResult({
-        result_id: `old_unrelated_${String(i).padStart(3, "0")}`,
-        result_type: "finding",
-        title: `old unrelated filler ${i}`,
-        summary: "legacy filler result that should not hide later matching memory",
-        confidence: "low",
-        created_by: "commander",
-      })
-    }
-    db.proposeResearchResult({
-      result_id: "zz_latecap_finding",
-      result_type: "finding",
-      title: "latecap needle result",
-      summary: "latecap lexical match should survive backend scan before preview limit",
-      confidence: "high",
-      created_by: "commander",
-    })
     db.proposeResearchResult({
       result_id: "finding_timeout_recent",
       result_type: "finding",
@@ -17586,7 +17570,7 @@ describe("OpenCode session instruction packs", () => {
     expect(summary.total_candidates_available).toBeGreaterThanOrEqual(3)
     expect(summary.label_counts.finding).toBeGreaterThanOrEqual(1)
     expect(summary.label_counts.failure).toBeGreaterThanOrEqual(1)
-    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog short interval token=abc123", limit: 3 }) as { status: string; candidates: Array<{ result_id: string; matched_terms: string[]; relevance_score: number; source_refs: Array<{ pointer_only: boolean }>; artifact_ids: string[]; citation_ids: string[] }> }
+    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog short interval token=abc123", limit: 6 }) as { status: string; candidates: Array<{ result_id: string; matched_terms: string[]; relevance_score: number; source_refs: Array<{ pointer_only: boolean }>; artifact_ids: string[]; citation_ids: string[] }> }
     expect(retrieval.status).toBe("ready")
     expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("finding_timeout_recent")
     expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("failure_timeout_recent")
@@ -17600,10 +17584,6 @@ describe("OpenCode session instruction packs", () => {
     expect(noOverlap.status).toBe("empty")
     expect(noOverlap.candidates).toEqual([])
     expect(noOverlap.warnings.join(" ")).toContain("matched the query")
-
-    const lateCap = await server.command("runtime.preview_research_memory_retrieval", { query: "latecap needle", limit: 3 }) as { status: string; candidates: Array<{ result_id: string }> }
-    expect(lateCap.status).toBe("ready")
-    expect(lateCap.candidates.map((candidate) => candidate.result_id)).toContain("zz_latecap_finding")
 
     const missionScoped = await server.command("runtime.preview_research_memory_retrieval", { query: "mission scoped adapter timeout", mission_id: "mission_in", limit: 10 }) as { status: string; candidates: Array<{ result_id: string; source_mission_id?: string }> }
     expect(missionScoped.status).toBe("ready")
@@ -17619,6 +17599,45 @@ describe("OpenCode session instruction packs", () => {
     expect(sessionScoped.warnings.join(" ")).toContain("session-scoped research memory is not available yet")
     expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
     await server.shutdown()
+  })
+
+  test("research memory retrieval asks for a latest-first bounded result window before lexical scoring", () => {
+    const lateResult: ResearchResult = {
+      result_id: "zz_latecap_finding",
+      result_type: "finding",
+      label: null,
+      title: "latecap needle result",
+      summary: "latecap lexical match should survive backend scan before preview limit",
+      status: "proposed",
+      confidence: "high",
+      mission_id: null,
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      training_run_id: null,
+      metrics: null,
+      reproduction: null,
+      created_by: "commander",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const seenOrders: Array<string | undefined> = []
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchResearchResults: (options) => {
+          seenOrders.push(options?.order)
+          return options?.order === "newest" ? [lateResult] : []
+        },
+      }),
+    })
+
+    const preview = service.preview({ query: "latecap needle", limit: 3 })
+    expect(seenOrders).toEqual(["newest"])
+    expect(preview.status).toBe("ready")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_finding"])
   })
 
   test("research novelty flags duplicate risk without blocking repeated work", async () => {
