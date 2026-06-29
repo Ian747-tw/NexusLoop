@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
@@ -81,6 +82,9 @@ import { ModelCapabilityRegistry } from "./context/model-capability-registry"
 import type { ModelCapability } from "./context/model-capability-types"
 import { ContextPacketCompilerService, readContextPacketPreviewInput } from "./context/context-packet-compiler-service"
 import type { ContextPacketPreview, ContextPacketSummary } from "./context/context-packet-types"
+import { ResearchMemoryService, readResearchMemoryRetrievalInput, type ResearchMemoryReadAdapter } from "./research-memory/research-memory-service"
+import { ResearchNoveltyService, readResearchNoveltyInput } from "./research-memory/research-novelty-service"
+import type { ResearchMemoryRetrievalPreview, ResearchMemorySummary, ResearchNoveltyPreview } from "./research-memory/research-memory-types"
 import type { OpenCodeSpawn } from "./opencode/process-adapter"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
@@ -293,6 +297,8 @@ export class RuntimeServer {
   private opencodeSessionInstructionPackServiceInstance: OpenCodeSessionInstructionPackService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
+  private researchMemoryServiceInstance: ResearchMemoryService | null = null
+  private researchNoveltyServiceInstance: ResearchNoveltyService | null = null
   private commanderExecutorReviewServiceInstance: CommanderExecutorReviewService | null = null
   private executorReviewProposalDraftServiceInstance: ExecutorReviewProposalDraftService | null = null
   private executorReviewProposalCreateServiceInstance: ExecutorReviewProposalCreateService | null = null
@@ -849,6 +855,12 @@ export class RuntimeServer {
         })
       case "runtime.get_opencode_session_instruction_pack":
         return this.getOpenCodeSessionInstructionPack(requiredString(payload.packId ?? payload.pack_id, "packId"))
+      case "runtime.research_memory_summary":
+        return this.researchMemorySummary()
+      case "runtime.preview_research_memory_retrieval":
+        return this.previewResearchMemoryRetrieval(readResearchMemoryRetrievalInput(payload))
+      case "runtime.preview_research_novelty_check":
+        return this.previewResearchNoveltyCheck(readResearchNoveltyInput(payload))
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(readCommanderExecutorReviewInput(payload))
       case "runtime.execute_commander_executor_review":
@@ -1724,6 +1736,18 @@ export class RuntimeServer {
 
   async getOpenCodeSessionInstructionPack(packId: string): Promise<OpenCodeSessionInstructionPackResult | null> {
     return this.opencodeSessionInstructionPackService().get(packId)
+  }
+
+  researchMemorySummary(): ResearchMemorySummary {
+    return this.researchMemoryService().summary()
+  }
+
+  previewResearchMemoryRetrieval(input: Parameters<ResearchMemoryService["preview"]>[0] = {}): ResearchMemoryRetrievalPreview {
+    return this.researchMemoryService().preview(input)
+  }
+
+  previewResearchNoveltyCheck(input: Parameters<ResearchNoveltyService["preview"]>[0] = {}): ResearchNoveltyPreview {
+    return this.researchNoveltyService().preview(input)
   }
 
   async previewCommanderExecutorReview(input: Parameters<CommanderExecutorReviewService["preview"]>[0] = {}): Promise<CommanderExecutorReviewPreview> {
@@ -3352,6 +3376,50 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
       synthesisId: this.researchSynthesisId,
     })
+  }
+
+  private researchMemoryService(): ResearchMemoryService {
+    this.researchMemoryServiceInstance ??= new ResearchMemoryService({
+      readAdapter: () => this.researchMemoryReadAdapter(),
+      now: this.researchSynthesisNow,
+    })
+    return this.researchMemoryServiceInstance
+  }
+
+  private researchNoveltyService(): ResearchNoveltyService {
+    this.researchNoveltyServiceInstance ??= new ResearchNoveltyService({
+      memoryService: this.researchMemoryService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.researchNoveltyServiceInstance
+  }
+
+  private researchMemoryReadAdapter(): ResearchMemoryReadAdapter {
+    if (this.researchProjectionMode === "disabled") {
+      return { available: false, policy: "empty_projection", unavailableReason: "research projection is disabled; no internal research memory was inspected" }
+    }
+    if (!this.researchDb && !existsSync(join(this.projectDir, ".nxl", "research.db"))) {
+      return { available: false, policy: "empty_projection", unavailableReason: "research.db projection is not present; no internal research memory was inspected" }
+    }
+    const integrity = this.checkResearchProjectionForStatus()
+    if (!integrity.ok || integrity.stale) {
+      return {
+        available: false,
+        policy: "empty_projection",
+        unavailableReason: `research projection is not usable for read-only retrieval: ${integrity.reason ?? (integrity.stale ? "stale" : "unknown")}`,
+      }
+    }
+    const db = this.getResearchDb() as RuntimeResearchDbProjection & ResearchMemoryReadAdapter
+    return {
+      available: true,
+      policy: "projection_read",
+      searchResearchResults: typeof db.searchResearchResults === "function" ? db.searchResearchResults.bind(db) : undefined,
+      listResultCitations: typeof db.listResultCitations === "function" ? db.listResultCitations.bind(db) : undefined,
+      listResultArtifacts: typeof db.listResultArtifacts === "function" ? db.listResultArtifacts.bind(db) : undefined,
+      searchCandidates: typeof db.searchCandidates === "function" ? db.searchCandidates.bind(db) : undefined,
+      searchTrials: typeof db.searchTrials === "function" ? db.searchTrials.bind(db) : undefined,
+      searchTrainingRuns: typeof db.searchTrainingRuns === "function" ? db.searchTrainingRuns.bind(db) : undefined,
+    }
   }
 
   private commanderCycleService(): CommanderCycleService {

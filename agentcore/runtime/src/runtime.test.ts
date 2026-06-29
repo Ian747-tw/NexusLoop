@@ -17471,6 +17471,165 @@ describe("OpenCode session instruction packs", () => {
     expect(writeRecord?.notes.join(" ")).toContain("does not launch OpenCode")
     expect(writeRecord?.out_of_scope).toEqual(expect.arrayContaining(["OpenCode launch", "provider calls", "research.db retrieval", "AGENTS.md mutation"]))
   })
+
+  test("research memory summary and retrieval are safe when projection is unavailable", async () => {
+    const dir = await tempProject()
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const beforeEvents = await readJsonlEvents(dir)
+
+    await expect(server.command("runtime.research_memory_summary")).resolves.toMatchObject({
+      total_candidates_available: 0,
+      has_research_db_projection: false,
+      retrieval_policy: "empty_projection",
+    })
+    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout token=abc123" }) as { status: string; warnings: string[]; candidates: unknown[]; blockers: string[] }
+    expect(retrieval.status).toBe("empty")
+    expect(retrieval.blockers).toEqual([])
+    expect(retrieval.candidates).toEqual([])
+    expect(retrieval.warnings.join(" ")).toContain("does not block Commander")
+    expect(JSON.stringify(retrieval)).not.toContain("abc123")
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+  })
+
+  test("research memory retrieval ranks bounded prior findings trials and failures", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_memory", title: "Research memory" })
+    db.addArtifact({ id: "artifact_timeout", topic_id: "topic_memory", kind: "report", content: "bounded report", description: "timeout watchdog report" })
+    db.recordCitation({ citation_id: "citation_timeout", source_type: "event", source_uri: "event://timeout", quoted_text_or_summary: "timeout finding summary" })
+    db.proposeResearchResult({
+      result_id: "finding_timeout",
+      result_type: "finding",
+      title: "adapter timeout watchdog",
+      summary: "short interval watchdog improved timeout reporting",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.linkResultArtifact("finding_timeout", "artifact_timeout")
+    db.linkResultCitation("finding_timeout", "citation_timeout")
+    db.proposeResearchResult({
+      result_id: "failure_timeout",
+      result_type: "negative_finding",
+      title: "adapter timeout watchdog failure",
+      summary: "previous short interval failed because heartbeat was missing",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.proposeResearchResult({
+      result_id: "unrelated_result",
+      result_type: "finding",
+      title: "unrelated optimizer",
+      summary: "optimizer result not about adapter timeout",
+      confidence: "low",
+      created_by: "commander",
+    })
+    db.close()
+    const beforeEvents = await readJsonlEvents(dir)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+
+    const summary = await server.command("runtime.research_memory_summary") as { total_candidates_available: number; label_counts: Record<string, number>; has_research_db_projection: boolean }
+    expect(summary.has_research_db_projection).toBe(true)
+    expect(summary.total_candidates_available).toBeGreaterThanOrEqual(3)
+    expect(summary.label_counts.finding).toBeGreaterThanOrEqual(1)
+    expect(summary.label_counts.failure).toBeGreaterThanOrEqual(1)
+    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog short interval token=abc123", limit: 3 }) as { status: string; candidates: Array<{ result_id: string; matched_terms: string[]; relevance_score: number; source_refs: Array<{ pointer_only: boolean }>; artifact_ids: string[]; citation_ids: string[] }> }
+    expect(retrieval.status).toBe("ready")
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("finding_timeout")
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("failure_timeout")
+    expect(retrieval.candidates[0]?.matched_terms).toContain("adapter")
+    expect(retrieval.candidates[0]?.relevance_score).toBeGreaterThan(0)
+    expect(retrieval.candidates.flatMap((candidate) => candidate.source_refs).every((ref) => ref.pointer_only)).toBe(true)
+    expect(JSON.stringify(retrieval)).not.toContain("bounded report")
+    expect(JSON.stringify(retrieval)).not.toContain("abc123")
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+    await server.shutdown()
+  })
+
+  test("research novelty flags duplicate risk without blocking repeated work", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_novelty", title: "Novelty" })
+    db.proposeResearchResult({
+      result_id: "finding_timeout",
+      result_type: "finding",
+      title: "adapter timeout watchdog",
+      summary: "short interval watchdog improved timeout reporting",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.close()
+    const beforeEvents = await readJsonlEvents(dir)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+
+    const duplicate = await server.command("runtime.preview_research_novelty_check", {
+      question: "adapter timeout watchdog",
+      method: "watchdog",
+      config: "short interval",
+    }) as { status: string; duplicate_risk: string; repetition_requires_justification: boolean; warnings: string[]; novelty_score: number }
+    expect(duplicate.status).toBe("ready")
+    expect(duplicate.duplicate_risk).toBe("high")
+    expect(duplicate.repetition_requires_justification).toBe(true)
+    expect(duplicate.warnings.join(" ")).toContain("repetition needs")
+    expect(duplicate.novelty_score).toBeLessThan(0.5)
+
+    const justified = await server.command("runtime.preview_research_novelty_check", {
+      question: "adapter timeout watchdog",
+      method: "watchdog",
+      config: "short interval",
+      reason: "replication",
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean; suggested_reason_not_duplicate?: string; warnings: string[] }
+    expect(justified.duplicate_risk).toBe("high")
+    expect(justified.repetition_requires_justification).toBe(false)
+    expect(justified.suggested_reason_not_duplicate).toBe("replication")
+    expect(justified.warnings.join(" ")).toContain("Commander/human may justify")
+
+    const unrelated = await server.command("runtime.preview_research_novelty_check", {
+      question: "spectral normalization curriculum",
+      method: "new model",
+      config: "fresh dataset",
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean }
+    expect(unrelated.duplicate_risk).toBe("low")
+    expect(unrelated.repetition_requires_justification).toBe(false)
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+    await server.shutdown()
+  })
+
+  test("research memory commands require no runtime start and append no events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.research_memory_summary")).resolves.toMatchObject({ total_candidates_available: 0 })
+    await expect(client.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout" })).resolves.toMatchObject({ status: "empty" })
+    await expect(client.command("runtime.preview_research_novelty_check", { question: "adapter timeout" })).resolves.toMatchObject({ status: "partial", duplicate_risk: "unknown" })
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(await readEventKinds(dir)).not.toContain("research_synthesis_created")
+    await client.shutdown()
+  })
+
+  test("authority registry includes research memory and novelty safe-read commands", () => {
+    for (const command of ["/research-memory-summary", "/research-memory-search", "/research-memory-preview", "/research-novelty-preview"]) {
+      const record = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === command)
+      expect(record).toMatchObject({
+        risk: "safe_read",
+        mutates_events: false,
+        creates_external_process: false,
+        calls_provider: false,
+        requires_active_runtime: false,
+        requires_run_lock: false,
+      })
+      expect(record?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_research_memory_novelty_tui.py")
+      expect(record?.notes.join(" ")).toContain("does not call providers")
+      expect(record?.notes.join(" ")).toContain("launch OpenCode")
+    }
+    const novelty = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-novelty-preview")
+    expect(novelty?.aliases).toEqual(expect.arrayContaining(["/novelty-preview", "/research-dup-check"]))
+    expect(novelty?.notes.join(" ")).toContain("flagged, not forbidden")
+    expect(novelty?.out_of_scope).toEqual(expect.arrayContaining(["topic allowlist/blocklist", "research.db writes", "OpenCode launch"]))
+  })
 })
 
 describe("OpenCode session contract", () => {

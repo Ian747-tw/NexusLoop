@@ -33,6 +33,7 @@ import type { OpenCodeSessionInstructionPackPreview, OpenCodeSessionInstructionP
 import type { ContextBudgetPreview, ContextBudgetPreviewInput, ContextBudgetSummary } from "../context/context-budget-types"
 import type { ModelCapability } from "../context/model-capability-types"
 import type { ContextPacketPreview, ContextPacketPreviewInput, ContextPacketSummary } from "../context/context-packet-types"
+import type { ResearchMemoryRetrievalInput, ResearchMemoryRetrievalPreview, ResearchMemorySummary, ResearchNoveltyInput, ResearchNoveltyPreview } from "../research-memory/research-memory-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAssessmentRecord } from "../wake/wake-hook-types"
@@ -346,6 +347,9 @@ export interface RuntimeClient {
   }): Promise<OpenCodeSessionInstructionPackResult>
   command(name: "runtime.list_opencode_session_instruction_packs", payload?: { limit?: number; session_id?: string; sessionId?: string; session?: string; status?: string }): Promise<OpenCodeSessionInstructionPackRecord[]>
   command(name: "runtime.get_opencode_session_instruction_pack", payload: { pack_id: string } | { packId: string }): Promise<OpenCodeSessionInstructionPackResult | null>
+  command(name: "runtime.research_memory_summary", payload?: Record<string, never>): Promise<ResearchMemorySummary>
+  command(name: "runtime.preview_research_memory_retrieval", payload?: ResearchMemoryRetrievalInput | { query?: string; labels?: string[]; limit?: number; sourceKind?: string; source_kind?: string; missionId?: string; mission_id?: string; sessionId?: string; session_id?: string; includeFailures?: boolean; include_failures?: boolean; includeArtifacts?: boolean; include_artifacts?: boolean }): Promise<ResearchMemoryRetrievalPreview>
+  command(name: "runtime.preview_research_novelty_check", payload?: ResearchNoveltyInput | { question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; mission_id?: string; sessionId?: string; session_id?: string; repetitionReason?: string; repetition_reason?: string; reason?: string; includeFailures?: boolean; include_failures?: boolean }): Promise<ResearchNoveltyPreview>
   command(name: "runtime.preview_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewPreview>
   command(name: "runtime.execute_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewResult>
   command(name: "runtime.list_commander_executor_reviews", payload?: { limit?: number; packet_id?: string; packetId?: string; mission_id?: string; missionId?: string; handoff_id?: string; handoffId?: string }): Promise<CommanderExecutorReviewRecord[]>
