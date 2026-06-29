@@ -17689,6 +17689,14 @@ describe("OpenCode session instruction packs", () => {
     expect(verboseSameMethod.repetition_requires_justification).toBe(true)
     expect(verboseSameMethod.warnings.join(" ")).toContain("repetition needs")
 
+    const partialSameMethod = await server.command("runtime.preview_research_novelty_check", {
+      question: "investigate executor behavior across policy boundaries and unrelated phrasing that would otherwise dilute lexical matching",
+      method: "watchdog probe",
+      config: "short medium",
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean }
+    expect(partialSameMethod.duplicate_risk).toBe("medium")
+    expect(partialSameMethod.repetition_requires_justification).toBe(true)
+
     const unrelated = await server.command("runtime.preview_research_novelty_check", {
       question: "spectral normalization curriculum",
       method: "baseline model",

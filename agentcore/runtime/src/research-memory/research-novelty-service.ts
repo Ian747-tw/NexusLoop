@@ -176,8 +176,10 @@ function shouldRecommendExternalResearch(query: string, missingMemory: boolean, 
 }
 
 function tokenOverlap(left: string, right: string): number {
+  const leftTokens = Array.from(new Set(tokens(left)))
+  if (leftTokens.length === 0) return 0
   const rightTokens = new Set(tokens(right))
-  return tokens(left).filter((token) => rightTokens.has(token)).length
+  return leftTokens.filter((token) => rightTokens.has(token)).length / leftTokens.length
 }
 
 function tokens(value: string): string[] {
