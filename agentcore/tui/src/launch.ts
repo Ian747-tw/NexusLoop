@@ -86,9 +86,6 @@ function isExplicitRuntimeResumeText(text: string): boolean {
   return command === "/opencode-session-plan"
     || command === "/session-plan"
     || command === "/opencode-plan"
-    || command === "/opencode-session-instruction-pack-write"
-    || command === "/session-instruction-pack-write"
-    || command === "/opencode-context-pack-write"
 }
 
 function isNoStartInspectionText(text: string): boolean {

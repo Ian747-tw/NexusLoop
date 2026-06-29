@@ -1093,6 +1093,7 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.write_opencode_session_instruction_pack")
     expect(runtime.commandNames).toContain("runtime.list_opencode_session_instruction_packs")
     expect(runtime.commandNames).toContain("runtime.get_opencode_session_instruction_pack")
+    expect(runtime.commandNames).not.toContain("runtime.resume")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })
