@@ -152,7 +152,7 @@ export class ResearchMemoryService {
 
   private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[] }): RawCandidate[] {
     const out: RawCandidate[] = []
-    const missionRuns = input.mission_id ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, mission_id: input.mission_id }) ?? [] : []
+    const missionRuns = input.mission_id ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? [] : []
     const missionRunIds = new Set(missionRuns.map((run) => run.training_run_id))
     const missionCandidateIds = new Set(missionRuns.map((run) => run.candidate_id).filter((id): id is string => !!id))
     const missionTrialIds = new Set(missionRuns.map((run) => run.trial_id).filter((id): id is string => !!id))
@@ -172,16 +172,22 @@ export class ResearchMemoryService {
       }
     }
     if (!input.source_kind || input.source_kind === "research_db") {
-      for (const candidate of adapter.searchCandidates?.({ limit: SCAN_LIMIT, order: "newest" }) ?? []) {
-        if (input.mission_id && !missionCandidateIds.has(candidate.candidate_id)) continue
+      const candidates = input.mission_id
+        ? Array.from(missionCandidateIds).flatMap((candidateId) => adapter.searchCandidates?.({ limit: 1, candidate_id: candidateId }) ?? [])
+        : adapter.searchCandidates?.({ limit: SCAN_LIMIT, order: "newest" }) ?? []
+      for (const candidate of candidates) {
         out.push(candidateFromCandidate(candidate, input.mission_id))
       }
-      for (const trial of adapter.searchTrials?.({ limit: SCAN_LIMIT }) ?? []) {
-        const linkedToMission = missionTrialIds.has(trial.trial_id) || (!!trial.candidate_id && missionCandidateIds.has(trial.candidate_id))
-        if (input.mission_id && !linkedToMission) continue
+      const trials = input.mission_id
+        ? [
+            ...Array.from(missionTrialIds).flatMap((trialId) => adapter.searchTrials?.({ limit: 1, trial_id: trialId }) ?? []),
+            ...Array.from(missionCandidateIds).flatMap((candidateId) => adapter.searchTrials?.({ limit: SCAN_LIMIT, candidate_id: candidateId }) ?? []),
+          ]
+        : adapter.searchTrials?.({ limit: SCAN_LIMIT }) ?? []
+      for (const trial of trials) {
         out.push(candidateFromTrial(trial, input.mission_id))
       }
-      const runs = input.mission_id ? missionRuns : adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT }) ?? []
+      const runs = input.mission_id ? missionRuns : adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, order: "newest" }) ?? []
       for (const run of runs) out.push(candidateFromTrainingRun(run))
     }
     const filtered = out

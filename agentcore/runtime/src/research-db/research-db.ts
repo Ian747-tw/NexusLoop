@@ -447,12 +447,14 @@ export interface SearchHypothesesOptions extends SearchOptions {
 
 export interface SearchCandidatesOptions extends SearchOptions {
   status?: CandidateStatus
+  candidate_id?: string
   hypothesis_id?: string
   order?: "oldest" | "newest"
 }
 
 export interface SearchTrialsOptions extends SearchOptions {
   status?: TrialStatus
+  trial_id?: string
   candidate_id?: string
   hypothesis_id?: string
 }
@@ -464,6 +466,7 @@ export interface SearchTrainingRunsOptions extends SearchOptions {
   hypothesis_id?: string
   trial_id?: string
   mission_id?: string
+  order?: "oldest" | "newest"
 }
 
 export interface WriteBarrierResult {
@@ -1324,6 +1327,10 @@ export class ResearchDb {
       filters.push("status = ?")
       params.push(options.status)
     }
+    if (options.candidate_id !== undefined) {
+      filters.push("candidate_id = ?")
+      params.push(cleanId(options.candidate_id))
+    }
     if (options.hypothesis_id !== undefined) {
       filters.push("hypothesis_id = ?")
       params.push(cleanId(options.hypothesis_id))
@@ -1487,6 +1494,10 @@ export class ResearchDb {
       filters.push("status = ?")
       params.push(options.status)
     }
+    if (options.trial_id !== undefined) {
+      filters.push("trial_id = ?")
+      params.push(cleanId(options.trial_id))
+    }
     if (options.candidate_id !== undefined) {
       filters.push("candidate_id = ?")
       params.push(cleanId(options.candidate_id))
@@ -1649,7 +1660,8 @@ export class ResearchDb {
     }
     params.push(cleanLimit(options.limit))
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
-    return (this.db.query(`SELECT * FROM training_runs ${where} ORDER BY created_at, training_run_id LIMIT ?`).all(...params) as TrainingRunRow[]).map((row) =>
+    const order = options.order === "newest" ? "created_at DESC, training_run_id DESC" : "created_at, training_run_id"
+    return (this.db.query(`SELECT * FROM training_runs ${where} ORDER BY ${order} LIMIT ?`).all(...params) as TrainingRunRow[]).map((row) =>
       this.trainingRunFromRow(row),
     )
   }

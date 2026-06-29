@@ -56,6 +56,7 @@ import {
   type Topic,
   type TopicSnapshot,
   type Trial,
+  type TrainingRun,
 } from "./research-db/research-db"
 import { stableWakeSchedulerNavigationWriteRunOutcomeHash } from "./schedules/wake-scheduler-navigation-write-run-compare-service"
 import { stableWakeSchedulerNavigationCheckpointWriteOutcomeHash } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-service"
@@ -17659,8 +17660,33 @@ describe("OpenCode session instruction packs", () => {
       created_at: "2026-06-29T00:00:00.000Z",
       updated_at: "2026-06-29T00:00:00.000Z",
     }
+    const lateRun: TrainingRun = {
+      training_run_id: "zz_latecap_training",
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      mission_id: null,
+      label: "probe",
+      status: "planned",
+      pid: null,
+      process_group_id: null,
+      log_path: null,
+      metrics_path: null,
+      checkpoint_dir: null,
+      latest_checkpoint_id: null,
+      last_step: null,
+      last_metric: null,
+      reproduction: { note: "latecap training needle" },
+      last_observed_at: null,
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
     const seenOrders: Array<string | undefined> = []
     const seenCandidateOrders: Array<string | undefined> = []
+    const seenTrainingOrders: Array<string | undefined> = []
     const service = new ResearchMemoryService({
       now: () => new Date("2026-06-29T00:00:00.000Z"),
       readAdapter: () => ({
@@ -17674,14 +17700,100 @@ describe("OpenCode session instruction packs", () => {
           seenCandidateOrders.push(options?.order)
           return options?.order === "newest" ? [lateCandidate] : []
         },
+        searchTrainingRuns: (options) => {
+          seenTrainingOrders.push(options?.order)
+          return options?.order === "newest" ? [lateRun] : []
+        },
       }),
     })
 
     const preview = service.preview({ query: "latecap needle", limit: 3 })
     expect(seenOrders).toEqual(["newest"])
     expect(seenCandidateOrders).toEqual(["newest"])
+    expect(seenTrainingOrders).toEqual(["newest"])
     expect(preview.status).toBe("ready")
-    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_candidate", "zz_latecap_finding"])
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_candidate", "zz_latecap_finding", "zz_latecap_training"])
+  })
+
+  test("research memory mission scope loads known linked ids without global candidate caps", () => {
+    const missionRun: TrainingRun = {
+      training_run_id: "mission_training_scope",
+      candidate_id: "mission_candidate_scope",
+      hypothesis_id: null,
+      trial_id: "mission_trial_scope",
+      mission_id: "mission_scope",
+      label: "probe",
+      status: "planned",
+      pid: null,
+      process_group_id: null,
+      log_path: null,
+      metrics_path: null,
+      checkpoint_dir: null,
+      latest_checkpoint_id: null,
+      last_step: null,
+      last_metric: null,
+      reproduction: { note: "mission scope needle" },
+      last_observed_at: null,
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const missionCandidate: Candidate = {
+      candidate_id: "mission_candidate_scope",
+      hypothesis_id: null,
+      claim: "mission scope candidate needle",
+      source: "commander",
+      status: "active",
+      commander_score: null,
+      rank_reason: null,
+      input_hash: "hash",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const missionTrial: Trial = {
+      trial_id: "mission_trial_scope",
+      hypothesis_id: null,
+      candidate_id: "mission_candidate_scope",
+      trial_kind: "mission scope trial needle",
+      status: "planned",
+      config: { watchdog: "short" },
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const candidateQueries: Array<string | undefined> = []
+    const trainingOrders: Array<string | undefined> = []
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchTrainingRuns: (options) => {
+          trainingOrders.push(options?.order)
+          return options?.mission_id === "mission_scope" && options?.order === "newest" ? [missionRun] : []
+        },
+        searchCandidates: (options) => {
+          candidateQueries.push(options?.candidate_id)
+          return options?.candidate_id === "mission_candidate_scope" ? [missionCandidate] : []
+        },
+        searchTrials: (options) => {
+          if (options?.trial_id === "mission_trial_scope") return [missionTrial]
+          return []
+        },
+      }),
+    })
+
+    const preview = service.preview({ query: "mission scope needle", mission_id: "mission_scope", limit: 5 })
+    expect(trainingOrders).toContain("newest")
+    expect(candidateQueries).toEqual(["mission_candidate_scope"])
+    expect(preview.status).toBe("ready")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toContain("mission_candidate_scope")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toContain("mission_trial_scope")
+    expect(preview.candidates.every((candidate) => candidate.source_mission_id === "mission_scope")).toBe(true)
   })
 
   test("research memory retrieval redacts structured metadata before stringifying previews", () => {
