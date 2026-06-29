@@ -17172,6 +17172,15 @@ describe("OpenCode session instruction packs", () => {
     expect(manifest.pack_id).toBe(withManifest.pack_id)
     const packEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")
     expect(packEvents.map((event) => event.pack_id)).toEqual([withoutManifest.pack_id, withManifest.pack_id])
+
+    const duplicateWithoutManifest = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      includeManifest: false,
+    }) as { status: string; error?: string }
+    expect(duplicateWithoutManifest.status).toBe("blocked")
+    expect(duplicateWithoutManifest.error).toContain("existing generated instruction-pack file is not part of requested pack: MANIFEST.json")
+    const eventsAfterDuplicate = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_instruction_pack_written")
+    expect(eventsAfterDuplicate.map((event) => event.pack_id)).toEqual([withoutManifest.pack_id, withManifest.pack_id])
     await server.shutdown()
   })
 

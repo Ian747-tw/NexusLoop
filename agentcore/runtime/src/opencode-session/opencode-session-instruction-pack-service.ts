@@ -102,6 +102,13 @@ export class OpenCodeSessionInstructionPackService {
       const targetDir = targetDirFor(this.options.projectDir, rebuilt.preview.session_id)
       const existing = await this.findExisting(rebuilt.preview.pack_hash)
       if (existing) {
+        const existingPreflightError = await validateTargetForPack(this.options.projectDir, targetDir, rebuilt.files)
+        if (existingPreflightError) {
+          return {
+            ...blockedResult(rebuilt.preview, writtenAt, writtenBy),
+            error: existingPreflightError,
+          }
+        }
         const matchingFiles = await existingFilesMatch(targetDir, rebuilt.files)
         if (matchingFiles) {
           return redactValue({
