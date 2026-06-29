@@ -61,7 +61,7 @@ export class ResearchNoveltyService {
     const repetitionRequiresJustification = (duplicateRisk === "high" || duplicateRisk === "medium") && !hasReason
     if (repetitionRequiresJustification) warnings.add("similar prior work was found; repetition needs an explicit justification")
     if (hasReason) warnings.add("repetition reason supplied; Commander/human may justify repeated work")
-    const missingMemoryWarning = retrieval.status === "empty" || retrieval.status === "partial" || retrieval.retrieval_policy === "empty_projection"
+    const missingMemoryWarning = retrieval.status === "blocked" || retrieval.retrieval_policy === "empty_projection"
     if (missingMemoryWarning) warnings.add("internal research memory is empty or unavailable; this does not block Commander")
     const noveltyScore = noveltyScoreFor(duplicateRisk, hasReason, missingMemoryWarning)
     const noveltyHash = hash(stableJson({
@@ -139,6 +139,7 @@ function noveltyScoreFor(risk: ResearchNoveltyRisk, hasReason: boolean, missingM
 }
 
 function differenceSummary(risk: ResearchNoveltyRisk, top: ResearchMemoryCandidate | undefined, method: string | undefined, config: string | undefined, reason: string | undefined): string {
+  if (!top && risk === "low") return "No matching internal prior result was found in the bounded memory preview; duplicate risk is low without blocking Commander."
   if (!top) return "No bounded internal prior result was available; Commander should treat novelty as unknown until memory or external research is checked."
   if (reason) return bound(`Repetition is justified by: ${reason}. Nearest prior result is ${top.result_id} with risk=${risk}.`)
   if (risk === "high") return bound(`Nearest prior result ${top.result_id} strongly overlaps; repeat only with changed model/dataset/method/config, bug fix, replication, inconclusive prior result, new evidence, or human direction.`)

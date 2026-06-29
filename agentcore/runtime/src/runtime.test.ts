@@ -17680,12 +17680,16 @@ describe("OpenCode session instruction packs", () => {
 
     const unrelated = await server.command("runtime.preview_research_novelty_check", {
       question: "spectral normalization curriculum",
-      method: "new model",
+      method: "baseline model",
       config: "fresh dataset",
-    }) as { duplicate_risk: string; repetition_requires_justification: boolean; nearest_prior_results: unknown[] }
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean; nearest_prior_results: unknown[]; missing_memory_warning: boolean; external_research_recommended: boolean; novelty_score: number; warnings: string[] }
     expect(unrelated.duplicate_risk).toBe("low")
     expect(unrelated.repetition_requires_justification).toBe(false)
     expect(unrelated.nearest_prior_results).toEqual([])
+    expect(unrelated.missing_memory_warning).toBe(false)
+    expect(unrelated.external_research_recommended).toBe(false)
+    expect(unrelated.novelty_score).toBe(0.85)
+    expect(unrelated.warnings.join(" ")).not.toContain("empty or unavailable")
     expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
     await server.shutdown()
   })
