@@ -25,7 +25,7 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
   let state = initialState(projectDir)
   const commands = env.NXL_TUI_KEYS ? (JSON.parse(env.NXL_TUI_KEYS) as KeyCommand[]) : []
   const noStartInspectionScript = isNoStartInspectionScript(commands)
-  const needsExplicitRuntimeResume = noStartInspectionScript && hasNonDrySessionPlanCommand(commands)
+  const needsExplicitRuntimeResume = noStartInspectionScript && hasExplicitRuntimeResumeCommand(commands)
   const iterator = runtime.stream()[Symbol.asyncIterator]()
   let sawEvent = false
   let idleTimedOut = false
@@ -77,13 +77,18 @@ function isNoStartInspectionScript(commands: KeyCommand[]): boolean {
   return inserts.every((command) => isNoStartInspectionText(command.text))
 }
 
-function hasNonDrySessionPlanCommand(commands: KeyCommand[]): boolean {
-  return commands.some((command) => command.type === "insert" && isNonDrySessionPlanText(command.text))
+function hasExplicitRuntimeResumeCommand(commands: KeyCommand[]): boolean {
+  return commands.some((command) => command.type === "insert" && isExplicitRuntimeResumeText(command.text))
 }
 
-function isNonDrySessionPlanText(text: string): boolean {
+function isExplicitRuntimeResumeText(text: string): boolean {
   const command = text.trim().split(/\s+/, 1)[0]
-  return command === "/opencode-session-plan" || command === "/session-plan" || command === "/opencode-plan"
+  return command === "/opencode-session-plan"
+    || command === "/session-plan"
+    || command === "/opencode-plan"
+    || command === "/opencode-session-instruction-pack-write"
+    || command === "/session-instruction-pack-write"
+    || command === "/opencode-context-pack-write"
 }
 
 function isNoStartInspectionText(text: string): boolean {
@@ -182,9 +187,12 @@ function isNoStartInspectionText(text: string): boolean {
     || trimmed.startsWith("/opencode-session-instruction-pack-preview")
     || trimmed.startsWith("/session-instruction-pack-preview")
     || trimmed.startsWith("/opencode-context-pack-preview")
-    || trimmed.startsWith("/opencode-session-instruction-pack-dry-run")
-    || trimmed.startsWith("/session-instruction-pack-dry-run")
-    || trimmed.startsWith("/opencode-session-instruction-packs")
+	    || trimmed.startsWith("/opencode-session-instruction-pack-dry-run")
+	    || trimmed.startsWith("/session-instruction-pack-dry-run")
+	    || trimmed.startsWith("/opencode-session-instruction-pack-write")
+	    || trimmed.startsWith("/session-instruction-pack-write")
+	    || trimmed.startsWith("/opencode-context-pack-write")
+	    || trimmed.startsWith("/opencode-session-instruction-packs")
     || trimmed.startsWith("/opencode-session-instruction-pack-show")
     || trimmed.startsWith("/authority")
     || trimmed.startsWith("/command-authority")
