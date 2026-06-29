@@ -161,7 +161,7 @@ export class ResearchMemoryService {
       }
     }
     if (!input.source_kind || input.source_kind === "research_db") {
-      for (const candidate of adapter.searchCandidates?.({ limit: SCAN_LIMIT }) ?? []) {
+      for (const candidate of adapter.searchCandidates?.({ limit: SCAN_LIMIT, order: "newest" }) ?? []) {
         if (input.mission_id && !missionCandidateIds.has(candidate.candidate_id)) continue
         out.push(candidateFromCandidate(candidate, input.mission_id))
       }
@@ -398,12 +398,26 @@ function countBy(values: string[]): Record<string, number> {
 
 function previewUnknown(value: unknown): string | undefined {
   if (value === null || value === undefined) return undefined
-  if (typeof value === "string") return bound(value)
+  if (typeof value === "string") return bound(redactText(value))
   try {
-    return bound(JSON.stringify(value))
+    return bound(JSON.stringify(redactMetadata(value)))
   } catch {
     return "unserializable metadata"
   }
+}
+
+function redactMetadata(value: unknown): unknown {
+  const redacted = redactValue(value)
+  if (Array.isArray(redacted)) return redacted.map((item) => redactMetadata(item))
+  if (redacted && typeof redacted === "object") {
+    const out: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(redacted)) {
+      const safeKey = /api[_-]?key|token|secret|password|credential/i.test(key) ? "[REDACTED_KEY]" : redactText(key)
+      out[safeKey] = redactMetadata(child)
+    }
+    return out
+  }
+  return redacted
 }
 
 function optional(value: unknown): string | undefined {

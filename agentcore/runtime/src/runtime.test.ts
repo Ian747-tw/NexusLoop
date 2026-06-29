@@ -47,6 +47,7 @@ import {
   ResearchDb,
   type ListResearchEventsOptions,
   type Note,
+  type Candidate,
   type ResearchEvent,
   type ResearchProjectionIntegrity,
   type ResearchProjectionStatus,
@@ -54,6 +55,7 @@ import {
   type SearchOptions,
   type Topic,
   type TopicSnapshot,
+  type Trial,
 } from "./research-db/research-db"
 import { stableWakeSchedulerNavigationWriteRunOutcomeHash } from "./schedules/wake-scheduler-navigation-write-run-compare-service"
 import { stableWakeSchedulerNavigationCheckpointWriteOutcomeHash } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-service"
@@ -17621,7 +17623,20 @@ describe("OpenCode session instruction packs", () => {
       created_at: "2026-06-29T00:00:00.000Z",
       updated_at: "2026-06-29T00:00:00.000Z",
     }
+    const lateCandidate: Candidate = {
+      candidate_id: "zz_latecap_candidate",
+      hypothesis_id: null,
+      claim: "latecap candidate needle",
+      source: "commander",
+      status: "active",
+      commander_score: null,
+      rank_reason: null,
+      input_hash: "hash",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
     const seenOrders: Array<string | undefined> = []
+    const seenCandidateOrders: Array<string | undefined> = []
     const service = new ResearchMemoryService({
       now: () => new Date("2026-06-29T00:00:00.000Z"),
       readAdapter: () => ({
@@ -17631,13 +17646,49 @@ describe("OpenCode session instruction packs", () => {
           seenOrders.push(options?.order)
           return options?.order === "newest" ? [lateResult] : []
         },
+        searchCandidates: (options) => {
+          seenCandidateOrders.push(options?.order)
+          return options?.order === "newest" ? [lateCandidate] : []
+        },
       }),
     })
 
     const preview = service.preview({ query: "latecap needle", limit: 3 })
     expect(seenOrders).toEqual(["newest"])
+    expect(seenCandidateOrders).toEqual(["newest"])
     expect(preview.status).toBe("ready")
-    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_finding"])
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_candidate", "zz_latecap_finding"])
+  })
+
+  test("research memory retrieval redacts structured metadata before stringifying previews", () => {
+    const trial: Trial = {
+      trial_id: "trial_secret_metadata",
+      hypothesis_id: null,
+      candidate_id: null,
+      trial_kind: "secretmeta trial",
+      status: "planned",
+      config: { api_key: "sk-secretmeta-123", note: "secretmeta needle" },
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchTrials: () => [trial],
+      }),
+    })
+
+    const preview = service.preview({ query: "secretmeta needle", limit: 3 })
+    const serialized = JSON.stringify(preview)
+    expect(preview.status).toBe("ready")
+    expect(serialized).toContain("secretmeta")
+    expect(serialized).not.toContain("sk-secretmeta-123")
+    expect(serialized).not.toContain("api_key")
   })
 
   test("research novelty flags duplicate risk without blocking repeated work", async () => {
