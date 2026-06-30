@@ -17522,7 +17522,7 @@ describe("OpenCode launch readiness", () => {
     }
     expect(readiness.session_id).toBe(session.session_id)
     expect(readiness.pack_id).toBe(pack.pack_id)
-    expect(readiness.status).toBe("partial")
+    expect(readiness.status).toBe("ready")
     expect(readiness.instruction_files_verified).toBe(true)
     expect(readiness.manifest_verified).toBe(true)
     expect(readiness.config_verified).toBe(true)
@@ -17683,6 +17683,121 @@ describe("OpenCode launch readiness", () => {
     expect(previewRecord?.out_of_scope).toEqual(expect.arrayContaining(["OpenCode launch", "provider calls", "file writes", "mission/proposal/review/apply mutation"]))
     expect(summaryRecord).toMatchObject({ risk: "safe_read", mutates_events: false, calls_provider: false })
     expect(summaryRecord?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_launch_readiness_tui.py")
+  })
+
+  async function readyLaunchFixture(dir: string): Promise<{ server: RuntimeServer; sessionId: string; packId: string; readinessHash: string }> {
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_launch_gate", title: "Launch gate" })
+    db.proposeResearchResult({
+      result_id: "result_unrelated_launch_gate",
+      result_type: "finding",
+      title: "adapter timeout watchdog",
+      summary: "prior timeout watchdog result",
+      confidence: "medium",
+      created_by: "commander",
+    })
+    db.close()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["opencode"] },
+      researchProjectionMode: "check_only",
+      opencodeLaunchId: () => "launch_test_1",
+    })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "adapter spectral curriculum" }) as { session_id: string }
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    const readiness = await server.command("runtime.preview_opencode_launch_readiness", { sessionId: session.session_id, packId: pack.pack_id, providerKind: "local", modelId: "local-medium" }) as { status: string; readiness_hash: string }
+    expect(readiness.status).toBe("ready")
+    return { server, sessionId: session.session_id, packId: pack.pack_id, readinessHash: readiness.readiness_hash }
+  }
+
+  test("launch gate preview dry-run and fake launch require ready readiness and record bounded metadata", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId, readinessHash } = await readyLaunchFixture(dir)
+    const eventsBeforePreview = await server.eventStore.readAll()
+
+    const preview = await server.command("runtime.preview_opencode_session_launch", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; can_launch: boolean; launch_performed: boolean; adapter_kind: string; readiness_hash?: string; instruction_files: string[] }
+    expect(preview).toMatchObject({ status: "ready", can_launch: true, launch_performed: false, adapter_kind: "fake", readiness_hash: readinessHash })
+    expect(preview.instruction_files).toEqual(expect.arrayContaining(["TASK.md", "CONTEXT.md", "MANIFEST.json"]))
+    expect(await server.eventStore.readAll()).toEqual(eventsBeforePreview)
+
+    const dryRun = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium", dryRun: true }) as { status: string; launch_performed: boolean }
+    expect(dryRun).toMatchObject({ status: "dry_run", launch_performed: false })
+    expect(await server.eventStore.readAll()).toEqual(eventsBeforePreview)
+
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_performed: boolean; session_id: string; pack_id: string; readiness_hash?: string; native_session_id?: string }
+    expect(launched).toMatchObject({ status: "launched", launch_performed: false, session_id: sessionId, pack_id: packId, readiness_hash: readinessHash })
+    expect(launched.native_session_id).toBe(`fake_native_${sessionId}`)
+    const launchEvents = (await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("opencode_session_launch_"))
+    expect(launchEvents.map((event) => event.kind)).toEqual(["opencode_session_launch_started", "opencode_session_launch_succeeded"])
+    expect(JSON.stringify(launchEvents)).not.toContain("spectral curriculum")
+    expect(JSON.stringify(launchEvents)).not.toContain("TASK.md content")
+    expect(await server.command("runtime.list_opencode_session_launches", { sessionId })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ launch_id: "launch_test_1", status: "launched", session_id: sessionId }),
+    ]))
+    expect(await server.command("runtime.get_opencode_session_launch", { launchId: "launch_test_1" })).toEqual(expect.objectContaining({ launch_id: "launch_test_1", session_id: sessionId }))
+    await server.shutdown()
+  })
+
+  test("launch gate blocks missing readiness stale hashes real opt-in and duplicate launches", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+
+    const missing = await server.command("runtime.preview_opencode_session_launch", { sessionId: "missing" }) as { status: string; blockers: string[] }
+    expect(missing.status).toBe("blocked")
+    expect(missing.blockers).toContain("OpenCode launch readiness must be ready; current status is blocked")
+
+    const staleHash = await server.command("runtime.preview_opencode_session_launch", { sessionId, packId, providerKind: "local", modelId: "local-medium", readinessHash: "stale" }) as { status: string; blockers: string[] }
+    expect(staleHash.status).toBe("blocked")
+    expect(staleHash.blockers).toContain("readiness_hash does not match rebuilt readiness preview")
+
+    const realBlocked = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium", adapterKind: "process_adapter", allowRealLaunch: true }) as { status: string; error?: string; launch_performed: boolean }
+    expect(realBlocked).toMatchObject({ status: "blocked", launch_performed: false })
+    expect(realBlocked.error).toBe("real OpenCode launch requires NXL_REAL_OPENCODE_LAUNCH=1")
+
+    const first = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string }
+    expect(first.status).toBe("launched")
+    const duplicate = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; error?: string }
+    expect(duplicate.status).toBe("blocked")
+    expect(duplicate.error).toBe("OpenCode session already has an active launch record")
+    const launchEvents = (await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("opencode_session_launch_"))
+    expect(launchEvents.map((event) => event.kind)).toEqual(["opencode_session_launch_started", "opencode_session_launch_succeeded"])
+    await server.shutdown()
+  })
+
+  test("RuntimeServerClient no-start covers launch gate preview list get and dry-run", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_session_launch", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.launch_opencode_session", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "dry_run", launch_performed: false })
+    await expect(client.command("runtime.list_opencode_session_launches")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_session_launch", { launchId: "missing" })).resolves.toBeNull()
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(await readEventKinds(dir)).not.toContain("opencode_session_launch_started")
+    await client.shutdown()
+  })
+
+  test("authority registry includes launch gate commands", () => {
+    const previewRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/opencode-launch-preview")
+    const launchRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/opencode-launch")
+    expect(previewRecord).toMatchObject({ risk: "safe_read", mutates_events: false, creates_external_process: false, calls_provider: false })
+    expect(launchRecord).toMatchObject({
+      risk: "high_impact_write",
+      mutates_events: true,
+      creates_external_process: true,
+      calls_provider: false,
+      requires_run_lock: true,
+      blocked_by_default: true,
+    })
+    expect(launchRecord?.notes.join(" ")).toContain("First real OpenCode launch gate")
+    expect(launchRecord?.out_of_scope).toEqual(expect.arrayContaining(["progress supervision", "provider calls", "research.db writes", "mission/proposal/review/apply mutation"]))
   })
 
   test("research memory summary and retrieval are safe when projection is unavailable", async () => {

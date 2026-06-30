@@ -88,6 +88,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...contextPacketLines(state))
   out.push(...opencodeSessionInstructionPackLines(state))
   out.push(...opencodeLaunchReadinessLines(state))
+  out.push(...opencodeLaunchLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -163,7 +164,7 @@ function commandAuthorityLines(state: UiState): string[] {
   }
   if (authority.selected) {
     const selected = authority.selected
-    out.push(`  selected=${preview(redactText(selected.slash_command))} risk=${selected.risk} gate=${selected.gate} owner=${selected.owner} mutates_events=${selected.mutates_events}`)
+    out.push(`  selected=${preview(redactText(selected.slash_command))} risk=${selected.risk} gate=${selected.gate} owner=${selected.owner} mutates_events=${selected.mutates_events} creates_external_process=${selected.creates_external_process} calls_provider=${selected.calls_provider}`)
     out.push(`  runtime=${selected.runtime_command ?? "none"} requires_active_runtime=${selected.requires_active_runtime} requires_run_lock=${selected.requires_run_lock} requires_approval=${selected.requires_approval}`)
     out.push(`  phase=${selected.current_phase_status} blocked_by_default=${selected.blocked_by_default}`)
     if (selected.approval_surface) out.push(`  approval_surface=${preview(redactText(selected.approval_surface))}`)
@@ -830,6 +831,63 @@ function opencodeLaunchReadinessLines(state: UiState): string[] {
   }
   if (readiness.commandError) out.push(`  command_error=${redactText(readiness.commandError)}`)
   out.push("  note=launch readiness does not launch OpenCode, call providers, call MCPs, query online sources, write files, mutate sessions, or mutate missions")
+  return out
+}
+
+function opencodeLaunchLines(state: UiState): string[] {
+  const launches = state.opencodeLaunches
+  const out = ["OpenCode launches"]
+  if (!launches) {
+    out.push("  preview=none")
+    out.push("  latest=none")
+    out.push("  records=none")
+    out.push("  note=preview/dry-run do not launch; non-dry launch is high-impact; 9D does not supervise progress or timeout yet")
+    return out
+  }
+  if (launches.preview) {
+    const item = launches.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_launch=${item.can_launch} launch_performed=${item.launch_performed}`)
+    out.push(`  adapter=${item.adapter_kind} mode=${item.launch_mode} session=${item.session_id || "none"} pack=${item.pack_id ?? "none"} readiness=${item.readiness_hash ?? "none"}`)
+    out.push(`  packet=${item.packet_id ?? "none"} budget=${item.budget_id ?? "none"} target_dir=${item.target_dir ? preview(redactText(item.target_dir)) : "none"}`)
+    if (item.command_preview) out.push(`  command_preview=${preview(redactText(item.command_preview))}`)
+    if (item.env_preview) out.push(`  env_preview=${preview(redactText(item.env_preview))}`)
+    out.push(`  instruction_files=${item.instruction_files.slice(0, 8).map((file) => preview(redactText(file))).join(",") || "none"}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 8).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (launches.latestResult) {
+    const item = launches.latestResult
+    out.push(`  latest=${item.launch_id} status=${item.status} launch_performed=${item.launch_performed} adapter=${item.adapter_kind}`)
+    out.push(`  session=${item.session_id || "none"} pack=${item.pack_id ?? "none"} readiness=${item.readiness_hash ?? "none"} native_session=${item.native_session_id ?? "none"} process=${item.process_id ?? "none"}`)
+    if (item.command_preview) out.push(`  latest_command_preview=${preview(redactText(item.command_preview))}`)
+    if (item.output_summary_preview) out.push(`  output_summary=${preview(redactText(item.output_summary_preview))}`)
+    if (item.error) out.push(`  latest_error=${preview(redactText(item.error))}`)
+  } else {
+    out.push("  latest=none")
+  }
+  if (launches.records.length > 0) {
+    out.push("  launch_records")
+    out.push(...launches.records.slice(0, 10).map((record) => `    - ${record.launch_id} status=${record.status} adapter=${record.adapter_kind} session=${record.session_id} pack=${record.pack_id ?? "none"}: ${preview(redactText(record.summary_preview))}`))
+  } else {
+    out.push("  records=none")
+  }
+  if (launches.selected) {
+    const selected = launches.selected
+    out.push(`  selected=${selected.launch_id} status=${selected.status} session=${selected.session_id} adapter=${selected.adapter_kind}`)
+  }
+  if (launches.commandError) out.push(`  command_error=${redactText(launches.commandError)}`)
+  out.push("  note=preview/dry-run do not launch; non-dry launch is high-impact; 9D does not supervise progress, heartbeat, timeout, Commander guidance, or wake supervision yet")
   return out
 }
 

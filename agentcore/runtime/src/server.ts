@@ -78,6 +78,10 @@ import { OpenCodeSessionInstructionPackService, readOpenCodeSessionInstructionPa
 import type { OpenCodeSessionInstructionPackPreview, OpenCodeSessionInstructionPackRecord, OpenCodeSessionInstructionPackResult } from "./opencode-session/opencode-session-instruction-pack-types"
 import { OpenCodeLaunchReadinessService, readOpenCodeLaunchReadinessPreviewInput, readOpenCodeLaunchReadinessSummaryInput } from "./opencode-session/opencode-launch-readiness-service"
 import type { OpenCodeLaunchReadinessPreview, OpenCodeLaunchReadinessSummary } from "./opencode-session/opencode-launch-readiness-types"
+import { DisabledOpenCodeLaunchAdapter, FakeOpenCodeLaunchAdapter, type OpenCodeLaunchAdapter } from "./opencode-session/opencode-launch-adapter"
+import { ProcessOpenCodeLaunchAdapter } from "./opencode-session/opencode-native-launch-adapter"
+import { OpenCodeLaunchGateService, readOpenCodeLaunchInput, readOpenCodeLaunchPreviewInput } from "./opencode-session/opencode-launch-gate-service"
+import type { OpenCodeLaunchPreview, OpenCodeLaunchRecord, OpenCodeLaunchResult } from "./opencode-session/opencode-launch-gate-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -187,6 +191,11 @@ export interface RuntimeServerOptions {
   opencodeProcessSmokeNow?: () => Date
   opencodeProcessSmokeId?: () => string
   opencodeProcessSmokeSpawn?: OpenCodeSpawn
+  opencodeLaunchEnv?: Record<string, string | undefined>
+  opencodeLaunchAdapter?: OpenCodeLaunchAdapter
+  opencodeLaunchNow?: () => Date
+  opencodeLaunchId?: () => string
+  opencodeLaunchSpawn?: OpenCodeSpawn
   runtimeCheckpointNow?: () => Date
   runtimeCheckpointId?: () => string
   runtimeResumeNow?: () => Date
@@ -268,6 +277,11 @@ export class RuntimeServer {
   private readonly opencodeProcessSmokeNow?: () => Date
   private readonly opencodeProcessSmokeId?: () => string
   private readonly opencodeProcessSmokeSpawn?: OpenCodeSpawn
+  private readonly opencodeLaunchEnv: Record<string, string | undefined>
+  private readonly opencodeLaunchAdapter?: OpenCodeLaunchAdapter
+  private readonly opencodeLaunchNow?: () => Date
+  private readonly opencodeLaunchId?: () => string
+  private readonly opencodeLaunchSpawn?: OpenCodeSpawn
   private readonly runtimeCheckpointNow?: () => Date
   private readonly runtimeCheckpointId?: () => string
   private readonly runtimeResumeNow?: () => Date
@@ -298,6 +312,7 @@ export class RuntimeServer {
   private opencodeSessionServiceInstance: OpenCodeSessionService | null = null
   private opencodeSessionInstructionPackServiceInstance: OpenCodeSessionInstructionPackService | null = null
   private opencodeLaunchReadinessServiceInstance: OpenCodeLaunchReadinessService | null = null
+  private opencodeLaunchGateServiceInstance: OpenCodeLaunchGateService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -380,6 +395,11 @@ export class RuntimeServer {
     this.opencodeProcessSmokeNow = options.opencodeProcessSmokeNow
     this.opencodeProcessSmokeId = options.opencodeProcessSmokeId
     this.opencodeProcessSmokeSpawn = options.opencodeProcessSmokeSpawn ?? options.openCodeAdapterFactoryOptions?.spawn
+    this.opencodeLaunchEnv = options.opencodeLaunchEnv ?? process.env
+    this.opencodeLaunchAdapter = options.opencodeLaunchAdapter
+    this.opencodeLaunchNow = options.opencodeLaunchNow
+    this.opencodeLaunchId = options.opencodeLaunchId
+    this.opencodeLaunchSpawn = options.opencodeLaunchSpawn ?? options.openCodeAdapterFactoryOptions?.spawn
     this.runtimeCheckpointNow = options.runtimeCheckpointNow
     this.runtimeCheckpointId = options.runtimeCheckpointId
     this.runtimeResumeNow = options.runtimeResumeNow
@@ -862,6 +882,18 @@ export class RuntimeServer {
         return this.previewOpenCodeLaunchReadiness(readOpenCodeLaunchReadinessPreviewInput(payload))
       case "runtime.opencode_launch_readiness_summary":
         return this.openCodeLaunchReadinessSummary(readOpenCodeLaunchReadinessSummaryInput(payload))
+      case "runtime.preview_opencode_session_launch":
+        return this.previewOpenCodeSessionLaunch(readOpenCodeLaunchPreviewInput(payload))
+      case "runtime.launch_opencode_session":
+        return this.launchOpenCodeSession(readOpenCodeLaunchInput(payload))
+      case "runtime.list_opencode_session_launches":
+        return this.listOpenCodeSessionLaunches({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          status: optionalString(payload.status, "status"),
+        })
+      case "runtime.get_opencode_session_launch":
+        return this.getOpenCodeSessionLaunch(requiredString(payload.launchId ?? payload.launch_id, "launchId"))
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -1751,6 +1783,23 @@ export class RuntimeServer {
 
   async openCodeLaunchReadinessSummary(input: Parameters<OpenCodeLaunchReadinessService["summary"]>[0] = {}): Promise<OpenCodeLaunchReadinessSummary> {
     return this.opencodeLaunchReadinessService().summary(input)
+  }
+
+  async previewOpenCodeSessionLaunch(input: Parameters<OpenCodeLaunchGateService["preview"]>[0] = {}): Promise<OpenCodeLaunchPreview> {
+    return this.opencodeLaunchGateService().preview(input)
+  }
+
+  async launchOpenCodeSession(input: Parameters<OpenCodeLaunchGateService["launch"]>[0] = {}): Promise<OpenCodeLaunchResult> {
+    if (input.dry_run === true) return this.opencodeLaunchGateService().launch(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeLaunchGateService().launch(input))
+  }
+
+  async listOpenCodeSessionLaunches(input: Parameters<OpenCodeLaunchGateService["list"]>[0] = {}): Promise<OpenCodeLaunchRecord[]> {
+    return this.opencodeLaunchGateService().list(input)
+  }
+
+  async getOpenCodeSessionLaunch(launchId: string): Promise<OpenCodeLaunchResult | null> {
+    return this.opencodeLaunchGateService().get(launchId)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -2665,6 +2714,16 @@ export class RuntimeServer {
     }
   }
 
+  private async withOpenCodeLaunchWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.runLock.isHeld()) return operation()
+    await this.runLock.acquire()
+    try {
+      return await operation()
+    } finally {
+      await this.runLock.release()
+    }
+  }
+
   private requireOpenCodeHandoffRuntime(commandName: string): void {
     if (this.mode !== "active") throw new Error(`${commandName} requires active mode`)
     if (!this.started || !this.runLock.isHeld()) throw new Error("runtime must be started before opencode handoff writes")
@@ -2832,6 +2891,35 @@ export class RuntimeServer {
       nativeLaunchSurface: this.openCodeAdapterConfig?.kind === "process" ? "process_adapter" : "unknown",
     })
     return this.opencodeLaunchReadinessServiceInstance
+  }
+
+  private opencodeLaunchGateService(): OpenCodeLaunchGateService {
+    this.opencodeLaunchGateServiceInstance ??= new OpenCodeLaunchGateService({
+      projectDir: this.projectDir,
+      eventStore: this.eventStore,
+      readinessService: this.opencodeLaunchReadinessService(),
+      instructionPackService: this.opencodeSessionInstructionPackService(),
+      fakeAdapter: new FakeOpenCodeLaunchAdapter(),
+      realAdapter: this.opencodeLaunchAdapter ?? this.createOpenCodeLaunchAdapter(),
+      env: this.opencodeLaunchEnv,
+      now: this.opencodeLaunchNow,
+      idFactory: this.opencodeLaunchId,
+    })
+    return this.opencodeLaunchGateServiceInstance
+  }
+
+  private createOpenCodeLaunchAdapter(): OpenCodeLaunchAdapter {
+    if (this.openCodeAdapterConfig?.kind === "process") {
+      return new ProcessOpenCodeLaunchAdapter({
+        command: this.openCodeAdapterConfig.command!,
+        args: this.openCodeAdapterConfig.args,
+        cwd: this.openCodeAdapterConfig.cwd ?? this.projectDir,
+        env: this.openCodeAdapterConfig.env,
+        spawn: this.opencodeLaunchSpawn,
+        spawnTimeoutMs: this.openCodeAdapterConfig.spawnTimeoutMs,
+      })
+    }
+    return new DisabledOpenCodeLaunchAdapter()
   }
 
   private commanderExecutorReviewService(): CommanderExecutorReviewService {

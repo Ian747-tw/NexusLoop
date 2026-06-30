@@ -214,7 +214,7 @@ Session tactical memory should map to generated bounded files such as:
 - `.nxl/opencode/sessions/<session_id>/MANIFEST.json`
 - `.nxl/opencode/sessions/<session_id>/opencode-session-config.json`
 
-Branch 9B3 writes these files as bounded, per-session future-launch artifacts with `launch_ready=false`. It does not launch OpenCode, mutate `AGENTS.md`, mutate global OpenCode config, call providers, call MCPs, or query `research.db`. Branch 9C adds a read-only launch-readiness preview that verifies the planned session, instruction-pack event metadata, on-disk generated file hashes, `MANIFEST.json`, `opencode-session-config.json`, context packet/budget status, advisory novelty metadata, and static native launch assumptions without spawning OpenCode. Future launch should include those files through OpenCode config `instructions`, command file attachment, or SDK prompt parts, depending on the launch surface selected in 9D.
+Branch 9B3 writes these files as bounded, per-session future-launch artifacts with `launch_ready=false`. It does not launch OpenCode, mutate `AGENTS.md`, mutate global OpenCode config, call providers, call MCPs, or query `research.db`. Branch 9C adds a read-only launch-readiness preview that verifies the planned session, instruction-pack event metadata, on-disk generated file hashes, `MANIFEST.json`, `opencode-session-config.json`, context packet/budget status, advisory novelty metadata, and static native launch assumptions without spawning OpenCode. Branch 9D adds the first explicit launch gate: it rebuilds readiness, requires a ready planned session and matching instruction pack, supports preview/dry-run/list/get without starting OpenCode, and records bounded launch metadata for one explicit launch attempt. Fake launch remains process-free for tests; real external launch requires explicit opt-in and still does not supervise progress, enforce timeout, inject guidance, call providers/MCPs, or mutate missions.
 
 Durable memory remains:
 
@@ -317,7 +317,7 @@ Branch 9B0 does not implement this protocol.
 - 9B3: session-specific OpenCode config/instruction writer (bounded artifact writer only; no launch)
 - 9B4: `research.db` retrieval + novelty-check planner
 - 9C: real OpenCode launch readiness (read-only; no launch authority)
-- 9D: real OpenCode launch gate
+- 9D: real OpenCode launch gate (explicit one-session launch metadata; no progress/timeout/guidance supervision)
 - 9E: progress report / heartbeat model
 - 9F: timeout watchdog / forced pause/report
 - 9G: OpenCode asks Commander

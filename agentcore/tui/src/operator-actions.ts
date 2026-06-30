@@ -82,6 +82,10 @@ const WRITE_COMMANDS = new Set([
   "opencode-session-instruction-pack-write",
   "session-instruction-pack-write",
   "opencode-context-pack-write",
+  "opencode-launch",
+  "launch-opencode",
+  "session-launch",
+  "opencode-session-launch",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"
