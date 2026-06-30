@@ -76,6 +76,8 @@ import { OpenCodeSessionService, readOpenCodeSessionCreateInput, readOpenCodeSes
 import type { OpenCodeSessionPlan, OpenCodeSessionPreview, OpenCodeSessionRecord, OpenCodeSessionSourceKind, OpenCodeSessionStatus, OpenCodeSessionSummary } from "./opencode-session/opencode-session-types"
 import { OpenCodeSessionInstructionPackService, readOpenCodeSessionInstructionPackPreviewInput, readOpenCodeSessionInstructionPackWriteInput } from "./opencode-session/opencode-session-instruction-pack-service"
 import type { OpenCodeSessionInstructionPackPreview, OpenCodeSessionInstructionPackRecord, OpenCodeSessionInstructionPackResult } from "./opencode-session/opencode-session-instruction-pack-types"
+import { OpenCodeLaunchReadinessService, readOpenCodeLaunchReadinessPreviewInput, readOpenCodeLaunchReadinessSummaryInput } from "./opencode-session/opencode-launch-readiness-service"
+import type { OpenCodeLaunchReadinessPreview, OpenCodeLaunchReadinessSummary } from "./opencode-session/opencode-launch-readiness-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -295,6 +297,7 @@ export class RuntimeServer {
   private opencodeResultReviewPacketServiceInstance: OpenCodeResultReviewPacketService | null = null
   private opencodeSessionServiceInstance: OpenCodeSessionService | null = null
   private opencodeSessionInstructionPackServiceInstance: OpenCodeSessionInstructionPackService | null = null
+  private opencodeLaunchReadinessServiceInstance: OpenCodeLaunchReadinessService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -855,6 +858,10 @@ export class RuntimeServer {
         })
       case "runtime.get_opencode_session_instruction_pack":
         return this.getOpenCodeSessionInstructionPack(requiredString(payload.packId ?? payload.pack_id, "packId"))
+      case "runtime.preview_opencode_launch_readiness":
+        return this.previewOpenCodeLaunchReadiness(readOpenCodeLaunchReadinessPreviewInput(payload))
+      case "runtime.opencode_launch_readiness_summary":
+        return this.openCodeLaunchReadinessSummary(readOpenCodeLaunchReadinessSummaryInput(payload))
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -1736,6 +1743,14 @@ export class RuntimeServer {
 
   async getOpenCodeSessionInstructionPack(packId: string): Promise<OpenCodeSessionInstructionPackResult | null> {
     return this.opencodeSessionInstructionPackService().get(packId)
+  }
+
+  async previewOpenCodeLaunchReadiness(input: Parameters<OpenCodeLaunchReadinessService["preview"]>[0] = {}): Promise<OpenCodeLaunchReadinessPreview> {
+    return this.opencodeLaunchReadinessService().preview(input)
+  }
+
+  async openCodeLaunchReadinessSummary(input: Parameters<OpenCodeLaunchReadinessService["summary"]>[0] = {}): Promise<OpenCodeLaunchReadinessSummary> {
+    return this.opencodeLaunchReadinessService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -2805,6 +2820,18 @@ export class RuntimeServer {
       contextPacketCompilerService: this.contextPacketCompilerService(),
     })
     return this.opencodeSessionInstructionPackServiceInstance
+  }
+
+  private opencodeLaunchReadinessService(): OpenCodeLaunchReadinessService {
+    this.opencodeLaunchReadinessServiceInstance ??= new OpenCodeLaunchReadinessService({
+      projectDir: this.projectDir,
+      opencodeSessionService: this.opencodeSessionService(),
+      instructionPackService: this.opencodeSessionInstructionPackService(),
+      contextPacketCompilerService: this.contextPacketCompilerService(),
+      researchNoveltyService: this.researchNoveltyService(),
+      nativeLaunchSurface: this.openCodeAdapterConfig?.kind === "process" ? "process_adapter" : "unknown",
+    })
+    return this.opencodeLaunchReadinessServiceInstance
   }
 
   private commanderExecutorReviewService(): CommanderExecutorReviewService {

@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -447,6 +447,10 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.listOpenCodeSessionInstructionPacks(payload)
       case "runtime.get_opencode_session_instruction_pack":
         return this.getOpenCodeSessionInstructionPack(String(payload.packId ?? payload.pack_id ?? ""))
+      case "runtime.preview_opencode_launch_readiness":
+        return this.previewOpenCodeLaunchReadiness(payload)
+      case "runtime.opencode_launch_readiness_summary":
+        return this.opencodeLaunchReadinessSummary(payload)
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -2234,6 +2238,85 @@ export class FakeRuntimeClient implements RuntimeClient {
   private getOpenCodeSessionInstructionPack(packId: string): OpenCodeSessionInstructionPackResultSummary | null {
     const id = requiredString(packId, "packId")
     return this.opencodeSessionInstructionPacks.find((item) => item.pack_id === id) ?? null
+  }
+
+  private previewOpenCodeLaunchReadiness(payload: Record<string, unknown>): OpenCodeLaunchReadinessPreviewSummary {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const packId = optionalString(payload.packId ?? payload.pack_id ?? payload.pack)
+    const session = sessionId ? this.opencodeSessions.find((item) => item.session_id === sessionId) : undefined
+    const pack = packId
+      ? this.opencodeSessionInstructionPacks.find((item) => item.pack_id === packId)
+      : this.opencodeSessionInstructionPacks.find((item) => item.session_id === sessionId)
+    const blockers: string[] = []
+    if (!sessionId) blockers.push("session_id is required")
+    if (sessionId && !session) blockers.push("planned OpenCode session was not found")
+    if (session && !pack) blockers.push("instruction pack is required before future launch readiness")
+    if (pack && pack.session_id !== sessionId) blockers.push("instruction pack does not belong to requested session_id")
+    const packet = session ? this.previewContextPacket({ ...payload, purpose: "opencode_executor_session", sessionId }) : undefined
+    const novelty = session ? this.previewResearchNoveltyCheck({ question: session.objective, sessionId }) : undefined
+    const checks: OpenCodeLaunchReadinessCheckSummary[] = [
+      fakeLaunchReadinessCheck("session", "Planned session", session ? "pass" : "fail", session ? `planned session ${session.session_id}` : "planned session was not found", session ? [] : ["planned OpenCode session was not found"]),
+      fakeLaunchReadinessCheck("context_packet", "Context packet", packet && packet.packet_status !== "blocked" ? "warn" : "fail", packet ? `${packet.packet_status} packet ${packet.packet_id}` : "context packet unavailable", packet?.packet_status === "blocked" ? packet.blockers : []),
+      fakeLaunchReadinessCheck("instruction_pack", "Instruction pack", pack ? "pass" : "fail", pack ? `instruction pack ${pack.pack_id}` : "instruction pack missing", pack ? [] : ["instruction pack is required before future launch readiness"]),
+      fakeLaunchReadinessCheck("filesystem", "Instruction files", pack ? "pass" : "unknown", pack ? "fake pack metadata is consistent; no real file read performed" : "no pack files available", []),
+      fakeLaunchReadinessCheck("manifest", "Manifest", pack ? "pass" : "unknown", pack ? "fake MANIFEST.json metadata verified" : "manifest unavailable", []),
+      fakeLaunchReadinessCheck("opencode_config", "Future launch config", pack ? "pass" : "unknown", pack ? "fake opencode-session-config.json has launch_ready=false" : "config unavailable", []),
+      fakeLaunchReadinessCheck("research_novelty", "Research memory novelty", "warn", `duplicate risk ${novelty?.duplicate_risk ?? "unknown"}`, []),
+      fakeLaunchReadinessCheck("native_config", "Native OpenCode launch surface", "warn", "future launch surface=process_adapter; no launch performed", []),
+    ]
+    const allBlockers = [...blockers, ...checks.flatMap((item) => item.blockers)]
+    const hash = createHash("sha256").update(`${sessionId ?? ""}:${pack?.pack_id ?? packId ?? ""}:${packet?.packet_id ?? ""}:${allBlockers.join("|")}`).digest("hex")
+    const status = allBlockers.length > 0 ? "blocked" : checks.some((item) => item.status === "warn" || item.status === "unknown") ? "partial" : "ready"
+    return {
+      preview_id: `fake-opencode-launch-readiness-${hash.slice(0, 12)}`,
+      status,
+      can_launch_in_future: status === "ready",
+      launch_performed: false,
+      session_id: sessionId ?? "",
+      pack_id: pack?.pack_id ?? packId,
+      packet_id: packet?.packet_id,
+      budget_id: packet?.budget_id,
+      source_kind: session?.source_kind,
+      mission_id: session?.mission_id,
+      proposal_id: session?.proposal_id,
+      review_request_id: session?.review_request_id,
+      apply_id: session?.apply_id,
+      target_dir: pack?.target_dir,
+      instruction_files_verified: !!pack,
+      manifest_verified: !!pack,
+      config_verified: !!pack,
+      context_packet_status: packet?.packet_status,
+      context_budget_status: packet?.budget_summary.over_budget ? "warn" : packet ? "pass" : undefined,
+      research_memory_status: novelty?.status,
+      novelty_risk: novelty?.duplicate_risk,
+      selected_launch_surface: "process_adapter",
+      checks,
+      blockers: allBlockers.map(redactText),
+      warnings: [
+        "launch readiness is advisory and does not grant launch authority",
+        ...(novelty?.duplicate_risk === "high" || novelty?.duplicate_risk === "medium" ? ["similar prior work found; future launch should include Commander/human justification"] : []),
+      ].map(redactText),
+      recommended_commands: [
+        { label: "Instruction packs", command: sessionId ? `/opencode-session-instruction-packs session=${sessionId}` : "/opencode-session-instruction-packs", command_type: "read" },
+        { label: "Context packet", command: sessionId ? `/context-packet-preview purpose=opencode_executor_session session=${sessionId}` : "/context-packet-preview purpose=opencode_executor_session", command_type: "read" },
+        { label: "Show authority", command: "/authority-show /opencode-launch-readiness", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: allBlockers[0] ?? `future launch readiness for ${sessionId}`,
+      readiness_hash: hash,
+    }
+  }
+
+  private opencodeLaunchReadinessSummary(payload: Record<string, unknown>): OpenCodeLaunchReadinessSummaryState {
+    const sessions = this.opencodeSessions.filter((item) => item.status === "planned").slice(0, readLimit(payload.limit, 20))
+    const previews = sessions.map((item) => this.previewOpenCodeLaunchReadiness({ sessionId: item.session_id, includeResearchMemory: false }))
+    return {
+      total_planned_sessions: sessions.length,
+      ready_count: previews.filter((item) => item.status === "ready").length,
+      blocked_count: previews.filter((item) => item.status === "blocked").length,
+      partial_count: previews.filter((item) => item.status === "partial").length,
+      generated_at: new Date(0).toISOString(),
+    }
   }
 
   private researchMemorySummary(): ResearchMemorySummaryState {
@@ -8180,6 +8263,19 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       reads: ["/opencode-session-instruction-packs"],
       targeted: ["tests/e2e_user/scenarios/test_opencode_session_instruction_pack_tui.py"],
     }),
+    fakeCommandAuthorityRecord("/opencode-launch-readiness", "runtime.preview_opencode_launch_readiness", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-session-instruction-packs", "/context-packet-preview", "/research-novelty-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_launch_readiness_tui.py"],
+      aliases: ["/launch-readiness", "/opencode-session-launch-readiness", "/session-launch-readiness", "/launch-ready"],
+      notes: ["Read-only future OpenCode launch readiness preview; no OpenCode launch, provider calls, MCP/online research, file writes, research.db writes, or launch authority."],
+      out: ["OpenCode launch", "OpenCode process start", "provider calls", "MCP/online research", "file writes", "research.db writes", "mission/proposal/review/apply mutation", "scheduler/wake execution", "checkpoint creation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-launch-readiness-summary", "runtime.opencode_launch_readiness_summary", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-launch-readiness"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_launch_readiness_tui.py"],
+      notes: ["Read-only launch-readiness aggregate; it does not launch OpenCode or write files/events."],
+      out: ["OpenCode launch", "provider calls", "MCP/online research", "file writes", "research.db writes", "mission/proposal/review/apply mutation"],
+    }),
     fakeCommandAuthorityRecord("/research-memory-summary", "runtime.research_memory_summary", "safe_read", "none", "research", {
       targeted: ["tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"],
       notes: ["Read-only research memory summary; no provider calls, no MCP/online research, no research.db writes, no mission/proposal creation, no OpenCode launch."],
@@ -8536,6 +8632,18 @@ function fakeNormalizeAuthorityCommand(value: string): string | undefined {
 
 function isSafeFakeSessionId(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/.test(value) && !value.includes("..") && !value.includes("/") && !value.includes("\\") && !value.includes("\0")
+}
+
+function fakeLaunchReadinessCheck(checkId: string, label: string, status: string, summary: string, blockers: string[] = [], warnings: string[] = []): OpenCodeLaunchReadinessCheckSummary {
+  return {
+    check_id: checkId,
+    label,
+    status,
+    summary_preview: redactText(summary),
+    blockers: blockers.map(redactText),
+    warnings: warnings.map(redactText),
+    source_refs: [],
+  }
 }
 
 function fakeCountBy(records: CommandAuthorityRecordSummary[], key: "risk" | "gate" | "owner"): Record<string, number> {

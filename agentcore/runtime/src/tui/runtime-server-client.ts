@@ -31,6 +31,8 @@ const noStartCommands = new Set([
   "runtime.write_opencode_session_instruction_pack",
   "runtime.list_opencode_session_instruction_packs",
   "runtime.get_opencode_session_instruction_pack",
+  "runtime.preview_opencode_launch_readiness",
+  "runtime.opencode_launch_readiness_summary",
   "runtime.research_memory_summary",
   "runtime.preview_research_memory_retrieval",
   "runtime.preview_research_novelty_check",
