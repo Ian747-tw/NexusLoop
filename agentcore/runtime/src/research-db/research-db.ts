@@ -205,6 +205,12 @@ export interface Artifact {
   created_at: string
 }
 
+export interface ResultArtifactPointer {
+  id: string
+  kind: ArtifactKind
+  description: string | null
+}
+
 export interface ResearchResultInput {
   result_id?: string
   result_type: ResearchResultType
@@ -263,6 +269,12 @@ export interface Citation {
   sha256: string | null
   metadata: unknown | null
   created_at: string
+}
+
+export interface ResultCitationPointer {
+  citation_id: string
+  source_type: CitationSourceType
+  title: string | null
 }
 
 export interface ResultCitationLink {
@@ -434,6 +446,10 @@ export interface SearchResearchResultsOptions extends SearchOptions {
   result_type?: ResearchResultType
   status?: ResearchResultStatus
   mission_id?: string
+  candidate_id?: string
+  trial_id?: string
+  training_run_id?: string
+  order?: "oldest" | "newest"
 }
 
 export interface SearchCitationsOptions extends SearchOptions {
@@ -446,13 +462,17 @@ export interface SearchHypothesesOptions extends SearchOptions {
 
 export interface SearchCandidatesOptions extends SearchOptions {
   status?: CandidateStatus
+  candidate_id?: string
   hypothesis_id?: string
+  order?: "oldest" | "newest"
 }
 
 export interface SearchTrialsOptions extends SearchOptions {
   status?: TrialStatus
+  trial_id?: string
   candidate_id?: string
   hypothesis_id?: string
+  order?: "oldest" | "newest"
 }
 
 export interface SearchTrainingRunsOptions extends SearchOptions {
@@ -462,6 +482,7 @@ export interface SearchTrainingRunsOptions extends SearchOptions {
   hypothesis_id?: string
   trial_id?: string
   mission_id?: string
+  order?: "oldest" | "newest"
 }
 
 export interface WriteBarrierResult {
@@ -1077,9 +1098,22 @@ export class ResearchDb {
       filters.push("mission_id = ?")
       params.push(cleanId(options.mission_id))
     }
+    if (options.candidate_id !== undefined) {
+      filters.push("candidate_id = ?")
+      params.push(cleanId(options.candidate_id))
+    }
+    if (options.trial_id !== undefined) {
+      filters.push("trial_id = ?")
+      params.push(cleanId(options.trial_id))
+    }
+    if (options.training_run_id !== undefined) {
+      filters.push("training_run_id = ?")
+      params.push(cleanId(options.training_run_id))
+    }
     params.push(cleanLimit(options.limit))
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
-    return (this.db.query(`SELECT * FROM research_results ${where} ORDER BY created_at, result_id LIMIT ?`).all(...params) as ResearchResultRow[]).map((row) =>
+    const order = options.order === "newest" ? "created_at DESC, result_id DESC" : "created_at, result_id"
+    return (this.db.query(`SELECT * FROM research_results ${where} ORDER BY ${order} LIMIT ?`).all(...params) as ResearchResultRow[]).map((row) =>
       this.researchResultFromRow(row),
     )
   }
@@ -1211,6 +1245,16 @@ export class ResearchDb {
       .all(id) as CitationRow[]).map((row) => this.citationFromRow(row))
   }
 
+  listResultCitationPointers(resultId: string, limit = 8): ResultCitationPointer[] {
+    const id = cleanId(resultId)
+    this.requireResearchResult(id)
+    return this.db
+      .query(
+        "SELECT c.citation_id, c.source_type, c.title FROM citations c INNER JOIN result_citations rc ON rc.citation_id = c.citation_id WHERE rc.result_id = ? ORDER BY rc.created_at, c.citation_id LIMIT ?",
+      )
+      .all(id, cleanLimit(limit)) as ResultCitationPointer[]
+  }
+
   listResultArtifacts(resultId: string): Artifact[] {
     const id = cleanId(resultId)
     this.requireResearchResult(id)
@@ -1219,6 +1263,16 @@ export class ResearchDb {
         "SELECT a.id, a.topic_id, a.kind, a.path, a.content, a.artifact_type, a.sha256, a.size_bytes, a.produced_by_mission_id, a.produced_by_run_id, a.description, a.created_at FROM artifacts a INNER JOIN result_artifacts ra ON ra.artifact_id = a.id WHERE ra.result_id = ? ORDER BY ra.created_at, a.id",
       )
       .all(id) as Artifact[]
+  }
+
+  listResultArtifactPointers(resultId: string, limit = 8): ResultArtifactPointer[] {
+    const id = cleanId(resultId)
+    this.requireResearchResult(id)
+    return this.db
+      .query(
+        "SELECT a.id, a.kind, a.description FROM artifacts a INNER JOIN result_artifacts ra ON ra.artifact_id = a.id WHERE ra.result_id = ? ORDER BY ra.created_at, a.id LIMIT ?",
+      )
+      .all(id, cleanLimit(limit)) as ResultArtifactPointer[]
   }
 
   createHypothesis(input: HypothesisInput): Hypothesis {
@@ -1321,13 +1375,18 @@ export class ResearchDb {
       filters.push("status = ?")
       params.push(options.status)
     }
+    if (options.candidate_id !== undefined) {
+      filters.push("candidate_id = ?")
+      params.push(cleanId(options.candidate_id))
+    }
     if (options.hypothesis_id !== undefined) {
       filters.push("hypothesis_id = ?")
       params.push(cleanId(options.hypothesis_id))
     }
     params.push(cleanLimit(options.limit))
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
-    return (this.db.query(`SELECT * FROM candidates ${where} ORDER BY created_at, candidate_id LIMIT ?`).all(...params) as CandidateRow[]).map((row) =>
+    const order = options.order === "newest" ? "created_at DESC, candidate_id DESC" : "created_at, candidate_id"
+    return (this.db.query(`SELECT * FROM candidates ${where} ORDER BY ${order} LIMIT ?`).all(...params) as CandidateRow[]).map((row) =>
       this.candidateFromRow(row),
     )
   }
@@ -1483,6 +1542,10 @@ export class ResearchDb {
       filters.push("status = ?")
       params.push(options.status)
     }
+    if (options.trial_id !== undefined) {
+      filters.push("trial_id = ?")
+      params.push(cleanId(options.trial_id))
+    }
     if (options.candidate_id !== undefined) {
       filters.push("candidate_id = ?")
       params.push(cleanId(options.candidate_id))
@@ -1493,7 +1556,8 @@ export class ResearchDb {
     }
     params.push(cleanLimit(options.limit))
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
-    return (this.db.query(`SELECT * FROM trials ${where} ORDER BY created_at, trial_id LIMIT ?`).all(...params) as TrialRow[]).map((row) =>
+    const orderBy = options.order === "newest" ? "created_at DESC, trial_id DESC" : "created_at, trial_id"
+    return (this.db.query(`SELECT * FROM trials ${where} ORDER BY ${orderBy} LIMIT ?`).all(...params) as TrialRow[]).map((row) =>
       this.trialFromRow(row),
     )
   }
@@ -1645,7 +1709,8 @@ export class ResearchDb {
     }
     params.push(cleanLimit(options.limit))
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
-    return (this.db.query(`SELECT * FROM training_runs ${where} ORDER BY created_at, training_run_id LIMIT ?`).all(...params) as TrainingRunRow[]).map((row) =>
+    const order = options.order === "newest" ? "created_at DESC, training_run_id DESC" : "created_at, training_run_id"
+    return (this.db.query(`SELECT * FROM training_runs ${where} ORDER BY ${order} LIMIT ?`).all(...params) as TrainingRunRow[]).map((row) =>
       this.trainingRunFromRow(row),
     )
   }

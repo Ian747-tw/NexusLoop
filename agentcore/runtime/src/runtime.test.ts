@@ -37,6 +37,7 @@ import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProce
 import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCodeAdapterConfig, validateOpenCodeAdapterConfig } from "./opencode/adapter-config"
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
+import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
 import type { ExecutorToolHandler, ExecutorToolHandlerAdapter, MissionUpdate, OpenCodeRuntimeAdapter, SessionSpec } from "./opencode/adapter"
@@ -46,12 +47,16 @@ import {
   ResearchDb,
   type ListResearchEventsOptions,
   type Note,
+  type Candidate,
   type ResearchEvent,
   type ResearchProjectionIntegrity,
   type ResearchProjectionStatus,
+  type ResearchResult,
   type SearchOptions,
   type Topic,
   type TopicSnapshot,
+  type Trial,
+  type TrainingRun,
 } from "./research-db/research-db"
 import { stableWakeSchedulerNavigationWriteRunOutcomeHash } from "./schedules/wake-scheduler-navigation-write-run-compare-service"
 import { stableWakeSchedulerNavigationCheckpointWriteOutcomeHash } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-service"
@@ -17470,6 +17475,561 @@ describe("OpenCode session instruction packs", () => {
     expect(writeRecord?.aliases).toEqual(expect.arrayContaining(["/session-instruction-pack-write", "/opencode-context-pack-write"]))
     expect(writeRecord?.notes.join(" ")).toContain("does not launch OpenCode")
     expect(writeRecord?.out_of_scope).toEqual(expect.arrayContaining(["OpenCode launch", "provider calls", "research.db retrieval", "AGENTS.md mutation"]))
+  })
+
+  test("research memory summary and retrieval are safe when projection is unavailable", async () => {
+    const dir = await tempProject()
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const beforeEvents = await readJsonlEvents(dir)
+
+    await expect(server.command("runtime.research_memory_summary")).resolves.toMatchObject({
+      total_candidates_available: 0,
+      has_research_db_projection: false,
+      retrieval_policy: "empty_projection",
+    })
+    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout token=abc123" }) as { status: string; warnings: string[]; candidates: unknown[]; blockers: string[] }
+    expect(retrieval.status).toBe("empty")
+    expect(retrieval.blockers).toEqual([])
+    expect(retrieval.candidates).toEqual([])
+    expect(retrieval.warnings.join(" ")).toContain("does not block Commander")
+    expect(JSON.stringify(retrieval)).not.toContain("abc123")
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+  })
+
+  test("research memory retrieval ranks bounded prior findings trials and failures", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_memory", title: "Research memory" })
+    db.addArtifact({ id: "artifact_timeout", topic_id: "topic_memory", kind: "report", content: "bounded report", description: "timeout watchdog report" })
+    db.recordCitation({ citation_id: "citation_timeout", source_type: "event", source_uri: "event://timeout", quoted_text_or_summary: "timeout finding summary" })
+    db.proposeResearchResult({
+      result_id: "finding_timeout",
+      result_type: "finding",
+      title: "adapter timeout watchdog",
+      summary: "short interval watchdog improved timeout reporting",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.linkResultArtifact("finding_timeout", "artifact_timeout")
+    db.linkResultCitation("finding_timeout", "citation_timeout")
+    db.proposeResearchResult({
+      result_id: "failure_timeout",
+      result_type: "negative_finding",
+      title: "adapter timeout watchdog failure",
+      summary: "previous short interval failed because heartbeat was missing",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.proposeResearchResult({
+      result_id: "unrelated_result",
+      result_type: "finding",
+      title: "unrelated optimizer",
+      summary: "optimizer result not about adapter timeout",
+      confidence: "low",
+      created_by: "commander",
+    })
+    db.proposeResearchResult({
+      result_id: "finding_timeout_recent",
+      result_type: "finding",
+      title: "adapter timeout watchdog recent",
+      summary: "recent short interval watchdog improved timeout reporting",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.proposeResearchResult({
+      result_id: "failure_timeout_recent",
+      result_type: "negative_finding",
+      title: "adapter timeout watchdog recent failure",
+      summary: "recent short interval failed because heartbeat was missing",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.createCandidate({ candidate_id: "candidate_mission_in", claim: "mission scoped adapter timeout candidate", source: "commander" })
+    db.createCandidate({ candidate_id: "candidate_mission_out", claim: "mission scoped adapter timeout candidate", source: "commander" })
+    db.planTrial({ trial_id: "trial_mission_in", candidate_id: "candidate_mission_in", trial_kind: "mission scoped adapter timeout trial", config: { watchdog: "short" } })
+    db.planTrial({ trial_id: "trial_mission_out", candidate_id: "candidate_mission_out", trial_kind: "mission scoped adapter timeout trial", config: { watchdog: "short" } })
+    db.planTrainingRun({
+      training_run_id: "training_mission_in",
+      candidate_id: "candidate_mission_in",
+      trial_id: "trial_mission_in",
+      mission_id: "mission_in",
+      label: "probe",
+      reproduction: { objective: "mission scoped adapter timeout" },
+    })
+    db.planTrainingRun({
+      training_run_id: "training_mission_out",
+      candidate_id: "candidate_mission_out",
+      trial_id: "trial_mission_out",
+      mission_id: "mission_out",
+      label: "probe",
+      reproduction: { objective: "mission scoped adapter timeout" },
+    })
+    db.proposeResearchResult({
+      result_id: "result_mission_in_linked",
+      result_type: "finding",
+      title: "mission scoped adapter timeout linked result",
+      summary: "mission result linked through candidate trial and training run",
+      confidence: "high",
+      candidate_id: "candidate_mission_in",
+      trial_id: "trial_mission_in",
+      training_run_id: "training_mission_in",
+      created_by: "commander",
+    })
+    db.proposeResearchResult({
+      result_id: "result_mission_out_linked",
+      result_type: "finding",
+      title: "mission scoped adapter timeout linked result",
+      summary: "out of scope mission result linked through candidate trial and training run",
+      confidence: "high",
+      candidate_id: "candidate_mission_out",
+      trial_id: "trial_mission_out",
+      training_run_id: "training_mission_out",
+      created_by: "commander",
+    })
+    db.close()
+    const beforeEvents = await readJsonlEvents(dir)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+
+    const summary = await server.command("runtime.research_memory_summary") as { total_candidates_available: number; label_counts: Record<string, number>; has_research_db_projection: boolean }
+    expect(summary.has_research_db_projection).toBe(true)
+    expect(summary.total_candidates_available).toBeGreaterThanOrEqual(3)
+    expect(summary.label_counts.finding).toBeGreaterThanOrEqual(1)
+    expect(summary.label_counts.failure).toBeGreaterThanOrEqual(1)
+    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog short interval token=abc123", limit: 6 }) as { status: string; candidates: Array<{ result_id: string; matched_terms: string[]; relevance_score: number; source_refs: Array<{ pointer_only: boolean }>; artifact_ids: string[]; citation_ids: string[] }> }
+    expect(retrieval.status).toBe("ready")
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("finding_timeout_recent")
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("failure_timeout_recent")
+    expect(retrieval.candidates[0]?.matched_terms).toContain("adapter")
+    expect(retrieval.candidates[0]?.relevance_score).toBeGreaterThan(0)
+    expect(retrieval.candidates.flatMap((candidate) => candidate.source_refs).every((ref) => ref.pointer_only)).toBe(true)
+    expect(JSON.stringify(retrieval)).not.toContain("bounded report")
+    expect(JSON.stringify(retrieval)).not.toContain("abc123")
+
+    const noOverlap = await server.command("runtime.preview_research_memory_retrieval", { query: "spectral normalization curriculum", limit: 3 }) as { status: string; candidates: Array<{ result_id: string; matched_terms: string[] }>; warnings: string[] }
+    expect(noOverlap.status).toBe("empty")
+    expect(noOverlap.candidates).toEqual([])
+    expect(noOverlap.warnings.join(" ")).toContain("matched the query")
+
+    const missionScoped = await server.command("runtime.preview_research_memory_retrieval", { query: "mission scoped adapter timeout", mission_id: "mission_in", limit: 10 }) as { status: string; candidates: Array<{ result_id: string; source_mission_id?: string }> }
+    expect(missionScoped.status).toBe("ready")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).toContain("candidate_mission_in")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).toContain("trial_mission_in")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).toContain("result_mission_in_linked")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).not.toContain("candidate_mission_out")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).not.toContain("trial_mission_out")
+    expect(missionScoped.candidates.map((candidate) => candidate.result_id)).not.toContain("result_mission_out_linked")
+    expect(missionScoped.candidates.every((candidate) => candidate.source_mission_id === "mission_in")).toBe(true)
+
+    const sessionScoped = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout watchdog", session_id: "opencode_session_missing" }) as { status: string; candidates: Array<{ source_session_id?: string }>; warnings: string[] }
+    expect(sessionScoped.status).toBe("ready")
+    expect(sessionScoped.candidates.length).toBeGreaterThan(0)
+    expect(sessionScoped.warnings.join(" ")).toContain("session-scoped research memory is not available yet")
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+    await server.shutdown()
+  })
+
+  test("research memory retrieval asks for a latest-first bounded result window before lexical scoring", () => {
+    const lateResult: ResearchResult = {
+      result_id: "zz_latecap_finding",
+      result_type: "finding",
+      label: null,
+      title: "latecap needle result",
+      summary: "latecap lexical match should survive backend scan before preview limit",
+      status: "proposed",
+      confidence: "high",
+      mission_id: null,
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      training_run_id: null,
+      metrics: null,
+      reproduction: null,
+      created_by: "commander",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const lateCandidate: Candidate = {
+      candidate_id: "zz_latecap_candidate",
+      hypothesis_id: null,
+      claim: "latecap candidate needle",
+      source: "commander",
+      status: "active",
+      commander_score: null,
+      rank_reason: null,
+      input_hash: "hash",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const lateTrial: Trial = {
+      trial_id: "zz_latecap_trial",
+      hypothesis_id: null,
+      candidate_id: null,
+      trial_kind: "latecap trial needle",
+      status: "planned",
+      config: { route: "newest" },
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const lateRun: TrainingRun = {
+      training_run_id: "zz_latecap_training",
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      mission_id: null,
+      label: "probe",
+      status: "planned",
+      pid: null,
+      process_group_id: null,
+      log_path: null,
+      metrics_path: null,
+      checkpoint_dir: null,
+      latest_checkpoint_id: null,
+      last_step: null,
+      last_metric: null,
+      reproduction: { note: "latecap training needle" },
+      last_observed_at: null,
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const seenOrders: Array<string | undefined> = []
+    const seenCandidateOrders: Array<string | undefined> = []
+    const seenTrialOrders: Array<string | undefined> = []
+    const seenTrainingOrders: Array<string | undefined> = []
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchResearchResults: (options) => {
+          seenOrders.push(options?.order)
+          return options?.order === "newest" ? [lateResult] : []
+        },
+        searchCandidates: (options) => {
+          seenCandidateOrders.push(options?.order)
+          return options?.order === "newest" ? [lateCandidate] : []
+        },
+        searchTrials: (options) => {
+          seenTrialOrders.push(options?.order)
+          return options?.order === "newest" ? [lateTrial] : []
+        },
+        searchTrainingRuns: (options) => {
+          seenTrainingOrders.push(options?.order)
+          return options?.order === "newest" ? [lateRun] : []
+        },
+      }),
+    })
+
+    const preview = service.preview({ query: "latecap needle", limit: 4 })
+    expect(seenOrders).toEqual(["newest"])
+    expect(seenCandidateOrders).toEqual(["newest"])
+    expect(seenTrialOrders).toEqual(["newest"])
+    expect(seenTrainingOrders).toEqual(["newest"])
+    expect(preview.status).toBe("ready")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_candidate", "zz_latecap_finding", "zz_latecap_training", "zz_latecap_trial"])
+  })
+
+  test("research memory mission scope loads known linked ids without global candidate caps", () => {
+    const missionRun: TrainingRun = {
+      training_run_id: "mission_training_scope",
+      candidate_id: "mission_candidate_scope",
+      hypothesis_id: null,
+      trial_id: "mission_trial_scope",
+      mission_id: "mission_scope",
+      label: "probe",
+      status: "planned",
+      pid: null,
+      process_group_id: null,
+      log_path: null,
+      metrics_path: null,
+      checkpoint_dir: null,
+      latest_checkpoint_id: null,
+      last_step: null,
+      last_metric: null,
+      reproduction: { note: "mission scope needle" },
+      last_observed_at: null,
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const missionCandidate: Candidate = {
+      candidate_id: "mission_candidate_scope",
+      hypothesis_id: null,
+      claim: "mission scope candidate needle",
+      source: "commander",
+      status: "active",
+      commander_score: null,
+      rank_reason: null,
+      input_hash: "hash",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const missionTrial: Trial = {
+      trial_id: "mission_trial_scope",
+      hypothesis_id: null,
+      candidate_id: "mission_candidate_scope",
+      trial_kind: "mission scope trial needle",
+      status: "planned",
+      config: { watchdog: "short" },
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const missionResult: ResearchResult = {
+      result_id: "mission_result_linked_scope",
+      result_type: "finding",
+      label: null,
+      title: "mission scope result needle",
+      summary: "result linked through mission candidate trial and training run",
+      status: "proposed",
+      confidence: "high",
+      mission_id: null,
+      candidate_id: "mission_candidate_scope",
+      hypothesis_id: null,
+      trial_id: "mission_trial_scope",
+      training_run_id: "mission_training_scope",
+      metrics: null,
+      reproduction: null,
+      created_by: "commander",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const candidateQueries: Array<string | undefined> = []
+    const resultQueries: Array<string | undefined> = []
+    const trainingOrders: Array<string | undefined> = []
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchResearchResults: (options) => {
+          resultQueries.push(options?.candidate_id ?? options?.trial_id ?? options?.training_run_id ?? options?.mission_id)
+          return options?.candidate_id === "mission_candidate_scope" || options?.trial_id === "mission_trial_scope" || options?.training_run_id === "mission_training_scope"
+            ? [missionResult]
+            : []
+        },
+        searchTrainingRuns: (options) => {
+          trainingOrders.push(options?.order)
+          return options?.mission_id === "mission_scope" && options?.order === "newest" ? [missionRun] : []
+        },
+        searchCandidates: (options) => {
+          candidateQueries.push(options?.candidate_id)
+          return options?.candidate_id === "mission_candidate_scope" ? [missionCandidate] : []
+        },
+        searchTrials: (options) => {
+          if (options?.trial_id === "mission_trial_scope") return [missionTrial]
+          return []
+        },
+      }),
+    })
+
+    const preview = service.preview({ query: "mission scope needle", mission_id: "mission_scope", limit: 5 })
+    expect(trainingOrders).toContain("newest")
+    expect(candidateQueries).toEqual(["mission_candidate_scope"])
+    expect(resultQueries).toContain("mission_candidate_scope")
+    expect(resultQueries).toContain("mission_trial_scope")
+    expect(resultQueries).toContain("mission_training_scope")
+    expect(preview.status).toBe("ready")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toContain("mission_candidate_scope")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toContain("mission_trial_scope")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toContain("mission_result_linked_scope")
+    expect(preview.candidates.every((candidate) => candidate.source_mission_id === "mission_scope")).toBe(true)
+  })
+
+  test("research memory retrieval uses pointer metadata instead of full citation and artifact rows", () => {
+    const result: ResearchResult = {
+      result_id: "pointer_result",
+      result_type: "finding",
+      label: null,
+      title: "pointer metadata needle",
+      summary: "bounded pointer summary",
+      status: "proposed",
+      confidence: "high",
+      mission_id: null,
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      training_run_id: null,
+      metrics: null,
+      reproduction: null,
+      created_by: "commander",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchResearchResults: () => [result],
+        listResultCitationPointers: () => [{ citation_id: "citation_pointer", source_type: "event", title: "pointer citation" }],
+        listResultArtifactPointers: () => [{ id: "artifact_pointer", kind: "report", description: "pointer artifact" }],
+        listResultCitations: () => {
+          throw new Error("full citation rows must not be loaded")
+        },
+        listResultArtifacts: () => {
+          throw new Error("full artifact rows must not be loaded")
+        },
+      }),
+    })
+
+    const preview = service.preview({ query: "pointer metadata needle", limit: 3 })
+    const serialized = JSON.stringify(preview)
+    expect(preview.status).toBe("ready")
+    expect(serialized).toContain("citation_pointer")
+    expect(serialized).toContain("artifact_pointer")
+    expect(serialized).not.toContain("full citation rows")
+    expect(serialized).not.toContain("full artifact rows")
+  })
+
+  test("research memory retrieval redacts structured metadata before stringifying previews", () => {
+    const trial: Trial = {
+      trial_id: "trial_secret_metadata",
+      hypothesis_id: null,
+      candidate_id: null,
+      trial_kind: "secretmeta trial",
+      status: "planned",
+      config: { api_key: "sk-secretmeta-123", note: "secretmeta needle" },
+      input_hash: "hash",
+      started_at: null,
+      completed_at: null,
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchTrials: () => [trial],
+      }),
+    })
+
+    const preview = service.preview({ query: "secretmeta needle", limit: 3 })
+    const serialized = JSON.stringify(preview)
+    expect(preview.status).toBe("ready")
+    expect(serialized).toContain("secretmeta")
+    expect(serialized).not.toContain("sk-secretmeta-123")
+    expect(serialized).not.toContain("api_key")
+  })
+
+  test("research novelty flags duplicate risk without blocking repeated work", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_novelty", title: "Novelty" })
+    db.proposeResearchResult({
+      result_id: "finding_timeout",
+      result_type: "finding",
+      title: "adapter timeout watchdog",
+      summary: "short interval watchdog improved timeout reporting",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.createCandidate({ candidate_id: "candidate_timeout_trial", claim: "adapter timeout watchdog trial candidate", source: "commander" })
+    db.planTrial({ trial_id: "trial_timeout_config", candidate_id: "candidate_timeout_trial", trial_kind: "watchdog", config: { interval: "short" } })
+    db.close()
+    const beforeEvents = await readJsonlEvents(dir)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+
+    const duplicate = await server.command("runtime.preview_research_novelty_check", {
+      question: "adapter timeout watchdog",
+      method: "watchdog",
+      config: "short interval",
+    }) as { status: string; duplicate_risk: string; repetition_requires_justification: boolean; warnings: string[]; novelty_score: number }
+    expect(duplicate.status).toBe("ready")
+    expect(duplicate.duplicate_risk).toBe("high")
+    expect(duplicate.repetition_requires_justification).toBe(true)
+    expect(duplicate.warnings.join(" ")).toContain("repetition needs")
+    expect(duplicate.novelty_score).toBeLessThan(0.5)
+
+    const justified = await server.command("runtime.preview_research_novelty_check", {
+      question: "adapter timeout watchdog",
+      method: "watchdog",
+      config: "short interval",
+      reason: "replication",
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean; suggested_reason_not_duplicate?: string; warnings: string[] }
+    expect(justified.duplicate_risk).toBe("high")
+    expect(justified.repetition_requires_justification).toBe(false)
+    expect(justified.suggested_reason_not_duplicate).toBe("replication")
+    expect(justified.warnings.join(" ")).toContain("Commander/human may justify")
+
+    const verboseSameMethod = await server.command("runtime.preview_research_novelty_check", {
+      question: "investigate executor behavior across policy boundaries and unrelated phrasing that would otherwise dilute lexical matching",
+      method: "watchdog",
+      config: "short interval",
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean; warnings: string[] }
+    expect(verboseSameMethod.duplicate_risk).toBe("high")
+    expect(verboseSameMethod.repetition_requires_justification).toBe(true)
+    expect(verboseSameMethod.warnings.join(" ")).toContain("repetition needs")
+
+    const partialSameMethod = await server.command("runtime.preview_research_novelty_check", {
+      question: "investigate executor behavior across policy boundaries and unrelated phrasing that would otherwise dilute lexical matching",
+      method: "watchdog probe",
+      config: "short medium",
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean }
+    expect(partialSameMethod.duplicate_risk).toBe("medium")
+    expect(partialSameMethod.repetition_requires_justification).toBe(true)
+
+    const unrelated = await server.command("runtime.preview_research_novelty_check", {
+      question: "spectral normalization curriculum",
+      method: "baseline model",
+      config: "fresh dataset",
+    }) as { duplicate_risk: string; repetition_requires_justification: boolean; nearest_prior_results: unknown[]; missing_memory_warning: boolean; external_research_recommended: boolean; novelty_score: number; warnings: string[] }
+    expect(unrelated.duplicate_risk).toBe("low")
+    expect(unrelated.repetition_requires_justification).toBe(false)
+    expect(unrelated.nearest_prior_results).toEqual([])
+    expect(unrelated.missing_memory_warning).toBe(false)
+    expect(unrelated.external_research_recommended).toBe(false)
+    expect(unrelated.novelty_score).toBe(0.85)
+    expect(unrelated.warnings.join(" ")).not.toContain("empty or unavailable")
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+    await server.shutdown()
+  })
+
+  test("research memory commands require no runtime start and append no events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.research_memory_summary")).resolves.toMatchObject({ total_candidates_available: 0 })
+    await expect(client.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout" })).resolves.toMatchObject({ status: "empty" })
+    await expect(client.command("runtime.preview_research_novelty_check", { question: "adapter timeout" })).resolves.toMatchObject({ status: "partial", duplicate_risk: "unknown" })
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(await readEventKinds(dir)).not.toContain("research_synthesis_created")
+    await client.shutdown()
+  })
+
+  test("authority registry includes research memory and novelty safe-read commands", () => {
+    for (const command of ["/research-memory-summary", "/research-memory-search", "/research-memory-preview", "/research-novelty-preview"]) {
+      const record = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === command)
+      expect(record).toMatchObject({
+        risk: "safe_read",
+        mutates_events: false,
+        creates_external_process: false,
+        calls_provider: false,
+        requires_active_runtime: false,
+        requires_run_lock: false,
+      })
+      expect(record?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_research_memory_novelty_tui.py")
+      expect(record?.notes.join(" ")).toContain("does not call providers")
+      expect(record?.notes.join(" ")).toContain("launch OpenCode")
+    }
+    const novelty = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-novelty-preview")
+    expect(novelty?.aliases).toEqual(expect.arrayContaining(["/novelty-preview", "/research-dup-check"]))
+    expect(novelty?.notes.join(" ")).toContain("flagged, not forbidden")
+    expect(novelty?.out_of_scope).toEqual(expect.arrayContaining(["topic allowlist/blocklist", "research.db writes", "OpenCode launch"]))
   })
 })
 

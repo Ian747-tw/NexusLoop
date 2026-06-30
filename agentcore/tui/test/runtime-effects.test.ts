@@ -5145,4 +5145,77 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toEqual([])
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
+
+  test("research memory and novelty slash commands render read-only previews", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-summary", args: [] })
+    expect(state.researchMemory?.summary).toMatchObject({
+      total_candidates_available: 4,
+      has_research_db_projection: true,
+      retrieval_policy: "fake",
+    })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-search", args: ["query=adapter", "timeout", "token=abc123"] })
+    expect(state.researchMemory?.retrievalPreview).toMatchObject({
+      status: "ready",
+      retrieval_policy: "fake",
+    })
+    expect(state.researchMemory?.retrievalPreview?.candidates.map((candidate) => candidate.label)).toContain("failure")
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Research memory and novelty")
+    expect(snapshot).toContain("retrieval=fake-research-memory")
+    expect(snapshot).toContain("retrieval_candidates")
+    expect(snapshot).toContain("refs=research_db:fake-finding-timeout")
+    expect(snapshot).toContain("artifacts=fake-artifact-timeout")
+    expect(snapshot).toContain("citations=fake-citation-timeout")
+    expect(snapshot).toContain("note=previews do not include raw research records, full research.db")
+    expect(snapshot).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-novelty-preview", args: ["question=adapter", "timeout", "method=watchdog", "config=short-interval"] })
+    expect(state.researchMemory?.noveltyPreview?.duplicate_risk).toBe("high")
+    expect(state.researchMemory?.noveltyPreview?.repetition_requires_justification).toBe(true)
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("duplicate_risk=high")
+    expect(snapshot).toContain("novelty_score=")
+    expect(snapshot).toContain("external_research_recommended=")
+    expect(snapshot).toContain("previews do not call providers, call MCPs, launch OpenCode, write research.db")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-novelty-preview", args: ["question=adapter", "timeout", "method=watchdog", "config=short-interval", "reason=replication"] })
+    expect(state.researchMemory?.noveltyPreview?.repetition_requires_justification).toBe(false)
+    expect(state.researchMemory?.noveltyPreview?.suggested_reason_not_duplicate).toBe("replication")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-novelty-preview", args: ["question=spectral", "normalization", "method=orthogonalization", "config=large-margin"] })
+    expect(state.researchMemory?.noveltyPreview).toMatchObject({
+      duplicate_risk: "low",
+      novelty_score: 0.85,
+      missing_memory_warning: false,
+      external_research_recommended: false,
+    })
+    expect(state.researchMemory?.noveltyPreview?.nearest_prior_results).toEqual([])
+    expect(state.researchMemory?.noveltyPreview?.warnings.join(" ")).not.toContain("empty or unavailable")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-search", args: [] })
+    expect(state.researchMemory?.commandError).toContain("requires query")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-novelty-preview", args: [] })
+    expect(state.researchMemory?.commandError).toContain("requires question")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/research-novelty-preview"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/research-novelty-preview",
+      risk: "safe_read",
+      creates_external_process: false,
+      calls_provider: false,
+      mutates_events: false,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("flagged, not forbidden")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: ["purpose=commander_research_decision"] })
+    expect(state.contextPackets?.preview?.purpose).toBe("commander_research_decision")
+
+    expect(runtime.sentCommands).toEqual([])
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
 })

@@ -87,6 +87,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...contextBudgetLines(state))
   out.push(...contextPacketLines(state))
   out.push(...opencodeSessionInstructionPackLines(state))
+  out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
   out.push(...executorReviewProposalCreateLines(state))
@@ -784,6 +785,85 @@ function opencodeSessionInstructionPackLines(state: UiState): string[] {
   }
   if (packs.commandError) out.push(`  command_error=${redactText(packs.commandError)}`)
   out.push("  note=instruction-pack writing does not launch OpenCode, call providers, query research.db, call MCPs, mutate missions, or compile executable prompts")
+  return out
+}
+
+function researchMemoryLines(state: UiState): string[] {
+  const memory = state.researchMemory
+  const out = ["Research memory and novelty"]
+  if (!memory) {
+    out.push("  summary=none")
+    out.push("  retrieval=none")
+    out.push("  novelty=none")
+    out.push("  note=retrieval/novelty previews do not call providers, call MCPs, launch OpenCode, write research.db, or decide research direction")
+    return out
+  }
+  if (memory.summary) {
+    const summary = memory.summary
+    out.push(`  summary candidates=${summary.total_candidates_available} projection=${summary.has_research_db_projection} policy=${summary.retrieval_policy}`)
+    out.push(`  label_counts=${countMapSummary(summary.label_counts)}`)
+    out.push(`  source_counts=${countMapSummary(summary.source_counts)}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (memory.retrievalPreview) {
+    const item = memory.retrievalPreview
+    out.push(`  retrieval=${item.preview_id} status=${item.status} policy=${item.retrieval_policy} limit=${item.limit} omitted=${item.omitted_count}`)
+    out.push(`  query=${preview(redactText(item.query_preview))}`)
+    out.push(`  labels=${item.labels.join(",") || "none"}`)
+    out.push(`  candidates=${item.candidates.length}`)
+    if (item.candidates.length > 0) {
+      out.push("  retrieval_candidates")
+      out.push(...item.candidates.slice(0, 10).flatMap((candidate) => [
+        `    - ${candidate.result_id} label=${candidate.label} source=${candidate.source_kind} relevance=${candidate.relevance_score} duplicate=${candidate.duplicate_similarity_score} terms=${candidate.matched_terms.join(",") || "none"}: ${preview(redactText(candidate.question_preview))}`,
+        `      refs=${candidate.source_refs.length ? candidate.source_refs.slice(0, 4).map((ref) => `${ref.source_kind}:${preview(redactText(ref.source_id))}`).join(",") : "none"} artifacts=${candidate.artifact_ids.slice(0, 4).map((item) => preview(redactText(item))).join(",") || "none"} citations=${candidate.citation_ids.slice(0, 4).map((item) => preview(redactText(item))).join(",") || "none"}`,
+      ]))
+    }
+    if (item.blockers.length > 0) {
+      out.push("  retrieval_blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  retrieval_warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  retrieval_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 8).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  retrieval=none")
+  }
+  if (memory.noveltyPreview) {
+    const item = memory.noveltyPreview
+    out.push(`  novelty=${item.preview_id} status=${item.status} duplicate_risk=${item.duplicate_risk} novelty_score=${item.novelty_score}`)
+    out.push(`  repetition_requires_justification=${item.repetition_requires_justification} missing_memory_warning=${item.missing_memory_warning} external_research_recommended=${item.external_research_recommended}`)
+    out.push(`  question=${preview(redactText(item.proposed_question_preview))}`)
+    if (item.proposed_method_preview) out.push(`  method=${preview(redactText(item.proposed_method_preview))}`)
+    if (item.proposed_config_preview) out.push(`  config=${preview(redactText(item.proposed_config_preview))}`)
+    out.push(`  difference=${preview(redactText(item.difference_summary_preview))}`)
+    if (item.suggested_reason_not_duplicate) out.push(`  repetition_reason=${preview(redactText(item.suggested_reason_not_duplicate))}`)
+    out.push(`  acceptable_repetition_reasons=${item.acceptable_repetition_reasons.join(",") || "none"}`)
+    if (item.nearest_prior_results.length > 0) {
+      out.push("  nearest_prior_results")
+      out.push(...item.nearest_prior_results.slice(0, 10).map((candidate) => `    - ${candidate.result_id} label=${candidate.label} relevance=${candidate.relevance_score} duplicate=${candidate.duplicate_similarity_score}: ${preview(redactText(candidate.question_preview))}`))
+    }
+    if (item.blockers.length > 0) {
+      out.push("  novelty_blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  novelty_warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  novelty_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 8).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  novelty=none")
+  }
+  if (memory.commandError) out.push(`  command_error=${redactText(memory.commandError)}`)
+  out.push("  note=previews do not include raw research records, full research.db, raw artifacts, provider output, OpenCode output, raw event log, or online research")
+  out.push("  note=retrieval/novelty previews do not call providers, call MCPs, launch OpenCode, write research.db, mutate missions/proposals/reviews/apply, or decide research direction")
   return out
 }
 

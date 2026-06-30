@@ -49,6 +49,11 @@ import type {
   OpenCodeSessionInstructionPackRecordSummary,
   OpenCodeSessionInstructionPackResultSummary,
   OpenCodeSessionInstructionPacksState,
+  ResearchMemoryCandidateSummary,
+  ResearchMemoryRetrievalPreviewSummary,
+  ResearchMemoryState,
+  ResearchMemorySummaryState,
+  ResearchNoveltyPreviewSummary,
   CommanderExecutorReviewCommandSummary,
   CommanderExecutorReviewFindingSummary,
   CommanderExecutorReviewPreviewSummary,
@@ -391,6 +396,9 @@ export type RuntimeUiEffect =
   | { type: "write-opencode-session-instruction-pack"; sessionId?: string; providerKind?: string; modelId?: string; maxContextTokens?: number; maxContextBytes?: number; includeOpenCodeConfig?: boolean; includeManifest?: boolean; dryRun?: boolean }
   | { type: "load-opencode-session-instruction-packs"; sessionId?: string; status?: string; limit?: number }
   | { type: "load-opencode-session-instruction-pack"; packId: string }
+  | { type: "load-research-memory-summary" }
+  | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
+  | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
   | { type: "preview-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string }
   | { type: "execute-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; dryRun?: boolean }
   | { type: "load-commander-executor-reviews"; limit?: number }
@@ -1186,6 +1194,31 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeSessionInstructionPackRecords(state, await runtime.command("runtime.list_opencode_session_instruction_packs", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, status: effect.status }))
       case "load-opencode-session-instruction-pack":
         return applyOpenCodeSessionInstructionPackSelected(state, await runtime.command("runtime.get_opencode_session_instruction_pack", { packId: effect.packId }), effect.packId)
+      case "load-research-memory-summary":
+        return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
+      case "preview-research-memory-retrieval":
+        return applyResearchMemoryRetrievalPreview(state, await runtime.command("runtime.preview_research_memory_retrieval", {
+          query: effect.query,
+          labels: effect.labels,
+          limit: effect.limit,
+          sourceKind: effect.sourceKind,
+          missionId: effect.missionId,
+          sessionId: effect.sessionId,
+          includeFailures: effect.includeFailures,
+          includeArtifacts: effect.includeArtifacts,
+        }))
+      case "preview-research-novelty-check":
+        return applyResearchNoveltyPreview(state, await runtime.command("runtime.preview_research_novelty_check", {
+          question: effect.question,
+          method: effect.method,
+          config: effect.config,
+          labels: effect.labels,
+          limit: effect.limit,
+          missionId: effect.missionId,
+          sessionId: effect.sessionId,
+          repetitionReason: effect.repetitionReason,
+          includeFailures: effect.includeFailures,
+        }))
       case "preview-commander-executor-review":
         return applyCommanderExecutorReviewPreview(
           state,
@@ -1807,6 +1840,7 @@ export async function applyRuntimeUiEffect(
     if (isContextBudgetEffect(effect)) return recordContextBudgetCommandError(state, error)
     if (isContextPacketEffect(effect)) return recordContextPacketCommandError(state, error)
     if (isOpenCodeSessionInstructionPackEffect(effect)) return recordOpenCodeSessionInstructionPackCommandError(state, error)
+    if (isResearchMemoryEffect(effect)) return recordResearchMemoryCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
     if (isExecutorReviewProposalCreateEffect(effect)) return recordExecutorReviewProposalCreateCommandError(state, error)
@@ -3026,6 +3060,45 @@ function applyOpenCodeSessionInstructionPackSelected(state: UiState, value: unkn
   }
 }
 
+function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
+  const summary = readResearchMemorySummary(value)
+  return {
+    ...state,
+    researchMemory: {
+      ...researchMemoryState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "research memory summary", detail: `candidates=${summary.total_candidates_available}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyResearchMemoryRetrievalPreview(state: UiState, value: unknown): UiState {
+  const retrievalPreview = readResearchMemoryRetrievalPreview(value)
+  return {
+    ...state,
+    researchMemory: {
+      ...researchMemoryState(state),
+      retrievalPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "research memory retrieval", detail: `status=${retrievalPreview.status} candidates=${retrievalPreview.candidates.length}`, status: retrievalPreview.status }].slice(-12),
+  }
+}
+
+function applyResearchNoveltyPreview(state: UiState, value: unknown): UiState {
+  const noveltyPreview = readResearchNoveltyPreview(value)
+  return {
+    ...state,
+    researchMemory: {
+      ...researchMemoryState(state),
+      noveltyPreview,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "research novelty preview", detail: `risk=${noveltyPreview.duplicate_risk} score=${noveltyPreview.novelty_score}`, status: noveltyPreview.status }].slice(-12),
+  }
+}
+
 function applyOpenCodeHandoffFollowup(state: UiState, value: unknown, handoffId?: string): UiState {
   const result = readOpenCodeHandoffFollowup(value)
   if (!result && value !== null) throw new Error("runtime.get_opencode_handoff_followup returned invalid follow-up")
@@ -4240,6 +4313,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (contextBudgetCommands.has(command)) return state.contextBudgets?.commandError
   if (contextPacketCommands.has(command)) return state.contextPackets?.commandError
   if (opencodeSessionInstructionPackCommands.has(command)) return state.opencodeSessionInstructionPacks?.commandError
+  if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
   if (executorReviewProposalCreateCommands.has(command)) return state.executorReviewProposalCreate?.commandError
@@ -4282,6 +4356,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (contextBudgetCommands.has(command)) return { ...state, contextBudgets: { ...contextBudgetsState(state), commandError: undefined } }
   if (contextPacketCommands.has(command)) return { ...state, contextPackets: { ...contextPacketsState(state), commandError: undefined } }
   if (opencodeSessionInstructionPackCommands.has(command)) return { ...state, opencodeSessionInstructionPacks: { ...opencodeSessionInstructionPacksState(state), commandError: undefined } }
+  if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
   if (executorReviewProposalCreateCommands.has(command)) return { ...state, executorReviewProposalCreate: { ...executorReviewProposalCreateState(state), commandError: undefined } }
@@ -4472,6 +4547,17 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, opencodeSessionInstructionPackListEffect(args))
     case "opencode-session-instruction-pack-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-session-instruction-pack", packId: requiredArg(args, 0, "packId") })
+    case "research-memory-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
+    case "research-memory-search":
+    case "research-memory-preview":
+    case "research-search":
+    case "memory-search":
+      return applyRuntimeUiEffect(commandState, runtime, researchMemoryRetrievalEffect(args))
+    case "research-novelty-preview":
+    case "novelty-preview":
+    case "research-dup-check":
+      return applyRuntimeUiEffect(commandState, runtime, researchNoveltyEffect(args))
     case "executor-review-preview":
     case "commander-executor-review-preview":
       return applyRuntimeUiEffect(commandState, runtime, commanderExecutorReviewEffect("preview-commander-executor-review", args))
@@ -5377,6 +5463,11 @@ function isOpenCodeSessionInstructionPackEffect(effect: RuntimeUiEffect): boolea
   return opencodeSessionInstructionPackCommands.has(effect.command)
 }
 
+function isResearchMemoryEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return researchMemoryEffectTypes.has(effect.type)
+  return researchMemoryCommands.has(effect.command)
+}
+
 function isCommanderExecutorReviewEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return commanderExecutorReviewEffectTypes.has(effect.type)
   return commanderExecutorReviewCommands.has(effect.command)
@@ -5675,6 +5766,23 @@ const opencodeSessionInstructionPackEffectTypes = new Set<RuntimeUiEffect["type"
   "write-opencode-session-instruction-pack",
   "load-opencode-session-instruction-packs",
   "load-opencode-session-instruction-pack",
+])
+
+const researchMemoryCommands = new Set([
+  "research-memory-summary",
+  "research-memory-search",
+  "research-memory-preview",
+  "research-search",
+  "memory-search",
+  "research-novelty-preview",
+  "novelty-preview",
+  "research-dup-check",
+])
+
+const researchMemoryEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "load-research-memory-summary",
+  "preview-research-memory-retrieval",
+  "preview-research-novelty-check",
 ])
 
 const commanderExecutorReviewCommands = new Set([
@@ -7154,6 +7262,18 @@ function recordOpenCodeSessionInstructionPackCommandError(state: UiState, error:
   }
 }
 
+function recordResearchMemoryCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    researchMemory: {
+      ...researchMemoryState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "research memory command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
 function recordCommanderExecutorReviewCommandError(state: UiState, error: unknown): UiState {
   const message = redactText(error instanceof Error ? error.message : String(error))
   return {
@@ -8397,6 +8517,113 @@ function readOpenCodeSessionInstructionPackFiles(value: unknown): OpenCodeSessio
 }
 
 function readOpenCodeSessionInstructionPackCommands(value: unknown): OpenCodeSessionInstructionPackPreviewSummary["recommended_commands"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readResearchMemorySummary(value: unknown): ResearchMemorySummaryState {
+  if (!isRecord(value)) throw new Error("runtime.research_memory_summary returned invalid summary")
+  return {
+    total_candidates_available: readNumber(value.total_candidates_available, 0),
+    label_counts: readNumberMap(value.label_counts, 12),
+    source_counts: readNumberMap(value.source_counts, 12),
+    has_research_db_projection: readBoolean(value.has_research_db_projection),
+    retrieval_policy: readString(value.retrieval_policy, "empty_projection"),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readResearchMemoryRetrievalPreview(value: unknown): ResearchMemoryRetrievalPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_research_memory_retrieval returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    query_preview: preview(readString(value.query_preview, "")),
+    labels: readStringList(value.labels, 12),
+    limit: readNumber(value.limit, 0),
+    candidates: readResearchMemoryCandidates(value.candidates),
+    omitted_count: readNumber(value.omitted_count, 0),
+    retrieval_policy: readString(value.retrieval_policy, "lexical_preview"),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 12).map(preview),
+    recommended_commands: readResearchMemoryCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    retrieval_hash: readString(value.retrieval_hash, ""),
+  }
+}
+
+function readResearchNoveltyPreview(value: unknown): ResearchNoveltyPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_research_novelty_check returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    proposed_question_preview: preview(readString(value.proposed_question_preview, "")),
+    proposed_method_preview: typeof value.proposed_method_preview === "string" ? preview(readString(value.proposed_method_preview, "")) : undefined,
+    proposed_config_preview: typeof value.proposed_config_preview === "string" ? preview(readString(value.proposed_config_preview, "")) : undefined,
+    nearest_prior_results: readResearchMemoryCandidates(value.nearest_prior_results),
+    duplicate_risk: readString(value.duplicate_risk, "unknown"),
+    novelty_score: readNumber(value.novelty_score, 0),
+    difference_summary_preview: preview(readString(value.difference_summary_preview, "")),
+    repetition_requires_justification: readBoolean(value.repetition_requires_justification),
+    acceptable_repetition_reasons: readStringList(value.acceptable_repetition_reasons, 12),
+    suggested_reason_not_duplicate: typeof value.suggested_reason_not_duplicate === "string" ? preview(readString(value.suggested_reason_not_duplicate, "")) : undefined,
+    missing_memory_warning: readBoolean(value.missing_memory_warning),
+    external_research_recommended: readBoolean(value.external_research_recommended),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 12).map(preview),
+    recommended_commands: readResearchMemoryCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    novelty_hash: readString(value.novelty_hash, ""),
+  }
+}
+
+function readResearchMemoryCandidates(value: unknown): ResearchMemoryCandidateSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, HANDOFF_LIMIT).map((candidate) => ({
+    result_id: redactText(readString(candidate.result_id, "")),
+    label: readString(candidate.label, "unknown"),
+    source_kind: readString(candidate.source_kind, "unknown"),
+    question_preview: preview(readString(candidate.question_preview, "")),
+    hypothesis_preview: typeof candidate.hypothesis_preview === "string" ? preview(readString(candidate.hypothesis_preview, "")) : undefined,
+    method_preview: typeof candidate.method_preview === "string" ? preview(readString(candidate.method_preview, "")) : undefined,
+    config_preview: typeof candidate.config_preview === "string" ? preview(readString(candidate.config_preview, "")) : undefined,
+    outcome_preview: typeof candidate.outcome_preview === "string" ? preview(readString(candidate.outcome_preview, "")) : undefined,
+    metric_preview: typeof candidate.metric_preview === "string" ? preview(readString(candidate.metric_preview, "")) : undefined,
+    confidence: typeof candidate.confidence === "number" ? readNumber(candidate.confidence, 0) : undefined,
+    status: typeof candidate.status === "string" ? readString(candidate.status, "unknown") : undefined,
+    source_session_id: typeof candidate.source_session_id === "string" ? redactText(candidate.source_session_id) : undefined,
+    source_mission_id: typeof candidate.source_mission_id === "string" ? redactText(candidate.source_mission_id) : undefined,
+    artifact_ids: readStringList(candidate.artifact_ids, 8).map(redactText),
+    citation_ids: readStringList(candidate.citation_ids, 8).map(redactText),
+    related_event_ids: readStringList(candidate.related_event_ids, 8).map(redactText),
+    relevance_score: readNumber(candidate.relevance_score, 0),
+    duplicate_similarity_score: readNumber(candidate.duplicate_similarity_score, 0),
+    matched_terms: readStringList(candidate.matched_terms, 12),
+    difference_preview: typeof candidate.difference_preview === "string" ? preview(readString(candidate.difference_preview, "")) : undefined,
+    warning_flags: readStringList(candidate.warning_flags, 8).map(preview),
+    source_refs: readResearchMemorySourceRefs(candidate.source_refs),
+  }))
+}
+
+function readResearchMemorySourceRefs(value: unknown): ResearchMemoryCandidateSummary["source_refs"] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((ref) => ({
+    source_kind: readString(ref.source_kind, "unknown"),
+    source_id: redactText(readString(ref.source_id, "")),
+    label: typeof ref.label === "string" ? preview(readString(ref.label, "")) : undefined,
+    summary_preview: typeof ref.summary_preview === "string" ? preview(readString(ref.summary_preview, "")) : undefined,
+    pointer_only: true,
+  }))
+}
+
+function readResearchMemoryCommands(value: unknown): ResearchMemoryRetrievalPreviewSummary["recommended_commands"] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -11869,6 +12096,10 @@ function opencodeSessionInstructionPacksState(state: UiState): OpenCodeSessionIn
   return state.opencodeSessionInstructionPacks ?? { preview: null, latestResult: null, records: [], selected: null }
 }
 
+function researchMemoryState(state: UiState): ResearchMemoryState {
+  return state.researchMemory ?? { summary: null, retrievalPreview: null, noveltyPreview: null }
+}
+
 function commanderExecutorReviewState(state: UiState): CommanderExecutorReviewState {
   return state.commanderExecutorReview ?? { preview: null, latestResult: null, records: [], selected: null }
 }
@@ -12787,6 +13018,81 @@ function opencodeSessionInstructionPackListEffect(args: string[]): Extract<Runti
     else throw new Error("OpenCode instruction pack list arg is unsupported")
   }
   return effect
+}
+
+function researchMemoryRetrievalEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-research-memory-retrieval" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-research-memory-retrieval" }> = { type: "preview-research-memory-retrieval", limit: HANDOFF_LIMIT }
+  const freeTextKeys = new Set(["query"])
+  const knownKeys = new Set(["query", "labels", "limit", "source", "mission", "session", "include_failures", "include_artifacts"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "research memory search args must use query=<text>, labels=<csv>, limit=<n>, source=<kind>, mission=<id>, or session=<id>")
+    index = nextIndex
+    if (key === "query") effect.query = value
+    else if (key === "labels") effect.labels = commaList(value)
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else if (key === "source") effect.sourceKind = value
+    else if (key === "mission") effect.missionId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "include_failures") effect.includeFailures = readBooleanArg(value)
+    else if (key === "include_artifacts") effect.includeArtifacts = readBooleanArg(value)
+    else throw new Error("research memory search arg is unsupported")
+  }
+  if (!effect.query) throw new Error("research memory search requires query=<text>")
+  return effect
+}
+
+function researchNoveltyEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-research-novelty-check" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-research-novelty-check" }> = { type: "preview-research-novelty-check", limit: HANDOFF_LIMIT }
+  const freeTextKeys = new Set(["question", "method", "config", "reason", "repetition_reason"])
+  const knownKeys = new Set(["question", "method", "config", "reason", "repetition_reason", "labels", "limit", "mission", "session", "include_failures"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "research novelty args must use question=<text>, method=<text>, config=<text>, reason=<reason>, labels=<csv>, limit=<n>, mission=<id>, or session=<id>")
+    index = nextIndex
+    if (key === "question") effect.question = value
+    else if (key === "method") effect.method = value
+    else if (key === "config") effect.config = value
+    else if (key === "reason" || key === "repetition_reason") effect.repetitionReason = value
+    else if (key === "labels") effect.labels = commaList(value)
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else if (key === "mission") effect.missionId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "include_failures") effect.includeFailures = readBooleanArg(value)
+    else throw new Error("research novelty arg is unsupported")
+  }
+  if (!effect.question) throw new Error("research novelty preview requires question=<text>")
+  return effect
+}
+
+function readKeyValueWithFreeText(args: string[], index: number, knownKeys: Set<string>, freeTextKeys: Set<string>, errorMessage: string): { key: string; value: string; nextIndex: number } {
+  const arg = args[index] ?? ""
+  const separator = arg.indexOf("=")
+  if (separator <= 0) throw new Error(errorMessage)
+  const key = arg.slice(0, separator).trim()
+  const first = arg.slice(separator + 1).trim()
+  if (!key || !first || !knownKeys.has(key)) throw new Error(errorMessage)
+  const parts = [first]
+  let nextIndex = index
+  if (freeTextKeys.has(key)) {
+    while (nextIndex + 1 < args.length && !looksLikeAnyKeyValueArg(args[nextIndex + 1] ?? "", knownKeys)) {
+      nextIndex += 1
+      parts.push(args[nextIndex] ?? "")
+    }
+  }
+  return { key, value: parts.join(" ").trim(), nextIndex }
+}
+
+function looksLikeAnyKeyValueArg(value: string, knownKeys: Set<string>): boolean {
+  const separator = value.indexOf("=")
+  if (separator <= 0) return false
+  return knownKeys.has(value.slice(0, separator).trim())
+}
+
+function commaList(value: string): string[] {
+  return value.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 12)
+}
+
+function readBooleanArg(value: string): boolean {
+  return value !== "false" && value !== "0" && value !== "no"
 }
 
 function checkpointEffect(type: "preview-runtime-checkpoint" | "create-runtime-checkpoint", args: string[]): Extract<RuntimeUiEffect, { type: "preview-runtime-checkpoint" | "create-runtime-checkpoint" }> {

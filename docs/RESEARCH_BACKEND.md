@@ -100,6 +100,28 @@ This prevents a conversational summary from silently becoming research truth.
 
 Those views exist for speed and ergonomics. They do not supersede the event log.
 
+## Read-Only Retrieval And Novelty Preview
+
+Branch 9B4 adds a read-only research-memory retrieval and novelty-check
+planner for Commander research/training decisions.
+
+The planner:
+
+- reads existing research memory/projections when available
+- returns bounded candidate previews and pointer-only source refs
+- includes prior failures by default so failed work is not repeated blindly
+- computes deterministic lexical duplicate-risk and novelty-score previews
+- flags repeated-looking work as needing justification
+- accepts bounded repetition reasons such as replication, bug fix, changed
+  model, changed dataset, changed method, changed config, inconclusive prior
+  result, new external evidence, or human-directed repeat
+- returns empty/missing-memory warnings when no projection exists
+
+The planner does not decide research direction. It does not block by topic,
+forbid repetition, call providers, call MCPs or online sources, launch
+OpenCode, write `research.db`, ingest research records, create missions or
+proposals, mutate authority records, or run Commander cycle/synthesis.
+
 ## Rebuildability
 
 `research.db` must be rebuildable from `events.jsonl`.
