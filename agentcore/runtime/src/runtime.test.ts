@@ -17768,6 +17768,49 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
+  test("launch config env opt-in reaches real launch gate", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_launch_config", title: "Launch config" })
+    db.proposeResearchResult({
+      result_id: "result_launch_config",
+      result_type: "finding",
+      title: "launch config env",
+      summary: "prior launch config finding",
+      confidence: "medium",
+      created_by: "commander",
+    })
+    db.close()
+    const spawnedArgs: string[][] = []
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: { NXL_REAL_OPENCODE_LAUNCH: "1" },
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["run", "--format", "json"] },
+      opencodeLaunchSpawn: (_command, args) => {
+        spawnedArgs.push(args)
+        return new FakeSpawnedProcess(6161)
+      },
+      researchProjectionMode: "check_only",
+      opencodeLaunchId: () => "launch_env_opt_in",
+    })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "launch config env opt in" }) as { session_id: string }
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    const launched = await server.command("runtime.launch_opencode_session", {
+      sessionId: session.session_id,
+      packId: pack.pack_id,
+      providerKind: "local",
+      modelId: "local-medium",
+      adapterKind: "process_adapter",
+      allowRealLaunch: true,
+    }) as { status: string; launch_performed: boolean; process_id?: number }
+    expect(launched).toMatchObject({ status: "launch_started", launch_performed: true, process_id: 6161 })
+    expect(spawnedArgs[0]).toContain("--file")
+    await server.shutdown()
+  })
+
   test("process launch adapter attaches instruction files with OpenCode --file args", async () => {
     const spawnedArgs: string[][] = []
     const adapter = new ProcessOpenCodeLaunchAdapter({
