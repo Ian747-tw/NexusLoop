@@ -17546,6 +17546,16 @@ describe("OpenCode launch readiness", () => {
     expect(eventKinds).not.toContain("opencode_process_smoke_started")
     expect(eventKinds).not.toContain("opencode_handoff_started")
     expect(eventKinds).not.toContain("mission_progress_recorded")
+
+    const changedBudgetReadiness = await server.command("runtime.preview_opencode_launch_readiness", {
+      sessionId: session.session_id,
+      packId: pack.pack_id,
+      maxContextBytes: 4096,
+    }) as { status: string; blockers: string[] }
+    expect(changedBudgetReadiness.status).toBe("blocked")
+    expect(changedBudgetReadiness.blockers).toContain("instruction pack packet_hash does not match readiness context packet")
+    expect(changedBudgetReadiness.blockers).toContain("instruction pack budget_id does not match readiness context budget")
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterPack)
     await server.shutdown()
   })
 

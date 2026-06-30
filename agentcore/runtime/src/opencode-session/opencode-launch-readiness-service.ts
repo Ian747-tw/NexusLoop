@@ -82,7 +82,16 @@ export class OpenCodeLaunchReadinessService {
     if (session && requestedPackId && !pack) blockers.push("explicit pack_id was not found")
     if (session && !requestedPackId && !pack) blockers.push("instruction pack is required before future launch readiness")
     if (pack && pack.session_id !== sessionId) blockers.push("instruction pack does not belong to requested session_id")
+    const packPacketBlockers = pack && packet ? packPacketMismatchBlockers(pack, packet) : []
+    blockers.push(...packPacketBlockers)
     checks.push(check("instruction_pack", "Instruction pack", pack ? "pass" : "fail", pack ? `instruction pack ${pack.pack_id}` : "instruction pack missing", pack ? [] : ["instruction pack is required before future launch readiness"], [], pack ? [ref("instruction_pack", pack.pack_id, "instruction pack", `pack for ${pack.session_id}`)] : []))
+    if (pack && packet) {
+      checks.push(check("instruction_pack_packet", "Instruction pack packet identity", packPacketBlockers.length === 0 ? "pass" : "fail", packPacketBlockers.length === 0 ? "instruction pack packet and budget match readiness inputs" : "instruction pack packet or budget does not match readiness inputs", packPacketBlockers, [], [
+        ref("instruction_pack", pack.pack_id, "instruction pack", pack.packet_id ?? "missing packet id"),
+        ref("context_packet", packet.packet_id, "readiness packet", packet.packet_hash),
+        ref("context_budget", packet.budget_id, "readiness budget", "budget for requested readiness inputs"),
+      ]))
+    }
 
     const fileVerification = pack && session ? await this.verifyPackFiles(session.session_id, pack) : verificationUnavailable()
     blockers.push(...fileVerification.blockers)
@@ -281,6 +290,14 @@ type FileVerification = {
 
 function verificationUnavailable(): FileVerification {
   return { instructionFilesVerified: false, manifestVerified: false, configVerified: false, blockers: [], warnings: [], checks: [] }
+}
+
+function packPacketMismatchBlockers(pack: OpenCodeSessionInstructionPackResult, packet: { packet_id: string; packet_hash: string; budget_id: string }): string[] {
+  const blockers: string[] = []
+  if (!pack.packet_id || pack.packet_id !== packet.packet_id) blockers.push("instruction pack packet_id does not match readiness context packet")
+  if (!pack.packet_hash || pack.packet_hash !== packet.packet_hash) blockers.push("instruction pack packet_hash does not match readiness context packet")
+  if (!pack.budget_id || pack.budget_id !== packet.budget_id) blockers.push("instruction pack budget_id does not match readiness context budget")
+  return blockers
 }
 
 function verifyManifest(text: string, pack: OpenCodeSessionInstructionPackResult, manifestFile: OpenCodeSessionInstructionPackFilePreview): { ok: boolean; blockers: string[]; warnings: string[] } {
