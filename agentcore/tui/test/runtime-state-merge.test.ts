@@ -189,6 +189,75 @@ describe("interactive runtime effect state merge", () => {
     })
   })
 
+  test("preserves newer research memory state while keeping older effect actions", () => {
+    const baseline: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      researchMemory: {
+        summary: null,
+        retrievalPreview: {
+          preview_id: "preview-old",
+          status: "ready",
+          query_preview: "old query",
+          labels: [],
+          limit: 3,
+          candidates: [],
+          omitted_count: 0,
+          retrieval_policy: "fake",
+          blockers: [],
+          warnings: [],
+          recommended_commands: [],
+          generated_at: "2026-06-30T00:00:00.000Z",
+          redacted_summary_preview: "old",
+          retrieval_hash: "hash-old",
+        },
+        noveltyPreview: null,
+      },
+      systemActions: [{ title: "user command -> runtime", detail: "research-memory-search" }],
+    }
+    const current: UiState = {
+      ...baseline,
+      researchMemory: {
+        ...baseline.researchMemory!,
+        retrievalPreview: {
+          ...baseline.researchMemory!.retrievalPreview!,
+          preview_id: "preview-new",
+          query_preview: "new query",
+          redacted_summary_preview: "new",
+          retrieval_hash: "hash-new",
+        },
+      },
+    }
+    const olderEffectResult: UiState = {
+      ...baseline,
+      researchMemory: {
+        ...baseline.researchMemory!,
+        retrievalPreview: {
+          ...baseline.researchMemory!.retrievalPreview!,
+          preview_id: "preview-older-result",
+          query_preview: "older result",
+          redacted_summary_preview: "older",
+          retrieval_hash: "hash-older",
+        },
+        commandError: "older memory failure",
+      },
+      systemActions: [
+        ...baseline.systemActions,
+        { title: "research memory command error", detail: "older memory failure", status: "failed" },
+      ],
+    }
+
+    const merged = mergeRuntimeEffectState(current, olderEffectResult, baseline.systemActions.length, baseline)
+
+    expect(merged.researchMemory?.retrievalPreview?.preview_id).toBe("preview-new")
+    expect(merged.researchMemory?.commandError).toBeUndefined()
+    expect(merged.systemActions.at(-1)).toEqual({
+      title: "research memory command error",
+      detail: "older memory failure",
+      status: "failed",
+    })
+  })
+
   test("preserves newer mission execution state while keeping older effect actions", () => {
     const baseline: UiState = {
       ...initialState("/tmp/demo"),
