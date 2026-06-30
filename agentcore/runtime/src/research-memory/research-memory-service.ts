@@ -4,6 +4,8 @@ import type {
   Artifact,
   Candidate,
   Citation,
+  ResultArtifactPointer,
+  ResultCitationPointer,
   ResearchResult,
   SearchCandidatesOptions,
   SearchResearchResultsOptions,
@@ -50,6 +52,8 @@ export type ResearchMemoryReadAdapter = {
   unavailableReason?: string
   policy?: ResearchMemoryRetrievalPolicy
   searchResearchResults?: (options?: SearchResearchResultsOptions) => ResearchResult[]
+  listResultCitationPointers?: (resultId: string, limit?: number) => ResultCitationPointer[]
+  listResultArtifactPointers?: (resultId: string, limit?: number) => ResultArtifactPointer[]
   listResultCitations?: (resultId: string) => Citation[]
   listResultArtifacts?: (resultId: string) => Artifact[]
   searchCandidates?: (options?: SearchCandidatesOptions) => Candidate[]
@@ -219,8 +223,10 @@ export function readResearchMemoryRetrievalInput(value: unknown): ResearchMemory
 }
 
 function candidateFromResearchResult(result: ResearchResult, adapter: ResearchMemoryReadAdapter, includeArtifacts: boolean, missionId?: string): RawCandidate {
-  const citations = adapter.listResultCitations?.(result.result_id) ?? []
-  const artifacts = includeArtifacts ? adapter.listResultArtifacts?.(result.result_id) ?? [] : []
+  const citations = adapter.listResultCitationPointers?.(result.result_id, 8) ?? adapter.listResultCitations?.(result.result_id).map(citationPointerFromFullRow) ?? []
+  const artifacts = includeArtifacts
+    ? adapter.listResultArtifactPointers?.(result.result_id, 8) ?? adapter.listResultArtifacts?.(result.result_id).map(artifactPointerFromFullRow) ?? []
+    : []
   const label = labelForResearchResult(result)
   const sourceRefs: ResearchMemorySourceRef[] = [
     sourceRef("research_db", result.result_id, "research result", `${result.title}: ${result.summary}`),
@@ -245,6 +251,22 @@ function candidateFromResearchResult(result: ResearchResult, adapter: ResearchMe
     warning_flags: label === "failure" ? ["failure evidence included to avoid repeated work"] : [],
     source_refs: sourceRefs,
   })
+}
+
+function citationPointerFromFullRow(citation: Citation): ResultCitationPointer {
+  return {
+    citation_id: citation.citation_id,
+    source_type: citation.source_type,
+    title: citation.title,
+  }
+}
+
+function artifactPointerFromFullRow(artifact: Artifact): ResultArtifactPointer {
+  return {
+    id: artifact.id,
+    kind: artifact.kind,
+    description: artifact.description,
+  }
 }
 
 function candidateFromCandidate(candidate: Candidate, missionId?: string): RawCandidate {

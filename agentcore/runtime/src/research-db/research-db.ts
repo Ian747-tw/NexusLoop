@@ -205,6 +205,12 @@ export interface Artifact {
   created_at: string
 }
 
+export interface ResultArtifactPointer {
+  id: string
+  kind: ArtifactKind
+  description: string | null
+}
+
 export interface ResearchResultInput {
   result_id?: string
   result_type: ResearchResultType
@@ -263,6 +269,12 @@ export interface Citation {
   sha256: string | null
   metadata: unknown | null
   created_at: string
+}
+
+export interface ResultCitationPointer {
+  citation_id: string
+  source_type: CitationSourceType
+  title: string | null
 }
 
 export interface ResultCitationLink {
@@ -1233,6 +1245,16 @@ export class ResearchDb {
       .all(id) as CitationRow[]).map((row) => this.citationFromRow(row))
   }
 
+  listResultCitationPointers(resultId: string, limit = 8): ResultCitationPointer[] {
+    const id = cleanId(resultId)
+    this.requireResearchResult(id)
+    return this.db
+      .query(
+        "SELECT c.citation_id, c.source_type, c.title FROM citations c INNER JOIN result_citations rc ON rc.citation_id = c.citation_id WHERE rc.result_id = ? ORDER BY rc.created_at, c.citation_id LIMIT ?",
+      )
+      .all(id, cleanLimit(limit)) as ResultCitationPointer[]
+  }
+
   listResultArtifacts(resultId: string): Artifact[] {
     const id = cleanId(resultId)
     this.requireResearchResult(id)
@@ -1241,6 +1263,16 @@ export class ResearchDb {
         "SELECT a.id, a.topic_id, a.kind, a.path, a.content, a.artifact_type, a.sha256, a.size_bytes, a.produced_by_mission_id, a.produced_by_run_id, a.description, a.created_at FROM artifacts a INNER JOIN result_artifacts ra ON ra.artifact_id = a.id WHERE ra.result_id = ? ORDER BY ra.created_at, a.id",
       )
       .all(id) as Artifact[]
+  }
+
+  listResultArtifactPointers(resultId: string, limit = 8): ResultArtifactPointer[] {
+    const id = cleanId(resultId)
+    this.requireResearchResult(id)
+    return this.db
+      .query(
+        "SELECT a.id, a.kind, a.description FROM artifacts a INNER JOIN result_artifacts ra ON ra.artifact_id = a.id WHERE ra.result_id = ? ORDER BY ra.created_at, a.id LIMIT ?",
+      )
+      .all(id, cleanLimit(limit)) as ResultArtifactPointer[]
   }
 
   createHypothesis(input: HypothesisInput): Hypothesis {

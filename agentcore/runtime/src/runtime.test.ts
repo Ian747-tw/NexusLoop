@@ -17845,6 +17845,52 @@ describe("OpenCode session instruction packs", () => {
     expect(preview.candidates.every((candidate) => candidate.source_mission_id === "mission_scope")).toBe(true)
   })
 
+  test("research memory retrieval uses pointer metadata instead of full citation and artifact rows", () => {
+    const result: ResearchResult = {
+      result_id: "pointer_result",
+      result_type: "finding",
+      label: null,
+      title: "pointer metadata needle",
+      summary: "bounded pointer summary",
+      status: "proposed",
+      confidence: "high",
+      mission_id: null,
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      training_run_id: null,
+      metrics: null,
+      reproduction: null,
+      created_by: "commander",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+    }
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchResearchResults: () => [result],
+        listResultCitationPointers: () => [{ citation_id: "citation_pointer", source_type: "event", title: "pointer citation" }],
+        listResultArtifactPointers: () => [{ id: "artifact_pointer", kind: "report", description: "pointer artifact" }],
+        listResultCitations: () => {
+          throw new Error("full citation rows must not be loaded")
+        },
+        listResultArtifacts: () => {
+          throw new Error("full artifact rows must not be loaded")
+        },
+      }),
+    })
+
+    const preview = service.preview({ query: "pointer metadata needle", limit: 3 })
+    const serialized = JSON.stringify(preview)
+    expect(preview.status).toBe("ready")
+    expect(serialized).toContain("citation_pointer")
+    expect(serialized).toContain("artifact_pointer")
+    expect(serialized).not.toContain("full citation rows")
+    expect(serialized).not.toContain("full artifact rows")
+  })
+
   test("research memory retrieval redacts structured metadata before stringifying previews", () => {
     const trial: Trial = {
       trial_id: "trial_secret_metadata",

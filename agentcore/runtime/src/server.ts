@@ -3414,6 +3414,8 @@ export class RuntimeServer {
       available: true,
       policy: "projection_read",
       searchResearchResults: typeof db.searchResearchResults === "function" ? db.searchResearchResults.bind(db) : undefined,
+      listResultCitationPointers: typeof db.listResultCitationPointers === "function" ? db.listResultCitationPointers.bind(db) : undefined,
+      listResultArtifactPointers: typeof db.listResultArtifactPointers === "function" ? db.listResultArtifactPointers.bind(db) : undefined,
       listResultCitations: typeof db.listResultCitations === "function" ? db.listResultCitations.bind(db) : undefined,
       listResultArtifacts: typeof db.listResultArtifacts === "function" ? db.listResultArtifacts.bind(db) : undefined,
       searchCandidates: typeof db.searchCandidates === "function" ? db.searchCandidates.bind(db) : undefined,
