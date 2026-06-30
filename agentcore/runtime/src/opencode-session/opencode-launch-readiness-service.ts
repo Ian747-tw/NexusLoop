@@ -106,7 +106,7 @@ export class OpenCodeLaunchReadinessService {
         warnings.add("similar prior work found; future launch should include Commander/human justification")
       }
       if (novelty.missing_memory_warning) warnings.add("research memory is empty or unavailable; readiness remains advisory")
-      checks.push(check("research_novelty", "Research memory novelty", novelty.status === "blocked" ? "warn" : "warn", `duplicate risk ${novelty.duplicate_risk}`, [], novelty.warnings, [ref("novelty_preview", novelty.preview_id, "novelty preview", novelty.difference_summary_preview)]))
+      checks.push(check("research_novelty", "Research memory novelty", noveltyCheckStatus(novelty), `duplicate risk ${novelty.duplicate_risk}`, [], novelty.warnings, [ref("novelty_preview", novelty.preview_id, "novelty preview", novelty.difference_summary_preview)]))
     }
 
     const surface = input.include_native_config === false ? "unknown" : this.options.nativeLaunchSurface ?? "process_adapter"
@@ -183,12 +183,7 @@ export class OpenCodeLaunchReadinessService {
     if (targetPathBlocker) blockers.push(targetPathBlocker)
     const packTarget = resolve(this.options.projectDir, pack.target_dir)
     if (relative(targetDir, packTarget).startsWith("..")) blockers.push("instruction pack target_dir does not match session directory")
-    try {
-      const targetStat = await lstat(targetDir)
-      if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) blockers.push("instruction pack target directory is not a safe directory")
-    } catch {
-      blockers.push("instruction pack target directory is missing")
-    }
+    blockers.push(...await targetDirectoryBlockers(this.options.projectDir, targetDir))
     let filesVerified = true
     let manifestVerified = false
     let configVerified = false
@@ -381,6 +376,32 @@ function safeFilePathBlocker(targetDir: string, relativePath: string, filePath: 
   }
 }
 
+async function targetDirectoryBlockers(projectDir: string, targetDir: string): Promise<string[]> {
+  const root = resolve(projectDir)
+  const parts = relative(root, targetDir).split(sep).filter(Boolean)
+  const blockers: string[] = []
+  let current = root
+  for (let index = 0; index < parts.length; index += 1) {
+    current = resolve(current, parts[index])
+    const label = parts.slice(0, index + 1).join("/")
+    try {
+      const stat = await lstat(current)
+      if (stat.isSymbolicLink()) {
+        blockers.push(`instruction pack path contains symlinked directory: ${label}`)
+        break
+      }
+      if (!stat.isDirectory()) {
+        blockers.push(current === targetDir ? "instruction pack target directory is not a safe directory" : `instruction pack parent path is not a directory: ${label}`)
+        break
+      }
+    } catch {
+      blockers.push(current === targetDir ? "instruction pack target directory is missing" : `instruction pack parent path is missing: ${label}`)
+      break
+    }
+  }
+  return blockers
+}
+
 function ensureChildPath(root: string, target: string): void {
   const rel = relative(resolve(root), resolve(target))
   if (rel === "" || rel.startsWith("..") || rel.split(sep).includes("..")) throw new Error("target path escapes root")
@@ -394,6 +415,12 @@ function readinessStatus(blockers: string[], checks: OpenCodeLaunchReadinessChec
   if (blockers.length > 0 || checks.some((item) => item.status === "fail")) return "blocked"
   if (checks.some((item) => item.status === "warn" || item.status === "unknown")) return "partial"
   return "ready"
+}
+
+function noveltyCheckStatus(novelty: { status: string; duplicate_risk: string; missing_memory_warning: boolean }): OpenCodeLaunchReadinessCheckStatus {
+  if (novelty.status === "blocked" || novelty.status === "partial" || novelty.missing_memory_warning) return "warn"
+  if (novelty.duplicate_risk === "high" || novelty.duplicate_risk === "medium" || novelty.duplicate_risk === "unknown") return "warn"
+  return "pass"
 }
 
 function statusToCheck(status: string): OpenCodeLaunchReadinessCheckStatus {

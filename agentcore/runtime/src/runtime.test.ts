@@ -17608,8 +17608,48 @@ describe("OpenCode launch readiness", () => {
       packId: leftPack.pack_id,
     }) as { status: string; blockers: string[] }
     expect(symlinkedTarget.status).toBe("blocked")
-    expect(symlinkedTarget.blockers).toContain("instruction pack target directory is not a safe directory")
+    expect(symlinkedTarget.blockers).toContain(`instruction pack path contains symlinked directory: .nxl/opencode/sessions/${left.session_id}`)
+
+    await rm(join(dir, ".nxl", "opencode", "sessions"), { recursive: true, force: true })
+    const outsideSessionsDir = join(dir, "outside-sessions-dir")
+    await mkdir(outsideSessionsDir)
+    await symlink(outsideSessionsDir, join(dir, ".nxl", "opencode", "sessions"), "dir")
+    const symlinkedParent = await server.command("runtime.preview_opencode_launch_readiness", {
+      sessionId: left.session_id,
+      packId: leftPack.pack_id,
+    }) as { status: string; blockers: string[] }
+    expect(symlinkedParent.status).toBe("blocked")
+    expect(symlinkedParent.blockers).toContain("instruction pack path contains symlinked directory: .nxl/opencode/sessions")
     expect(await server.eventStore.readAll()).toEqual(eventsAfterPacks)
+    await server.shutdown()
+  })
+
+  test("preview treats low-risk ready novelty as advisory pass", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_launch_low_novelty", title: "Launch low novelty" })
+    db.proposeResearchResult({
+      result_id: "result_adapter_timeout_prior",
+      result_type: "evaluation_result",
+      title: "adapter timeout watchdog",
+      summary: "prior timeout watchdog result",
+      confidence: "medium",
+      created_by: "commander",
+    })
+    db.close()
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "adapter spectral curriculum" }) as { session_id: string }
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id }) as { pack_id: string }
+    const readiness = await server.command("runtime.preview_opencode_launch_readiness", {
+      sessionId: session.session_id,
+      packId: pack.pack_id,
+    }) as { novelty_risk?: string; checks: Array<{ check_id: string; status: string }> }
+    expect(readiness.novelty_risk).toBe("low")
+    expect(readiness.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ check_id: "research_novelty", status: "pass" }),
+    ]))
     await server.shutdown()
   })
 
