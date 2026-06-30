@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process"
-import { basename } from "node:path"
+import { basename, join } from "node:path"
 import type { OpenCodeSpawnedProcess } from "../opencode/process-adapter"
 import { redactText } from "../security/redaction"
 import type {
@@ -66,8 +66,7 @@ export class ProcessOpenCodeLaunchAdapter implements OpenCodeLaunchAdapter {
   private commandArgs(input: OpenCodeLaunchAdapterPreviewInput): string[] {
     return [
       ...this.args,
-      "--",
-      ...input.instruction_files.map((file) => `${input.target_dir ?? "."}/${file}`),
+      ...input.instruction_files.flatMap((file) => ["--file", input.target_dir ? join(input.target_dir, file) : file]),
     ]
   }
 }

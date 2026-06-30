@@ -37,6 +37,7 @@ import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProce
 import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCodeAdapterConfig, validateOpenCodeAdapterConfig } from "./opencode/adapter-config"
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
+import { ProcessOpenCodeLaunchAdapter } from "./opencode-session/opencode-native-launch-adapter"
 import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
@@ -17753,7 +17754,7 @@ describe("OpenCode launch readiness", () => {
     expect(staleHash.status).toBe("blocked")
     expect(staleHash.blockers).toContain("readiness_hash does not match rebuilt readiness preview")
 
-    const realBlocked = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium", adapterKind: "process_adapter", allowRealLaunch: true }) as { status: string; error?: string; launch_performed: boolean }
+    const realBlocked = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium", adapterKind: "process_adapter", allowRealLaunch: true, requireOptIn: false, require_opt_in: false }) as { status: string; error?: string; launch_performed: boolean }
     expect(realBlocked).toMatchObject({ status: "blocked", launch_performed: false })
     expect(realBlocked.error).toBe("real OpenCode launch requires NXL_REAL_OPENCODE_LAUNCH=1")
 
@@ -17765,6 +17766,44 @@ describe("OpenCode launch readiness", () => {
     const launchEvents = (await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("opencode_session_launch_"))
     expect(launchEvents.map((event) => event.kind)).toEqual(["opencode_session_launch_started", "opencode_session_launch_succeeded"])
     await server.shutdown()
+  })
+
+  test("process launch adapter attaches instruction files with OpenCode --file args", async () => {
+    const spawnedArgs: string[][] = []
+    const adapter = new ProcessOpenCodeLaunchAdapter({
+      command: "/bin/echo",
+      args: ["run", "--format", "json"],
+      cwd: "/tmp/nxl-project",
+      spawn: (_command, args) => {
+        spawnedArgs.push(args)
+        return new FakeSpawnedProcess(5150)
+      },
+    })
+    const preview = adapter.preview({
+      project_dir: "/tmp/nxl-project",
+      target_dir: ".nxl/opencode/sessions/session_launch",
+      instruction_files: ["TASK.md", "CONTEXT.md"],
+    })
+    expect(preview.command_preview).toContain("--file .nxl/opencode/sessions/session_launch/TASK.md")
+    expect(preview.command_preview).toContain("--file .nxl/opencode/sessions/session_launch/CONTEXT.md")
+    expect(preview.command_preview).not.toContain("-- .nxl/opencode/sessions/session_launch/TASK.md")
+
+    await expect(adapter.launch({
+      launch_id: "launch_file_args",
+      session_id: "session_launch",
+      project_dir: "/tmp/nxl-project",
+      target_dir: ".nxl/opencode/sessions/session_launch",
+      instruction_files: ["TASK.md", "CONTEXT.md"],
+    })).resolves.toMatchObject({ status: "launch_started", process_id: 5150 })
+    expect(spawnedArgs).toEqual([[
+      "run",
+      "--format",
+      "json",
+      "--file",
+      ".nxl/opencode/sessions/session_launch/TASK.md",
+      "--file",
+      ".nxl/opencode/sessions/session_launch/CONTEXT.md",
+    ]])
   })
 
   test("RuntimeServerClient no-start covers launch gate preview list get and dry-run", async () => {

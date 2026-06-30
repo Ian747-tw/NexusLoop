@@ -79,7 +79,7 @@ export class OpenCodeLaunchGateService {
         error: preview.blockers[0] ?? "OpenCode launch is blocked",
       })
     }
-    if (preview.adapter_kind !== "fake" && (input.require_opt_in ?? true) !== false && this.env.NXL_REAL_OPENCODE_LAUNCH !== "1") {
+    if (preview.adapter_kind !== "fake" && this.env.NXL_REAL_OPENCODE_LAUNCH !== "1") {
       return resultFromPreview(preview, {
         launch_id: launchId,
         status: "blocked",
@@ -298,7 +298,6 @@ export function readOpenCodeLaunchInput(value: unknown): OpenCodeLaunchInput {
     ...readOpenCodeLaunchPreviewInput(input),
     dry_run: optionalBoolean(input.dryRun ?? input.dry_run),
     launched_by: optional(input.launchedBy ?? input.launched_by),
-    require_opt_in: optionalBoolean(input.requireOptIn ?? input.require_opt_in),
   }
 }
 

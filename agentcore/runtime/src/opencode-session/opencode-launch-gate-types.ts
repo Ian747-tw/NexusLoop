@@ -105,5 +105,4 @@ export type OpenCodeLaunchPreviewInput = {
 export type OpenCodeLaunchInput = OpenCodeLaunchPreviewInput & {
   dry_run?: boolean
   launched_by?: string
-  require_opt_in?: boolean
 }
