@@ -87,6 +87,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...contextBudgetLines(state))
   out.push(...contextPacketLines(state))
   out.push(...opencodeSessionInstructionPackLines(state))
+  out.push(...opencodeLaunchReadinessLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -785,6 +786,50 @@ function opencodeSessionInstructionPackLines(state: UiState): string[] {
   }
   if (packs.commandError) out.push(`  command_error=${redactText(packs.commandError)}`)
   out.push("  note=instruction-pack writing does not launch OpenCode, call providers, query research.db, call MCPs, mutate missions, or compile executable prompts")
+  return out
+}
+
+function opencodeLaunchReadinessLines(state: UiState): string[] {
+  const readiness = state.opencodeLaunchReadiness
+  const out = ["OpenCode launch readiness"]
+  if (!readiness) {
+    out.push("  preview=none")
+    out.push("  summary=none")
+    out.push("  note=launch readiness does not launch OpenCode, call providers, call MCPs, query online sources, write files, or mutate missions")
+    return out
+  }
+  if (readiness.preview) {
+    const item = readiness.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_launch_in_future=${item.can_launch_in_future} launch_performed=${item.launch_performed}`)
+    out.push(`  session=${item.session_id || "none"} pack=${item.pack_id ?? "none"} packet=${item.packet_id ?? "none"} budget=${item.budget_id ?? "none"}`)
+    out.push(`  surface=${item.selected_launch_surface} target_dir=${item.target_dir ? preview(redactText(item.target_dir)) : "none"}`)
+    out.push(`  instruction_files_verified=${item.instruction_files_verified} manifest_verified=${item.manifest_verified} config_verified=${item.config_verified}`)
+    out.push(`  context_packet_status=${item.context_packet_status ?? "unknown"} context_budget_status=${item.context_budget_status ?? "unknown"} research_memory_status=${item.research_memory_status ?? "unknown"} novelty_risk=${item.novelty_risk ?? "unknown"}`)
+    out.push("  checks")
+    if (item.checks.length === 0) out.push("    - empty")
+    else out.push(...item.checks.slice(0, 14).map((check) => `    - ${check.check_id} ${check.label} status=${check.status}: ${preview(redactText(check.summary_preview))}`))
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 8).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (readiness.summary) {
+    const summary = readiness.summary
+    out.push(`  summary total_planned=${summary.total_planned_sessions} ready=${summary.ready_count} blocked=${summary.blocked_count} partial=${summary.partial_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (readiness.commandError) out.push(`  command_error=${redactText(readiness.commandError)}`)
+  out.push("  note=launch readiness does not launch OpenCode, call providers, call MCPs, query online sources, write files, mutate sessions, or mutate missions")
   return out
 }
 

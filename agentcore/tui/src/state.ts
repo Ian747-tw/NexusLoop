@@ -1522,6 +1522,78 @@ export type OpenCodeSessionInstructionPacksState = {
   commandError?: string
 }
 
+export type OpenCodeLaunchReadinessSourceRefSummary = {
+  source_kind: string
+  source_id: string
+  label?: string
+  summary_preview?: string
+  pointer_only: true
+}
+
+export type OpenCodeLaunchReadinessCheckSummary = {
+  check_id: string
+  label: string
+  status: "pass" | "warn" | "fail" | "unknown" | string
+  summary_preview: string
+  blockers: string[]
+  warnings: string[]
+  source_refs: OpenCodeLaunchReadinessSourceRefSummary[]
+}
+
+export type OpenCodeLaunchReadinessCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeLaunchReadinessPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | "partial" | "unknown" | string
+  can_launch_in_future: boolean
+  launch_performed: false
+  session_id: string
+  pack_id?: string
+  packet_id?: string
+  budget_id?: string
+  source_kind?: string
+  mission_id?: string
+  proposal_id?: string
+  review_request_id?: string
+  apply_id?: string
+  target_dir?: string
+  instruction_files_verified: boolean
+  manifest_verified: boolean
+  config_verified: boolean
+  context_packet_status?: string
+  context_budget_status?: string
+  research_memory_status?: string
+  novelty_risk?: string
+  selected_launch_surface: string
+  checks: OpenCodeLaunchReadinessCheckSummary[]
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeLaunchReadinessCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  readiness_hash: string
+}
+
+export type OpenCodeLaunchReadinessSummaryState = {
+  total_planned_sessions: number
+  ready_count: number
+  blocked_count: number
+  partial_count: number
+  generated_at: string
+}
+
+export type OpenCodeLaunchReadinessState = {
+  preview?: OpenCodeLaunchReadinessPreviewSummary | null
+  summary?: OpenCodeLaunchReadinessSummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -3899,6 +3971,7 @@ export type UiState = {
   contextBudgets?: ContextBudgetsState
   contextPackets?: ContextPacketsState
   opencodeSessionInstructionPacks?: OpenCodeSessionInstructionPacksState
+  opencodeLaunchReadiness?: OpenCodeLaunchReadinessState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

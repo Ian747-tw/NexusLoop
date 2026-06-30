@@ -5146,6 +5146,56 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
 
+  test("OpenCode launch readiness slash commands render read-only fake checks", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=launch", "readiness", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch-readiness", args: [`session=${sessionId}`] })
+    expect(state.opencodeLaunchReadiness?.preview).toMatchObject({
+      status: "blocked",
+      session_id: sessionId,
+      launch_performed: false,
+    })
+    expect(state.opencodeLaunchReadiness?.commandError).toContain("instruction pack is required")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    const packId = state.opencodeSessionInstructionPacks?.latestResult?.pack_id
+    expect(packId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "launch-readiness", args: [`session=${sessionId}`, `pack=${packId}`] })
+    expect(state.opencodeLaunchReadiness?.preview).toMatchObject({
+      session_id: sessionId,
+      pack_id: packId,
+      launch_performed: false,
+      instruction_files_verified: true,
+      manifest_verified: true,
+      config_verified: true,
+    })
+    expect(state.opencodeLaunchReadiness?.preview?.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ check_id: "instruction_pack", status: "pass" }),
+      expect.objectContaining({ check_id: "native_config", status: "warn" }),
+    ]))
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch-readiness-summary", args: [] })
+    expect(state.opencodeLaunchReadiness?.summary?.total_planned_sessions).toBeGreaterThanOrEqual(1)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-launch-readiness"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/opencode-launch-readiness",
+      risk: "safe_read",
+      creates_external_process: false,
+      calls_provider: false,
+    })
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode launch readiness")
+    expect(snapshot).toContain("launch_performed=false")
+    expect(snapshot).toContain("selected=/opencode-launch-readiness risk=safe_read")
+    expect(snapshot).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

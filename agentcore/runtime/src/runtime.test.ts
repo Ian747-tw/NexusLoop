@@ -17476,6 +17476,164 @@ describe("OpenCode session instruction packs", () => {
     expect(writeRecord?.notes.join(" ")).toContain("does not launch OpenCode")
     expect(writeRecord?.out_of_scope).toEqual(expect.arrayContaining(["OpenCode launch", "provider calls", "research.db retrieval", "AGENTS.md mutation"]))
   })
+})
+
+describe("OpenCode launch readiness", () => {
+  test("preview verifies planned session, instruction pack files, manifest, config, packet, budget, and advisory novelty without launching", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", {
+      objective: "launch readiness test token=ready-secret",
+      maxContextBytes: 4096,
+    }) as { session_id: string }
+
+    const missingPack = await server.command("runtime.preview_opencode_launch_readiness", {
+      sessionId: session.session_id,
+    }) as { status: string; blockers: string[]; launch_performed: boolean }
+    expect(missingPack.status).toBe("blocked")
+    expect(missingPack.blockers).toContain("instruction pack is required before future launch readiness")
+    expect(missingPack.launch_performed).toBe(false)
+
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+    }) as { pack_id: string }
+    const eventsAfterPack = await server.eventStore.readAll()
+
+    const readiness = await server.command("runtime.preview_opencode_launch_readiness", {
+      sessionId: session.session_id,
+      packId: pack.pack_id,
+    }) as {
+      status: string
+      session_id: string
+      pack_id?: string
+      instruction_files_verified: boolean
+      manifest_verified: boolean
+      config_verified: boolean
+      launch_performed: boolean
+      selected_launch_surface: string
+      context_packet_status?: string
+      context_budget_status?: string
+      research_memory_status?: string
+      checks: Array<{ check_id: string; status: string }>
+      warnings: string[]
+    }
+    expect(readiness.session_id).toBe(session.session_id)
+    expect(readiness.pack_id).toBe(pack.pack_id)
+    expect(readiness.status).toBe("partial")
+    expect(readiness.instruction_files_verified).toBe(true)
+    expect(readiness.manifest_verified).toBe(true)
+    expect(readiness.config_verified).toBe(true)
+    expect(readiness.launch_performed).toBe(false)
+    expect(readiness.selected_launch_surface).toBe("unknown")
+    expect(readiness.context_packet_status).not.toBe("blocked")
+    expect(readiness.context_budget_status).not.toBe("fail")
+    expect(readiness.context_budget_status).not.toBe("unknown")
+    expect(readiness.research_memory_status).toBe("partial")
+    expect(readiness.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ check_id: "instruction_pack", status: "pass" }),
+      expect.objectContaining({ check_id: "filesystem", status: "pass" }),
+      expect.objectContaining({ check_id: "manifest", status: "pass" }),
+      expect.objectContaining({ check_id: "opencode_config", status: "pass" }),
+      expect.objectContaining({ check_id: "native_config", status: "warn" }),
+    ]))
+    expect(JSON.stringify(readiness)).not.toContain("ready-secret")
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterPack)
+    expect(adapter.startCalls).toBe(1)
+    const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+    expect(eventKinds).not.toContain("opencode_process_smoke_started")
+    expect(eventKinds).not.toContain("opencode_handoff_started")
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+    await server.shutdown()
+  })
+
+  test("preview blocks explicit pack mismatch, missing files, hash mismatch, and unsafe config without writing events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const left = await server.command("runtime.create_opencode_session_plan", { objective: "left launch readiness" }) as { session_id: string }
+    const right = await server.command("runtime.create_opencode_session_plan", { objective: "right launch readiness" }) as { session_id: string }
+    const leftPack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: left.session_id }) as { pack_id: string }
+    const rightPack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: right.session_id }) as { pack_id: string }
+    const eventsAfterPacks = await server.eventStore.readAll()
+
+    const mismatch = await server.command("runtime.preview_opencode_launch_readiness", {
+      sessionId: left.session_id,
+      packId: rightPack.pack_id,
+    }) as { status: string; blockers: string[] }
+    expect(mismatch.status).toBe("blocked")
+    expect(mismatch.blockers).toContain("instruction pack does not belong to requested session_id")
+
+    const targetDir = join(dir, ".nxl", "opencode", "sessions", left.session_id)
+    await writeFile(join(targetDir, "TASK.md"), "different\n")
+    const hashMismatch = await server.command("runtime.preview_opencode_launch_readiness", {
+      sessionId: left.session_id,
+      packId: leftPack.pack_id,
+    }) as { status: string; blockers: string[] }
+    expect(hashMismatch.status).toBe("blocked")
+    expect(hashMismatch.blockers).toContain("generated file hash mismatch: TASK.md")
+
+    await writeFile(join(targetDir, "opencode-session-config.json"), JSON.stringify({
+      generated_for_future_launch: true,
+      launch_ready: true,
+      session_id: left.session_id,
+      instructions: [`.nxl/opencode/sessions/${left.session_id}/TASK.md`],
+    }))
+    const badConfig = await server.command("runtime.preview_opencode_launch_readiness", {
+      sessionId: left.session_id,
+      packId: leftPack.pack_id,
+    }) as { status: string; blockers: string[] }
+    expect(badConfig.status).toBe("blocked")
+    expect(badConfig.blockers).toContain("opencode-session-config launch_ready must remain false in 9C")
+
+    await rm(targetDir, { recursive: true, force: true })
+    const outsidePackDir = join(dir, "outside-pack-dir")
+    await mkdir(outsidePackDir)
+    await symlink(outsidePackDir, targetDir, "dir")
+    const symlinkedTarget = await server.command("runtime.preview_opencode_launch_readiness", {
+      sessionId: left.session_id,
+      packId: leftPack.pack_id,
+    }) as { status: string; blockers: string[] }
+    expect(symlinkedTarget.status).toBe("blocked")
+    expect(symlinkedTarget.blockers).toContain("instruction pack target directory is not a safe directory")
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterPacks)
+    await server.shutdown()
+  })
+
+  test("RuntimeServerClient no-start covers launch readiness preview and summary", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_launch_readiness", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.opencode_launch_readiness_summary")).resolves.toMatchObject({ total_planned_sessions: 0 })
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    expect(await readEventKinds(dir)).not.toContain("opencode_session_instruction_pack_written")
+    await client.shutdown()
+  })
+
+  test("authority registry includes launch readiness read-only commands", () => {
+    const previewRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/opencode-launch-readiness")
+    const summaryRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/opencode-launch-readiness-summary")
+    expect(previewRecord).toMatchObject({
+      risk: "safe_read",
+      mutates_events: false,
+      creates_external_process: false,
+      calls_provider: false,
+      requires_active_runtime: false,
+    })
+    expect(previewRecord?.aliases).toEqual(expect.arrayContaining(["/launch-readiness", "/opencode-session-launch-readiness", "/session-launch-readiness", "/launch-ready"]))
+    expect(previewRecord?.notes.join(" ")).toContain("no launch authority")
+    expect(previewRecord?.out_of_scope).toEqual(expect.arrayContaining(["OpenCode launch", "provider calls", "file writes", "mission/proposal/review/apply mutation"]))
+    expect(summaryRecord).toMatchObject({ risk: "safe_read", mutates_events: false, calls_provider: false })
+    expect(summaryRecord?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_launch_readiness_tui.py")
+  })
 
   test("research memory summary and retrieval are safe when projection is unavailable", async () => {
     const dir = await tempProject()

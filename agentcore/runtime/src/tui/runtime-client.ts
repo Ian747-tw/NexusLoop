@@ -30,6 +30,7 @@ import type { OpenCodeHandoffReadinessInput, OpenCodeHandoffReadinessPreview, Op
 import type { OpenCodeResultReviewPacket, OpenCodeResultReviewPacketInput, OpenCodeResultReviewSummary } from "../opencode/opencode-result-review-packet-types"
 import type { OpenCodeSessionCreateInput, OpenCodeSessionPlan, OpenCodeSessionPreview, OpenCodeSessionPreviewInput, OpenCodeSessionRecord, OpenCodeSessionSourceKind, OpenCodeSessionStatus, OpenCodeSessionSummary } from "../opencode-session/opencode-session-types"
 import type { OpenCodeSessionInstructionPackPreview, OpenCodeSessionInstructionPackPreviewInput, OpenCodeSessionInstructionPackRecord, OpenCodeSessionInstructionPackResult, OpenCodeSessionInstructionPackWriteInput } from "../opencode-session/opencode-session-instruction-pack-types"
+import type { OpenCodeLaunchReadinessPreview, OpenCodeLaunchReadinessPreviewInput, OpenCodeLaunchReadinessSummary } from "../opencode-session/opencode-launch-readiness-types"
 import type { ContextBudgetPreview, ContextBudgetPreviewInput, ContextBudgetSummary } from "../context/context-budget-types"
 import type { ModelCapability } from "../context/model-capability-types"
 import type { ContextPacketPreview, ContextPacketPreviewInput, ContextPacketSummary } from "../context/context-packet-types"
@@ -347,6 +348,8 @@ export interface RuntimeClient {
   }): Promise<OpenCodeSessionInstructionPackResult>
   command(name: "runtime.list_opencode_session_instruction_packs", payload?: { limit?: number; session_id?: string; sessionId?: string; session?: string; status?: string }): Promise<OpenCodeSessionInstructionPackRecord[]>
   command(name: "runtime.get_opencode_session_instruction_pack", payload: { pack_id: string } | { packId: string }): Promise<OpenCodeSessionInstructionPackResult | null>
+  command(name: "runtime.preview_opencode_launch_readiness", payload?: OpenCodeLaunchReadinessPreviewInput | { sessionId?: string; session_id?: string; session?: string; packId?: string; pack_id?: string; pack?: string; providerKind?: string; modelId?: string; maxContextTokens?: number; maxContextBytes?: number; includeResearchMemory?: boolean; includeNativeConfig?: boolean }): Promise<OpenCodeLaunchReadinessPreview>
+  command(name: "runtime.opencode_launch_readiness_summary", payload?: { limit?: number }): Promise<OpenCodeLaunchReadinessSummary>
   command(name: "runtime.research_memory_summary", payload?: Record<string, never>): Promise<ResearchMemorySummary>
   command(name: "runtime.preview_research_memory_retrieval", payload?: ResearchMemoryRetrievalInput | { query?: string; labels?: string[]; limit?: number; sourceKind?: string; source_kind?: string; missionId?: string; mission_id?: string; sessionId?: string; session_id?: string; includeFailures?: boolean; include_failures?: boolean; includeArtifacts?: boolean; include_artifacts?: boolean }): Promise<ResearchMemoryRetrievalPreview>
   command(name: "runtime.preview_research_novelty_check", payload?: ResearchNoveltyInput | { question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; mission_id?: string; sessionId?: string; session_id?: string; repetitionReason?: string; repetition_reason?: string; reason?: string; includeFailures?: boolean; include_failures?: boolean }): Promise<ResearchNoveltyPreview>
@@ -598,6 +601,8 @@ export interface RuntimeCommandEnvelope {
     | "runtime.write_opencode_session_instruction_pack"
     | "runtime.list_opencode_session_instruction_packs"
     | "runtime.get_opencode_session_instruction_pack"
+    | "runtime.preview_opencode_launch_readiness"
+    | "runtime.opencode_launch_readiness_summary"
     | "runtime.preview_commander_executor_review"
     | "runtime.execute_commander_executor_review"
     | "runtime.list_commander_executor_reviews"

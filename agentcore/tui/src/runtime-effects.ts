@@ -90,6 +90,12 @@ import type {
   ExecutorReviewProposalNarrowApplyRecordSummary,
   ExecutorReviewProposalNarrowApplyResultSummary,
   ExecutorReviewProposalNarrowApplyState,
+  OpenCodeLaunchReadinessCheckSummary,
+  OpenCodeLaunchReadinessCommandSummary,
+  OpenCodeLaunchReadinessPreviewSummary,
+  OpenCodeLaunchReadinessSourceRefSummary,
+  OpenCodeLaunchReadinessState,
+  OpenCodeLaunchReadinessSummaryState,
   OpenCodeHandoffRecordSummary,
   OpenCodeHandoffResultSummary,
   OpenCodeHandoffState,
@@ -396,6 +402,8 @@ export type RuntimeUiEffect =
   | { type: "write-opencode-session-instruction-pack"; sessionId?: string; providerKind?: string; modelId?: string; maxContextTokens?: number; maxContextBytes?: number; includeOpenCodeConfig?: boolean; includeManifest?: boolean; dryRun?: boolean }
   | { type: "load-opencode-session-instruction-packs"; sessionId?: string; status?: string; limit?: number }
   | { type: "load-opencode-session-instruction-pack"; packId: string }
+  | { type: "preview-opencode-launch-readiness"; sessionId?: string; packId?: string; providerKind?: string; modelId?: string; maxContextTokens?: number; maxContextBytes?: number; includeResearchMemory?: boolean; includeNativeConfig?: boolean }
+  | { type: "load-opencode-launch-readiness-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1194,6 +1202,19 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeSessionInstructionPackRecords(state, await runtime.command("runtime.list_opencode_session_instruction_packs", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, status: effect.status }))
       case "load-opencode-session-instruction-pack":
         return applyOpenCodeSessionInstructionPackSelected(state, await runtime.command("runtime.get_opencode_session_instruction_pack", { packId: effect.packId }), effect.packId)
+      case "preview-opencode-launch-readiness":
+        return applyOpenCodeLaunchReadinessPreview(state, await runtime.command("runtime.preview_opencode_launch_readiness", {
+          sessionId: effect.sessionId,
+          packId: effect.packId,
+          providerKind: effect.providerKind,
+          modelId: effect.modelId,
+          maxContextTokens: effect.maxContextTokens,
+          maxContextBytes: effect.maxContextBytes,
+          includeResearchMemory: effect.includeResearchMemory,
+          includeNativeConfig: effect.includeNativeConfig,
+        }))
+      case "load-opencode-launch-readiness-summary":
+        return applyOpenCodeLaunchReadinessSummary(state, await runtime.command("runtime.opencode_launch_readiness_summary", { limit: effect.limit }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -3060,6 +3081,33 @@ function applyOpenCodeSessionInstructionPackSelected(state: UiState, value: unkn
   }
 }
 
+function applyOpenCodeLaunchReadinessPreview(state: UiState, value: unknown): UiState {
+  const readiness = readOpenCodeLaunchReadinessPreview(value)
+  const commandError = readiness.status === "blocked" ? readiness.blockers[0] ?? "OpenCode launch readiness is blocked" : undefined
+  return {
+    ...state,
+    opencodeLaunchReadiness: {
+      ...opencodeLaunchReadinessState(state),
+      preview: readiness,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode launch readiness", detail: `status=${readiness.status} session=${readiness.session_id || "missing"}`, status: readiness.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeLaunchReadinessSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeLaunchReadinessSummary(value)
+  return {
+    ...state,
+    opencodeLaunchReadiness: {
+      ...opencodeLaunchReadinessState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode launch readiness summary", detail: `ready=${summary.ready_count} blocked=${summary.blocked_count} partial=${summary.partial_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -4547,6 +4595,14 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, opencodeSessionInstructionPackListEffect(args))
     case "opencode-session-instruction-pack-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-session-instruction-pack", packId: requiredArg(args, 0, "packId") })
+    case "opencode-launch-readiness":
+    case "launch-readiness":
+    case "opencode-session-launch-readiness":
+    case "session-launch-readiness":
+    case "launch-ready":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeLaunchReadinessEffect(args))
+    case "opencode-launch-readiness-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-launch-readiness-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -8527,6 +8583,87 @@ function readOpenCodeSessionInstructionPackCommands(value: unknown): OpenCodeSes
   }))
 }
 
+function readOpenCodeLaunchReadinessPreview(value: unknown): OpenCodeLaunchReadinessPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_launch_readiness returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "unknown"),
+    can_launch_in_future: value.can_launch_in_future === true,
+    launch_performed: false,
+    session_id: redactText(readString(value.session_id, "")),
+    pack_id: typeof value.pack_id === "string" ? redactText(value.pack_id) : undefined,
+    packet_id: typeof value.packet_id === "string" ? redactText(value.packet_id) : undefined,
+    budget_id: typeof value.budget_id === "string" ? redactText(value.budget_id) : undefined,
+    source_kind: typeof value.source_kind === "string" ? readString(value.source_kind, "unknown") : undefined,
+    mission_id: typeof value.mission_id === "string" ? redactText(value.mission_id) : undefined,
+    proposal_id: typeof value.proposal_id === "string" ? redactText(value.proposal_id) : undefined,
+    review_request_id: typeof value.review_request_id === "string" ? redactText(value.review_request_id) : undefined,
+    apply_id: typeof value.apply_id === "string" ? redactText(value.apply_id) : undefined,
+    target_dir: typeof value.target_dir === "string" ? readString(value.target_dir, "") : undefined,
+    instruction_files_verified: value.instruction_files_verified === true,
+    manifest_verified: value.manifest_verified === true,
+    config_verified: value.config_verified === true,
+    context_packet_status: typeof value.context_packet_status === "string" ? readString(value.context_packet_status, "unknown") : undefined,
+    context_budget_status: typeof value.context_budget_status === "string" ? readString(value.context_budget_status, "unknown") : undefined,
+    research_memory_status: typeof value.research_memory_status === "string" ? readString(value.research_memory_status, "unknown") : undefined,
+    novelty_risk: typeof value.novelty_risk === "string" ? readString(value.novelty_risk, "unknown") : undefined,
+    selected_launch_surface: readString(value.selected_launch_surface, "unknown"),
+    checks: readOpenCodeLaunchReadinessChecks(value.checks),
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    recommended_commands: readOpenCodeLaunchReadinessCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    readiness_hash: readString(value.readiness_hash, ""),
+  }
+}
+
+function readOpenCodeLaunchReadinessSummary(value: unknown): OpenCodeLaunchReadinessSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.opencode_launch_readiness_summary returned invalid summary")
+  return {
+    total_planned_sessions: readNumber(value.total_planned_sessions, 0),
+    ready_count: readNumber(value.ready_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    partial_count: readNumber(value.partial_count, 0),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeLaunchReadinessChecks(value: unknown): OpenCodeLaunchReadinessCheckSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 16).map((item) => ({
+    check_id: readString(item.check_id, "unknown"),
+    label: preview(readString(item.label, "")),
+    status: readString(item.status, "unknown"),
+    summary_preview: preview(readString(item.summary_preview, "")),
+    blockers: readStringList(item.blockers, 8).map(preview),
+    warnings: readStringList(item.warnings, 8).map(preview),
+    source_refs: readOpenCodeLaunchReadinessSourceRefs(item.source_refs),
+  }))
+}
+
+function readOpenCodeLaunchReadinessSourceRefs(value: unknown): OpenCodeLaunchReadinessSourceRefSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((item) => ({
+    source_kind: readString(item.source_kind, "unknown"),
+    source_id: preview(readString(item.source_id, "")),
+    label: typeof item.label === "string" ? preview(readString(item.label, "")) : undefined,
+    summary_preview: typeof item.summary_preview === "string" ? preview(readString(item.summary_preview, "")) : undefined,
+    pointer_only: true,
+  }))
+}
+
+function readOpenCodeLaunchReadinessCommands(value: unknown): OpenCodeLaunchReadinessCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
 function readResearchMemorySummary(value: unknown): ResearchMemorySummaryState {
   if (!isRecord(value)) throw new Error("runtime.research_memory_summary returned invalid summary")
   return {
@@ -12096,6 +12233,10 @@ function opencodeSessionInstructionPacksState(state: UiState): OpenCodeSessionIn
   return state.opencodeSessionInstructionPacks ?? { preview: null, latestResult: null, records: [], selected: null }
 }
 
+function opencodeLaunchReadinessState(state: UiState): OpenCodeLaunchReadinessState {
+  return state.opencodeLaunchReadiness ?? { preview: null, summary: null }
+}
+
 function researchMemoryState(state: UiState): ResearchMemoryState {
   return state.researchMemory ?? { summary: null, retrievalPreview: null, noveltyPreview: null }
 }
@@ -13017,6 +13158,26 @@ function opencodeSessionInstructionPackListEffect(args: string[]): Extract<Runti
     else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
     else throw new Error("OpenCode instruction pack list arg is unsupported")
   }
+  return effect
+}
+
+function opencodeLaunchReadinessEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-opencode-launch-readiness" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-launch-readiness" }> = { type: "preview-opencode-launch-readiness" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode launch readiness args must use session=<id>, pack=<id>, provider=<kind>, model=<id>, max_context_bytes=<n>, or max_context_tokens=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "pack") effect.packId = value
+    else if (key === "provider") effect.providerKind = value
+    else if (key === "model") effect.modelId = value
+    else if (key === "max_context_bytes") effect.maxContextBytes = readPositiveInteger(value, "max_context_bytes", 512_000)
+    else if (key === "max_context_tokens") effect.maxContextTokens = readPositiveInteger(value, "max_context_tokens", 128_000)
+    else if (key === "include_research_memory") effect.includeResearchMemory = value !== "false"
+    else if (key === "include_native_config") effect.includeNativeConfig = value !== "false"
+    else throw new Error("OpenCode launch readiness arg is unsupported")
+  }
+  if (!effect.sessionId) throw new Error("OpenCode launch readiness requires session=<id>")
   return effect
 }
 
