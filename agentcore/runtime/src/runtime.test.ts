@@ -17795,6 +17795,9 @@ describe("OpenCode launch readiness", () => {
 	    const rawLogQuestion = await server.command("runtime.preview_opencode_progress", { sessionId, kind: "question", question: `traceback\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[] }
 	    expect(rawLogQuestion.status).toBe("blocked")
 	    expect(rawLogQuestion.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
+	    const lateRawLogMarker = await server.command("runtime.preview_opencode_progress", { sessionId, summary: `${"safe prefix ".repeat(60)}stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[] }
+	    expect(lateRawLogMarker.status).toBe("blocked")
+	    expect(lateRawLogMarker.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
 	    await server.shutdown()
 	  })
 

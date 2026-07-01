@@ -287,16 +287,16 @@ export function readOpenCodeProgressPreviewInput(value: unknown): OpenCodeProgre
     launch_id: optional(input.launchId ?? input.launch_id ?? input.launch),
     kind: optional(input.kind),
     execution_state: optional(input.executionState ?? input.execution_state),
-    report_summary: optional(input.reportSummary ?? input.report_summary ?? input.summary),
-    current_step: optional(input.currentStep ?? input.current_step ?? input.step),
+    report_summary: optionalRawText(input.reportSummary ?? input.report_summary ?? input.summary),
+    current_step: optionalRawText(input.currentStep ?? input.current_step ?? input.step),
     files_touched: optionalStringArray(input.filesTouched ?? input.files_touched ?? input.files),
     commands_run: optionalStringArray(input.commandsRun ?? input.commands_run ?? input.commands),
     tests_run: optionalStringArray(input.testsRun ?? input.tests_run ?? input.tests),
     artifacts: optionalStringArray(input.artifacts),
     blockers: optionalStringArray(input.blockers ?? input.blocker),
-    question: optional(input.question),
+    question: optionalRawText(input.question),
     confidence: readConfidence(input.confidence),
-    next_action: optional(input.nextAction ?? input.next_action ?? input.next),
+    next_action: optionalRawText(input.nextAction ?? input.next_action ?? input.next),
     source_kind: optional(input.sourceKind ?? input.source_kind ?? input.source),
   }
 }
@@ -456,6 +456,10 @@ function readConfidence(value: unknown): number | "low" | "medium" | "high" | "u
 
 function optional(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? bound(value) : undefined
+}
+
+function optionalRawText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
 
 function optionalBoolean(value: unknown): boolean | undefined {
