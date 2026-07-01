@@ -44,6 +44,7 @@ export type OpenCodeWatchdogPreview = {
   latest_progress_kind?: string
   latest_progress_state?: string
   latest_progress_at?: string
+  watchdog_evidence_progress_id?: string
   latest_report_summary_preview?: string
   has_blockers: boolean
   has_question: boolean
@@ -86,6 +87,9 @@ export type OpenCodeWatchdogResult = {
   latest_progress_kind?: string
   latest_progress_state?: string
   latest_progress_at?: string
+  watchdog_evidence_progress_id?: string
+  has_blockers: boolean
+  has_question: boolean
   wall_clock_elapsed_ms?: number
   no_progress_elapsed_ms?: number
   heartbeat_elapsed_ms?: number

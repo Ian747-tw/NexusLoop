@@ -18003,8 +18003,11 @@ describe("OpenCode launch readiness", () => {
     })
     expect(preview.warnings.join(" ")).toContain("failure_report is evidence only")
 
-    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { status: string; watchdog_status: string; report_required: boolean }
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { status: string; watchdog_status: string; report_required: boolean; has_blockers: boolean; has_question: boolean }
     expect(recorded).toMatchObject({ status: "recorded", watchdog_status: "blocked", report_required: false })
+    expect(recorded).toMatchObject({ has_blockers: false, has_question: false })
+    const watchdogEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_watchdog_recorded")
+    expect(watchdogEvents.at(-1)).toMatchObject({ has_blockers: false, has_question: false })
     const forcedReport = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "failure report follow-up" }) as { status: string; error?: string }
     expect(forcedReport).toMatchObject({ status: "blocked" })
     expect(forcedReport.error).toContain("forced report request is only allowed")
@@ -18018,18 +18021,50 @@ describe("OpenCode launch readiness", () => {
     await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked on choice", blockers: ["needs commander answer"] })
     await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "still alive" })
 
-    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; recommended_action: string; report_required: boolean; has_blockers: boolean; latest_progress_kind?: string; blockers_preview: string[] }
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; recommended_action: string; report_required: boolean; has_blockers: boolean; latest_progress_kind?: string; blockers_preview: string[]; watchdog_evidence_progress_id?: string }
+    const evidenceProgressId = preview.watchdog_evidence_progress_id
     expect(preview).toMatchObject({
       watchdog_status: "blocked",
       recommended_action: "escalate_to_commander",
       report_required: true,
       has_blockers: true,
       latest_progress_kind: "heartbeat",
+      watchdog_evidence_progress_id: expect.stringMatching(/^opencode_progress_/),
       blockers_preview: ["needs commander answer"],
     })
     const request = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker", dryRun: true }) as { status: string; forced_report_requested: boolean; session_id: string }
     expect(request).toMatchObject({ status: "dry_run", forced_report_requested: false, session_id: sessionId })
     expect(request).not.toHaveProperty("request_id")
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; has_blockers: boolean; has_question: boolean; latest_progress_kind?: string; watchdog_evidence_progress_id?: string }
+    expect(recorded).toMatchObject({ has_blockers: true, has_question: false, latest_progress_kind: "heartbeat", watchdog_evidence_progress_id: evidenceProgressId })
+    const watchdogEvent = (await server.eventStore.readAll()).find((event) => event.kind === "opencode_session_watchdog_recorded" && event.watchdog_id === recorded.watchdog_id)
+    expect(watchdogEvent).toMatchObject({ has_blockers: true, has_question: false, latest_progress_kind: "heartbeat", watchdog_evidence_progress_id: evidenceProgressId })
+    const persistedRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker" }) as { request_id: string; latest_progress_id?: string }
+    expect(persistedRequest.latest_progress_id).toBe(evidenceProgressId)
+    const duplicateAfterHeartbeat = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "duplicate after fresh heartbeat" }) as { status: string; error?: string }
+    expect(duplicateAfterHeartbeat).toMatchObject({ status: "blocked" })
+    expect(duplicateAfterHeartbeat.error).toContain("already exists")
+    await server.shutdown()
+  })
+
+  test("opencode watchdog persists preserved question evidence across later heartbeats", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    const question = await server.command("runtime.record_opencode_progress", { sessionId, kind: "question", question: "which option should executor choose?" }) as { progress_id: string }
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "still alive after question" })
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; has_question: boolean; latest_progress_kind?: string; watchdog_evidence_progress_id?: string }
+    expect(preview).toMatchObject({
+      watchdog_status: "needs_report",
+      has_question: true,
+      latest_progress_kind: "heartbeat",
+      watchdog_evidence_progress_id: question.progress_id,
+    })
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; has_blockers: boolean; has_question: boolean; watchdog_evidence_progress_id?: string }
+    expect(recorded).toMatchObject({ has_blockers: false, has_question: true, watchdog_evidence_progress_id: question.progress_id })
+    const watchdogEvent = (await server.eventStore.readAll()).find((event) => event.kind === "opencode_session_watchdog_recorded" && event.watchdog_id === recorded.watchdog_id)
+    expect(watchdogEvent).toMatchObject({ has_blockers: false, has_question: true, watchdog_evidence_progress_id: question.progress_id })
     await server.shutdown()
   })
 

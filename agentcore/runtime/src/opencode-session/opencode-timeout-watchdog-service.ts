@@ -183,7 +183,7 @@ export class OpenCodeTimeoutWatchdogService {
       session_id: preview.session_id,
       launch_id: preview.launch_id,
       watchdog_hash: preview.watchdog_hash,
-      latest_progress_id: preview.latest_progress_id,
+      latest_progress_id: preview.watchdog_evidence_progress_id ?? preview.latest_progress_id,
       reason,
       forced_pause_recommended: forcedPauseRecommended,
     }))
@@ -195,7 +195,7 @@ export class OpenCodeTimeoutWatchdogService {
       reason,
       requested_at: requestedAt,
       requested_by: requestedBy,
-      latest_progress_id: preview.latest_progress_id,
+      latest_progress_id: preview.watchdog_evidence_progress_id ?? preview.latest_progress_id,
       report_due_after_ms: DEFAULT_REPORT_DUE_AFTER_MS,
       forced_pause_recommended: forcedPauseRecommended,
       process_paused: false as const,
@@ -305,6 +305,7 @@ export class OpenCodeTimeoutWatchdogService {
     const heartbeatElapsedMs = latestElapsedMs ?? wallClockElapsedMs
     const noProgressElapsedMs = latestSubstantiveElapsedMs ?? wallClockElapsedMs
     const statusEvidence = latestProgress?.kind === "heartbeat" ? latestSubstantiveProgress ?? latestProgress : latestProgress
+    const watchdogEvidenceProgressId = statusEvidence?.progress_id
     const hasBlockers = (latestProgress?.blockers_preview?.length ?? 0) > 0 || latestProgress?.execution_state === "blocked" || latestProgress?.kind === "blocker" || (latestSubstantiveProgress?.blockers_preview?.length ?? 0) > 0 || latestSubstantiveProgress?.execution_state === "blocked" || latestSubstantiveProgress?.kind === "blocker"
     const hasQuestion = Boolean(latestProgress?.question_preview) || latestProgress?.execution_state === "needs_commander" || latestProgress?.kind === "question" || Boolean(latestSubstantiveProgress?.question_preview) || latestSubstantiveProgress?.execution_state === "needs_commander" || latestSubstantiveProgress?.kind === "question"
     const statusResult = computeWatchdogStatus({
@@ -325,12 +326,13 @@ export class OpenCodeTimeoutWatchdogService {
       launch_id: launch?.launch_id ?? launchId,
       watchdog_status: statusResult.status,
       latest_progress_id: latestProgress?.progress_id,
+      watchdog_evidence_progress_id: watchdogEvidenceProgressId,
       latest_substantive_progress_id: latestSubstantiveProgress?.progress_id,
       wall_clock_elapsed_ms: wallClockElapsedMs,
       no_progress_elapsed_ms: noProgressElapsedMs,
       heartbeat_elapsed_ms: heartbeatElapsedMs,
     }))
-    const existingForcedReport = await this.findForcedReportForEvidence(sessionId, launch?.launch_id ?? launchId, latestProgress?.progress_id)
+    const existingForcedReport = await this.findForcedReportForEvidence(sessionId, launch?.launch_id ?? launchId, watchdogEvidenceProgressId)
     const reportRequiredOnTimeout = policy?.report_required_on_timeout ?? true
     const timeoutDerivedReport = statusResult.status === "timed_out" || statusResult.status === "needs_report" || statusResult.status === "stale"
     const reportRequired = (statusResult.status === "blocked" && (hasBlockers || hasQuestion)) || hasQuestion || (timeoutDerivedReport && reportRequiredOnTimeout)
@@ -357,6 +359,7 @@ export class OpenCodeTimeoutWatchdogService {
         latest_progress_kind: latestProgress?.kind,
         latest_progress_state: latestProgress?.execution_state,
         latest_progress_at: latestProgress?.recorded_at,
+        watchdog_evidence_progress_id: watchdogEvidenceProgressId,
         latest_report_summary_preview: latestProgress?.report_summary_preview,
         has_blockers: hasBlockers,
         has_question: hasQuestion,
@@ -520,6 +523,9 @@ function resultFromPreview(preview: OpenCodeWatchdogPreview, overrides: { watchd
     latest_progress_kind: preview.latest_progress_kind,
     latest_progress_state: preview.latest_progress_state,
     latest_progress_at: preview.latest_progress_at,
+    watchdog_evidence_progress_id: preview.watchdog_evidence_progress_id,
+    has_blockers: preview.has_blockers,
+    has_question: preview.has_question,
     wall_clock_elapsed_ms: preview.wall_clock_elapsed_ms,
     no_progress_elapsed_ms: preview.no_progress_elapsed_ms,
     heartbeat_elapsed_ms: preview.heartbeat_elapsed_ms,
@@ -547,8 +553,9 @@ function watchdogEventPayload(result: OpenCodeWatchdogResult): Record<string, un
     latest_progress_kind: result.latest_progress_kind,
     latest_progress_state: result.latest_progress_state,
     latest_progress_at: result.latest_progress_at,
-    has_blockers: result.watchdog_status === "blocked",
-    has_question: result.latest_progress_kind === "question" || result.latest_progress_state === "needs_commander",
+    watchdog_evidence_progress_id: result.watchdog_evidence_progress_id,
+    has_blockers: result.has_blockers,
+    has_question: result.has_question,
     recorded_at: result.recorded_at,
     recorded_by: result.recorded_by,
     watchdog_hash: result.watchdog_hash,
@@ -605,6 +612,9 @@ function watchdogResultFromEvent(event: JsonlEvent, linkedRequest?: OpenCodeForc
     latest_progress_kind: typeof event.latest_progress_kind === "string" ? event.latest_progress_kind : undefined,
     latest_progress_state: typeof event.latest_progress_state === "string" ? event.latest_progress_state : undefined,
     latest_progress_at: typeof event.latest_progress_at === "string" ? event.latest_progress_at : undefined,
+    watchdog_evidence_progress_id: typeof event.watchdog_evidence_progress_id === "string" ? event.watchdog_evidence_progress_id : undefined,
+    has_blockers: event.has_blockers === true,
+    has_question: event.has_question === true,
     wall_clock_elapsed_ms: typeof event.wall_clock_elapsed_ms === "number" ? event.wall_clock_elapsed_ms : undefined,
     no_progress_elapsed_ms: typeof event.no_progress_elapsed_ms === "number" ? event.no_progress_elapsed_ms : undefined,
     heartbeat_elapsed_ms: typeof event.heartbeat_elapsed_ms === "number" ? event.heartbeat_elapsed_ms : undefined,
