@@ -13770,9 +13770,10 @@ function opencodeProgressEffect(
     else throw new Error("OpenCode progress arg is unsupported")
   }
   if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode progress requires session=<id> or launch=<id>")
-  if (requirePayload && (defaultKind === "heartbeat" || defaultKind === "progress" || defaultKind === "blocker") && !effect.reportSummary) throw new Error("OpenCode progress requires summary=<text>")
-  if (requirePayload && defaultKind === "question" && !effect.question) throw new Error("OpenCode question requires question=<text>")
-  if (defaultKind === "blocker" && !effect.blockers?.length) throw new Error("OpenCode blocker requires blocker=<text>")
+  const effectiveKind = effect.kind ?? defaultKind
+  if (requirePayload && (effectiveKind === "heartbeat" || effectiveKind === "progress" || effectiveKind === "blocker") && !effect.reportSummary) throw new Error("OpenCode progress requires summary=<text>")
+  if (requirePayload && effectiveKind === "question" && !effect.question) throw new Error("OpenCode question requires question=<text>")
+  if (effectiveKind === "blocker" && !effect.blockers?.length) throw new Error("OpenCode blocker requires blocker=<text>")
   return effect
 }
 

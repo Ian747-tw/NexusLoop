@@ -5318,6 +5318,10 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-preview", args: [`launch=${launchId}`, "summary=stdout", "stderr"] })
     expect(state.opencodeProgress?.commandError).toContain("raw logs are out of scope")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress", args: [`session=${sessionId}`, "kind=question", "question=override", "question"] })
+    expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "question", question_preview: "override question" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-question", args: [`session=${sessionId}`, "kind=progress", "summary=override", "progress"] })
+    expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "progress", report_summary_preview: "override progress" })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: [`/opencode-progress session=${sessionId} summary=staged progress`] })
     expect(state.operatorActions?.staged?.command_type).toBe("write")
 

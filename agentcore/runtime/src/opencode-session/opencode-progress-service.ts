@@ -454,12 +454,12 @@ function readConfidence(value: unknown): number | "low" | "medium" | "high" | "u
   return "unknown"
 }
 
-function optionalBoundedMetadata(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? bound(value) : undefined
-}
-
 function optionalRawText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function optionalBoundedMetadata(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? bound(value) : undefined
 }
 
 function optionalBoolean(value: unknown): boolean | undefined {
