@@ -101,6 +101,12 @@ import type {
   OpenCodeLaunchRecordSummary,
   OpenCodeLaunchResultSummary,
   OpenCodeLaunchesState,
+  OpenCodeProgressCommandSummary,
+  OpenCodeProgressPreviewSummary,
+  OpenCodeProgressRecordSummary,
+  OpenCodeProgressResultSummary,
+  OpenCodeProgressState,
+  OpenCodeProgressSummaryState,
   OpenCodeHandoffRecordSummary,
   OpenCodeHandoffResultSummary,
   OpenCodeHandoffState,
@@ -413,6 +419,12 @@ export type RuntimeUiEffect =
   | { type: "launch-opencode-session"; sessionId?: string; packId?: string; readinessHash?: string; adapterKind?: string; providerKind?: string; modelId?: string; allowRealLaunch?: boolean; dryRun?: boolean }
   | { type: "load-opencode-session-launches"; sessionId?: string; status?: string; limit?: number }
   | { type: "load-opencode-session-launch"; launchId: string }
+  | { type: "preview-opencode-progress"; sessionId?: string; launchId?: string; kind?: string; executionState?: string; reportSummary?: string; currentStep?: string; filesTouched?: string[]; commandsRun?: string[]; testsRun?: string[]; artifacts?: string[]; blockers?: string[]; question?: string; confidence?: number | string; nextAction?: string; sourceKind?: string }
+  | { type: "record-opencode-progress"; sessionId?: string; launchId?: string; kind?: string; executionState?: string; reportSummary?: string; currentStep?: string; filesTouched?: string[]; commandsRun?: string[]; testsRun?: string[]; artifacts?: string[]; blockers?: string[]; question?: string; confidence?: number | string; nextAction?: string; sourceKind?: string; dryRun?: boolean }
+  | { type: "load-opencode-progress-records"; sessionId?: string; launchId?: string; kind?: string; executionState?: string; limit?: number }
+  | { type: "load-opencode-progress"; progressId: string }
+  | { type: "load-latest-opencode-progress"; sessionId?: string; launchId?: string }
+  | { type: "load-opencode-progress-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1253,6 +1265,21 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeLaunchRecords(state, await runtime.command("runtime.list_opencode_session_launches", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, status: effect.status }))
       case "load-opencode-session-launch":
         return applyOpenCodeLaunchSelected(state, await runtime.command("runtime.get_opencode_session_launch", { launchId: effect.launchId }), effect.launchId)
+      case "preview-opencode-progress":
+        return applyOpenCodeProgressPreview(state, await runtime.command("runtime.preview_opencode_progress", progressPayload(effect)))
+      case "record-opencode-progress": {
+        const next = applyOpenCodeProgressResult(state, await runtime.command("runtime.record_opencode_progress", { ...progressPayload(effect), dryRun: effect.dryRun === true, recordedBy: "operator" }))
+        if (next.opencodeProgress?.commandError) return next
+        return effect.dryRun === true ? next : applyOpenCodeProgressRecords(next, await runtime.command("runtime.list_opencode_progress", { limit: HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId }))
+      }
+      case "load-opencode-progress-records":
+        return applyOpenCodeProgressRecords(state, await runtime.command("runtime.list_opencode_progress", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId, kind: effect.kind, executionState: effect.executionState }))
+      case "load-opencode-progress":
+        return applyOpenCodeProgressSelected(state, await runtime.command("runtime.get_opencode_progress", { progressId: effect.progressId }), effect.progressId)
+      case "load-latest-opencode-progress":
+        return applyOpenCodeProgressLatest(state, await runtime.command("runtime.latest_opencode_progress", { sessionId: effect.sessionId, launchId: effect.launchId }), effect.sessionId ?? effect.launchId ?? "latest")
+      case "load-opencode-progress-summary":
+        return applyOpenCodeProgressSummary(state, await runtime.command("runtime.opencode_progress_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -3202,6 +3229,87 @@ function applyOpenCodeLaunchSelected(state: UiState, value: unknown, launchId: s
   }
 }
 
+function applyOpenCodeProgressPreview(state: UiState, value: unknown): UiState {
+  const progress = readOpenCodeProgressPreview(value)
+  const commandError = progress.status === "blocked" ? progress.blockers[0] ?? "OpenCode progress preview is blocked" : undefined
+  return {
+    ...state,
+    opencodeProgress: {
+      ...opencodeProgressState(state),
+      preview: progress,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode progress preview", detail: `status=${progress.status} kind=${progress.kind} session=${progress.session_id || "missing"}`, status: progress.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeProgressResult(state: UiState, value: unknown): UiState {
+  const result = readOpenCodeProgressResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "OpenCode progress record is blocked or failed" : undefined
+  return {
+    ...state,
+    opencodeProgress: {
+      ...opencodeProgressState(state),
+      latestResult: result,
+      latest: result.status === "recorded" ? result : opencodeProgressState(state).latest ?? null,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode progress", detail: `status=${result.status} kind=${result.kind} session=${result.session_id || "missing"}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeProgressRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeProgressRecords(value)
+  return {
+    ...state,
+    opencodeProgress: {
+      ...opencodeProgressState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode progress records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeProgressSelected(state: UiState, value: unknown, progressId: string): UiState {
+  const selected = value === null ? null : readOpenCodeProgressResult(value)
+  return {
+    ...state,
+    opencodeProgress: {
+      ...opencodeProgressState(state),
+      selected,
+      commandError: selected ? undefined : `OpenCode progress record not found: ${redactText(progressId)}`,
+    },
+    systemActions: [...state.systemActions, { title: "opencode progress selected", detail: `progress=${redactText(progressId)}`, status: selected ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeProgressLatest(state: UiState, value: unknown, label: string): UiState {
+  const latest = value === null ? null : readOpenCodeProgressResult(value)
+  return {
+    ...state,
+    opencodeProgress: {
+      ...opencodeProgressState(state),
+      latest,
+      commandError: latest ? undefined : `OpenCode progress latest not found: ${redactText(label)}`,
+    },
+    systemActions: [...state.systemActions, { title: "opencode progress latest", detail: `target=${redactText(label)}`, status: latest ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeProgressSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeProgressSummary(value)
+  return {
+    ...state,
+    opencodeProgress: {
+      ...opencodeProgressState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode progress summary", detail: `records=${summary.total_records} heartbeat=${summary.heartbeat_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -4457,6 +4565,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeSessionInstructionPackCommands.has(command)) return state.opencodeSessionInstructionPacks?.commandError
   if (opencodeLaunchReadinessCommands.has(command)) return state.opencodeLaunchReadiness?.commandError
   if (opencodeLaunchCommands.has(command)) return state.opencodeLaunches?.commandError
+  if (opencodeProgressCommands.has(command)) return state.opencodeProgress?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -4502,6 +4611,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeSessionInstructionPackCommands.has(command)) return { ...state, opencodeSessionInstructionPacks: { ...opencodeSessionInstructionPacksState(state), commandError: undefined } }
   if (opencodeLaunchReadinessCommands.has(command)) return { ...state, opencodeLaunchReadiness: { ...opencodeLaunchReadinessState(state), commandError: undefined } }
   if (opencodeLaunchCommands.has(command)) return { ...state, opencodeLaunches: { ...opencodeLaunchesState(state), commandError: undefined } }
+  if (opencodeProgressCommands.has(command)) return { ...state, opencodeProgress: { ...opencodeProgressState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -4718,6 +4828,34 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, opencodeLaunchListEffect(args))
     case "opencode-launch-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-session-launch", launchId: requiredArg(args, 0, "launchId") })
+    case "opencode-progress-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeProgressEffect("preview-opencode-progress", args, "heartbeat", false))
+    case "opencode-progress-dry-run": {
+      const effect = opencodeProgressEffect("record-opencode-progress", args, "progress", true) as Extract<RuntimeUiEffect, { type: "record-opencode-progress" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-heartbeat":
+    case "session-heartbeat":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeProgressEffect("record-opencode-progress", args, "heartbeat", true))
+    case "opencode-progress":
+    case "session-progress":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeProgressEffect("record-opencode-progress", args, "progress", true))
+    case "opencode-blocker":
+    case "session-blocker":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeProgressEffect("record-opencode-progress", args, "blocker", true))
+    case "opencode-question":
+    case "session-question":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeProgressEffect("record-opencode-progress", args, "question", true))
+    case "opencode-progress-list":
+    case "progress-list":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeProgressListEffect(args))
+    case "opencode-progress-latest":
+    case "progress-latest":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeProgressLatestEffect(args))
+    case "opencode-progress-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-progress", progressId: requiredArg(args, 0, "progressId") })
+    case "opencode-progress-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-progress-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -5959,6 +6097,25 @@ const opencodeLaunchCommands = new Set([
   "opencode-session-launch",
   "opencode-launches",
   "opencode-launch-show",
+])
+
+const opencodeProgressCommands = new Set([
+  "opencode-progress-preview",
+  "opencode-progress-dry-run",
+  "opencode-heartbeat",
+  "session-heartbeat",
+  "opencode-progress",
+  "session-progress",
+  "opencode-blocker",
+  "session-blocker",
+  "opencode-question",
+  "session-question",
+  "opencode-progress-list",
+  "progress-list",
+  "opencode-progress-latest",
+  "progress-latest",
+  "opencode-progress-show",
+  "opencode-progress-summary",
 ])
 
 const researchMemoryCommands = new Set([
@@ -8883,6 +9040,114 @@ function readOpenCodeLaunchRecord(value: Record<string, unknown>): OpenCodeLaunc
 }
 
 function readOpenCodeLaunchCommands(value: unknown): OpenCodeLaunchCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readOpenCodeProgressPreview(value: unknown): OpenCodeProgressPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_progress returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_record: value.can_record === true,
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    launch_status: typeof value.launch_status === "string" ? readString(value.launch_status, "unknown") : undefined,
+    launch_started_at: typeof value.launch_started_at === "string" ? readString(value.launch_started_at, "") : undefined,
+    kind: readString(value.kind, "heartbeat"),
+    execution_state: readString(value.execution_state, "unknown"),
+    report_summary_preview: preview(readString(value.report_summary_preview, "")),
+    current_step_preview: typeof value.current_step_preview === "string" ? preview(readString(value.current_step_preview, "")) : undefined,
+    files_touched_preview: readStringList(value.files_touched_preview, 12).map(preview),
+    commands_run_preview: readStringList(value.commands_run_preview, 12).map(preview),
+    tests_run_preview: readStringList(value.tests_run_preview, 12).map(preview),
+    artifacts_preview: readStringList(value.artifacts_preview, 12).map(preview),
+    blockers_preview: readStringList(value.blockers_preview, 12).map(preview),
+    question_preview: typeof value.question_preview === "string" ? preview(readString(value.question_preview, "")) : undefined,
+    confidence: typeof value.confidence === "number" ? readNumber(value.confidence, 0) : typeof value.confidence === "string" ? readString(value.confidence, "unknown") : undefined,
+    next_action_preview: typeof value.next_action_preview === "string" ? preview(readString(value.next_action_preview, "")) : undefined,
+    source_kind: readString(value.source_kind, "manual"),
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    recommended_commands: readOpenCodeProgressCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    progress_hash: readString(value.progress_hash, ""),
+  }
+}
+
+function readOpenCodeProgressResult(value: unknown): OpenCodeProgressResultSummary {
+  if (!isRecord(value) || typeof value.progress_id !== "string") throw new Error("runtime.record_opencode_progress returned invalid result")
+  return {
+    progress_id: redactText(value.progress_id),
+    status: readString(value.status, "blocked"),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    kind: readString(value.kind, "heartbeat"),
+    execution_state: readString(value.execution_state, "unknown"),
+    report_summary_preview: preview(readString(value.report_summary_preview, "")),
+    current_step_preview: typeof value.current_step_preview === "string" ? preview(readString(value.current_step_preview, "")) : undefined,
+    files_touched_preview: readStringList(value.files_touched_preview, 12).map(preview),
+    commands_run_preview: readStringList(value.commands_run_preview, 12).map(preview),
+    tests_run_preview: readStringList(value.tests_run_preview, 12).map(preview),
+    artifacts_preview: readStringList(value.artifacts_preview, 12).map(preview),
+    blockers_preview: readStringList(value.blockers_preview, 12).map(preview),
+    question_preview: typeof value.question_preview === "string" ? preview(readString(value.question_preview, "")) : undefined,
+    confidence: typeof value.confidence === "number" ? readNumber(value.confidence, 0) : typeof value.confidence === "string" ? readString(value.confidence, "unknown") : undefined,
+    next_action_preview: typeof value.next_action_preview === "string" ? preview(readString(value.next_action_preview, "")) : undefined,
+    recorded_at: readString(value.recorded_at, ""),
+    recorded_by: preview(readString(value.recorded_by, "")),
+    source_kind: readString(value.source_kind, "manual"),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    progress_hash: readString(value.progress_hash, ""),
+    recommended_commands: readOpenCodeProgressCommands(value.recommended_commands),
+  }
+}
+
+function readOpenCodeProgressRecords(value: unknown): OpenCodeProgressRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map(readOpenCodeProgressRecord)
+}
+
+function readOpenCodeProgressRecord(value: Record<string, unknown>): OpenCodeProgressRecordSummary {
+  return {
+    progress_id: redactText(readString(value.progress_id, "")),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    kind: readString(value.kind, "heartbeat"),
+    execution_state: readString(value.execution_state, "unknown"),
+    report_summary_preview: preview(readString(value.report_summary_preview, "")),
+    recorded_at: readString(value.recorded_at, ""),
+    recorded_by: preview(readString(value.recorded_by, "")),
+    source_kind: readString(value.source_kind, "manual"),
+    confidence: typeof value.confidence === "number" ? readNumber(value.confidence, 0) : typeof value.confidence === "string" ? readString(value.confidence, "unknown") : undefined,
+    has_blockers: value.has_blockers === true,
+    has_question: value.has_question === true,
+    progress_hash: readString(value.progress_hash, ""),
+  }
+}
+
+function readOpenCodeProgressSummary(value: unknown): OpenCodeProgressSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.opencode_progress_summary returned invalid summary")
+  return {
+    total_records: readNumber(value.total_records, 0),
+    session_count: readNumber(value.session_count, 0),
+    launched_session_count: readNumber(value.launched_session_count, 0),
+    latest_records: readOpenCodeProgressRecords(value.latest_records),
+    blocked_count: readNumber(value.blocked_count, 0),
+    question_count: readNumber(value.question_count, 0),
+    heartbeat_count: readNumber(value.heartbeat_count, 0),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeProgressCommands(value: unknown): OpenCodeProgressCommandSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -12470,6 +12735,30 @@ function opencodeLaunchesState(state: UiState): OpenCodeLaunchesState {
   return state.opencodeLaunches ?? { preview: null, latestResult: null, records: [], selected: null }
 }
 
+function opencodeProgressState(state: UiState): OpenCodeProgressState {
+  return state.opencodeProgress ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
+function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
+  return {
+    sessionId: effect.sessionId,
+    launchId: effect.launchId,
+    kind: effect.kind,
+    executionState: effect.executionState,
+    reportSummary: effect.reportSummary,
+    currentStep: effect.currentStep,
+    filesTouched: effect.filesTouched,
+    commandsRun: effect.commandsRun,
+    testsRun: effect.testsRun,
+    artifacts: effect.artifacts,
+    blockers: effect.blockers,
+    question: effect.question,
+    confidence: effect.confidence,
+    nextAction: effect.nextAction,
+    sourceKind: effect.sourceKind,
+  }
+}
+
 function researchMemoryState(state: UiState): ResearchMemoryState {
   return state.researchMemory ?? { summary: null, retrievalPreview: null, noveltyPreview: null }
 }
@@ -13448,6 +13737,73 @@ function opencodeLaunchListEffect(args: string[]): Extract<RuntimeUiEffect, { ty
     else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
     else throw new Error("OpenCode launch list arg is unsupported")
   }
+  return effect
+}
+
+function opencodeProgressEffect(
+  type: "preview-opencode-progress" | "record-opencode-progress",
+  args: string[],
+  defaultKind: string,
+  requirePayload: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }> = { type, kind: defaultKind }
+  const freeTextKeys = new Set(["summary", "step", "blocker", "blockers", "question", "next"])
+  const knownKeys = new Set(["session", "launch", "kind", "state", "execution_state", "summary", "step", "files", "commands", "tests", "artifacts", "blocker", "blockers", "question", "confidence", "next", "source"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "OpenCode progress args must use session=<id>, launch=<id>, summary=<text>, step=<text>, files=<csv>, commands=<csv>, tests=<csv>, artifacts=<csv>, blocker=<text>, question=<text>, confidence=<value>, or next=<text>")
+    index = nextIndex
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "kind") effect.kind = value
+    else if (key === "state" || key === "execution_state") effect.executionState = value
+    else if (key === "summary") effect.reportSummary = value
+    else if (key === "step") effect.currentStep = value
+    else if (key === "files") effect.filesTouched = commaList(value)
+    else if (key === "commands") effect.commandsRun = commaList(value)
+    else if (key === "tests") effect.testsRun = commaList(value)
+    else if (key === "artifacts") effect.artifacts = commaList(value)
+    else if (key === "blocker" || key === "blockers") effect.blockers = commaList(value)
+    else if (key === "question") effect.question = value
+    else if (key === "confidence") effect.confidence = value
+    else if (key === "next") effect.nextAction = value
+    else if (key === "source") effect.sourceKind = value
+    else throw new Error("OpenCode progress arg is unsupported")
+  }
+  if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode progress requires session=<id> or launch=<id>")
+  const effectiveKind = effect.kind ?? defaultKind
+  if (requirePayload && (effectiveKind === "heartbeat" || effectiveKind === "progress" || effectiveKind === "blocker") && !effect.reportSummary) throw new Error("OpenCode progress requires summary=<text>")
+  if (requirePayload && effectiveKind === "question" && !effect.question) throw new Error("OpenCode question requires question=<text>")
+  if (effectiveKind === "blocker" && !effect.blockers?.length) throw new Error("OpenCode blocker requires blocker=<text>")
+  return effect
+}
+
+function opencodeProgressListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-opencode-progress-records" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-opencode-progress-records" }> = { type: "load-opencode-progress-records", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode progress list args must use session=<id>, launch=<id>, kind=<kind>, state=<state>, or limit=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "kind") effect.kind = value
+    else if (key === "state" || key === "execution_state") effect.executionState = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode progress list arg is unsupported")
+  }
+  return effect
+}
+
+function opencodeProgressLatestEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-latest-opencode-progress" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-latest-opencode-progress" }> = { type: "load-latest-opencode-progress" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode progress latest args must use session=<id> or launch=<id>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else throw new Error("OpenCode progress latest arg is unsupported")
+  }
+  if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode progress latest requires session=<id> or launch=<id>")
   return effect
 }
 

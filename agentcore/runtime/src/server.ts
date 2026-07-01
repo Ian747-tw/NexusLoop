@@ -82,6 +82,8 @@ import { DisabledOpenCodeLaunchAdapter, FakeOpenCodeLaunchAdapter, type OpenCode
 import { ProcessOpenCodeLaunchAdapter } from "./opencode-session/opencode-native-launch-adapter"
 import { OpenCodeLaunchGateService, readOpenCodeLaunchInput, readOpenCodeLaunchPreviewInput } from "./opencode-session/opencode-launch-gate-service"
 import type { OpenCodeLaunchPreview, OpenCodeLaunchRecord, OpenCodeLaunchResult } from "./opencode-session/opencode-launch-gate-types"
+import { OpenCodeProgressService, readOpenCodeProgressAppendInput, readOpenCodeProgressPreviewInput } from "./opencode-session/opencode-progress-service"
+import type { OpenCodeProgressPreview, OpenCodeProgressRecord, OpenCodeProgressResult, OpenCodeProgressSummary } from "./opencode-session/opencode-progress-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -313,6 +315,7 @@ export class RuntimeServer {
   private opencodeSessionInstructionPackServiceInstance: OpenCodeSessionInstructionPackService | null = null
   private opencodeLaunchReadinessServiceInstance: OpenCodeLaunchReadinessService | null = null
   private opencodeLaunchGateServiceInstance: OpenCodeLaunchGateService | null = null
+  private opencodeProgressServiceInstance: OpenCodeProgressService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -894,6 +897,27 @@ export class RuntimeServer {
         })
       case "runtime.get_opencode_session_launch":
         return this.getOpenCodeSessionLaunch(requiredString(payload.launchId ?? payload.launch_id, "launchId"))
+      case "runtime.preview_opencode_progress":
+        return this.previewOpenCodeProgress(readOpenCodeProgressPreviewInput(payload))
+      case "runtime.record_opencode_progress":
+        return this.recordOpenCodeProgress(readOpenCodeProgressAppendInput(payload))
+      case "runtime.list_opencode_progress":
+        return this.listOpenCodeProgress({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+          kind: optionalString(payload.kind, "kind"),
+          execution_state: optionalString(payload.executionState ?? payload.execution_state, "executionState"),
+        })
+      case "runtime.get_opencode_progress":
+        return this.getOpenCodeProgress(requiredString(payload.progressId ?? payload.progress_id, "progressId"))
+      case "runtime.latest_opencode_progress":
+        return this.latestOpenCodeProgress({
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+        })
+      case "runtime.opencode_progress_summary":
+        return this.openCodeProgressSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -1800,6 +1824,31 @@ export class RuntimeServer {
 
   async getOpenCodeSessionLaunch(launchId: string): Promise<OpenCodeLaunchResult | null> {
     return this.opencodeLaunchGateService().get(launchId)
+  }
+
+  async previewOpenCodeProgress(input: Parameters<OpenCodeProgressService["preview"]>[0] = {}): Promise<OpenCodeProgressPreview> {
+    return this.opencodeProgressService().preview(input)
+  }
+
+  async recordOpenCodeProgress(input: Parameters<OpenCodeProgressService["record"]>[0] = {}): Promise<OpenCodeProgressResult> {
+    if (input.dry_run === true) return this.opencodeProgressService().record(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeProgressService().record(input))
+  }
+
+  async listOpenCodeProgress(input: Parameters<OpenCodeProgressService["list"]>[0] = {}): Promise<OpenCodeProgressRecord[]> {
+    return this.opencodeProgressService().list(input)
+  }
+
+  async getOpenCodeProgress(progressId: string): Promise<OpenCodeProgressResult | null> {
+    return this.opencodeProgressService().get(progressId)
+  }
+
+  async latestOpenCodeProgress(input: Parameters<OpenCodeProgressService["latest"]>[0] = {}): Promise<OpenCodeProgressResult | null> {
+    return this.opencodeProgressService().latest(input)
+  }
+
+  async openCodeProgressSummary(input: Parameters<OpenCodeProgressService["summary"]>[0] = {}): Promise<OpenCodeProgressSummary> {
+    return this.opencodeProgressService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -2906,6 +2955,15 @@ export class RuntimeServer {
       idFactory: this.opencodeLaunchId,
     })
     return this.opencodeLaunchGateServiceInstance
+  }
+
+  private opencodeProgressService(): OpenCodeProgressService {
+    this.opencodeProgressServiceInstance ??= new OpenCodeProgressService({
+      eventStore: this.eventStore,
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+    })
+    return this.opencodeProgressServiceInstance
   }
 
   private createOpenCodeLaunchAdapter(): OpenCodeLaunchAdapter {

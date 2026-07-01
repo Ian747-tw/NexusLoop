@@ -86,6 +86,14 @@ const WRITE_COMMANDS = new Set([
   "launch-opencode",
   "session-launch",
   "opencode-session-launch",
+  "opencode-heartbeat",
+  "session-heartbeat",
+  "opencode-progress",
+  "session-progress",
+  "opencode-blocker",
+  "session-blocker",
+  "opencode-question",
+  "session-question",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"
