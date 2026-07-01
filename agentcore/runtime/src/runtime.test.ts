@@ -17686,7 +17686,7 @@ describe("OpenCode launch readiness", () => {
     expect(summaryRecord?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_launch_readiness_tui.py")
   })
 
-  async function readyLaunchFixture(dir: string): Promise<{ server: RuntimeServer; sessionId: string; packId: string; readinessHash: string }> {
+  async function readyLaunchFixture(dir: string, options: { watchdogNow?: () => Date } = {}): Promise<{ server: RuntimeServer; sessionId: string; packId: string; readinessHash: string }> {
     await makeProject(dir, { approvedSpec: true })
     const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
     db.createTopic({ id: "topic_launch_gate", title: "Launch gate" })
@@ -17705,6 +17705,7 @@ describe("OpenCode launch readiness", () => {
       openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["opencode"] },
       researchProjectionMode: "check_only",
       opencodeLaunchId: () => "launch_test_1",
+      opencodeWatchdogNow: options.watchdogNow,
     })
     await server.start()
     const session = await server.command("runtime.create_opencode_session_plan", { objective: "adapter spectral curriculum" }) as { session_id: string }
@@ -18049,6 +18050,56 @@ describe("OpenCode launch readiness", () => {
     expect(recorded).toMatchObject({ watchdog_status: "timed_out", report_required: false })
     const manualRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "manual timeout report", dryRun: true }) as { request_id: string; process_paused: boolean }
     expect(manualRequest).toMatchObject({ process_paused: false })
+    await server.shutdown()
+  })
+
+  test("opencode watchdog no-progress timeout is not reset by fresh heartbeat", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir, {
+      watchdogNow: () => new Date("2026-01-01T00:20:00.000Z"),
+    })
+    const launch = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { launch_id: string }
+    await server.eventStore.append({
+      kind: "opencode_session_progress_recorded",
+      progress_id: "progress_substantive_old",
+      session_id: sessionId,
+      launch_id: launch.launch_id,
+      progress_kind: "progress",
+      execution_state: "working",
+      report_summary_preview: "substantive work",
+      recorded_at: "2026-01-01T00:00:00.000Z",
+      recorded_by: "test",
+      source_kind: "manual",
+      progress_hash: "progress_substantive_old_hash",
+    })
+    await server.eventStore.append({
+      kind: "opencode_session_progress_recorded",
+      progress_id: "progress_heartbeat_fresh",
+      session_id: sessionId,
+      launch_id: launch.launch_id,
+      progress_kind: "heartbeat",
+      execution_state: "running",
+      report_summary_preview: "alive",
+      recorded_at: "2026-01-01T00:19:30.000Z",
+      recorded_by: "test",
+      source_kind: "manual",
+      progress_hash: "progress_heartbeat_fresh_hash",
+    })
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", {
+      sessionId,
+      maxWallTimeMs: 60 * 60 * 1000,
+      maxNoProgressMs: 10 * 60 * 1000,
+      heartbeatIntervalMs: 60 * 1000,
+    }) as { watchdog_status: string; latest_progress_id?: string; latest_progress_kind?: string; heartbeat_elapsed_ms?: number; no_progress_elapsed_ms?: number; recommended_action: string }
+    expect(preview).toMatchObject({
+      watchdog_status: "needs_report",
+      recommended_action: "request_report",
+      latest_progress_id: "progress_heartbeat_fresh",
+      latest_progress_kind: "heartbeat",
+      heartbeat_elapsed_ms: 30_000,
+      no_progress_elapsed_ms: 20 * 60 * 1000,
+    })
     await server.shutdown()
   })
 

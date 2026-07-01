@@ -284,16 +284,17 @@ export class OpenCodeTimeoutWatchdogService {
     }
 
     const latestProgress = input.include_latest_progress === false || !sessionId ? null : await this.options.progressService.latest({ session_id: sessionId, launch_id: launch?.launch_id })
+    const latestSubstantiveProgress = input.include_latest_progress === false || !sessionId ? null : await this.latestNonHeartbeatProgress(sessionId, launch?.launch_id)
     const policy = session?.timeout_policy
     const maxWallTimeMs = clampMs(input.max_wall_time_ms, policy?.max_wall_time_ms ?? 30 * 60 * 1000, 1_000, 24 * 60 * 60 * 1000)
     const maxNoProgressMs = clampMs(input.max_no_progress_ms, policy?.max_no_progress_ms ?? 10 * 60 * 1000, 1_000, 24 * 60 * 60 * 1000)
     const heartbeatIntervalMs = clampMs(input.heartbeat_interval_ms, policy?.heartbeat_interval_ms ?? 60_000, 1_000, 60 * 60 * 1000)
     const launchStartedAt = launch && "started_at" in launch ? launch.started_at : undefined
     const wallClockElapsedMs = elapsed(nowMs, launchStartedAt)
-    const latestAt = latestProgress?.recorded_at
-    const latestElapsedMs = elapsed(nowMs, latestAt)
+    const latestElapsedMs = elapsed(nowMs, latestProgress?.recorded_at)
+    const latestSubstantiveElapsedMs = elapsed(nowMs, latestSubstantiveProgress?.recorded_at)
     const heartbeatElapsedMs = latestElapsedMs ?? wallClockElapsedMs
-    const noProgressElapsedMs = latestElapsedMs ?? wallClockElapsedMs
+    const noProgressElapsedMs = latestSubstantiveElapsedMs ?? wallClockElapsedMs
     const hasBlockers = (latestProgress?.blockers_preview?.length ?? 0) > 0 || latestProgress?.execution_state === "blocked" || latestProgress?.kind === "blocker"
     const hasQuestion = Boolean(latestProgress?.question_preview) || latestProgress?.execution_state === "needs_commander" || latestProgress?.kind === "question"
     const statusResult = computeWatchdogStatus({
@@ -314,6 +315,7 @@ export class OpenCodeTimeoutWatchdogService {
       launch_id: launch?.launch_id ?? launchId,
       watchdog_status: statusResult.status,
       latest_progress_id: latestProgress?.progress_id,
+      latest_substantive_progress_id: latestSubstantiveProgress?.progress_id,
       wall_clock_elapsed_ms: wallClockElapsedMs,
       no_progress_elapsed_ms: noProgressElapsedMs,
       heartbeat_elapsed_ms: heartbeatElapsedMs,
@@ -397,6 +399,21 @@ export class OpenCodeTimeoutWatchdogService {
       })
     }
     return [...records.values()]
+  }
+
+  private async latestNonHeartbeatProgress(sessionId: string, launchId: string | undefined): Promise<{ progress_id?: string; recorded_at?: string } | null> {
+    const events = await this.options.eventStore.readAll()
+    for (const event of [...events].reverse()) {
+      if (event.kind !== "opencode_session_progress_recorded") continue
+      if (event.progress_kind === "heartbeat") continue
+      if (event.session_id !== sessionId) continue
+      if (launchId && event.launch_id !== launchId) continue
+      return {
+        progress_id: typeof event.progress_id === "string" ? event.progress_id : undefined,
+        recorded_at: typeof event.recorded_at === "string" ? event.recorded_at : undefined,
+      }
+    }
+    return null
   }
 
   private async findForcedReportForEvidence(sessionId: string, launchId: string | undefined, latestProgressId: string | undefined): Promise<OpenCodeForcedReportRequest | null> {
