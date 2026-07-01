@@ -1594,6 +1594,90 @@ export type OpenCodeLaunchReadinessState = {
   commandError?: string
 }
 
+export type OpenCodeLaunchCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeLaunchPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_launch: boolean
+  launch_performed: false
+  adapter_kind: string
+  launch_mode: "fresh" | string
+  session_id: string
+  pack_id?: string
+  readiness_hash?: string
+  readiness_status?: string
+  packet_id?: string
+  packet_hash?: string
+  budget_id?: string
+  target_dir?: string
+  command_preview?: string
+  env_preview?: string
+  instruction_files: string[]
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeLaunchCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  launch_hash: string
+}
+
+export type OpenCodeLaunchResultSummary = {
+  launch_id: string
+  status: "dry_run" | "launched" | "launch_started" | "launch_failed" | "blocked" | string
+  adapter_kind: string
+  launch_mode: "fresh" | string
+  session_id: string
+  pack_id?: string
+  readiness_hash?: string
+  packet_id?: string
+  packet_hash?: string
+  budget_id?: string
+  target_dir?: string
+  process_id?: number
+  native_session_id?: string
+  command_preview?: string
+  started_at?: string
+  completed_at?: string
+  exit_code?: number
+  error?: string
+  launch_performed: boolean
+  output_summary_preview?: string
+  event_count?: number
+  launch_hash: string
+  recommended_commands: OpenCodeLaunchCommandSummary[]
+}
+
+export type OpenCodeLaunchRecordSummary = {
+  launch_id: string
+  status: string
+  adapter_kind: string
+  launch_mode: string
+  session_id: string
+  pack_id?: string
+  native_session_id?: string
+  process_id?: number
+  started_at: string
+  completed_at?: string
+  exit_code?: number
+  summary_preview: string
+  launch_hash: string
+}
+
+export type OpenCodeLaunchesState = {
+  preview?: OpenCodeLaunchPreviewSummary | null
+  latestResult?: OpenCodeLaunchResultSummary | null
+  records: OpenCodeLaunchRecordSummary[]
+  selected?: OpenCodeLaunchResultSummary | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -3972,6 +4056,7 @@ export type UiState = {
   contextPackets?: ContextPacketsState
   opencodeSessionInstructionPacks?: OpenCodeSessionInstructionPacksState
   opencodeLaunchReadiness?: OpenCodeLaunchReadinessState
+  opencodeLaunches?: OpenCodeLaunchesState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

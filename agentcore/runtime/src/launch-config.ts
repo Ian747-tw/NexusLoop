@@ -18,6 +18,7 @@ export function readRuntimeServerLaunchOptionsFromEnv(
   }
   if (!options.externalApiEnv) options.externalApiEnv = env
   if (!options.opencodeProcessSmokeEnv) options.opencodeProcessSmokeEnv = env
+  if (!options.opencodeLaunchEnv) options.opencodeLaunchEnv = env
   if (!options.reasoningProviderConfig) {
     const reasoningProviderConfig = readReasoningProviderConfigFromEnv(env)
     if (reasoningProviderConfig) options.reasoningProviderConfig = reasoningProviderConfig

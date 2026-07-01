@@ -413,7 +413,8 @@ function isSafeSessionId(value: string): boolean {
 
 function readinessStatus(blockers: string[], checks: OpenCodeLaunchReadinessCheck[]): OpenCodeLaunchReadinessStatus {
   if (blockers.length > 0 || checks.some((item) => item.status === "fail")) return "blocked"
-  if (checks.some((item) => item.status === "warn" || item.status === "unknown")) return "partial"
+  const advisoryOnly = new Set(["context_packet", "research_novelty", "native_config"])
+  if (checks.some((item) => (item.status === "warn" || item.status === "unknown") && !advisoryOnly.has(item.check_id))) return "partial"
   return "ready"
 }
 

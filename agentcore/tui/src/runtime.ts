@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -53,6 +53,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly opencodeProcessSmokes: OpenCodeProcessSmokeResultSummary[] = []
   private readonly opencodeSessions: OpenCodeSessionPlanSummary[] = []
   private readonly opencodeSessionInstructionPacks: OpenCodeSessionInstructionPackResultSummary[] = []
+  private readonly opencodeLaunches: OpenCodeLaunchResultSummary[] = []
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly executorReviewProposalCreates: ExecutorReviewProposalCreateResultSummary[] = []
   private readonly executorReviewProposalReviewRequests: ExecutorReviewProposalReviewRequestResultSummary[] = []
@@ -451,6 +452,14 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.previewOpenCodeLaunchReadiness(payload)
       case "runtime.opencode_launch_readiness_summary":
         return this.opencodeLaunchReadinessSummary(payload)
+      case "runtime.preview_opencode_session_launch":
+        return this.previewOpenCodeSessionLaunch(payload)
+      case "runtime.launch_opencode_session":
+        return this.launchOpenCodeSession(payload)
+      case "runtime.list_opencode_session_launches":
+        return this.listOpenCodeSessionLaunches(payload)
+      case "runtime.get_opencode_session_launch":
+        return this.getOpenCodeSessionLaunch(String(payload.launchId ?? payload.launch_id ?? ""))
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -2266,7 +2275,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     ]
     const allBlockers = [...blockers, ...checks.flatMap((item) => item.blockers)]
     const hash = createHash("sha256").update(`${sessionId ?? ""}:${pack?.pack_id ?? packId ?? ""}:${packet?.packet_id ?? ""}:${allBlockers.join("|")}`).digest("hex")
-    const status = allBlockers.length > 0 ? "blocked" : checks.some((item) => item.status === "warn" || item.status === "unknown") ? "partial" : "ready"
+    const status = allBlockers.length > 0 ? "blocked" : checks.some((item) => item.status === "unknown" || (item.status === "warn" && item.check_id !== "context_packet" && item.check_id !== "research_novelty" && item.check_id !== "native_config")) ? "partial" : "ready"
     return {
       preview_id: `fake-opencode-launch-readiness-${hash.slice(0, 12)}`,
       status,
@@ -2317,6 +2326,94 @@ export class FakeRuntimeClient implements RuntimeClient {
       partial_count: previews.filter((item) => item.status === "partial").length,
       generated_at: new Date(0).toISOString(),
     }
+  }
+
+  private previewOpenCodeSessionLaunch(payload: Record<string, unknown>): OpenCodeLaunchPreviewSummary {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const packId = optionalString(payload.packId ?? payload.pack_id ?? payload.pack)
+    const readiness = this.previewOpenCodeLaunchReadiness({ sessionId, packId })
+    const pack = readiness.pack_id ? this.opencodeSessionInstructionPacks.find((item) => item.pack_id === readiness.pack_id) : undefined
+    const blockers = [...readiness.blockers]
+    if (!sessionId) blockers.push("session_id is required")
+    if (readiness.status !== "ready") blockers.push(`OpenCode launch readiness must be ready; current status is ${readiness.status}`)
+    if (!pack) blockers.push("instruction pack is required before launch")
+    if (this.opencodeLaunches.some((item) => item.session_id === sessionId && (item.status === "launched" || item.status === "launch_started"))) blockers.push("OpenCode session already has an active launch record")
+    const hash = createHash("sha256").update(`${sessionId ?? ""}:${readiness.pack_id ?? ""}:${readiness.readiness_hash}:${blockers.join("|")}`).digest("hex")
+    return {
+      preview_id: `fake-opencode-launch-preview-${hash.slice(0, 12)}`,
+      status: blockers.length ? "blocked" : "ready",
+      can_launch: blockers.length === 0,
+      launch_performed: false,
+      adapter_kind: "fake",
+      launch_mode: "fresh",
+      session_id: sessionId ?? "",
+      pack_id: readiness.pack_id,
+      readiness_hash: readiness.readiness_hash,
+      readiness_status: readiness.status,
+      packet_id: readiness.packet_id,
+      packet_hash: pack?.packet_hash,
+      budget_id: readiness.budget_id,
+      target_dir: readiness.target_dir,
+      command_preview: pack ? `fake-opencode-launch ${pack.files.map((file) => file.relative_path).join(" ")}` : undefined,
+      env_preview: "fake adapter; no external process",
+      instruction_files: pack?.files.map((file) => file.relative_path) ?? [],
+      blockers: blockers.map(redactText),
+      warnings: ["preview does not launch OpenCode; non-dry launch is high-impact", ...readiness.warnings].map(redactText),
+      recommended_commands: [
+        { label: "Dry-run launch", command: sessionId ? `/opencode-launch-dry-run session=${sessionId}` : "/opencode-launch-dry-run session=<session_id>", command_type: "read" },
+        { label: "Launch OpenCode", command: sessionId ? `/opencode-launch session=${sessionId}` : "/opencode-launch session=<session_id>", command_type: "write", requires_active_runtime: true },
+        { label: "List launches", command: "/opencode-launches", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `OpenCode launch gate ready for ${sessionId}`,
+      launch_hash: hash,
+    }
+  }
+
+  private launchOpenCodeSession(payload: Record<string, unknown>): OpenCodeLaunchResultSummary {
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const previewResult = this.previewOpenCodeSessionLaunch(payload)
+    const launchId = `fake_launch_${previewResult.launch_hash.slice(0, 12)}`
+    const result: OpenCodeLaunchResultSummary = {
+      launch_id: launchId,
+      status: dryRun ? "dry_run" : previewResult.can_launch ? "launched" : "blocked",
+      adapter_kind: previewResult.adapter_kind,
+      launch_mode: "fresh",
+      session_id: previewResult.session_id,
+      pack_id: previewResult.pack_id,
+      readiness_hash: previewResult.readiness_hash,
+      packet_id: previewResult.packet_id,
+      packet_hash: previewResult.packet_hash,
+      budget_id: previewResult.budget_id,
+      target_dir: previewResult.target_dir,
+      process_id: dryRun || !previewResult.can_launch ? undefined : 0,
+      native_session_id: dryRun || !previewResult.can_launch ? undefined : `fake_native_${previewResult.session_id}`,
+      command_preview: previewResult.command_preview,
+      started_at: new Date(0).toISOString(),
+      completed_at: new Date(0).toISOString(),
+      error: previewResult.can_launch || dryRun ? undefined : previewResult.blockers[0] ?? "OpenCode launch is blocked",
+      launch_performed: false,
+      output_summary_preview: dryRun ? "dry-run requested; no OpenCode process launched and no events appended" : previewResult.can_launch ? "fake OpenCode launch recorded; no external process was started" : previewResult.redacted_summary_preview,
+      event_count: 0,
+      launch_hash: createHash("sha256").update(`${launchId}:${previewResult.launch_hash}:${dryRun}`).digest("hex"),
+      recommended_commands: previewResult.recommended_commands,
+    }
+    if (!dryRun && result.status === "launched" && !this.opencodeLaunches.some((item) => item.launch_id === result.launch_id)) this.opencodeLaunches.unshift(result)
+    return result
+  }
+
+  private listOpenCodeSessionLaunches(payload: Record<string, unknown>): OpenCodeLaunchRecordSummary[] {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const status = optionalString(payload.status)
+    return this.opencodeLaunches
+      .filter((item) => !sessionId || item.session_id === sessionId)
+      .filter((item) => !status || item.status === status)
+      .slice(0, readLimit(payload.limit, 20))
+      .map(recordFromOpenCodeLaunch)
+  }
+
+  private getOpenCodeSessionLaunch(id: string): OpenCodeLaunchResultSummary | null {
+    return this.opencodeLaunches.find((item) => item.launch_id === id) ?? null
   }
 
   private researchMemorySummary(): ResearchMemorySummaryState {
@@ -8276,6 +8373,45 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       notes: ["Read-only launch-readiness aggregate; it does not launch OpenCode or write files/events."],
       out: ["OpenCode launch", "provider calls", "MCP/online research", "file writes", "research.db writes", "mission/proposal/review/apply mutation"],
     }),
+    fakeCommandAuthorityRecord("/opencode-launch-preview", "runtime.preview_opencode_session_launch", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-launch-readiness", "/opencode-session-instruction-packs"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_launch_gate_tui.py"],
+      aliases: ["/launch-opencode-preview"],
+      notes: ["Read-only launch preview; no OpenCode process, provider call, MCP call, event append, progress supervision, or mission mutation."],
+      out: ["OpenCode process start", "provider calls", "MCP calls", "research.db writes", "progress polling", "timeout watchdog", "mission/proposal/review/apply mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-launch-dry-run", "runtime.launch_opencode_session", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-launch-preview", "/opencode-launch-readiness"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_launch_gate_tui.py"],
+      aliases: ["/launch-opencode-dry-run"],
+      notes: ["Dry-run launch verifies the high-impact launch gate without starting OpenCode or appending launch events."],
+      out: ["OpenCode process start", "provider calls", "MCP calls", "research.db writes", "progress polling", "timeout watchdog", "mission/proposal/review/apply mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-launch", "runtime.launch_opencode_session", "high_impact_write", "opencode_runtime", "opencode_handoff", {
+      mutates: true,
+      active: true,
+      lock: true,
+      blocked: true,
+      process: true,
+      events: ["opencode_session_launch_started", "opencode_session_launch_succeeded", "opencode_session_launch_failed"],
+      reads: ["/opencode-launch-readiness", "/opencode-session-instruction-packs", "/opencode-launches"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_launch_gate_tui.py"],
+      aliases: ["/launch-opencode", "/session-launch", "/opencode-session-launch"],
+      notes: ["First real OpenCode launch gate; requires 9C ready readiness, explicit opt-in for real external process launch, and records metadata only. NexusLoop does not call providers."],
+      out: ["progress supervision", "progress polling", "timeout watchdog", "Commander guidance", "OpenCode asks Commander", "wake supervision", "provider calls by NexusLoop", "MCP calls", "research.db writes", "mission/proposal/review/apply mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-launches", "runtime.list_opencode_session_launches", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-launch-show"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_launch_gate_tui.py"],
+      notes: ["Read-only launch metadata listing; it does not launch OpenCode or inspect progress."],
+      out: ["OpenCode launch", "provider calls", "progress polling", "timeout watchdog", "mission/proposal/review/apply mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-launch-show", "runtime.get_opencode_session_launch", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-launches"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_launch_gate_tui.py"],
+      notes: ["Read-only launch metadata inspection; no raw stdout/stderr/env/file contents are displayed."],
+      out: ["OpenCode launch", "provider calls", "raw stdout/stderr", "raw env", "progress polling", "mission/proposal/review/apply mutation"],
+    }),
     fakeCommandAuthorityRecord("/research-memory-summary", "runtime.research_memory_summary", "safe_read", "none", "research", {
       targeted: ["tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"],
       notes: ["Read-only research memory summary; no provider calls, no MCP/online research, no research.db writes, no mission/proposal creation, no OpenCode launch."],
@@ -8643,6 +8779,24 @@ function fakeLaunchReadinessCheck(checkId: string, label: string, status: string
     blockers: blockers.map(redactText),
     warnings: warnings.map(redactText),
     source_refs: [],
+  }
+}
+
+function recordFromOpenCodeLaunch(item: OpenCodeLaunchResultSummary): OpenCodeLaunchRecordSummary {
+  return {
+    launch_id: item.launch_id,
+    status: item.status,
+    adapter_kind: item.adapter_kind,
+    launch_mode: item.launch_mode,
+    session_id: item.session_id,
+    pack_id: item.pack_id,
+    native_session_id: item.native_session_id,
+    process_id: item.process_id,
+    started_at: item.started_at ?? new Date(0).toISOString(),
+    completed_at: item.completed_at,
+    exit_code: item.exit_code,
+    summary_preview: item.error ?? item.output_summary_preview ?? item.status,
+    launch_hash: item.launch_hash,
   }
 }
 

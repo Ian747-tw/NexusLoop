@@ -195,6 +195,10 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "runtime.write_opencode_session_instruction_pack") return opencodeSessionInstructionPackResult(payload, payload?.dry_run === true || payload?.dryRun === true ? "dry_run" : "blocked")
     if (name === "runtime.list_opencode_session_instruction_packs") return []
     if (name === "runtime.get_opencode_session_instruction_pack") return null
+    if (name === "runtime.preview_opencode_session_launch") return opencodeSessionLaunchPreview(payload)
+    if (name === "runtime.launch_opencode_session") return opencodeSessionLaunchResult(payload, payload?.dry_run === true || payload?.dryRun === true ? "dry_run" : "blocked")
+    if (name === "runtime.list_opencode_session_launches") return []
+    if (name === "runtime.get_opencode_session_launch") return null
     if (name === "runtime.command_authority_get") {
       return {
         authority_id: "authority_opencode_smoke",
@@ -345,6 +349,60 @@ function opencodeSessionInstructionPackResult(payload: Record<string, unknown> |
     written_by: "operator",
     error: status === "blocked" ? "planned OpenCode session was not found" : undefined,
     pack_hash: "hash-pack",
+    recommended_commands: [],
+  }
+}
+
+function opencodeSessionLaunchPreview(payload: Record<string, unknown> | undefined) {
+  const sessionId = String(payload?.session_id ?? payload?.sessionId ?? "missing-session")
+  return {
+    preview_id: "launch_preview_test",
+    status: "blocked",
+    can_launch: false,
+    launch_performed: false,
+    adapter_kind: "fake",
+    launch_mode: "fresh",
+    session_id: sessionId,
+    pack_id: typeof payload?.pack_id === "string" ? payload.pack_id : typeof payload?.packId === "string" ? payload.packId : undefined,
+    readiness_hash: "readiness-hash",
+    readiness_status: "blocked",
+    packet_id: "packet-preview-test",
+    packet_hash: "hash",
+    budget_id: "budget-test",
+    target_dir: `.nxl/opencode/sessions/${sessionId}`,
+    command_preview: "fake opencode launch",
+    instruction_files: ["TASK.md", "CONTEXT.md", "POLICY.md", "MANIFEST.json"],
+    blockers: ["OpenCode launch readiness must be ready; current status is blocked"],
+    warnings: [],
+    recommended_commands: [],
+    generated_at: "2026-06-20T00:00:00.000Z",
+    redacted_summary_preview: "launch preview blocked",
+    launch_hash: "hash-launch-preview",
+  }
+}
+
+function opencodeSessionLaunchResult(payload: Record<string, unknown> | undefined, status: "dry_run" | "blocked") {
+  const preview = opencodeSessionLaunchPreview(payload)
+  return {
+    launch_id: "launch_test",
+    status,
+    adapter_kind: preview.adapter_kind,
+    launch_mode: "fresh",
+    session_id: preview.session_id,
+    pack_id: preview.pack_id,
+    readiness_hash: preview.readiness_hash,
+    packet_id: preview.packet_id,
+    packet_hash: preview.packet_hash,
+    budget_id: preview.budget_id,
+    target_dir: preview.target_dir,
+    command_preview: preview.command_preview,
+    started_at: status === "dry_run" ? undefined : "2026-06-20T00:00:00.000Z",
+    completed_at: "2026-06-20T00:00:00.000Z",
+    error: status === "blocked" ? "OpenCode launch readiness must be ready; current status is blocked" : undefined,
+    launch_performed: false,
+    output_summary_preview: "dry-run launch metadata only",
+    event_count: 0,
+    launch_hash: "hash-launch",
     recommended_commands: [],
   }
 }
@@ -1093,6 +1151,41 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.write_opencode_session_instruction_pack")
     expect(runtime.commandNames).toContain("runtime.list_opencode_session_instruction_packs")
     expect(runtime.commandNames).toContain("runtime.get_opencode_session_instruction_pack")
+    expect(runtime.commandNames).not.toContain("runtime.resume")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless OpenCode launch gate scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/opencode-launch-preview session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/launch-opencode-dry-run session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-launch session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-launches" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-launch-show missing-launch" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-opencode-launch-gate-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("OpenCode launches")
+    expect(runtime.commandNames).toContain("runtime.preview_opencode_session_launch")
+    expect(runtime.commandNames).toContain("runtime.launch_opencode_session")
+    expect(runtime.commandNames).toContain("runtime.list_opencode_session_launches")
+    expect(runtime.commandNames).toContain("runtime.get_opencode_session_launch")
     expect(runtime.commandNames).not.toContain("runtime.resume")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")

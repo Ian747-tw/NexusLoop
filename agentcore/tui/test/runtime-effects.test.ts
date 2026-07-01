@@ -5196,6 +5196,82 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
 
+  test("OpenCode launch gate slash commands preview dry-run fake launch and block duplicates", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch-preview", args: [] })
+    expect(state.runtimeCommandError).toContain("requires session")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=launch", "gate", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch-preview", args: [`session=${sessionId}`] })
+    expect(state.opencodeLaunches?.preview).toMatchObject({ status: "blocked", session_id: sessionId, launch_performed: false })
+    expect(state.opencodeLaunches?.commandError).toContain("instruction pack is required")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    const packId = state.opencodeSessionInstructionPacks?.latestResult?.pack_id
+    expect(packId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "launch-opencode-preview", args: [`session=${sessionId}`, `pack=${packId}`] })
+    expect(state.opencodeLaunches?.preview).toMatchObject({
+      status: "ready",
+      can_launch: true,
+      session_id: sessionId,
+      pack_id: packId,
+      adapter_kind: "fake",
+      launch_performed: false,
+    })
+    expect(state.opencodeLaunches?.preview?.instruction_files).toEqual(expect.arrayContaining(["TASK.md", "CONTEXT.md", "POLICY.md", "MANIFEST.json"]))
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch-dry-run", args: [`session=${sessionId}`, `pack=${packId}`] })
+    expect(state.opencodeLaunches?.latestResult).toMatchObject({ status: "dry_run", session_id: sessionId, launch_performed: false })
+    expect(state.opencodeLaunches?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`, `pack=${packId}`] })
+    const launchId = state.opencodeLaunches?.latestResult?.launch_id
+    expect(launchId).toBeTruthy()
+    expect(state.opencodeLaunches?.latestResult).toMatchObject({ status: "launched", session_id: sessionId, adapter_kind: "fake", launch_performed: false })
+    expect(state.opencodeLaunches?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`, `pack=${packId}`] })
+    expect(state.opencodeLaunches?.latestResult?.status).toBe("blocked")
+    expect(state.opencodeLaunches?.commandError).toContain("already has an active launch record")
+    expect(state.opencodeLaunches?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launches", args: [] })
+    expect(state.opencodeLaunches?.records.map((record) => record.launch_id)).toContain(launchId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch-show", args: [launchId!] })
+    expect(state.opencodeLaunches?.selected?.launch_id).toBe(launchId)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/opencode-launch session=missing-session-does-not-exist-999999"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged", args: [] })
+    expect(state.operatorActions?.lastResult?.ok).toBe(false)
+    expect(state.operatorActions?.commandError).toContain("planned OpenCode session was not found")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-launch"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/opencode-launch",
+      risk: "high_impact_write",
+      creates_external_process: true,
+      calls_provider: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("First real OpenCode launch gate")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode launches")
+    expect(snapshot).toContain("preview/dry-run do not launch")
+    expect(snapshot).toContain("9D does not supervise progress")
+    expect(snapshot).toContain("selected=/opencode-launch risk=high_impact_write")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")
