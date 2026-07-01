@@ -59,16 +59,6 @@ export class OpenCodeLaunchGateService {
     const built = await this.buildPreview(input)
     const preview = built.preview
     const launchId = this.idFactory()
-    if (input.dry_run === true) {
-      return resultFromPreview(preview, {
-        launch_id: launchId,
-        status: "dry_run",
-        launch_performed: false,
-        started_at: startedAt,
-        completed_at: startedAt,
-        output_summary_preview: "dry-run requested; no OpenCode process launched and no events appended",
-      })
-    }
     if (!preview.can_launch || !built.readiness) {
       return resultFromPreview(preview, {
         launch_id: launchId,
@@ -77,6 +67,16 @@ export class OpenCodeLaunchGateService {
         started_at: startedAt,
         completed_at: startedAt,
         error: preview.blockers[0] ?? "OpenCode launch is blocked",
+      })
+    }
+    if (input.dry_run === true) {
+      return resultFromPreview(preview, {
+        launch_id: launchId,
+        status: "dry_run",
+        launch_performed: false,
+        started_at: startedAt,
+        completed_at: startedAt,
+        output_summary_preview: "dry-run requested; no OpenCode process launched and no events appended",
       })
     }
     if (preview.adapter_kind !== "fake" && this.env.NXL_REAL_OPENCODE_LAUNCH !== "1") {
@@ -173,7 +173,7 @@ export class OpenCodeLaunchGateService {
   async get(launchId: string): Promise<OpenCodeLaunchResult | null> {
     const events = await this.options.eventStore.readAll()
     const event = events
-      .filter((item) => item.kind === "opencode_session_launch_succeeded" || item.kind === "opencode_session_launch_failed")
+      .filter(isLaunchRecordEvent)
       .reverse()
       .find((item) => item.launch_id === launchId)
     return event ? resultFromEvent(event) : null
@@ -266,10 +266,13 @@ export class OpenCodeLaunchGateService {
 
   private async records(): Promise<OpenCodeLaunchRecord[]> {
     const events = await this.options.eventStore.readAll()
-    return events
-      .filter((event) => event.kind === "opencode_session_launch_succeeded" || event.kind === "opencode_session_launch_failed")
-      .map(recordFromEvent)
-      .filter((record): record is OpenCodeLaunchRecord => record !== null)
+    const records = new Map<string, OpenCodeLaunchRecord>()
+    for (const event of events) {
+      if (!isLaunchRecordEvent(event)) continue
+      const record = recordFromEvent(event)
+      if (record) records.set(record.launch_id, record)
+    }
+    return [...records.values()]
   }
 
   private serializeLaunch<T>(operation: () => Promise<T>): Promise<T> {
@@ -348,7 +351,7 @@ function eventPayload(preview: OpenCodeLaunchPreview, payload: Record<string, un
 
 function recordFromEvent(event: JsonlEvent): OpenCodeLaunchRecord | null {
   if (typeof event.launch_id !== "string" || typeof event.session_id !== "string") return null
-  const status = readResultStatus(event.status, event.kind === "opencode_session_launch_failed" ? "launch_failed" : "launched")
+  const status = readResultStatus(event.status, fallbackStatusForLaunchEvent(event))
   const adapterKind = readAdapterKind(event.adapter_kind)
   return redactValue({
     launch_id: event.launch_id,
@@ -368,7 +371,7 @@ function recordFromEvent(event: JsonlEvent): OpenCodeLaunchRecord | null {
 }
 
 function resultFromEvent(event: JsonlEvent): OpenCodeLaunchResult {
-  const status = readResultStatus(event.status, event.kind === "opencode_session_launch_failed" ? "launch_failed" : "launched")
+  const status = readResultStatus(event.status, fallbackStatusForLaunchEvent(event))
   const adapterKind = readAdapterKind(event.adapter_kind)
   return redactValue({
     launch_id: String(event.launch_id ?? ""),
@@ -395,6 +398,16 @@ function resultFromEvent(event: JsonlEvent): OpenCodeLaunchResult {
     launch_hash: typeof event.launch_hash === "string" ? event.launch_hash : hash(stableJson(event)),
     recommended_commands: recommendedCommands(String(event.session_id ?? "<session_id>"), typeof event.pack_id === "string" ? event.pack_id : undefined),
   })
+}
+
+function isLaunchRecordEvent(event: JsonlEvent): boolean {
+  return event.kind === "opencode_session_launch_started" || event.kind === "opencode_session_launch_succeeded" || event.kind === "opencode_session_launch_failed"
+}
+
+function fallbackStatusForLaunchEvent(event: JsonlEvent): OpenCodeLaunchResult["status"] {
+  if (event.kind === "opencode_session_launch_failed") return "launch_failed"
+  if (event.kind === "opencode_session_launch_started") return "launch_started"
+  return "launched"
 }
 
 function readResultStatus(value: unknown, fallback: OpenCodeLaunchResult["status"]): OpenCodeLaunchResult["status"] {

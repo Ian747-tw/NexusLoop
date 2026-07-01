@@ -67,8 +67,13 @@ export class ProcessOpenCodeLaunchAdapter implements OpenCodeLaunchAdapter {
     return [
       ...this.args,
       ...input.instruction_files.flatMap((file) => ["--file", input.target_dir ? join(input.target_dir, file) : file]),
+      launchMessage(),
     ]
   }
+}
+
+function launchMessage(): string {
+  return "Run the NexusLoop OpenCode session using the attached instruction-pack files. Read TASK.md, CONTEXT.md, GUIDANCE.md, SESSION_MEMORY.md, POLICY.md, and MANIFEST.json before making changes."
 }
 
 function defaultSpawn(command: string, args: string[], options: { cwd: string; env?: Record<string, string> }): OpenCodeSpawnedProcess {

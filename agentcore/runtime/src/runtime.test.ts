@@ -17767,8 +17767,26 @@ describe("OpenCode launch readiness", () => {
     const duplicate = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; error?: string }
     expect(duplicate.status).toBe("blocked")
     expect(duplicate.error).toBe("OpenCode session already has an active launch record")
+
+    const orphanSession = await server.command("runtime.create_opencode_session_plan", { objective: "orphan started launch duplicate" }) as { session_id: string }
+    const orphanPack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: orphanSession.session_id, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    await server.eventStore.append({
+      kind: "opencode_session_launch_started",
+      launch_id: "launch_orphan_started",
+      status: "launch_started",
+      session_id: orphanSession.session_id,
+      adapter_kind: "process_adapter",
+      launch_mode: "fresh",
+      started_at: "2026-01-01T00:00:00.000Z",
+      launch_hash: "hash_orphan_started",
+    })
+    const orphanStarted = await server.command("runtime.list_opencode_session_launches", { sessionId: orphanSession.session_id }) as Array<{ status: string; launch_id: string }>
+    expect(orphanStarted).toEqual([expect.objectContaining({ launch_id: "launch_orphan_started", status: "launch_started" })])
+    const startedDuplicate = await server.command("runtime.launch_opencode_session", { sessionId: orphanSession.session_id, packId: orphanPack.pack_id, providerKind: "local", modelId: "local-medium" }) as { status: string; error?: string }
+    expect(startedDuplicate.status).toBe("blocked")
+    expect(startedDuplicate.error).toBe("OpenCode session already has an active launch record")
     const launchEvents = (await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("opencode_session_launch_"))
-    expect(launchEvents.map((event) => event.kind)).toEqual(["opencode_session_launch_started", "opencode_session_launch_succeeded"])
+    expect(launchEvents.map((event) => event.kind)).toEqual(["opencode_session_launch_started", "opencode_session_launch_succeeded", "opencode_session_launch_started"])
     await server.shutdown()
   })
 
@@ -17842,6 +17860,7 @@ describe("OpenCode launch readiness", () => {
     })
     expect(preview.command_preview).toContain("--file .nxl/opencode/sessions/session_launch/TASK.md")
     expect(preview.command_preview).toContain("--file .nxl/opencode/sessions/session_launch/CONTEXT.md")
+    expect(preview.command_preview).toContain("Run the NexusLoop OpenCode session")
     expect(preview.command_preview).not.toContain("-- .nxl/opencode/sessions/session_launch/TASK.md")
 
     await expect(adapter.launch({
@@ -17859,6 +17878,7 @@ describe("OpenCode launch readiness", () => {
       ".nxl/opencode/sessions/session_launch/TASK.md",
       "--file",
       ".nxl/opencode/sessions/session_launch/CONTEXT.md",
+      "Run the NexusLoop OpenCode session using the attached instruction-pack files. Read TASK.md, CONTEXT.md, GUIDANCE.md, SESSION_MEMORY.md, POLICY.md, and MANIFEST.json before making changes.",
     ]])
   })
 
@@ -17870,7 +17890,7 @@ describe("OpenCode launch readiness", () => {
     const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
 
     await expect(client.command("runtime.preview_opencode_session_launch", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
-    await expect(client.command("runtime.launch_opencode_session", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "dry_run", launch_performed: false })
+    await expect(client.command("runtime.launch_opencode_session", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked", launch_performed: false })
     await expect(client.command("runtime.list_opencode_session_launches")).resolves.toEqual([])
     await expect(client.command("runtime.get_opencode_session_launch", { launchId: "missing" })).resolves.toBeNull()
     expect(adapter.startCalls).toBe(0)
