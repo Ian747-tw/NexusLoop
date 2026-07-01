@@ -41,6 +41,11 @@ type BuiltProgressPreview = {
   launch?: OpenCodeLaunchResult | OpenCodeLaunchRecord | null
 }
 
+type SequencedProgressRecord = {
+  record: OpenCodeProgressRecord
+  event_index: number
+}
+
 export class OpenCodeProgressService {
   private readonly now: () => Date
   private readonly idFactory: () => string
@@ -99,12 +104,13 @@ export class OpenCodeProgressService {
 
   async list(input: { limit?: number; session_id?: string; launch_id?: string; kind?: string; execution_state?: string } = {}): Promise<OpenCodeProgressRecord[]> {
     const limit = Math.max(1, Math.min(input.limit ?? 20, MAX_LIST))
-    return (await this.records())
-      .filter((record) => !input.session_id || record.session_id === input.session_id)
-      .filter((record) => !input.launch_id || record.launch_id === input.launch_id)
-      .filter((record) => !input.kind || record.kind === input.kind)
-      .filter((record) => !input.execution_state || record.execution_state === input.execution_state)
-      .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))
+    return (await this.sequencedRecords())
+      .filter((item) => !input.session_id || item.record.session_id === input.session_id)
+      .filter((item) => !input.launch_id || item.record.launch_id === input.launch_id)
+      .filter((item) => !input.kind || item.record.kind === input.kind)
+      .filter((item) => !input.execution_state || item.record.execution_state === input.execution_state)
+      .sort(compareSequencedProgressRecords)
+      .map((item) => item.record)
       .slice(0, limit)
   }
 
@@ -122,13 +128,15 @@ export class OpenCodeProgressService {
   }
 
   async summary(input: { limit?: number } = {}): Promise<OpenCodeProgressSummary> {
-    const records = await this.records()
-    const latest = new Map<string, OpenCodeProgressRecord>()
-    for (const record of records.sort((left, right) => left.recorded_at.localeCompare(right.recorded_at))) {
-      latest.set(record.session_id, record)
+    const sequenced = await this.sequencedRecords()
+    const records = sequenced.map((item) => item.record)
+    const latest = new Map<string, SequencedProgressRecord>()
+    for (const item of [...sequenced].sort(compareSequencedProgressRecordsAscending)) {
+      latest.set(item.record.session_id, item)
     }
     const latestRecords = [...latest.values()]
-      .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))
+      .sort(compareSequencedProgressRecords)
+      .map((item) => item.record)
       .slice(0, Math.max(1, Math.min(input.limit ?? 10, MAX_LIST)))
     return redactValue({
       total_records: records.length,
@@ -167,7 +175,7 @@ export class OpenCodeProgressService {
       if (!session) blockers.push("session_id does not resolve to a planned OpenCode session")
     }
     if (!launch && sessionId) {
-      const launches = await this.options.launchGateService.list({ session_id: sessionId, limit: 100 })
+      const launches = await this.resolveLaunchesForSession(sessionId)
       launch = launches.find((record) => NORMAL_LAUNCH_STATUSES.has(record.status)) ?? launches[0] ?? null
       if (!launch) blockers.push("OpenCode progress requires a launch record for the session")
     }
@@ -195,7 +203,7 @@ export class OpenCodeProgressService {
     if ((kind === "heartbeat" || kind === "progress" || kind === "blocker") && !summary) blockers.push("report_summary is required for heartbeat, progress, and blocker records")
     if (kind === "question" && !question) blockers.push("question is required for question records")
     if (kind === "blocker" && blockersPreview.length === 0) blockers.push("blocker metadata is required for blocker records")
-    if (looksLikeRawLog(input.report_summary) || looksLikeRawLog(input.current_step) || (input.commands_run ?? []).some(looksLikeRawLog)) {
+    if (progressInputLooksLikeRawLog(input)) {
       blockers.push("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
     }
     const progressHash = hash(stableJson({
@@ -250,7 +258,25 @@ export class OpenCodeProgressService {
   }
 
   private async records(): Promise<OpenCodeProgressRecord[]> {
-    return (await this.options.eventStore.readAll()).filter(isProgressEvent).map(recordFromEvent).filter((record): record is OpenCodeProgressRecord => !!record)
+    return (await this.sequencedRecords()).map((item) => item.record)
+  }
+
+  private async sequencedRecords(): Promise<SequencedProgressRecord[]> {
+    return (await this.options.eventStore.readAll())
+      .map((event, event_index) => ({ event, event_index }))
+      .filter((item) => isProgressEvent(item.event))
+      .map((item) => ({ record: recordFromEvent(item.event), event_index: item.event_index }))
+      .filter((item): item is SequencedProgressRecord => !!item.record)
+  }
+
+  private async resolveLaunchesForSession(sessionId: string): Promise<Array<OpenCodeLaunchResult | OpenCodeLaunchRecord>> {
+    const records = await this.options.launchGateService.list({ session_id: sessionId, limit: 100 })
+    const resolved = new Map<string, OpenCodeLaunchResult | OpenCodeLaunchRecord>()
+    for (const record of records) {
+      const latest = await this.options.launchGateService.get(record.launch_id)
+      resolved.set(record.launch_id, latest ?? record)
+    }
+    return [...resolved.values()].sort(compareLaunchRecords)
   }
 }
 
@@ -462,6 +488,36 @@ function looksLikeRawLog(value: unknown): boolean {
   if (typeof value !== "string") return false
   if (value.length > 2_000) return true
   return RAW_LOG_PATTERNS.some((pattern) => pattern.test(value))
+}
+
+function progressInputLooksLikeRawLog(input: OpenCodeProgressPreviewInput): boolean {
+  return [
+    input.report_summary,
+    input.current_step,
+    input.question,
+    input.next_action,
+    ...(input.files_touched ?? []),
+    ...(input.commands_run ?? []),
+    ...(input.tests_run ?? []),
+    ...(input.artifacts ?? []),
+    ...(input.blockers ?? []),
+  ].some(looksLikeRawLog)
+}
+
+function compareSequencedProgressRecords(left: SequencedProgressRecord, right: SequencedProgressRecord): number {
+  const time = right.record.recorded_at.localeCompare(left.record.recorded_at)
+  return time || right.event_index - left.event_index
+}
+
+function compareSequencedProgressRecordsAscending(left: SequencedProgressRecord, right: SequencedProgressRecord): number {
+  const time = left.record.recorded_at.localeCompare(right.record.recorded_at)
+  return time || left.event_index - right.event_index
+}
+
+function compareLaunchRecords(left: OpenCodeLaunchResult | OpenCodeLaunchRecord, right: OpenCodeLaunchResult | OpenCodeLaunchRecord): number {
+  const rightTime = "completed_at" in right && right.completed_at ? right.completed_at : right.started_at ?? ""
+  const leftTime = "completed_at" in left && left.completed_at ? left.completed_at : left.started_at ?? ""
+  return rightTime.localeCompare(leftTime)
 }
 
 function unique(values: string[]): string[] {

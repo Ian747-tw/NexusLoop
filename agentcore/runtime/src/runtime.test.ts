@@ -17786,25 +17786,41 @@ describe("OpenCode launch readiness", () => {
     const summary = await server.command("runtime.opencode_progress_summary") as { total_records: number; heartbeat_count: number; blocked_count: number; question_count: number }
     expect(summary).toMatchObject({ total_records: 4, heartbeat_count: 1, blocked_count: 1, question_count: 1 })
 
-    const rawLog = await server.command("runtime.preview_opencode_progress", { sessionId, summary: `stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[] }
-    expect(rawLog.status).toBe("blocked")
-    expect(rawLog.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
-    await server.shutdown()
-  })
+	    const rawLog = await server.command("runtime.preview_opencode_progress", { sessionId, summary: `stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[] }
+	    expect(rawLog.status).toBe("blocked")
+	    expect(rawLog.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
+	    const rawLogBlocker = await server.command("runtime.preview_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: [`stderr\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}`] }) as { status: string; blockers: string[] }
+	    expect(rawLogBlocker.status).toBe("blocked")
+	    expect(rawLogBlocker.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
+	    const rawLogQuestion = await server.command("runtime.preview_opencode_progress", { sessionId, kind: "question", question: `traceback\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[] }
+	    expect(rawLogQuestion.status).toBe("blocked")
+	    expect(rawLogQuestion.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
+	    await server.shutdown()
+	  })
 
-  test("opencode progress validates launch status and runtime client no-start commands", async () => {
+	  test("opencode progress validates launch status and runtime client no-start commands", async () => {
     const dir = await tempProject()
     const { server, sessionId } = await readyLaunchFixture(dir)
     const missing = await server.command("runtime.preview_opencode_progress", { sessionId: "missing", summary: "missing" }) as { status: string; blockers: string[] }
     expect(missing.status).toBe("blocked")
     expect(missing.blockers).toContain("session_id does not resolve to a planned OpenCode session")
-    const unlaunched = await server.command("runtime.preview_opencode_progress", { sessionId, summary: "not launched" }) as { status: string; blockers: string[] }
-    expect(unlaunched.status).toBe("blocked")
-    expect(unlaunched.blockers).toContain("OpenCode progress requires a launch record for the session")
-    await server.eventStore.append({
-      kind: "opencode_session_launch_failed",
-      launch_id: "launch_failed_progress",
-      status: "launch_failed",
+	    const unlaunched = await server.command("runtime.preview_opencode_progress", { sessionId, summary: "not launched" }) as { status: string; blockers: string[] }
+	    expect(unlaunched.status).toBe("blocked")
+	    expect(unlaunched.blockers).toContain("OpenCode progress requires a launch record for the session")
+	    await server.eventStore.append({
+	      kind: "opencode_session_launch_started",
+	      launch_id: "launch_failed_progress",
+	      status: "launch_started",
+	      session_id: sessionId,
+	      adapter_kind: "fake",
+	      launch_mode: "fresh",
+	      started_at: "2026-01-01T00:00:00.000Z",
+	      launch_hash: "started_hash",
+	    })
+	    await server.eventStore.append({
+	      kind: "opencode_session_launch_failed",
+	      launch_id: "launch_failed_progress",
+	      status: "launch_failed",
       session_id: sessionId,
       adapter_kind: "fake",
       launch_mode: "fresh",
@@ -17814,9 +17830,9 @@ describe("OpenCode launch readiness", () => {
     const normal = await server.command("runtime.preview_opencode_progress", { launchId: "launch_failed_progress", summary: "normal progress" }) as { status: string; blockers: string[] }
     expect(normal.status).toBe("blocked")
     expect(normal.blockers).toContain("launch_failed records only allow failure_report progress metadata")
-    const failure = await server.command("runtime.preview_opencode_progress", { launchId: "launch_failed_progress", kind: "failure_report", summary: "failed before work" }) as { status: string; can_record: boolean }
-    expect(failure).toMatchObject({ status: "ready", can_record: true })
-    await server.shutdown()
+	    const failure = await server.command("runtime.preview_opencode_progress", { launchId: "launch_failed_progress", kind: "failure_report", summary: "failed before work" }) as { status: string; can_record: boolean }
+	    expect(failure).toMatchObject({ status: "ready", can_record: true })
+	    await server.shutdown()
 
     const noStartDir = await tempProject()
     await makeProject(noStartDir, { approvedSpec: true })
@@ -17830,10 +17846,48 @@ describe("OpenCode launch readiness", () => {
     await expect(client.command("runtime.latest_opencode_progress", { sessionId: "missing" })).resolves.toBeNull()
     await expect(client.command("runtime.opencode_progress_summary")).resolves.toMatchObject({ total_records: 0 })
     expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
-    await client.shutdown?.()
-  })
+	    await client.shutdown?.()
+	  })
 
-  test("launch gate blocks missing readiness stale hashes real opt-in and duplicate launches", async () => {
+	  test("opencode progress latest breaks same-timestamp ties by durable event order", async () => {
+	    const dir = await tempProject()
+	    const { server, sessionId } = await readyLaunchFixture(dir)
+	    await server.eventStore.append({
+	      kind: "opencode_session_progress_recorded",
+	      progress_id: "progress_tie_old",
+	      session_id: sessionId,
+	      launch_id: "launch_tie",
+	      progress_kind: "heartbeat",
+	      execution_state: "running",
+	      report_summary_preview: "old heartbeat",
+	      recorded_at: "2026-01-01T00:00:00.000Z",
+	      recorded_by: "test",
+	      source_kind: "manual",
+	      progress_hash: "old_hash",
+	    })
+	    await server.eventStore.append({
+	      kind: "opencode_session_progress_recorded",
+	      progress_id: "progress_tie_new",
+	      session_id: sessionId,
+	      launch_id: "launch_tie",
+	      progress_kind: "progress",
+	      execution_state: "working",
+	      report_summary_preview: "new progress",
+	      recorded_at: "2026-01-01T00:00:00.000Z",
+	      recorded_by: "test",
+	      source_kind: "manual",
+	      progress_hash: "new_hash",
+	    })
+	    const list = await server.command("runtime.list_opencode_progress", { sessionId, limit: 2 }) as Array<{ progress_id: string; kind: string }>
+	    expect(list.map((item) => item.progress_id)).toEqual(["progress_tie_new", "progress_tie_old"])
+	    const latest = await server.command("runtime.latest_opencode_progress", { sessionId }) as { progress_id: string; kind: string }
+	    expect(latest).toMatchObject({ progress_id: "progress_tie_new", kind: "progress" })
+	    const summary = await server.command("runtime.opencode_progress_summary") as { latest_records: Array<{ progress_id: string }> }
+	    expect(summary.latest_records[0]).toMatchObject({ progress_id: "progress_tie_new" })
+	    await server.shutdown()
+	  })
+
+	  test("launch gate blocks missing readiness stale hashes real opt-in and duplicate launches", async () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)
 
