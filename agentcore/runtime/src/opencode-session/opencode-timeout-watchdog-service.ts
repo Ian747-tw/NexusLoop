@@ -218,9 +218,10 @@ export class OpenCodeTimeoutWatchdogService {
 
   async summary(input: { limit?: number } = {}): Promise<OpenCodeWatchdogSummary> {
     const launches = await this.allLaunchRecords()
-    const latestBySession = new Map<string, OpenCodeWatchdogRecord>()
-    for (const { record } of [...await this.recordEntries()].sort(compareRecordEntriesAsc)) latestBySession.set(record.session_id, record)
-    const records = [...latestBySession.values()]
+    const latestBySession = new Map<string, { record: OpenCodeWatchdogRecord; index: number }>()
+    for (const entry of [...await this.recordEntries()].sort(compareRecordEntriesAsc)) latestBySession.set(entry.record.session_id, entry)
+    const entries = [...latestBySession.values()]
+    const records = entries.map(({ record }) => record)
     return redactValue({
       total_launched_sessions: new Set(launches.filter((launch) => LAUNCHED_STATUSES.has(launch.status)).map((launch) => launch.session_id)).size,
       healthy_count: records.filter((record) => record.watchdog_status === "healthy").length,
@@ -228,7 +229,7 @@ export class OpenCodeTimeoutWatchdogService {
       timed_out_count: records.filter((record) => record.watchdog_status === "timed_out").length,
       needs_report_count: records.filter((record) => record.watchdog_status === "needs_report").length,
       blocked_count: records.filter((record) => record.watchdog_status === "blocked").length,
-      latest_records: records.sort((left, right) => right.recorded_at.localeCompare(left.recorded_at)).slice(0, Math.max(1, Math.min(input.limit ?? 10, MAX_LIST))),
+      latest_records: entries.sort(compareRecordEntriesDesc).map(({ record }) => record).slice(0, Math.max(1, Math.min(input.limit ?? 10, MAX_LIST))),
       generated_at: this.now().toISOString(),
     })
   }

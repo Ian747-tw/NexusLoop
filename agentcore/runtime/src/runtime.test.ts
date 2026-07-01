@@ -18109,6 +18109,46 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
+  test("opencode watchdog summary breaks same-timestamp latest records across sessions by append order", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+    })
+    await server.start()
+    const recordedAt = "2026-01-01T00:00:00.000Z"
+    await server.eventStore.append({
+      kind: "opencode_session_watchdog_recorded",
+      watchdog_id: "watchdog_cross_old",
+      session_id: "session_cross_old",
+      launch_id: "launch_cross_old",
+      watchdog_status: "healthy",
+      recommended_action: "none",
+      report_required: false,
+      recorded_at: recordedAt,
+      recorded_by: "test",
+      watchdog_hash: "watchdog_cross_old_hash",
+    })
+    await server.eventStore.append({
+      kind: "opencode_session_watchdog_recorded",
+      watchdog_id: "watchdog_cross_new",
+      session_id: "session_cross_new",
+      launch_id: "launch_cross_new",
+      watchdog_status: "blocked",
+      recommended_action: "escalate_to_commander",
+      report_required: true,
+      recorded_at: recordedAt,
+      recorded_by: "test",
+      watchdog_hash: "watchdog_cross_new_hash",
+    })
+
+    const summary = await server.command("runtime.opencode_watchdog_summary", { limit: 2 }) as { latest_records: Array<{ watchdog_id: string }> }
+    expect(summary.latest_records.map((record) => record.watchdog_id)).toEqual(["watchdog_cross_new", "watchdog_cross_old"])
+    await server.shutdown()
+  })
+
   test("opencode watchdog show preserves forced-report linkage created during record", async () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)
