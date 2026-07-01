@@ -17948,6 +17948,14 @@ describe("OpenCode launch readiness", () => {
     const dryRunRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "dry run report", dryRun: true }) as { request_id: string; process_paused: boolean }
     expect(dryRunRequest).toMatchObject({ process_paused: false })
     expect(await server.eventStore.readAll()).toEqual(beforeWatchdog)
+    const rawLogReason = await server.command("runtime.request_opencode_forced_report", {
+      sessionId,
+      reason: `stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}`,
+    }) as { status: string; error?: string }
+    expect(rawLogReason).toMatchObject({ status: "blocked" })
+    expect(rawLogReason.error).toContain("raw logs are out of scope for forced report requests")
+    expect(JSON.stringify(rawLogReason)).not.toContain("stdout")
+    expect(await server.eventStore.readAll()).toEqual(beforeWatchdog)
 
     const record = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { status: string; watchdog_id: string; watchdog_status: string }
     expect(record).toMatchObject({ status: "recorded", watchdog_status: "blocked" })

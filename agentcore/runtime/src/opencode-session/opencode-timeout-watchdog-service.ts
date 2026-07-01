@@ -27,6 +27,11 @@ const MAX_TEXT = 320
 const MAX_ARRAY = 12
 const DEFAULT_REPORT_DUE_AFTER_MS = 60_000
 const LAUNCHED_STATUSES = new Set(["launch_started", "launched"])
+const RAW_LOG_PATTERNS = [
+  /\n.{80,}\n.{80,}\n/s,
+  /(stdout|stderr|traceback|stack trace|bun test v|npm error|error:).{0,80}\n/i,
+  /(\[[0-9]{2}:[0-9]{2}:[0-9]{2}\].*\n){3,}/i,
+]
 
 export type OpenCodeTimeoutWatchdogServiceOptions = {
   eventStore: EventStore
@@ -123,7 +128,8 @@ export class OpenCodeTimeoutWatchdogService {
   async requestForcedReport(input: OpenCodeForcedReportInput = {}, context: { watchdogId?: string; preview?: OpenCodeWatchdogPreview } = {}): Promise<OpenCodeForcedReportRequest | OpenCodeWatchdogResult> {
     const requestedAt = this.now().toISOString()
     const requestedBy = bound(input.requested_by ?? "operator") ?? "operator"
-    const reason = bound(input.reason ?? "operator requested report after watchdog assessment") ?? "operator requested report after watchdog assessment"
+    const rawReason = input.reason ?? "operator requested report after watchdog assessment"
+    const reason = bound(rawReason) ?? "operator requested report after watchdog assessment"
     const preview = context.preview ?? await this.preview({ session_id: input.session_id, launch_id: input.launch_id })
     const requestId = this.forcedReportIdFactory()
     if (!preview.can_record) {
@@ -133,6 +139,15 @@ export class OpenCodeTimeoutWatchdogService {
         recorded_at: requestedAt,
         recorded_by: requestedBy,
         error: preview.blockers[0] ?? "OpenCode forced report request is blocked",
+      })
+    }
+    if (looksLikeRawLog(rawReason)) {
+      return resultFromPreview(preview, {
+        watchdog_id: context.watchdogId ?? this.watchdogIdFactory(),
+        status: "blocked",
+        recorded_at: requestedAt,
+        recorded_by: requestedBy,
+        error: "raw logs are out of scope for forced report requests; attach an artifact pointer in a later branch",
       })
     }
     if (!shouldAllowForcedReport(preview.watchdog_status, preview.has_blockers, preview.has_question)) {
@@ -681,6 +696,12 @@ function bound(value: unknown, max = MAX_TEXT): string | undefined {
 
 function boundArray(values: unknown[] | undefined, limit = MAX_ARRAY): string[] {
   return (values ?? []).map((item) => bound(item) ?? "").filter(Boolean).slice(0, limit)
+}
+
+function looksLikeRawLog(value: unknown): boolean {
+  if (typeof value !== "string") return false
+  if (value.length > 2_000) return true
+  return RAW_LOG_PATTERNS.some((pattern) => pattern.test(value))
 }
 
 function unique(values: string[]): string[] {
