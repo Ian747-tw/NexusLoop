@@ -83,6 +83,24 @@ export class OpenCodeTimeoutWatchdogService {
         recorded_by: recordedBy,
       })
     }
+    if (input.request_report === true && !shouldAllowForcedReport(preview.watchdog_status, preview.has_blockers, preview.has_question)) {
+      return resultFromPreview(preview, {
+        watchdog_id: watchdogId,
+        status: "blocked",
+        recorded_at: recordedAt,
+        recorded_by: recordedBy,
+        error: "forced report request is only allowed for stale, timed_out, needs_report, or blocked sessions",
+      })
+    }
+    if (input.request_report === true && preview.forced_report_already_requested) {
+      return resultFromPreview(preview, {
+        watchdog_id: watchdogId,
+        status: "blocked",
+        recorded_at: recordedAt,
+        recorded_by: recordedBy,
+        error: "forced report request already exists for this watchdog assessment",
+      })
+    }
     const result = resultFromPreview(preview, {
       watchdog_id: watchdogId,
       status: "recorded",
@@ -90,7 +108,7 @@ export class OpenCodeTimeoutWatchdogService {
       recorded_by: recordedBy,
     })
     await this.options.eventStore.append(watchdogEventPayload(result) as JsonlEvent)
-    if (input.request_report === true && shouldAllowForcedReport(preview.watchdog_status, preview.has_blockers, preview.has_question)) {
+    if (input.request_report === true) {
       const request = await this.requestForcedReport({
         session_id: preview.session_id,
         launch_id: preview.launch_id,
@@ -199,7 +217,7 @@ export class OpenCodeTimeoutWatchdogService {
   }
 
   async summary(input: { limit?: number } = {}): Promise<OpenCodeWatchdogSummary> {
-    const launches = await this.options.launchGateService.list({ limit: MAX_LIST })
+    const launches = await this.allLaunchRecords()
     const latestBySession = new Map<string, OpenCodeWatchdogRecord>()
     for (const { record } of [...await this.recordEntries()].sort(compareRecordEntriesAsc)) latestBySession.set(record.session_id, record)
     const records = [...latestBySession.values()]
@@ -351,6 +369,18 @@ export class OpenCodeTimeoutWatchdogService {
 
   private async forcedReportRequests(): Promise<OpenCodeForcedReportRequest[]> {
     return (await this.options.eventStore.readAll()).filter(isForcedReportEvent).map(forcedReportFromEvent).filter((record): record is OpenCodeForcedReportRequest => !!record)
+  }
+
+  private async allLaunchRecords(): Promise<Array<{ session_id: string; status: string }>> {
+    const records = new Map<string, { session_id: string; status: string }>()
+    for (const event of await this.options.eventStore.readAll()) {
+      if (!isLaunchRecordEvent(event) || typeof event.launch_id !== "string" || typeof event.session_id !== "string") continue
+      records.set(event.launch_id, {
+        session_id: event.session_id,
+        status: readLaunchRecordStatus(event),
+      })
+    }
+    return [...records.values()]
   }
 
   private async findForcedReportForEvidence(sessionId: string, launchId: string | undefined, latestProgressId: string | undefined): Promise<OpenCodeForcedReportRequest | null> {
@@ -572,6 +602,17 @@ function isWatchdogEvent(event: JsonlEvent): boolean {
 
 function isForcedReportEvent(event: JsonlEvent): boolean {
   return event.kind === "opencode_session_forced_report_requested"
+}
+
+function isLaunchRecordEvent(event: JsonlEvent): boolean {
+  return event.kind === "opencode_session_launch_started" || event.kind === "opencode_session_launch_succeeded" || event.kind === "opencode_session_launch_failed"
+}
+
+function readLaunchRecordStatus(event: JsonlEvent): string {
+  if (event.status === "launch_started" || event.status === "launched" || event.status === "launch_failed") return event.status
+  if (event.kind === "opencode_session_launch_failed") return "launch_failed"
+  if (event.kind === "opencode_session_launch_started") return "launch_started"
+  return "launched"
 }
 
 function isForcedReportRequestShape(value: unknown): value is OpenCodeForcedReportRequest {

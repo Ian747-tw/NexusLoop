@@ -17916,6 +17916,11 @@ describe("OpenCode launch readiness", () => {
     const healthyForceReport = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "healthy should not report" }) as { status: string; error?: string }
     expect(healthyForceReport).toMatchObject({ status: "blocked" })
     expect(healthyForceReport.error).toContain("forced report request is only allowed")
+    const healthyRecordWithRequest = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true }) as { status: string; error?: string; forced_report_requested: boolean }
+    expect(healthyRecordWithRequest).toMatchObject({ status: "blocked", forced_report_requested: false })
+    expect(healthyRecordWithRequest.error).toContain("forced report request is only allowed")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_watchdog_recorded")).toHaveLength(0)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_forced_report_requested")).toHaveLength(0)
 
     const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { status: string; watchdog_id: string; watchdog_status: string; report_required: boolean }
     expect(recorded).toMatchObject({ status: "recorded", watchdog_status: "healthy", report_required: false })
@@ -18074,6 +18079,33 @@ describe("OpenCode launch readiness", () => {
     expect(list.map((item) => item.watchdog_id)).toEqual(["watchdog_tie_new", "watchdog_tie_old"])
     const summary = await server.command("runtime.opencode_watchdog_summary") as { latest_records: Array<{ watchdog_id: string; watchdog_status: string }> }
     expect(summary.latest_records[0]).toMatchObject({ watchdog_id: "watchdog_tie_new", watchdog_status: "blocked" })
+    await server.shutdown()
+  })
+
+  test("opencode watchdog summary counts launched sessions beyond public launch list cap", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+    })
+    await server.start()
+    for (let index = 0; index < 105; index += 1) {
+      await server.eventStore.append({
+        kind: "opencode_session_launch_started",
+        launch_id: `launch_summary_${index}`,
+        status: "launch_started",
+        adapter_kind: "fake",
+        launch_mode: "fresh",
+        session_id: `session_summary_${index}`,
+        started_at: `2026-01-01T00:00:${String(index % 60).padStart(2, "0")}.000Z`,
+        launch_hash: `launch_summary_hash_${index}`,
+      })
+    }
+
+    const summary = await server.command("runtime.opencode_watchdog_summary") as { total_launched_sessions: number }
+    expect(summary.total_launched_sessions).toBe(105)
     await server.shutdown()
   })
 
