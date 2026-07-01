@@ -17980,6 +17980,30 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
+  test("opencode watchdog failure reports are blocked evidence without required forced reports", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "failure_report", summary: "failed before completion" })
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; recommended_action: string; report_required: boolean; has_blockers: boolean; has_question: boolean; warnings: string[] }
+    expect(preview).toMatchObject({
+      watchdog_status: "blocked",
+      recommended_action: "record_assessment",
+      report_required: false,
+      has_blockers: false,
+      has_question: false,
+    })
+    expect(preview.warnings.join(" ")).toContain("failure_report is evidence only")
+
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { status: string; watchdog_status: string; report_required: boolean }
+    expect(recorded).toMatchObject({ status: "recorded", watchdog_status: "blocked", report_required: false })
+    const forcedReport = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "failure report follow-up" }) as { status: string; error?: string }
+    expect(forcedReport).toMatchObject({ status: "blocked" })
+    expect(forcedReport.error).toContain("forced report request is only allowed")
+    await server.shutdown()
+  })
+
   test("opencode watchdog honors report_required_on_timeout false policy while allowing manual forced report", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

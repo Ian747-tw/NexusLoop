@@ -323,7 +323,7 @@ export class OpenCodeTimeoutWatchdogService {
     const existingForcedReport = await this.findForcedReportForEvidence(sessionId, launch?.launch_id ?? launchId, latestProgress?.progress_id)
     const reportRequiredOnTimeout = policy?.report_required_on_timeout ?? true
     const timeoutDerivedReport = statusResult.status === "timed_out" || statusResult.status === "needs_report" || statusResult.status === "stale"
-    const reportRequired = statusResult.status === "blocked" || hasQuestion || (timeoutDerivedReport && reportRequiredOnTimeout)
+    const reportRequired = (statusResult.status === "blocked" && (hasBlockers || hasQuestion)) || hasQuestion || (timeoutDerivedReport && reportRequiredOnTimeout)
     const canRecord = blockers.length === 0
     return {
       preview: redactValue({
