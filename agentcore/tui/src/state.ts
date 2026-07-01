@@ -1678,6 +1678,105 @@ export type OpenCodeLaunchesState = {
   commandError?: string
 }
 
+export type OpenCodeProgressCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeProgressPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_record: boolean
+  session_id: string
+  launch_id?: string
+  launch_status?: string
+  launch_started_at?: string
+  kind: string
+  execution_state: string
+  report_summary_preview: string
+  current_step_preview?: string
+  files_touched_preview: string[]
+  commands_run_preview: string[]
+  tests_run_preview: string[]
+  artifacts_preview: string[]
+  blockers_preview: string[]
+  question_preview?: string
+  confidence?: number | string
+  next_action_preview?: string
+  source_kind: string
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeProgressCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  progress_hash: string
+}
+
+export type OpenCodeProgressResultSummary = {
+  progress_id: string
+  status: "recorded" | "blocked" | "failed" | "dry_run" | string
+  session_id: string
+  launch_id?: string
+  kind: string
+  execution_state: string
+  report_summary_preview: string
+  current_step_preview?: string
+  files_touched_preview: string[]
+  commands_run_preview: string[]
+  tests_run_preview: string[]
+  artifacts_preview: string[]
+  blockers_preview: string[]
+  question_preview?: string
+  confidence?: number | string
+  next_action_preview?: string
+  recorded_at: string
+  recorded_by: string
+  source_kind: string
+  error?: string
+  progress_hash: string
+  recommended_commands: OpenCodeProgressCommandSummary[]
+}
+
+export type OpenCodeProgressRecordSummary = {
+  progress_id: string
+  session_id: string
+  launch_id?: string
+  kind: string
+  execution_state: string
+  report_summary_preview: string
+  recorded_at: string
+  recorded_by: string
+  source_kind: string
+  confidence?: number | string
+  has_blockers: boolean
+  has_question: boolean
+  progress_hash: string
+}
+
+export type OpenCodeProgressSummaryState = {
+  total_records: number
+  session_count: number
+  launched_session_count: number
+  latest_records: OpenCodeProgressRecordSummary[]
+  blocked_count: number
+  question_count: number
+  heartbeat_count: number
+  generated_at: string
+}
+
+export type OpenCodeProgressState = {
+  preview?: OpenCodeProgressPreviewSummary | null
+  latestResult?: OpenCodeProgressResultSummary | null
+  records: OpenCodeProgressRecordSummary[]
+  selected?: OpenCodeProgressResultSummary | null
+  latest?: OpenCodeProgressResultSummary | null
+  summary?: OpenCodeProgressSummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -4057,6 +4156,7 @@ export type UiState = {
   opencodeSessionInstructionPacks?: OpenCodeSessionInstructionPacksState
   opencodeLaunchReadiness?: OpenCodeLaunchReadinessState
   opencodeLaunches?: OpenCodeLaunchesState
+  opencodeProgress?: OpenCodeProgressState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

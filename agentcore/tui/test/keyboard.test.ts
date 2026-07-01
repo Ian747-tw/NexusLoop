@@ -362,6 +362,18 @@ describe("TUI keyboard command model", () => {
     ])
   })
 
+  test("path-like OpenCode progress text remains a user message", () => {
+    for (const message of ["/tmp/repro/opencode-progress", "/path/opencode-progress-preview", ".opencode-progress", ":opencode-progress"]) {
+      const result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("review slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -840,6 +852,22 @@ describe("TUI keyboard command model", () => {
       ["/opencode-session-launch session=session-1", "opencode-session-launch", ["session=session-1"]],
       ["/opencode-launches", "opencode-launches", []],
       ["/opencode-launch-show launch-1", "opencode-launch-show", ["launch-1"]],
+      ["/opencode-progress-preview session=session-1 summary=working", "opencode-progress-preview", ["session=session-1", "summary=working"]],
+      ["/opencode-heartbeat session=session-1 summary=alive", "opencode-heartbeat", ["session=session-1", "summary=alive"]],
+      ["/session-heartbeat session=session-1 summary=alive", "session-heartbeat", ["session=session-1", "summary=alive"]],
+      ["/opencode-progress session=session-1 summary=working", "opencode-progress", ["session=session-1", "summary=working"]],
+      ["/session-progress session=session-1 summary=working", "session-progress", ["session=session-1", "summary=working"]],
+      ["/opencode-blocker session=session-1 summary=blocked blocker=needs commander", "opencode-blocker", ["session=session-1", "summary=blocked", "blocker=needs", "commander"]],
+      ["/session-blocker session=session-1 summary=blocked blocker=needs commander", "session-blocker", ["session=session-1", "summary=blocked", "blocker=needs", "commander"]],
+      ["/opencode-question session=session-1 question=prefer A or B", "opencode-question", ["session=session-1", "question=prefer", "A", "or", "B"]],
+      ["/session-question session=session-1 question=prefer A or B", "session-question", ["session=session-1", "question=prefer", "A", "or", "B"]],
+      ["/opencode-progress-dry-run session=session-1 summary=dry", "opencode-progress-dry-run", ["session=session-1", "summary=dry"]],
+      ["/opencode-progress-list session=session-1", "opencode-progress-list", ["session=session-1"]],
+      ["/progress-list session=session-1", "progress-list", ["session=session-1"]],
+      ["/opencode-progress-latest session=session-1", "opencode-progress-latest", ["session=session-1"]],
+      ["/progress-latest session=session-1", "progress-latest", ["session=session-1"]],
+      ["/opencode-progress-show progress-1", "opencode-progress-show", ["progress-1"]],
+      ["/opencode-progress-summary", "opencode-progress-summary", []],
       ["/research-memory-summary", "research-memory-summary", []],
       ["/research-memory-search query=adapter timeout token=abc123", "research-memory-search", ["query=adapter", "timeout", "token=abc123"]],
       ["/research-memory-preview query=adapter timeout", "research-memory-preview", ["query=adapter", "timeout"]],

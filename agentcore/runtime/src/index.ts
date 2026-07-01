@@ -62,6 +62,8 @@ export { OpenCodeLaunchGateService } from "./opencode-session/opencode-launch-ga
 export { DisabledOpenCodeLaunchAdapter, FakeOpenCodeLaunchAdapter } from "./opencode-session/opencode-launch-adapter"
 export { ProcessOpenCodeLaunchAdapter as OpenCodeNativeLaunchAdapter } from "./opencode-session/opencode-native-launch-adapter"
 export * from "./opencode-session/opencode-launch-gate-types"
+export { OpenCodeProgressService } from "./opencode-session/opencode-progress-service"
+export * from "./opencode-session/opencode-progress-types"
 export { ContextBudgetService } from "./context/context-budget-service"
 export { ModelCapabilityRegistry } from "./context/model-capability-registry"
 export { ContextPacketCompilerService } from "./context/context-packet-compiler-service"

@@ -5272,6 +5272,69 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toEqual([])
   })
 
+  test("OpenCode progress slash commands preview record list latest summary and classify writes", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=progress", "heartbeat", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+    const launchId = state.opencodeLaunches?.latestResult?.launch_id
+    expect(launchId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-preview", args: [`session=${sessionId}`, "summary=working", "through", "first", "step", "token=abc123"] })
+    expect(state.opencodeProgress?.preview).toMatchObject({ status: "ready", can_record: true, session_id: sessionId, kind: "heartbeat" })
+    expect(JSON.stringify(state.opencodeProgress?.preview)).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-dry-run", args: [`session=${sessionId}`, "summary=dry", "run", "progress", "token=abc123"] })
+    expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "dry_run", session_id: sessionId })
+    expect(state.opencodeProgress?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-heartbeat", args: [`session=${sessionId}`, "summary=alive", "and", "working", "token=abc123"] })
+    expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "heartbeat", session_id: sessionId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress", args: [`session=${sessionId}`, "summary=implemented", "first", "change", "files=fileA.ts", "tests=bun-test"] })
+    expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "progress", session_id: sessionId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-blocker", args: [`session=${sessionId}`, "summary=blocked", "on", "ambiguity", "blocker=needs", "commander", "clarification"] })
+    expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "blocker", execution_state: "blocked" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-question", args: [`session=${sessionId}`, "question=should", "I", "prefer", "option", "A", "or", "B"] })
+    expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "question", execution_state: "needs_commander" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-list", args: [`session=${sessionId}`] })
+    expect(state.opencodeProgress?.records.map((record) => record.kind)).toEqual(["question", "blocker", "progress", "heartbeat"])
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-latest", args: [`session=${sessionId}`] })
+    expect(state.opencodeProgress?.latest?.kind).toBe("question")
+    const progressId = state.opencodeProgress?.latest?.progress_id
+    expect(progressId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-show", args: [progressId!] })
+    expect(state.opencodeProgress?.selected?.progress_id).toBe(progressId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-summary", args: [] })
+    expect(state.opencodeProgress?.summary).toMatchObject({ total_records: 4, heartbeat_count: 1, blocked_count: 1, question_count: 1 })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-preview", args: [`launch=${launchId}`, "summary=stdout", "stderr"] })
+    expect(state.opencodeProgress?.commandError).toContain("raw logs are out of scope")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: [`/opencode-progress session=${sessionId} summary=staged progress`] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-progress"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/opencode-progress",
+      risk: "medium_risk_write",
+      calls_provider: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("metadata")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode progress")
+    expect(snapshot).toContain("heartbeat does not mean task success")
+    expect(snapshot).toContain("question reports do not ask Commander yet")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")
