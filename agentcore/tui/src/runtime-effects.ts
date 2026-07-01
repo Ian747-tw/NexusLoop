@@ -107,6 +107,13 @@ import type {
   OpenCodeProgressResultSummary,
   OpenCodeProgressState,
   OpenCodeProgressSummaryState,
+  OpenCodeForcedReportRequestSummary,
+  OpenCodeWatchdogCommandSummary,
+  OpenCodeWatchdogPreviewSummary,
+  OpenCodeWatchdogRecordSummary,
+  OpenCodeWatchdogResultSummary,
+  OpenCodeWatchdogState,
+  OpenCodeWatchdogSummaryState,
   OpenCodeHandoffRecordSummary,
   OpenCodeHandoffResultSummary,
   OpenCodeHandoffState,
@@ -425,6 +432,14 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-progress"; progressId: string }
   | { type: "load-latest-opencode-progress"; sessionId?: string; launchId?: string }
   | { type: "load-opencode-progress-summary"; limit?: number }
+  | { type: "preview-opencode-watchdog"; sessionId?: string; launchId?: string; maxWallTimeMs?: number; maxNoProgressMs?: number; heartbeatIntervalMs?: number }
+  | { type: "record-opencode-watchdog"; sessionId?: string; launchId?: string; maxWallTimeMs?: number; maxNoProgressMs?: number; heartbeatIntervalMs?: number; dryRun?: boolean; requestReport?: boolean }
+  | { type: "request-opencode-forced-report"; sessionId?: string; launchId?: string; reason?: string; dryRun?: boolean }
+  | { type: "load-opencode-watchdogs"; sessionId?: string; launchId?: string; status?: string; limit?: number }
+  | { type: "load-opencode-watchdog"; watchdogId: string }
+  | { type: "load-opencode-forced-report-requests"; sessionId?: string; launchId?: string; limit?: number }
+  | { type: "load-opencode-forced-report-request"; requestId: string }
+  | { type: "load-opencode-watchdog-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1280,6 +1295,28 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeProgressLatest(state, await runtime.command("runtime.latest_opencode_progress", { sessionId: effect.sessionId, launchId: effect.launchId }), effect.sessionId ?? effect.launchId ?? "latest")
       case "load-opencode-progress-summary":
         return applyOpenCodeProgressSummary(state, await runtime.command("runtime.opencode_progress_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "preview-opencode-watchdog":
+        return applyOpenCodeWatchdogPreview(state, await runtime.command("runtime.preview_opencode_watchdog", watchdogPayload(effect)))
+      case "record-opencode-watchdog": {
+        const next = applyOpenCodeWatchdogResult(state, await runtime.command("runtime.record_opencode_watchdog", { ...watchdogPayload(effect), dryRun: effect.dryRun === true, requestReport: effect.requestReport === true, recordedBy: "operator" }))
+        if (next.opencodeWatchdog?.commandError) return next
+        return effect.dryRun === true ? next : applyOpenCodeWatchdogRecords(next, await runtime.command("runtime.list_opencode_watchdogs", { limit: HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId }))
+      }
+      case "request-opencode-forced-report": {
+        const next = applyOpenCodeForcedReportResult(state, await runtime.command("runtime.request_opencode_forced_report", { sessionId: effect.sessionId, launchId: effect.launchId, reason: effect.reason, dryRun: effect.dryRun === true, requestedBy: "operator" }))
+        if (next.opencodeWatchdog?.commandError) return next
+        return effect.dryRun === true ? next : applyOpenCodeForcedReportRecords(next, await runtime.command("runtime.list_opencode_forced_report_requests", { limit: HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId }))
+      }
+      case "load-opencode-watchdogs":
+        return applyOpenCodeWatchdogRecords(state, await runtime.command("runtime.list_opencode_watchdogs", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId, status: effect.status }))
+      case "load-opencode-watchdog":
+        return applyOpenCodeWatchdogSelected(state, await runtime.command("runtime.get_opencode_watchdog", { watchdogId: effect.watchdogId }), effect.watchdogId)
+      case "load-opencode-forced-report-requests":
+        return applyOpenCodeForcedReportRecords(state, await runtime.command("runtime.list_opencode_forced_report_requests", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId }))
+      case "load-opencode-forced-report-request":
+        return applyOpenCodeForcedReportSelected(state, await runtime.command("runtime.get_opencode_forced_report_request", { requestId: effect.requestId }), effect.requestId)
+      case "load-opencode-watchdog-summary":
+        return applyOpenCodeWatchdogSummary(state, await runtime.command("runtime.opencode_watchdog_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -3310,6 +3347,115 @@ function applyOpenCodeProgressSummary(state: UiState, value: unknown): UiState {
   }
 }
 
+function applyOpenCodeWatchdogPreview(state: UiState, value: unknown): UiState {
+  const watchdog = readOpenCodeWatchdogPreview(value)
+  const commandError = watchdog.status === "blocked" ? watchdog.blockers[0] ?? "OpenCode watchdog preview is blocked" : undefined
+  return {
+    ...state,
+    opencodeWatchdog: {
+      ...opencodeWatchdogState(state),
+      preview: watchdog,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode watchdog preview", detail: `status=${watchdog.watchdog_status} session=${watchdog.session_id || "missing"}`, status: watchdog.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeWatchdogResult(state: UiState, value: unknown): UiState {
+  const result = readOpenCodeWatchdogResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "OpenCode watchdog record is blocked or failed" : undefined
+  return {
+    ...state,
+    opencodeWatchdog: {
+      ...opencodeWatchdogState(state),
+      latestResult: result,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode watchdog", detail: `status=${result.status} watchdog=${result.watchdog_status} session=${result.session_id || "missing"}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeForcedReportResult(state: UiState, value: unknown): UiState {
+  if (isRecord(value) && typeof value.request_id === "string") {
+    const request = readOpenCodeForcedReportRequest(value)
+    return {
+      ...state,
+      opencodeWatchdog: {
+        ...opencodeWatchdogState(state),
+        forcedReportResult: request,
+        commandError: undefined,
+      },
+      systemActions: [...state.systemActions, { title: "opencode forced report", detail: `request=${request.request_id} session=${request.session_id || "missing"}`, status: "recorded" }].slice(-12),
+    }
+  }
+  return applyOpenCodeWatchdogResult(state, value)
+}
+
+function applyOpenCodeWatchdogRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeWatchdogRecords(value)
+  return {
+    ...state,
+    opencodeWatchdog: {
+      ...opencodeWatchdogState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode watchdog records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeWatchdogSelected(state: UiState, value: unknown, watchdogId: string): UiState {
+  const selected = value === null ? null : readOpenCodeWatchdogResult(value)
+  return {
+    ...state,
+    opencodeWatchdog: {
+      ...opencodeWatchdogState(state),
+      selected,
+      commandError: selected ? undefined : `OpenCode watchdog record not found: ${redactText(watchdogId)}`,
+    },
+    systemActions: [...state.systemActions, { title: "opencode watchdog selected", detail: `watchdog=${redactText(watchdogId)}`, status: selected ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeForcedReportRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeForcedReportRequests(value)
+  return {
+    ...state,
+    opencodeWatchdog: {
+      ...opencodeWatchdogState(state),
+      forcedReportRequests: records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode forced reports", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeForcedReportSelected(state: UiState, value: unknown, requestId: string): UiState {
+  const selectedRequest = value === null ? null : readOpenCodeForcedReportRequest(value)
+  return {
+    ...state,
+    opencodeWatchdog: {
+      ...opencodeWatchdogState(state),
+      selectedRequest,
+      commandError: selectedRequest ? undefined : `OpenCode forced report request not found: ${redactText(requestId)}`,
+    },
+    systemActions: [...state.systemActions, { title: "opencode forced report selected", detail: `request=${redactText(requestId)}`, status: selectedRequest ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeWatchdogSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeWatchdogSummary(value)
+  return {
+    ...state,
+    opencodeWatchdog: {
+      ...opencodeWatchdogState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode watchdog summary", detail: `healthy=${summary.healthy_count} timed_out=${summary.timed_out_count} needs_report=${summary.needs_report_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -4566,6 +4712,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeLaunchReadinessCommands.has(command)) return state.opencodeLaunchReadiness?.commandError
   if (opencodeLaunchCommands.has(command)) return state.opencodeLaunches?.commandError
   if (opencodeProgressCommands.has(command)) return state.opencodeProgress?.commandError
+  if (opencodeWatchdogCommands.has(command)) return state.opencodeWatchdog?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -4612,6 +4759,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeLaunchReadinessCommands.has(command)) return { ...state, opencodeLaunchReadiness: { ...opencodeLaunchReadinessState(state), commandError: undefined } }
   if (opencodeLaunchCommands.has(command)) return { ...state, opencodeLaunches: { ...opencodeLaunchesState(state), commandError: undefined } }
   if (opencodeProgressCommands.has(command)) return { ...state, opencodeProgress: { ...opencodeProgressState(state), commandError: undefined } }
+  if (opencodeWatchdogCommands.has(command)) return { ...state, opencodeWatchdog: { ...opencodeWatchdogState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -4856,6 +5004,37 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-progress", progressId: requiredArg(args, 0, "progressId") })
     case "opencode-progress-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-progress-summary", limit: HANDOFF_LIMIT })
+    case "opencode-watchdog-preview":
+    case "session-watchdog":
+    case "watchdog-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWatchdogEffect("preview-opencode-watchdog", args, false))
+    case "opencode-watchdog-dry-run": {
+      const effect = opencodeWatchdogEffect("record-opencode-watchdog", args, true) as Extract<RuntimeUiEffect, { type: "record-opencode-watchdog" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-watchdog-record":
+    case "watchdog-record":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWatchdogEffect("record-opencode-watchdog", args, true))
+    case "opencode-force-report-dry-run": {
+      const effect = opencodeForcedReportEffect(args) as Extract<RuntimeUiEffect, { type: "request-opencode-forced-report" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-force-report":
+    case "force-report":
+    case "session-force-report":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeForcedReportEffect(args))
+    case "opencode-watchdogs":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWatchdogListEffect(args))
+    case "opencode-watchdog-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-watchdog", watchdogId: requiredArg(args, 0, "watchdogId") })
+    case "opencode-force-report-requests":
+    case "forced-reports":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeForcedReportListEffect(args))
+    case "opencode-force-report-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-forced-report-request", requestId: requiredArg(args, 0, "requestId") })
+    case "opencode-watchdog-summary":
+    case "watchdog-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-watchdog-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -6116,6 +6295,26 @@ const opencodeProgressCommands = new Set([
   "progress-latest",
   "opencode-progress-show",
   "opencode-progress-summary",
+])
+
+const opencodeWatchdogCommands = new Set([
+  "opencode-watchdog-preview",
+  "session-watchdog",
+  "watchdog-preview",
+  "opencode-watchdog-record",
+  "watchdog-record",
+  "opencode-watchdog-dry-run",
+  "opencode-force-report",
+  "force-report",
+  "session-force-report",
+  "opencode-force-report-dry-run",
+  "opencode-watchdogs",
+  "opencode-watchdog-show",
+  "opencode-force-report-requests",
+  "forced-reports",
+  "opencode-force-report-show",
+  "opencode-watchdog-summary",
+  "watchdog-summary",
 ])
 
 const researchMemoryCommands = new Set([
@@ -9148,6 +9347,137 @@ function readOpenCodeProgressSummary(value: unknown): OpenCodeProgressSummarySta
 }
 
 function readOpenCodeProgressCommands(value: unknown): OpenCodeProgressCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readOpenCodeWatchdogPreview(value: unknown): OpenCodeWatchdogPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_watchdog returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_record: value.can_record === true,
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    launch_status: typeof value.launch_status === "string" ? readString(value.launch_status, "unknown") : undefined,
+    watchdog_status: readString(value.watchdog_status, "unknown"),
+    recommended_action: readString(value.recommended_action, "none"),
+    wall_clock_elapsed_ms: readOptionalNumber(value.wall_clock_elapsed_ms),
+    no_progress_elapsed_ms: readOptionalNumber(value.no_progress_elapsed_ms),
+    heartbeat_elapsed_ms: readOptionalNumber(value.heartbeat_elapsed_ms),
+    max_wall_time_ms: readOptionalNumber(value.max_wall_time_ms),
+    max_no_progress_ms: readOptionalNumber(value.max_no_progress_ms),
+    heartbeat_interval_ms: readOptionalNumber(value.heartbeat_interval_ms),
+    forced_pause_enabled: typeof value.forced_pause_enabled === "boolean" ? value.forced_pause_enabled : undefined,
+    report_required_on_timeout: typeof value.report_required_on_timeout === "boolean" ? value.report_required_on_timeout : undefined,
+    latest_progress_id: typeof value.latest_progress_id === "string" ? redactText(value.latest_progress_id) : undefined,
+    latest_progress_kind: typeof value.latest_progress_kind === "string" ? readString(value.latest_progress_kind, "unknown") : undefined,
+    latest_progress_state: typeof value.latest_progress_state === "string" ? readString(value.latest_progress_state, "unknown") : undefined,
+    latest_progress_at: typeof value.latest_progress_at === "string" ? readString(value.latest_progress_at, "") : undefined,
+    latest_report_summary_preview: typeof value.latest_report_summary_preview === "string" ? preview(readString(value.latest_report_summary_preview, "")) : undefined,
+    has_blockers: value.has_blockers === true,
+    has_question: value.has_question === true,
+    blockers_preview: readStringList(value.blockers_preview, 12).map(preview),
+    question_preview: typeof value.question_preview === "string" ? preview(readString(value.question_preview, "")) : undefined,
+    report_required: value.report_required === true,
+    forced_report_already_requested: value.forced_report_already_requested === true,
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    recommended_commands: readOpenCodeWatchdogCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    watchdog_hash: readString(value.watchdog_hash, ""),
+  }
+}
+
+function readOpenCodeWatchdogResult(value: unknown): OpenCodeWatchdogResultSummary {
+  if (!isRecord(value) || typeof value.watchdog_id !== "string") throw new Error("runtime.record_opencode_watchdog returned invalid result")
+  return {
+    watchdog_id: redactText(value.watchdog_id),
+    status: readString(value.status, "blocked"),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    watchdog_status: readString(value.watchdog_status, "unknown"),
+    recommended_action: readString(value.recommended_action, "none"),
+    report_required: value.report_required === true,
+    forced_report_requested: value.forced_report_requested === true,
+    forced_report_request_id: typeof value.forced_report_request_id === "string" ? redactText(value.forced_report_request_id) : undefined,
+    latest_progress_id: typeof value.latest_progress_id === "string" ? redactText(value.latest_progress_id) : undefined,
+    latest_progress_kind: typeof value.latest_progress_kind === "string" ? readString(value.latest_progress_kind, "unknown") : undefined,
+    latest_progress_state: typeof value.latest_progress_state === "string" ? readString(value.latest_progress_state, "unknown") : undefined,
+    latest_progress_at: typeof value.latest_progress_at === "string" ? readString(value.latest_progress_at, "") : undefined,
+    wall_clock_elapsed_ms: readOptionalNumber(value.wall_clock_elapsed_ms),
+    no_progress_elapsed_ms: readOptionalNumber(value.no_progress_elapsed_ms),
+    heartbeat_elapsed_ms: readOptionalNumber(value.heartbeat_elapsed_ms),
+    recorded_at: readString(value.recorded_at, ""),
+    recorded_by: preview(readString(value.recorded_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    watchdog_hash: readString(value.watchdog_hash, ""),
+    recommended_commands: readOpenCodeWatchdogCommands(value.recommended_commands),
+  }
+}
+
+function readOpenCodeWatchdogRecords(value: unknown): OpenCodeWatchdogRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((record) => ({
+    watchdog_id: redactText(readString(record.watchdog_id, "")),
+    session_id: redactText(readString(record.session_id, "")),
+    launch_id: typeof record.launch_id === "string" ? redactText(record.launch_id) : undefined,
+    watchdog_status: readString(record.watchdog_status, "unknown"),
+    recommended_action: readString(record.recommended_action, "none"),
+    report_required: record.report_required === true,
+    recorded_at: readString(record.recorded_at, ""),
+    recorded_by: preview(readString(record.recorded_by, "")),
+    latest_progress_id: typeof record.latest_progress_id === "string" ? redactText(record.latest_progress_id) : undefined,
+    watchdog_hash: readString(record.watchdog_hash, ""),
+  }))
+}
+
+function readOpenCodeForcedReportRequest(value: unknown): OpenCodeForcedReportRequestSummary {
+  if (!isRecord(value) || typeof value.request_id !== "string") throw new Error("runtime.request_opencode_forced_report returned invalid request")
+  return {
+    request_id: redactText(value.request_id),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    watchdog_id: typeof value.watchdog_id === "string" ? redactText(value.watchdog_id) : undefined,
+    reason: preview(readString(value.reason, "")),
+    requested_at: readString(value.requested_at, ""),
+    requested_by: preview(readString(value.requested_by, "")),
+    latest_progress_id: typeof value.latest_progress_id === "string" ? redactText(value.latest_progress_id) : undefined,
+    report_due_after_ms: readOptionalNumber(value.report_due_after_ms),
+    forced_pause_recommended: value.forced_pause_recommended === true,
+    process_paused: false,
+    command_to_operator_preview: typeof value.command_to_operator_preview === "string" ? preview(readString(value.command_to_operator_preview, "")) : undefined,
+    request_hash: readString(value.request_hash, ""),
+  }
+}
+
+function readOpenCodeForcedReportRequests(value: unknown): OpenCodeForcedReportRequestSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map(readOpenCodeForcedReportRequest)
+}
+
+function readOpenCodeWatchdogSummary(value: unknown): OpenCodeWatchdogSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.opencode_watchdog_summary returned invalid summary")
+  return {
+    total_launched_sessions: readNumber(value.total_launched_sessions, 0),
+    healthy_count: readNumber(value.healthy_count, 0),
+    stale_count: readNumber(value.stale_count, 0),
+    timed_out_count: readNumber(value.timed_out_count, 0),
+    needs_report_count: readNumber(value.needs_report_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    latest_records: readOpenCodeWatchdogRecords(value.latest_records),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeWatchdogCommands(value: unknown): OpenCodeWatchdogCommandSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -12739,6 +13069,10 @@ function opencodeProgressState(state: UiState): OpenCodeProgressState {
   return state.opencodeProgress ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
 }
 
+function opencodeWatchdogState(state: UiState): OpenCodeWatchdogState {
+  return state.opencodeWatchdog ?? { preview: null, latestResult: null, forcedReportResult: null, records: [], forcedReportRequests: [], selected: null, selectedRequest: null, summary: null }
+}
+
 function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
   return {
     sessionId: effect.sessionId,
@@ -12756,6 +13090,16 @@ function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-openc
     confidence: effect.confidence,
     nextAction: effect.nextAction,
     sourceKind: effect.sourceKind,
+  }
+}
+
+function watchdogPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-watchdog" | "record-opencode-watchdog" }>): Record<string, unknown> {
+  return {
+    sessionId: effect.sessionId,
+    launchId: effect.launchId,
+    maxWallTimeMs: effect.maxWallTimeMs,
+    maxNoProgressMs: effect.maxNoProgressMs,
+    heartbeatIntervalMs: effect.heartbeatIntervalMs,
   }
 }
 
@@ -13807,6 +14151,75 @@ function opencodeProgressLatestEffect(args: string[]): Extract<RuntimeUiEffect, 
   return effect
 }
 
+function opencodeWatchdogEffect(
+  type: "preview-opencode-watchdog" | "record-opencode-watchdog",
+  args: string[],
+  requireTarget: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-opencode-watchdog" | "record-opencode-watchdog" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-watchdog" | "record-opencode-watchdog" }> = { type }
+  const knownKeys = new Set(["session", "launch", "max_wall", "max_wall_time_ms", "max_no_progress", "max_no_progress_ms", "heartbeat", "heartbeat_interval_ms", "request_report"])
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode watchdog args must use session=<id>, launch=<id>, max_wall_ms=<n>, max_no_progress_ms=<n>, heartbeat_ms=<n>, or request_report=<bool>")
+    if (!knownKeys.has(key)) throw new Error("OpenCode watchdog arg is unsupported")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "max_wall" || key === "max_wall_time_ms") effect.maxWallTimeMs = readPositiveInteger(value, key, 86_400_000)
+    else if (key === "max_no_progress" || key === "max_no_progress_ms") effect.maxNoProgressMs = readPositiveInteger(value, key, 86_400_000)
+    else if (key === "heartbeat" || key === "heartbeat_interval_ms") effect.heartbeatIntervalMs = readPositiveInteger(value, key, 3_600_000)
+    else if (key === "request_report" && type === "record-opencode-watchdog") (effect as Extract<RuntimeUiEffect, { type: "record-opencode-watchdog" }>).requestReport = readBooleanArg(value)
+  }
+  if (requireTarget && !effect.sessionId && !effect.launchId) throw new Error("OpenCode watchdog requires session=<id> or launch=<id>")
+  return effect
+}
+
+function opencodeForcedReportEffect(args: string[]): Extract<RuntimeUiEffect, { type: "request-opencode-forced-report" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "request-opencode-forced-report" }> = { type: "request-opencode-forced-report" }
+  const freeTextKeys = new Set(["reason"])
+  const knownKeys = new Set(["session", "launch", "reason"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "OpenCode forced report args must use session=<id>, launch=<id>, or reason=<text>")
+    index = nextIndex
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "reason") effect.reason = value
+    else throw new Error("OpenCode forced report arg is unsupported")
+  }
+  if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode forced report requires session=<id> or launch=<id>")
+  if (!effect.reason) effect.reason = "operator requested report after watchdog assessment"
+  return effect
+}
+
+function opencodeWatchdogListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-opencode-watchdogs" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-opencode-watchdogs" }> = { type: "load-opencode-watchdogs", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode watchdog list args must use session=<id>, launch=<id>, status=<status>, or limit=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "status") effect.status = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode watchdog list arg is unsupported")
+  }
+  return effect
+}
+
+function opencodeForcedReportListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-opencode-forced-report-requests" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-opencode-forced-report-requests" }> = { type: "load-opencode-forced-report-requests", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode forced report list args must use session=<id>, launch=<id>, or limit=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode forced report list arg is unsupported")
+  }
+  return effect
+}
+
 function researchMemoryRetrievalEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-research-memory-retrieval" }> {
   const effect: Extract<RuntimeUiEffect, { type: "preview-research-memory-retrieval" }> = { type: "preview-research-memory-retrieval", limit: HANDOFF_LIMIT }
   const freeTextKeys = new Set(["query"])
@@ -14125,6 +14538,10 @@ function readBoolean(value: unknown): boolean {
 
 function readNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function readOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

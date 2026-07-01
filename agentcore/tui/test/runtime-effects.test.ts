@@ -5359,6 +5359,88 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toEqual([])
   })
 
+  test("OpenCode watchdog slash commands record assessments and forced report metadata only", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=timeout", "watchdog", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+    const launchId = state.opencodeLaunches?.latestResult?.launch_id
+    expect(launchId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-heartbeat", args: [`session=${sessionId}`, "summary=alive", "token=abc123"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdog-preview", args: [`session=${sessionId}`] })
+    expect(state.opencodeWatchdog?.preview).toMatchObject({ status: "ready", can_record: true, session_id: sessionId, watchdog_status: "healthy" })
+    expect(JSON.stringify(state.opencodeWatchdog?.preview)).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-force-report", args: [`session=${sessionId}`, "reason=healthy", "report", "request"] })
+    expect(state.opencodeWatchdog?.commandError).toContain("forced report request is only allowed")
+    expect(state.opencodeWatchdog?.forcedReportRequests).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdog-dry-run", args: [`session=${sessionId}`] })
+    expect(state.opencodeWatchdog?.latestResult).toMatchObject({ status: "dry_run", session_id: sessionId })
+    expect(state.opencodeWatchdog?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdog-record", args: [`session=${sessionId}`] })
+    expect(state.opencodeWatchdog?.latestResult).toMatchObject({ status: "recorded", session_id: sessionId, watchdog_status: "healthy", report_required: false })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-blocker", args: [`session=${sessionId}`, "summary=blocked", "blocker=needs", "report", "token=abc123"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdog-preview", args: [`session=${sessionId}`] })
+    expect(state.opencodeWatchdog?.preview).toMatchObject({ watchdog_status: "blocked", report_required: true, has_blockers: true })
+    expect(state.opencodeWatchdog?.preview?.blockers_preview).toEqual(["needs report [REDACTED]"])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-force-report-dry-run", args: [`session=${sessionId}`, "reason=dry", "report"] })
+    expect(state.opencodeWatchdog?.forcedReportResult).toMatchObject({ session_id: sessionId, process_paused: false, reason: "dry report" })
+    expect(state.opencodeWatchdog?.forcedReportRequests).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-force-report", args: [`session=${sessionId}`, "reason=operator", "requested", "report", "token=abc123"] })
+    expect(state.opencodeWatchdog?.forcedReportResult).toMatchObject({ session_id: sessionId, process_paused: false, forced_pause_recommended: false })
+    expect(state.opencodeWatchdog?.forcedReportResult?.reason).not.toContain("abc123")
+    const requestId = state.opencodeWatchdog?.forcedReportResult?.request_id
+    expect(requestId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-force-report", args: [`session=${sessionId}`, "reason=duplicate", "request"] })
+    expect(state.opencodeWatchdog?.commandError).toContain("forced report request already exists")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdogs", args: [`session=${sessionId}`] })
+    expect(state.opencodeWatchdog?.records.map((record) => record.watchdog_status)).toContain("healthy")
+    const watchdogId = state.opencodeWatchdog?.records[0]?.watchdog_id
+    expect(watchdogId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdog-show", args: [watchdogId!] })
+    expect(state.opencodeWatchdog?.selected?.watchdog_id).toBe(watchdogId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-force-report-requests", args: [`session=${sessionId}`] })
+    expect(state.opencodeWatchdog?.forcedReportRequests.map((request) => request.request_id)).toContain(requestId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-force-report-show", args: [requestId!] })
+    expect(state.opencodeWatchdog?.selectedRequest?.request_id).toBe(requestId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdog-summary", args: [] })
+    expect(state.opencodeWatchdog?.summary?.total_launched_sessions).toBeGreaterThanOrEqual(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: [`/opencode-force-report session=${sessionId} reason=staged report`] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-force-report"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/opencode-force-report",
+      risk: "medium_risk_write",
+      calls_provider: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("process_paused=false")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode watchdog")
+    expect(snapshot).toContain("forced_report_requests")
+    expect(snapshot).toContain("process_paused=false")
+    expect(snapshot).toContain("watchdog does not pause/kill OpenCode")
+    expect(snapshot).toContain("Commander guidance/answer and wake scheduler execution are future work")
+    expect(snapshot).toContain("selected=/opencode-force-report risk=medium_risk_write")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

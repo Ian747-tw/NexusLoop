@@ -1191,6 +1191,45 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
   })
 
+  test("headless OpenCode watchdog inspection scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/opencode-watchdog-preview session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-watchdog-dry-run session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-force-report-dry-run session=missing-session reason=dry run" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-watchdogs session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-force-report-requests session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-watchdog-summary" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-opencode-watchdog-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("OpenCode watchdog")
+    expect(runtime.commandNames).toContain("runtime.preview_opencode_watchdog")
+    expect(runtime.commandNames).toContain("runtime.record_opencode_watchdog")
+    expect(runtime.commandNames).toContain("runtime.request_opencode_forced_report")
+    expect(runtime.commandNames).toContain("runtime.list_opencode_watchdogs")
+    expect(runtime.commandNames).toContain("runtime.list_opencode_forced_report_requests")
+    expect(runtime.commandNames).toContain("runtime.opencode_watchdog_summary")
+    expect(runtime.commandNames).not.toContain("runtime.resume")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
   test("headless OpenCode smoke inspection scripts skip broad startup refresh", async () => {
     const runtime = new TestRuntimeClient()
     const output: string[] = []

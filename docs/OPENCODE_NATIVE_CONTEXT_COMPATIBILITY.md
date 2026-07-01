@@ -259,6 +259,8 @@ Future launch should use dual control:
 
 Branch 9B0 does not implement timers, pause, abort, progress polling, or watchdog execution.
 
+Branch 9F adds the first watchdog metadata layer: it previews and records wall-clock, no-progress, heartbeat, blocker, and question status from 9A timeout policy, 9D launch records, and 9E progress records. It can also record a bounded forced-report request. It does not poll OpenCode, send prompts, pause, kill, stop, resume, inject Commander guidance, answer OpenCode questions, execute wake supervision, write `research.db`, call providers/MCPs, mutate missions/proposals/reviews/apply records, or mark mission/session success or failure.
+
 ## OpenCode Asks Commander Implications
 
 Native evidence:
@@ -319,7 +321,7 @@ Branch 9B0 does not implement this protocol.
 - 9C: real OpenCode launch readiness (read-only; no launch authority)
 - 9D: real OpenCode launch gate (explicit one-session launch metadata; no progress/timeout/guidance supervision)
 - 9E: progress report / heartbeat model (typed report metadata only; no polling, timeout enforcement, Commander guidance, wake supervision, or mission mutation)
-- 9F: timeout watchdog / forced pause/report
+- 9F: timeout watchdog / forced report request model (metadata only; no process pause/kill, Commander guidance, question answer, wake execution, provider/MCP call, research.db write, or mission mutation)
 - 9G: OpenCode asks Commander
 - 9H: Commander guidance to OpenCode
 - 9I: human live pause/correction/override
