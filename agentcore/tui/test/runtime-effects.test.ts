@@ -5302,11 +5302,13 @@ describe("runtime UI effects", () => {
     expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "progress", session_id: sessionId })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-blocker", args: [`session=${sessionId}`, "summary=blocked", "on", "ambiguity", "blocker=needs", "commander", "clarification"] })
     expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "blocker", execution_state: "blocked" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-blocker", args: [`session=${sessionId}`, "summary=blocked", "again", "blockers=needs", "commander", "clarification"] })
+    expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "blocker", blockers_preview: ["needs commander clarification"] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-question", args: [`session=${sessionId}`, "question=should", "I", "prefer", "option", "A", "or", "B"] })
     expect(state.opencodeProgress?.latestResult).toMatchObject({ status: "recorded", kind: "question", execution_state: "needs_commander" })
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-list", args: [`session=${sessionId}`] })
-    expect(state.opencodeProgress?.records.map((record) => record.kind)).toEqual(["question", "blocker", "progress", "heartbeat"])
+    expect(state.opencodeProgress?.records.map((record) => record.kind)).toEqual(["question", "blocker", "blocker", "progress", "heartbeat"])
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-latest", args: [`session=${sessionId}`] })
     expect(state.opencodeProgress?.latest?.kind).toBe("question")
     const progressId = state.opencodeProgress?.latest?.progress_id
@@ -5314,7 +5316,7 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-show", args: [progressId!] })
     expect(state.opencodeProgress?.selected?.progress_id).toBe(progressId)
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-summary", args: [] })
-    expect(state.opencodeProgress?.summary).toMatchObject({ total_records: 4, heartbeat_count: 1, blocked_count: 1, question_count: 1 })
+    expect(state.opencodeProgress?.summary).toMatchObject({ total_records: 5, heartbeat_count: 1, blocked_count: 2, question_count: 1 })
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-preview", args: [`launch=${launchId}`, "summary=stdout", "stderr"] })
     expect(state.opencodeProgress?.commandError).toContain("raw logs are out of scope")

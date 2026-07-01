@@ -13747,7 +13747,7 @@ function opencodeProgressEffect(
   requirePayload: boolean,
 ): Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }> {
   const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }> = { type, kind: defaultKind }
-  const freeTextKeys = new Set(["summary", "step", "blocker", "question", "next"])
+  const freeTextKeys = new Set(["summary", "step", "blocker", "blockers", "question", "next"])
   const knownKeys = new Set(["session", "launch", "kind", "state", "execution_state", "summary", "step", "files", "commands", "tests", "artifacts", "blocker", "blockers", "question", "confidence", "next", "source"])
   for (let index = 0; index < args.length; index += 1) {
     const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "OpenCode progress args must use session=<id>, launch=<id>, summary=<text>, step=<text>, files=<csv>, commands=<csv>, tests=<csv>, artifacts=<csv>, blocker=<text>, question=<text>, confidence=<value>, or next=<text>")
