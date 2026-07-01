@@ -64,8 +64,9 @@ export class ProcessOpenCodeLaunchAdapter implements OpenCodeLaunchAdapter {
   }
 
   private commandArgs(input: OpenCodeLaunchAdapterPreviewInput): string[] {
+    const args = this.args[0] === "run" ? this.args : ["run", ...this.args]
     return [
-      ...this.args,
+      ...args,
       ...input.instruction_files.flatMap((file) => ["--file", input.target_dir ? join(input.target_dir, file) : file]),
       launchMessage(),
     ]

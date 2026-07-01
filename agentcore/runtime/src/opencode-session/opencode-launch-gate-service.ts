@@ -201,7 +201,7 @@ export class OpenCodeLaunchGateService {
     const pack = readiness?.pack_id ? await this.options.instructionPackService.get(readiness.pack_id) : null
     if (readiness?.pack_id && !pack) blockers.push("ready instruction pack could not be loaded")
     const requestedKind = input.adapter_kind
-    const adapter = this.adapterFor(requestedKind ?? this.defaultAdapterKind(input.allow_real_launch === true))
+    const adapter = this.adapterFor(requestedKind ?? this.defaultAdapterKind(input.allow_real_launch === true || this.env.NXL_REAL_OPENCODE_LAUNCH === "1"))
     const adapterPreview = adapter
       ? await adapter.preview({ project_dir: this.options.projectDir, target_dir: readiness?.target_dir, instruction_files: pack?.files.map((file) => file.relative_path) ?? [] })
       : { adapter_kind: "disabled" as const, blockers: ["OpenCode launch adapter is unavailable"], warnings: [] }

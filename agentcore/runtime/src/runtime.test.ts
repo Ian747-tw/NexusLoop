@@ -17809,7 +17809,7 @@ describe("OpenCode launch readiness", () => {
       projectDir: dir,
       env: { NXL_REAL_OPENCODE_LAUNCH: "1" },
       adapter: new LongLivedAdapter(),
-      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["run", "--format", "json"] },
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["--format", "json"] },
       opencodeLaunchSpawn: (_command, args) => {
         spawnedArgs.push(args)
         return new FakeSpawnedProcess(6161)
@@ -17825,8 +17825,6 @@ describe("OpenCode launch readiness", () => {
       packId: pack.pack_id,
       providerKind: "local",
       modelId: "local-medium",
-      adapterKind: "process_adapter",
-      allowRealLaunch: true,
     }) as { status: string; can_launch: boolean; blockers: string[] }
     expect(preview).toMatchObject({ status: "ready", can_launch: true, blockers: [] })
     const launched = await server.command("runtime.launch_opencode_session", {
@@ -17834,10 +17832,9 @@ describe("OpenCode launch readiness", () => {
       packId: pack.pack_id,
       providerKind: "local",
       modelId: "local-medium",
-      adapterKind: "process_adapter",
-      allowRealLaunch: true,
     }) as { status: string; launch_performed: boolean; process_id?: number }
     expect(launched).toMatchObject({ status: "launch_started", launch_performed: true, process_id: 6161 })
+    expect(spawnedArgs[0].slice(0, 3)).toEqual(["run", "--format", "json"])
     expect(spawnedArgs[0]).toContain("--file")
     await server.shutdown()
   })
@@ -17846,7 +17843,7 @@ describe("OpenCode launch readiness", () => {
     const spawnedArgs: string[][] = []
     const adapter = new ProcessOpenCodeLaunchAdapter({
       command: "/bin/echo",
-      args: ["run", "--format", "json"],
+      args: ["--format", "json"],
       cwd: "/tmp/nxl-project",
       spawn: (_command, args) => {
         spawnedArgs.push(args)
