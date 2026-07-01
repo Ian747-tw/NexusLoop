@@ -166,11 +166,12 @@ export class OpenCodeTimeoutWatchdogService {
 
   async list(input: { limit?: number; session_id?: string; launch_id?: string; status?: string } = {}): Promise<OpenCodeWatchdogRecord[]> {
     const limit = Math.max(1, Math.min(input.limit ?? 20, MAX_LIST))
-    return (await this.records())
-      .filter((record) => !input.session_id || record.session_id === input.session_id)
-      .filter((record) => !input.launch_id || record.launch_id === input.launch_id)
-      .filter((record) => !input.status || record.watchdog_status === input.status)
-      .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))
+    return (await this.recordEntries())
+      .filter(({ record }) => !input.session_id || record.session_id === input.session_id)
+      .filter(({ record }) => !input.launch_id || record.launch_id === input.launch_id)
+      .filter(({ record }) => !input.status || record.watchdog_status === input.status)
+      .sort(compareRecordEntriesDesc)
+      .map(({ record }) => record)
       .slice(0, limit)
   }
 
@@ -198,7 +199,7 @@ export class OpenCodeTimeoutWatchdogService {
   async summary(input: { limit?: number } = {}): Promise<OpenCodeWatchdogSummary> {
     const launches = await this.options.launchGateService.list({ limit: MAX_LIST })
     const latestBySession = new Map<string, OpenCodeWatchdogRecord>()
-    for (const record of [...await this.records()].sort((left, right) => left.recorded_at.localeCompare(right.recorded_at))) latestBySession.set(record.session_id, record)
+    for (const { record } of [...await this.recordEntries()].sort(compareRecordEntriesAsc)) latestBySession.set(record.session_id, record)
     const records = [...latestBySession.values()]
     return redactValue({
       total_launched_sessions: new Set(launches.filter((launch) => LAUNCHED_STATUSES.has(launch.status)).map((launch) => launch.session_id)).size,
@@ -282,7 +283,9 @@ export class OpenCodeTimeoutWatchdogService {
       heartbeat_elapsed_ms: heartbeatElapsedMs,
     }))
     const existingForcedReport = await this.findForcedReportForEvidence(sessionId, launch?.launch_id ?? launchId, latestProgress?.progress_id)
-    const reportRequired = statusResult.status === "timed_out" || statusResult.status === "needs_report" || statusResult.status === "blocked" || (statusResult.status === "stale" && policy?.report_required_on_timeout === true)
+    const reportRequiredOnTimeout = policy?.report_required_on_timeout ?? true
+    const timeoutDerivedReport = statusResult.status === "timed_out" || statusResult.status === "needs_report" || statusResult.status === "stale"
+    const reportRequired = statusResult.status === "blocked" || hasQuestion || (timeoutDerivedReport && reportRequiredOnTimeout)
     const canRecord = blockers.length === 0
     return {
       preview: redactValue({
@@ -334,6 +337,14 @@ export class OpenCodeTimeoutWatchdogService {
 
   private async records(): Promise<OpenCodeWatchdogRecord[]> {
     return (await this.options.eventStore.readAll()).filter(isWatchdogEvent).map(watchdogRecordFromEvent).filter((record): record is OpenCodeWatchdogRecord => !!record)
+  }
+
+  private async recordEntries(): Promise<Array<{ record: OpenCodeWatchdogRecord; index: number }>> {
+    return (await this.options.eventStore.readAll())
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => isWatchdogEvent(event))
+      .map(({ event, index }) => ({ record: watchdogRecordFromEvent(event), index }))
+      .filter((entry): entry is { record: OpenCodeWatchdogRecord; index: number } => !!entry.record)
   }
 
   private async forcedReportRequests(): Promise<OpenCodeForcedReportRequest[]> {
@@ -540,6 +551,16 @@ function forcedReportFromEvent(event: JsonlEvent): OpenCodeForcedReportRequest |
     command_to_operator_preview: "metadata only: no OpenCode process was paused or prompted",
     request_hash: typeof event.request_hash === "string" ? event.request_hash : hash(stableJson(event)),
   })
+}
+
+function compareRecordEntriesDesc(left: { record: OpenCodeWatchdogRecord; index: number }, right: { record: OpenCodeWatchdogRecord; index: number }): number {
+  const time = right.record.recorded_at.localeCompare(left.record.recorded_at)
+  return time !== 0 ? time : right.index - left.index
+}
+
+function compareRecordEntriesAsc(left: { record: OpenCodeWatchdogRecord; index: number }, right: { record: OpenCodeWatchdogRecord; index: number }): number {
+  const time = left.record.recorded_at.localeCompare(right.record.recorded_at)
+  return time !== 0 ? time : left.index - right.index
 }
 
 function isWatchdogEvent(event: JsonlEvent): boolean {

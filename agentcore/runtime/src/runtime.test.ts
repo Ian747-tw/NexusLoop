@@ -17966,6 +17966,117 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
+  test("opencode watchdog honors report_required_on_timeout false policy while allowing manual forced report", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_watchdog_policy", title: "Watchdog policy" })
+    db.close()
+    const sessionId = "session_watchdog_policy_false"
+    await new EventStore(join(dir, ".nxl", "events.jsonl")).append({
+      kind: "opencode_session_planned",
+      session_id: sessionId,
+      status: "planned",
+      source_kind: "manual",
+      title: "Watchdog policy false",
+      objective: "verify report required policy",
+      commander_context_summary: "Commander summary pointer",
+      opencode_context_seed: "OpenCode executor seed",
+      shared_context_summary: "Shared bounded summary",
+      commander_context_hash: "commander_context_hash",
+      opencode_context_hash: "opencode_context_hash",
+      max_context_bytes: 4096,
+      success_criteria: ["verify policy"],
+      constraints: ["metadata only"],
+      artifact_expectations: ["watchdog record"],
+      timeout_policy: {
+        max_wall_time_ms: 60_000,
+        max_no_progress_ms: 30_000,
+        heartbeat_interval_ms: 5_000,
+        forced_pause_enabled: true,
+        report_required_on_timeout: false,
+        timeout_policy_hash: "timeout_policy_hash_false",
+      },
+      question_policy: {
+        allow_opencode_questions: true,
+        commander_answer_required_for_blockers: true,
+        human_escalation_allowed: true,
+        max_pending_questions: 3,
+        question_policy_hash: "question_policy_hash",
+      },
+      human_control_policy: {
+        allow_human_pause: true,
+        allow_human_override: true,
+        allow_human_stop: true,
+        allow_human_guidance_note: true,
+        require_reason_for_stop: true,
+        human_policy_hash: "human_policy_hash",
+      },
+      created_at: "2026-06-29T00:00:00.000Z",
+      created_by: "operator",
+      session_hash: "session_hash_watchdog_policy_false",
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["opencode"] },
+      researchProjectionMode: "check_only",
+      opencodeLaunchId: () => "launch_watchdog_policy_false",
+      opencodeWatchdogNow: () => new Date("2030-01-01T00:00:00.000Z"),
+    })
+    await server.start()
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId: pack.pack_id, providerKind: "local", modelId: "local-medium" }) as { status: string }
+    expect(launched.status).toBe("launched")
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId, maxWallTimeMs: 1, maxNoProgressMs: 1 }) as { watchdog_status: string; report_required: boolean; report_required_on_timeout: boolean; warnings: string[] }
+    expect(preview).toMatchObject({ watchdog_status: "timed_out", report_required: false, report_required_on_timeout: false })
+    expect(preview.warnings.join(" ")).toContain("policy does not require reports")
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId, maxWallTimeMs: 1, maxNoProgressMs: 1 }) as { watchdog_status: string; report_required: boolean }
+    expect(recorded).toMatchObject({ watchdog_status: "timed_out", report_required: false })
+    const manualRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "manual timeout report", dryRun: true }) as { request_id: string; process_paused: boolean }
+    expect(manualRequest).toMatchObject({ process_paused: false })
+    await server.shutdown()
+  })
+
+  test("opencode watchdog list and summary break same-timestamp ties by append order", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    const recordedAt = "2026-01-01T00:00:00.000Z"
+    await server.eventStore.append({
+      kind: "opencode_session_watchdog_recorded",
+      watchdog_id: "watchdog_tie_old",
+      session_id: sessionId,
+      launch_id: "launch_test_1",
+      watchdog_status: "healthy",
+      recommended_action: "none",
+      report_required: false,
+      recorded_at: recordedAt,
+      recorded_by: "test",
+      watchdog_hash: "old_hash",
+    })
+    await server.eventStore.append({
+      kind: "opencode_session_watchdog_recorded",
+      watchdog_id: "watchdog_tie_new",
+      session_id: sessionId,
+      launch_id: "launch_test_1",
+      watchdog_status: "blocked",
+      recommended_action: "escalate_to_commander",
+      report_required: true,
+      recorded_at: recordedAt,
+      recorded_by: "test",
+      latest_progress_id: "progress_tie_new",
+      watchdog_hash: "new_hash",
+    })
+
+    const list = await server.command("runtime.list_opencode_watchdogs", { sessionId, limit: 2 }) as Array<{ watchdog_id: string; watchdog_status: string }>
+    expect(list.map((item) => item.watchdog_id)).toEqual(["watchdog_tie_new", "watchdog_tie_old"])
+    const summary = await server.command("runtime.opencode_watchdog_summary") as { latest_records: Array<{ watchdog_id: string; watchdog_status: string }> }
+    expect(summary.latest_records[0]).toMatchObject({ watchdog_id: "watchdog_tie_new", watchdog_status: "blocked" })
+    await server.shutdown()
+  })
+
   test("opencode watchdog no-start client commands and authority registry are safe", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
