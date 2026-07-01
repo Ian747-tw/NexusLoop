@@ -2438,9 +2438,29 @@ export class FakeRuntimeClient implements RuntimeClient {
     const sessionId = sessionIdInput ?? launch?.session_id ?? ""
     const session = sessionId ? this.opencodeSessions.find((item) => item.session_id === sessionId) : undefined
     const sessionLaunch = launch ?? this.opencodeLaunches.find((item) => item.session_id === sessionId && (item.status === "launched" || item.status === "launch_started"))
-    const summary = preview(redactText(String(payload.reportSummary ?? payload.report_summary ?? payload.summary ?? "")))
-    const question = optionalString(payload.question)
-    const blockersPreview = readCsvPayload(payload.blockers ?? payload.blocker)
+    const summaryRaw = optionalString(payload.reportSummary ?? payload.report_summary ?? payload.summary) ?? ""
+    const currentStepRaw = optionalString(payload.currentStep ?? payload.current_step ?? payload.step)
+    const questionRaw = optionalString(payload.question)
+    const nextActionRaw = optionalString(payload.nextAction ?? payload.next_action ?? payload.next)
+    const filesTouchedRaw = readRawCsvPayload(payload.filesTouched ?? payload.files_touched ?? payload.files)
+    const commandsRunRaw = readRawCsvPayload(payload.commandsRun ?? payload.commands_run ?? payload.commands)
+    const testsRunRaw = readRawCsvPayload(payload.testsRun ?? payload.tests_run ?? payload.tests)
+    const artifactsRaw = readRawCsvPayload(payload.artifacts)
+    const blockersRaw = readRawCsvPayload(payload.blockers ?? payload.blocker)
+    const rawLogBlocked = fakeProgressPayloadLooksLikeRawLog([
+      summaryRaw,
+      currentStepRaw,
+      questionRaw,
+      nextActionRaw,
+      ...filesTouchedRaw,
+      ...commandsRunRaw,
+      ...testsRunRaw,
+      ...artifactsRaw,
+      ...blockersRaw,
+    ])
+    const summary = rawLogBlocked ? "raw progress log omitted; attach artifact pointer in a later branch" : preview(redactText(summaryRaw))
+    const question = rawLogBlocked ? undefined : questionRaw
+    const blockersPreview = rawLogBlocked ? [] : blockersRaw.map((item) => preview(redactText(item))).slice(0, 12)
     const blockers: string[] = []
     if (!sessionIdInput && !launchId) blockers.push("session_id or launch_id is required")
     if (sessionId && !session) blockers.push("session_id does not resolve to a planned OpenCode session")
@@ -2452,7 +2472,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     if ((kind === "heartbeat" || kind === "progress" || kind === "blocker") && !summary) blockers.push("report_summary is required for heartbeat, progress, and blocker records")
     if (kind === "question" && !question) blockers.push("question is required for question records")
     if (kind === "blocker" && blockersPreview.length === 0) blockers.push("blocker metadata is required for blocker records")
-    if (summary.length > 1200 || summary.includes("stdout") || summary.includes("stderr")) blockers.push("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
+    if (rawLogBlocked) blockers.push("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
     const hash = createHash("sha256").update(`${sessionId}:${sessionLaunch?.launch_id ?? launchId ?? ""}:${kind}:${summary}:${question ?? ""}:${blockers.join("|")}`).digest("hex")
     return {
       preview_id: `fake-opencode-progress-preview-${hash.slice(0, 12)}`,
@@ -2465,15 +2485,15 @@ export class FakeRuntimeClient implements RuntimeClient {
       kind,
       execution_state: executionState,
       report_summary_preview: summary || (kind === "question" ? "question metadata report" : "OpenCode progress report"),
-      current_step_preview: optionalString(payload.currentStep ?? payload.current_step ?? payload.step),
-      files_touched_preview: readCsvPayload(payload.filesTouched ?? payload.files_touched ?? payload.files),
-      commands_run_preview: readCsvPayload(payload.commandsRun ?? payload.commands_run ?? payload.commands),
-      tests_run_preview: readCsvPayload(payload.testsRun ?? payload.tests_run ?? payload.tests),
-      artifacts_preview: readCsvPayload(payload.artifacts),
+      current_step_preview: rawLogBlocked ? undefined : currentStepRaw,
+      files_touched_preview: rawLogBlocked ? [] : filesTouchedRaw.map((item) => preview(redactText(item))).slice(0, 12),
+      commands_run_preview: rawLogBlocked ? [] : commandsRunRaw.map((item) => preview(redactText(item))).slice(0, 12),
+      tests_run_preview: rawLogBlocked ? [] : testsRunRaw.map((item) => preview(redactText(item))).slice(0, 12),
+      artifacts_preview: rawLogBlocked ? [] : artifactsRaw.map((item) => preview(redactText(item))).slice(0, 12),
       blockers_preview: blockersPreview,
       question_preview: question,
       confidence: typeof payload.confidence === "number" ? payload.confidence : optionalString(payload.confidence),
-      next_action_preview: optionalString(payload.nextAction ?? payload.next_action ?? payload.next),
+      next_action_preview: rawLogBlocked ? undefined : nextActionRaw,
       source_kind: optionalString(payload.sourceKind ?? payload.source_kind ?? payload.source) ?? "fake",
       blockers: blockers.map(redactText),
       warnings: ["fake progress preview is metadata only; no OpenCode launch, provider call, timeout, wake, guidance, research.db write, or mission mutation"].map(redactText),
@@ -6991,6 +7011,20 @@ function readCsvPayload(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((item) => preview(redactText(String(item)))).filter(Boolean).slice(0, 12)
   if (typeof value === "string") return value.split(",").map((item) => preview(redactText(item.trim()))).filter(Boolean).slice(0, 12)
   return []
+}
+
+function readRawCsvPayload(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean).slice(0, 12)
+  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 12)
+  return []
+}
+
+function fakeProgressPayloadLooksLikeRawLog(values: Array<string | undefined>): boolean {
+  return values.some((value) => {
+    if (!value) return false
+    if (value.length > 2_000) return true
+    return /\b(stdout|stderr|traceback|stack trace|exception)\b/i.test(value)
+  })
 }
 
 function reviewStatusForDraft(proposalCount: number, reviewCount: number): string {

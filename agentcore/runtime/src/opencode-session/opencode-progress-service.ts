@@ -203,24 +203,34 @@ export class OpenCodeProgressService {
     if ((kind === "heartbeat" || kind === "progress" || kind === "blocker") && !summary) blockers.push("report_summary is required for heartbeat, progress, and blocker records")
     if (kind === "question" && !question) blockers.push("question is required for question records")
     if (kind === "blocker" && blockersPreview.length === 0) blockers.push("blocker metadata is required for blocker records")
-    if (progressInputLooksLikeRawLog(input)) {
+    const rawLogBlocked = progressInputLooksLikeRawLog(input)
+    if (rawLogBlocked) {
       blockers.push("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
     }
+    const safeSummary = rawLogBlocked ? "raw progress log omitted; attach artifact pointer in a later branch" : summary
+    const safeCurrentStep = rawLogBlocked ? undefined : currentStep
+    const safeFilesTouched = rawLogBlocked ? [] : filesTouched
+    const safeCommandsRun = rawLogBlocked ? [] : commandsRun
+    const safeTestsRun = rawLogBlocked ? [] : testsRun
+    const safeArtifacts = rawLogBlocked ? [] : artifacts
+    const safeBlockersPreview = rawLogBlocked ? [] : blockersPreview
+    const safeQuestion = rawLogBlocked ? undefined : question
+    const safeNextAction = rawLogBlocked ? undefined : nextAction
     const progressHash = hash(stableJson({
       session_id: sessionId,
       launch_id: launch?.launch_id ?? launchId,
       kind,
       execution_state: executionState,
-      report_summary_preview: summary,
-      current_step_preview: currentStep,
-      files_touched_preview: filesTouched,
-      commands_run_preview: commandsRun,
-      tests_run_preview: testsRun,
-      artifacts_preview: artifacts,
-      blockers_preview: blockersPreview,
-      question_preview: question,
+      report_summary_preview: safeSummary,
+      current_step_preview: safeCurrentStep,
+      files_touched_preview: safeFilesTouched,
+      commands_run_preview: safeCommandsRun,
+      tests_run_preview: safeTestsRun,
+      artifacts_preview: safeArtifacts,
+      blockers_preview: safeBlockersPreview,
+      question_preview: safeQuestion,
       confidence,
-      next_action_preview: nextAction,
+      next_action_preview: safeNextAction,
       source_kind: sourceKind,
     }))
     const canRecord = blockers.length === 0
@@ -235,16 +245,16 @@ export class OpenCodeProgressService {
         launch_started_at: launch && "started_at" in launch ? launch.started_at : undefined,
         kind,
         execution_state: executionState,
-        report_summary_preview: summary ?? (kind === "question" ? "question metadata report" : "OpenCode progress report"),
-        current_step_preview: currentStep,
-        files_touched_preview: filesTouched,
-        commands_run_preview: commandsRun,
-        tests_run_preview: testsRun,
-        artifacts_preview: artifacts,
-        blockers_preview: blockersPreview,
-        question_preview: question,
+        report_summary_preview: safeSummary ?? (kind === "question" ? "question metadata report" : "OpenCode progress report"),
+        current_step_preview: safeCurrentStep,
+        files_touched_preview: safeFilesTouched,
+        commands_run_preview: safeCommandsRun,
+        tests_run_preview: safeTestsRun,
+        artifacts_preview: safeArtifacts,
+        blockers_preview: safeBlockersPreview,
+        question_preview: safeQuestion,
         confidence,
-        next_action_preview: nextAction,
+        next_action_preview: safeNextAction,
         source_kind: sourceKind,
         blockers: boundArray(unique(blockers)),
         warnings: boundArray(unique([...warnings])),

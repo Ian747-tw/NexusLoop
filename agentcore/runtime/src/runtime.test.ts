@@ -17786,22 +17786,28 @@ describe("OpenCode launch readiness", () => {
     const summary = await server.command("runtime.opencode_progress_summary") as { total_records: number; heartbeat_count: number; blocked_count: number; question_count: number }
     expect(summary).toMatchObject({ total_records: 4, heartbeat_count: 1, blocked_count: 1, question_count: 1 })
 
-	    const rawLog = await server.command("runtime.preview_opencode_progress", { sessionId, summary: `stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[] }
-	    expect(rawLog.status).toBe("blocked")
-	    expect(rawLog.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
-	    const rawLogBlocker = await server.command("runtime.preview_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: [`stderr\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}`] }) as { status: string; blockers: string[] }
-	    expect(rawLogBlocker.status).toBe("blocked")
-	    expect(rawLogBlocker.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
-	    const rawLogQuestion = await server.command("runtime.preview_opencode_progress", { sessionId, kind: "question", question: `traceback\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[] }
-	    expect(rawLogQuestion.status).toBe("blocked")
-	    expect(rawLogQuestion.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
-	    const lateRawLogMarker = await server.command("runtime.preview_opencode_progress", { sessionId, summary: `${"safe prefix ".repeat(60)}stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[] }
-	    expect(lateRawLogMarker.status).toBe("blocked")
-	    expect(lateRawLogMarker.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
-	    await server.shutdown()
-	  })
+    const rawLog = await server.command("runtime.preview_opencode_progress", { sessionId, summary: `stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[]; report_summary_preview: string }
+    expect(rawLog.status).toBe("blocked")
+    expect(rawLog.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
+    expect(rawLog.report_summary_preview).toBe("raw progress log omitted; attach artifact pointer in a later branch")
+    expect(JSON.stringify(rawLog)).not.toContain("stdout")
+    expect(JSON.stringify(rawLog)).not.toContain("xxxxxxxx")
+    const rawLogBlocker = await server.command("runtime.preview_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: [`stderr\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}`] }) as { status: string; blockers: string[]; blockers_preview: string[] }
+    expect(rawLogBlocker.status).toBe("blocked")
+    expect(rawLogBlocker.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
+    expect(rawLogBlocker.blockers_preview).toEqual([])
+    const rawLogQuestion = await server.command("runtime.preview_opencode_progress", { sessionId, kind: "question", question: `traceback\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[]; question_preview?: string }
+    expect(rawLogQuestion.status).toBe("blocked")
+    expect(rawLogQuestion.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
+    expect(rawLogQuestion.question_preview).toBeUndefined()
+    const lateRawLogMarker = await server.command("runtime.preview_opencode_progress", { sessionId, summary: `${"safe prefix ".repeat(60)}stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}` }) as { status: string; blockers: string[]; report_summary_preview: string }
+    expect(lateRawLogMarker.status).toBe("blocked")
+    expect(lateRawLogMarker.blockers).toContain("raw logs are out of scope for progress records; attach an artifact pointer in a later branch")
+    expect(lateRawLogMarker.report_summary_preview).toBe("raw progress log omitted; attach artifact pointer in a later branch")
+    await server.shutdown()
+  })
 
-	  test("opencode progress validates launch status and runtime client no-start commands", async () => {
+  test("opencode progress validates launch status and runtime client no-start commands", async () => {
     const dir = await tempProject()
     const { server, sessionId } = await readyLaunchFixture(dir)
     const missing = await server.command("runtime.preview_opencode_progress", { sessionId: "missing", summary: "missing" }) as { status: string; blockers: string[] }
