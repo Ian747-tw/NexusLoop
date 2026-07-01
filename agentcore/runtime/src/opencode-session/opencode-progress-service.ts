@@ -155,8 +155,8 @@ export class OpenCodeProgressService {
     const kind = readProgressKind(input.kind)
     const executionState = readExecutionState(input.execution_state, defaultExecutionState(kind))
     const sourceKind = readSourceKind(input.source_kind)
-    const sessionIdInput = optional(input.session_id)
-    const launchId = optional(input.launch_id)
+    const sessionIdInput = optionalBoundedMetadata(input.session_id)
+    const launchId = optionalBoundedMetadata(input.launch_id)
     const blockers: string[] = []
     const warnings = new Set<string>([
       "progress records do not mutate missions, accept results, enforce timeouts, ask Commander, launch OpenCode, call providers, call MCPs, or write research.db",
@@ -283,10 +283,10 @@ export class OpenCodeProgressService {
 export function readOpenCodeProgressPreviewInput(value: unknown): OpenCodeProgressPreviewInput {
   const input = isRecord(value) ? value : {}
   return {
-    session_id: optional(input.sessionId ?? input.session_id ?? input.session),
-    launch_id: optional(input.launchId ?? input.launch_id ?? input.launch),
-    kind: optional(input.kind),
-    execution_state: optional(input.executionState ?? input.execution_state),
+    session_id: optionalBoundedMetadata(input.sessionId ?? input.session_id ?? input.session),
+    launch_id: optionalBoundedMetadata(input.launchId ?? input.launch_id ?? input.launch),
+    kind: optionalBoundedMetadata(input.kind),
+    execution_state: optionalBoundedMetadata(input.executionState ?? input.execution_state),
     report_summary: optionalRawText(input.reportSummary ?? input.report_summary ?? input.summary),
     current_step: optionalRawText(input.currentStep ?? input.current_step ?? input.step),
     files_touched: optionalStringArray(input.filesTouched ?? input.files_touched ?? input.files),
@@ -297,7 +297,7 @@ export function readOpenCodeProgressPreviewInput(value: unknown): OpenCodeProgre
     question: optionalRawText(input.question),
     confidence: readConfidence(input.confidence),
     next_action: optionalRawText(input.nextAction ?? input.next_action ?? input.next),
-    source_kind: optional(input.sourceKind ?? input.source_kind ?? input.source),
+    source_kind: optionalBoundedMetadata(input.sourceKind ?? input.source_kind ?? input.source),
   }
 }
 
@@ -306,7 +306,7 @@ export function readOpenCodeProgressAppendInput(value: unknown): OpenCodeProgres
   return {
     ...readOpenCodeProgressPreviewInput(input),
     dry_run: optionalBoolean(input.dryRun ?? input.dry_run),
-    recorded_by: optional(input.recordedBy ?? input.recorded_by),
+    recorded_by: optionalBoundedMetadata(input.recordedBy ?? input.recorded_by),
   }
 }
 
@@ -454,7 +454,7 @@ function readConfidence(value: unknown): number | "low" | "medium" | "high" | "u
   return "unknown"
 }
 
-function optional(value: unknown): string | undefined {
+function optionalBoundedMetadata(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? bound(value) : undefined
 }
 

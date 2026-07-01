@@ -2494,7 +2494,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const progressId = `fake_progress_${previewResult.progress_hash.slice(0, 12)}_${this.opencodeProgressRecords.length + 1}`
     const result: OpenCodeProgressResultSummary = {
       progress_id: progressId,
-      status: dryRun ? "dry_run" : previewResult.can_record ? "recorded" : "blocked",
+      status: previewResult.can_record ? dryRun ? "dry_run" : "recorded" : "blocked",
       session_id: previewResult.session_id,
       launch_id: previewResult.launch_id,
       kind: previewResult.kind,
@@ -2512,7 +2512,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       recorded_at: new Date(this.opencodeProgressRecords.length * 1000).toISOString(),
       recorded_by: "operator",
       source_kind: previewResult.source_kind,
-      error: previewResult.can_record || dryRun ? undefined : previewResult.blockers[0] ?? "OpenCode progress is blocked",
+      error: previewResult.can_record ? undefined : previewResult.blockers[0] ?? "OpenCode progress is blocked",
       progress_hash: createHash("sha256").update(`${progressId}:${previewResult.progress_hash}:${dryRun}`).digest("hex"),
       recommended_commands: previewResult.recommended_commands,
     }
