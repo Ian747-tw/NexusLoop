@@ -180,7 +180,9 @@ export class OpenCodeTimeoutWatchdogService {
       .filter(isWatchdogEvent)
       .reverse()
       .find((item) => item.watchdog_id === watchdogId)
-    return event ? watchdogResultFromEvent(event) : null
+    if (!event) return null
+    const linkedRequest = (await this.forcedReportRequests()).find((request) => request.watchdog_id === watchdogId)
+    return watchdogResultFromEvent(event, linkedRequest)
   }
 
   async listForcedReports(input: { limit?: number; session_id?: string; launch_id?: string } = {}): Promise<OpenCodeForcedReportRequest[]> {
@@ -509,7 +511,7 @@ function watchdogRecordFromEvent(event: JsonlEvent): OpenCodeWatchdogRecord | nu
   })
 }
 
-function watchdogResultFromEvent(event: JsonlEvent): OpenCodeWatchdogResult {
+function watchdogResultFromEvent(event: JsonlEvent, linkedRequest?: OpenCodeForcedReportRequest): OpenCodeWatchdogResult {
   const record = watchdogRecordFromEvent(event)
   return redactValue({
     watchdog_id: String(event.watchdog_id ?? ""),
@@ -519,7 +521,8 @@ function watchdogResultFromEvent(event: JsonlEvent): OpenCodeWatchdogResult {
     watchdog_status: readWatchdogStatus(event.watchdog_status),
     recommended_action: readWatchdogAction(event.recommended_action),
     report_required: event.report_required === true,
-    forced_report_requested: false,
+    forced_report_requested: Boolean(linkedRequest),
+    forced_report_request_id: linkedRequest?.request_id,
     latest_progress_id: typeof event.latest_progress_id === "string" ? event.latest_progress_id : undefined,
     latest_progress_kind: typeof event.latest_progress_kind === "string" ? event.latest_progress_kind : undefined,
     latest_progress_state: typeof event.latest_progress_state === "string" ? event.latest_progress_state : undefined,

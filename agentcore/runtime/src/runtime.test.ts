@@ -18077,6 +18077,26 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
+  test("opencode watchdog show preserves forced-report linkage created during record", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: ["needs report"] })
+
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true }) as { status: string; watchdog_id: string; forced_report_requested: boolean; forced_report_request_id?: string }
+    expect(recorded).toMatchObject({ status: "recorded", forced_report_requested: true })
+    expect(recorded.forced_report_request_id).toBeTruthy()
+    const hydrated = await server.command("runtime.get_opencode_watchdog", { watchdogId: recorded.watchdog_id }) as { watchdog_id: string; forced_report_requested: boolean; forced_report_request_id?: string }
+    expect(hydrated).toMatchObject({
+      watchdog_id: recorded.watchdog_id,
+      forced_report_requested: true,
+      forced_report_request_id: recorded.forced_report_request_id,
+    })
+    const requests = await server.command("runtime.list_opencode_forced_report_requests", { sessionId }) as Array<{ request_id: string; watchdog_id?: string }>
+    expect(requests).toEqual([expect.objectContaining({ request_id: recorded.forced_report_request_id, watchdog_id: recorded.watchdog_id })])
+    await server.shutdown()
+  })
+
   test("opencode watchdog no-start client commands and authority registry are safe", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
