@@ -5317,6 +5317,13 @@ describe("runtime UI effects", () => {
     expect(state.opencodeProgress?.selected?.progress_id).toBe(progressId)
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-summary", args: [] })
     expect(state.opencodeProgress?.summary).toMatchObject({ total_records: 5, heartbeat_count: 1, blocked_count: 2, question_count: 1 })
+    const blockerId = state.opencodeProgress?.records.find((record) => record.kind === "blocker")?.progress_id
+    expect(blockerId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-show", args: [blockerId!] })
+    expect(state.opencodeProgress?.selected).toMatchObject({ kind: "blocker", blockers_preview: ["needs commander clarification"] })
+    const progressDetailSnapshot = layoutSnapshot(state)
+    expect(progressDetailSnapshot).toContain("latest_question=should I prefer option A or B")
+    expect(progressDetailSnapshot).toContain("selected_blockers=needs commander clarification")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress-preview", args: [`launch=${launchId}`, "summary=stdout", "stderr"] })
     expect(state.opencodeProgress?.commandError).toContain("raw logs are out of scope")
@@ -5344,6 +5351,7 @@ describe("runtime UI effects", () => {
 
     const snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("OpenCode progress")
+    expect(snapshot).toContain("selected_blockers=needs commander clarification")
     expect(snapshot).toContain("heartbeat does not mean task success")
     expect(snapshot).toContain("question reports do not ask Commander yet")
     expect(snapshot).not.toContain("abc123")

@@ -936,6 +936,7 @@ function opencodeProgressLines(state: UiState): string[] {
     out.push(`  latest_result=${item.progress_id} status=${item.status} kind=${item.kind} execution_state=${item.execution_state}`)
     out.push(`  latest_session=${item.session_id || "none"} latest_launch=${item.launch_id ?? "none"} recorded_by=${preview(redactText(item.recorded_by))}`)
     out.push(`  latest_report=${preview(redactText(item.report_summary_preview))}`)
+    out.push(...opencodeProgressDetailLines("latest", item))
     if (item.error) out.push(`  latest_error=${preview(redactText(item.error))}`)
   } else {
     out.push("  latest_result=none")
@@ -943,6 +944,7 @@ function opencodeProgressLines(state: UiState): string[] {
   if (progress.latest) {
     const item = progress.latest
     out.push(`  latest=${item.progress_id} status=${item.status} kind=${item.kind} execution_state=${item.execution_state}: ${preview(redactText(item.report_summary_preview))}`)
+    out.push(...opencodeProgressDetailLines("latest", item))
   } else {
     out.push("  latest=none")
   }
@@ -955,6 +957,7 @@ function opencodeProgressLines(state: UiState): string[] {
   if (progress.selected) {
     const selected = progress.selected
     out.push(`  selected=${selected.progress_id} status=${selected.status} kind=${selected.kind} session=${selected.session_id}`)
+    out.push(...opencodeProgressDetailLines("selected", selected))
   }
   if (progress.summary) {
     const summary = progress.summary
@@ -964,6 +967,19 @@ function opencodeProgressLines(state: UiState): string[] {
   }
   if (progress.commandError) out.push(`  command_error=${redactText(progress.commandError)}`)
   out.push("  note=progress records do not mutate missions; heartbeat does not mean task success; question reports do not ask Commander yet; timeout/wake supervision is future work")
+  return out
+}
+
+function opencodeProgressDetailLines(prefix: string, item: { current_step_preview?: string; files_touched_preview?: string[]; commands_run_preview?: string[]; tests_run_preview?: string[]; artifacts_preview?: string[]; blockers_preview?: string[]; question_preview?: string; next_action_preview?: string }): string[] {
+  const out: string[] = []
+  if (item.current_step_preview) out.push(`  ${prefix}_step=${preview(redactText(item.current_step_preview))}`)
+  if (item.files_touched_preview && item.files_touched_preview.length > 0) out.push(`  ${prefix}_files=${item.files_touched_preview.slice(0, 8).map((value) => preview(redactText(value))).join(",")}`)
+  if (item.commands_run_preview && item.commands_run_preview.length > 0) out.push(`  ${prefix}_commands=${item.commands_run_preview.slice(0, 8).map((value) => preview(redactText(value))).join(",")}`)
+  if (item.tests_run_preview && item.tests_run_preview.length > 0) out.push(`  ${prefix}_tests=${item.tests_run_preview.slice(0, 8).map((value) => preview(redactText(value))).join(",")}`)
+  if (item.artifacts_preview && item.artifacts_preview.length > 0) out.push(`  ${prefix}_artifacts=${item.artifacts_preview.slice(0, 8).map((value) => preview(redactText(value))).join(",")}`)
+  if (item.blockers_preview && item.blockers_preview.length > 0) out.push(`  ${prefix}_blockers=${item.blockers_preview.slice(0, 8).map((value) => preview(redactText(value))).join(",")}`)
+  if (item.question_preview) out.push(`  ${prefix}_question=${preview(redactText(item.question_preview))}`)
+  if (item.next_action_preview) out.push(`  ${prefix}_next=${preview(redactText(item.next_action_preview))}`)
   return out
 }
 
