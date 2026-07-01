@@ -208,6 +208,7 @@ export class OpenCodeLaunchGateService {
     blockers.push(...adapterPreview.blockers)
     for (const warning of adapterPreview.warnings) warnings.add(warning)
     if (adapterPreview.adapter_kind !== "fake" && input.allow_real_launch !== true) warnings.add("real launch is not allowed by preview input; non-dry launch also requires NXL_REAL_OPENCODE_LAUNCH=1")
+    if (adapterPreview.adapter_kind !== "fake" && this.env.NXL_REAL_OPENCODE_LAUNCH !== "1") blockers.push("real OpenCode launch requires NXL_REAL_OPENCODE_LAUNCH=1")
     const active = sessionId ? (await this.records()).find((record) => record.session_id === sessionId && ACTIVE_STATUSES.has(record.status)) : undefined
     if (active) blockers.push("OpenCode session already has an active launch record")
     const failed = sessionId ? (await this.records()).find((record) => record.session_id === sessionId && record.status === "launch_failed") : undefined

@@ -17754,6 +17754,10 @@ describe("OpenCode launch readiness", () => {
     expect(staleHash.status).toBe("blocked")
     expect(staleHash.blockers).toContain("readiness_hash does not match rebuilt readiness preview")
 
+    const realPreviewBlocked = await server.command("runtime.preview_opencode_session_launch", { sessionId, packId, providerKind: "local", modelId: "local-medium", adapterKind: "process_adapter", allowRealLaunch: true }) as { status: string; can_launch: boolean; blockers: string[] }
+    expect(realPreviewBlocked).toMatchObject({ status: "blocked", can_launch: false })
+    expect(realPreviewBlocked.blockers).toContain("real OpenCode launch requires NXL_REAL_OPENCODE_LAUNCH=1")
+
     const realBlocked = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium", adapterKind: "process_adapter", allowRealLaunch: true, requireOptIn: false, require_opt_in: false }) as { status: string; error?: string; launch_performed: boolean }
     expect(realBlocked).toMatchObject({ status: "blocked", launch_performed: false })
     expect(realBlocked.error).toBe("real OpenCode launch requires NXL_REAL_OPENCODE_LAUNCH=1")
@@ -17798,6 +17802,15 @@ describe("OpenCode launch readiness", () => {
     await server.start()
     const session = await server.command("runtime.create_opencode_session_plan", { objective: "launch config env opt in" }) as { session_id: string }
     const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    const preview = await server.command("runtime.preview_opencode_session_launch", {
+      sessionId: session.session_id,
+      packId: pack.pack_id,
+      providerKind: "local",
+      modelId: "local-medium",
+      adapterKind: "process_adapter",
+      allowRealLaunch: true,
+    }) as { status: string; can_launch: boolean; blockers: string[] }
+    expect(preview).toMatchObject({ status: "ready", can_launch: true, blockers: [] })
     const launched = await server.command("runtime.launch_opencode_session", {
       sessionId: session.session_id,
       packId: pack.pack_id,
