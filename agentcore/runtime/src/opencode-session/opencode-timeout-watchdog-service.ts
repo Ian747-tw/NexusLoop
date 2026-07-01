@@ -5,7 +5,7 @@ import { redactText, redactValue } from "../security/redaction"
 import type { OpenCodeLaunchGateService } from "./opencode-launch-gate-service"
 import type { OpenCodeLaunchRecord, OpenCodeLaunchResult } from "./opencode-launch-gate-types"
 import type { OpenCodeProgressService } from "./opencode-progress-service"
-import type { OpenCodeProgressResult } from "./opencode-progress-types"
+import type { OpenCodeExecutionState, OpenCodeProgressKind, OpenCodeProgressResult } from "./opencode-progress-types"
 import type { OpenCodeSessionPlan } from "./opencode-session-types"
 import type { OpenCodeSessionService } from "./opencode-session-service"
 import type {
@@ -49,6 +49,8 @@ type BuiltWatchdogPreview = {
   launch?: OpenCodeLaunchResult | OpenCodeLaunchRecord | null
   latestProgress?: OpenCodeProgressResult | null
 }
+
+type WatchdogProgressEvidence = Pick<OpenCodeProgressResult, "progress_id" | "recorded_at" | "kind" | "execution_state" | "blockers_preview" | "question_preview">
 
 export class OpenCodeTimeoutWatchdogService {
   private readonly now: () => Date
@@ -295,10 +297,11 @@ export class OpenCodeTimeoutWatchdogService {
     const latestSubstantiveElapsedMs = elapsed(nowMs, latestSubstantiveProgress?.recorded_at)
     const heartbeatElapsedMs = latestElapsedMs ?? wallClockElapsedMs
     const noProgressElapsedMs = latestSubstantiveElapsedMs ?? wallClockElapsedMs
-    const hasBlockers = (latestProgress?.blockers_preview?.length ?? 0) > 0 || latestProgress?.execution_state === "blocked" || latestProgress?.kind === "blocker"
-    const hasQuestion = Boolean(latestProgress?.question_preview) || latestProgress?.execution_state === "needs_commander" || latestProgress?.kind === "question"
+    const statusEvidence = latestProgress?.kind === "heartbeat" ? latestSubstantiveProgress ?? latestProgress : latestProgress
+    const hasBlockers = (latestProgress?.blockers_preview?.length ?? 0) > 0 || latestProgress?.execution_state === "blocked" || latestProgress?.kind === "blocker" || (latestSubstantiveProgress?.blockers_preview?.length ?? 0) > 0 || latestSubstantiveProgress?.execution_state === "blocked" || latestSubstantiveProgress?.kind === "blocker"
+    const hasQuestion = Boolean(latestProgress?.question_preview) || latestProgress?.execution_state === "needs_commander" || latestProgress?.kind === "question" || Boolean(latestSubstantiveProgress?.question_preview) || latestSubstantiveProgress?.execution_state === "needs_commander" || latestSubstantiveProgress?.kind === "question"
     const statusResult = computeWatchdogStatus({
-      latestProgress,
+      latestProgress: statusEvidence,
       wallClockElapsedMs,
       noProgressElapsedMs,
       heartbeatElapsedMs,
@@ -350,8 +353,8 @@ export class OpenCodeTimeoutWatchdogService {
         latest_report_summary_preview: latestProgress?.report_summary_preview,
         has_blockers: hasBlockers,
         has_question: hasQuestion,
-        blockers_preview: boundArray(latestProgress?.blockers_preview),
-        question_preview: bound(latestProgress?.question_preview),
+        blockers_preview: boundArray(latestProgress?.blockers_preview?.length ? latestProgress.blockers_preview : latestSubstantiveProgress?.blockers_preview),
+        question_preview: bound(latestProgress?.question_preview ?? latestSubstantiveProgress?.question_preview),
         report_required: canRecord && reportRequired,
         forced_report_already_requested: Boolean(existingForcedReport),
         blockers: boundArray(unique(blockers)),
@@ -401,16 +404,21 @@ export class OpenCodeTimeoutWatchdogService {
     return [...records.values()]
   }
 
-  private async latestNonHeartbeatProgress(sessionId: string, launchId: string | undefined): Promise<{ progress_id?: string; recorded_at?: string } | null> {
+  private async latestNonHeartbeatProgress(sessionId: string, launchId: string | undefined): Promise<WatchdogProgressEvidence | null> {
     const events = await this.options.eventStore.readAll()
     for (const event of [...events].reverse()) {
       if (event.kind !== "opencode_session_progress_recorded") continue
       if (event.progress_kind === "heartbeat") continue
       if (event.session_id !== sessionId) continue
       if (launchId && event.launch_id !== launchId) continue
+      const kind = readProgressKind(event.progress_kind)
       return {
-        progress_id: typeof event.progress_id === "string" ? event.progress_id : undefined,
-        recorded_at: typeof event.recorded_at === "string" ? event.recorded_at : undefined,
+        progress_id: typeof event.progress_id === "string" ? event.progress_id : "unknown",
+        recorded_at: typeof event.recorded_at === "string" ? event.recorded_at : "",
+        kind,
+        execution_state: readExecutionState(event.execution_state, defaultExecutionState(kind)),
+        blockers_preview: boundArray(Array.isArray(event.blockers_preview) ? event.blockers_preview : []),
+        question_preview: bound(event.question_preview),
       }
     }
     return null
@@ -459,7 +467,7 @@ export function readOpenCodeForcedReportInput(value: unknown): OpenCodeForcedRep
 }
 
 function computeWatchdogStatus(input: {
-  latestProgress: OpenCodeProgressResult | null
+  latestProgress: Pick<OpenCodeProgressResult, "kind" | "execution_state"> | null
   wallClockElapsedMs?: number
   noProgressElapsedMs?: number
   heartbeatElapsedMs?: number
@@ -668,6 +676,22 @@ function readWatchdogStatus(value: unknown): OpenCodeWatchdogStatus {
 
 function readWatchdogAction(value: unknown): OpenCodeWatchdogAction {
   return value === "none" || value === "record_assessment" || value === "request_report" || value === "escalate_to_commander" || value === "escalate_to_human" ? value : "none"
+}
+
+function readProgressKind(value: unknown): OpenCodeProgressKind {
+  return value === "progress" || value === "blocker" || value === "question" || value === "checkpoint_note" || value === "completion_report" || value === "failure_report" ? value : "heartbeat"
+}
+
+function defaultExecutionState(kind: OpenCodeProgressKind): OpenCodeExecutionState {
+  if (kind === "blocker") return "blocked"
+  if (kind === "question") return "needs_commander"
+  if (kind === "completion_report") return "reported_done"
+  if (kind === "failure_report") return "reported_failed"
+  return "running"
+}
+
+function readExecutionState(value: unknown, fallback: OpenCodeExecutionState): OpenCodeExecutionState {
+  return value === "running" || value === "working" || value === "waiting" || value === "blocked" || value === "needs_commander" || value === "needs_human" || value === "reported_done" || value === "reported_failed" || value === "unknown" ? value : fallback
 }
 
 function elapsed(nowMs: number, iso: string | undefined): number | undefined {

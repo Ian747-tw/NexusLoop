@@ -18004,6 +18004,27 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
+  test("opencode watchdog preserves blocker evidence across later heartbeats", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked on choice", blockers: ["needs commander answer"] })
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "still alive" })
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; recommended_action: string; report_required: boolean; has_blockers: boolean; latest_progress_kind?: string; blockers_preview: string[] }
+    expect(preview).toMatchObject({
+      watchdog_status: "blocked",
+      recommended_action: "escalate_to_commander",
+      report_required: true,
+      has_blockers: true,
+      latest_progress_kind: "heartbeat",
+      blockers_preview: ["needs commander answer"],
+    })
+    const request = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker", dryRun: true }) as { request_id: string; process_paused: boolean }
+    expect(request).toMatchObject({ process_paused: false })
+    await server.shutdown()
+  })
+
   test("opencode watchdog honors report_required_on_timeout false policy while allowing manual forced report", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
