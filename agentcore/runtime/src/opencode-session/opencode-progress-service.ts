@@ -176,7 +176,7 @@ export class OpenCodeProgressService {
     }
     if (!launch && sessionId) {
       const launches = await this.resolveLaunchesForSession(sessionId)
-      launch = launches.find((record) => NORMAL_LAUNCH_STATUSES.has(record.status)) ?? launches[0] ?? null
+      launch = launches[0] ?? null
       if (!launch) blockers.push("OpenCode progress requires a launch record for the session")
     }
     if (launch && sessionIdInput && launch.session_id !== sessionIdInput) blockers.push("launch_id does not belong to session_id")
