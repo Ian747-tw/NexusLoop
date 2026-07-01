@@ -14157,7 +14157,7 @@ function opencodeWatchdogEffect(
   requireTarget: boolean,
 ): Extract<RuntimeUiEffect, { type: "preview-opencode-watchdog" | "record-opencode-watchdog" }> {
   const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-watchdog" | "record-opencode-watchdog" }> = { type }
-  const knownKeys = new Set(["session", "launch", "max_wall", "max_wall_time_ms", "max_no_progress", "max_no_progress_ms", "heartbeat", "heartbeat_interval_ms", "request_report"])
+  const knownKeys = new Set(["session", "launch", "max_wall", "max_wall_ms", "max_wall_time_ms", "max_no_progress", "max_no_progress_ms", "heartbeat", "heartbeat_ms", "heartbeat_interval_ms", "request_report"])
   for (const arg of args) {
     const [key, ...rest] = arg.split("=")
     const value = rest.join("=").trim()
@@ -14165,9 +14165,9 @@ function opencodeWatchdogEffect(
     if (!knownKeys.has(key)) throw new Error("OpenCode watchdog arg is unsupported")
     if (key === "session") effect.sessionId = value
     else if (key === "launch") effect.launchId = value
-    else if (key === "max_wall" || key === "max_wall_time_ms") effect.maxWallTimeMs = readPositiveInteger(value, key, 86_400_000)
+    else if (key === "max_wall" || key === "max_wall_ms" || key === "max_wall_time_ms") effect.maxWallTimeMs = readPositiveInteger(value, key, 86_400_000)
     else if (key === "max_no_progress" || key === "max_no_progress_ms") effect.maxNoProgressMs = readPositiveInteger(value, key, 86_400_000)
-    else if (key === "heartbeat" || key === "heartbeat_interval_ms") effect.heartbeatIntervalMs = readPositiveInteger(value, key, 3_600_000)
+    else if (key === "heartbeat" || key === "heartbeat_ms" || key === "heartbeat_interval_ms") effect.heartbeatIntervalMs = readPositiveInteger(value, key, 3_600_000)
     else if (key === "request_report" && type === "record-opencode-watchdog") (effect as Extract<RuntimeUiEffect, { type: "record-opencode-watchdog" }>).requestReport = readBooleanArg(value)
   }
   if (requireTarget && !effect.sessionId && !effect.launchId) throw new Error("OpenCode watchdog requires session=<id> or launch=<id>")

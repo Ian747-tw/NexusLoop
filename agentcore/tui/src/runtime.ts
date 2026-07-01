@@ -2693,8 +2693,34 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private recordOpenCodeWatchdog(payload: Record<string, unknown>): OpenCodeWatchdogResultSummary {
     const dryRun = payload.dryRun === true || payload.dry_run === true
+    const requestReport = payload.requestReport === true || payload.request_report === true
     const previewResult = this.previewOpenCodeWatchdog(payload)
     const watchdogId = `fake_watchdog_${previewResult.watchdog_hash.slice(0, 12)}_${this.opencodeWatchdogRecords.length + 1}`
+    const reportAllowed = previewResult.watchdog_status === "stale" || previewResult.watchdog_status === "timed_out" || previewResult.watchdog_status === "needs_report" || (previewResult.watchdog_status === "blocked" && (previewResult.has_blockers || previewResult.has_question))
+    if (!dryRun && requestReport && (!previewResult.can_record || !reportAllowed || previewResult.forced_report_already_requested)) {
+      return {
+        watchdog_id: watchdogId,
+        status: "blocked",
+        session_id: previewResult.session_id,
+        launch_id: previewResult.launch_id,
+        watchdog_status: previewResult.watchdog_status,
+        recommended_action: previewResult.recommended_action,
+        report_required: previewResult.report_required,
+        forced_report_requested: false,
+        latest_progress_id: previewResult.latest_progress_id,
+        latest_progress_kind: previewResult.latest_progress_kind,
+        latest_progress_state: previewResult.latest_progress_state,
+        latest_progress_at: previewResult.latest_progress_at,
+        wall_clock_elapsed_ms: previewResult.wall_clock_elapsed_ms,
+        no_progress_elapsed_ms: previewResult.no_progress_elapsed_ms,
+        heartbeat_elapsed_ms: previewResult.heartbeat_elapsed_ms,
+        recorded_at: new Date(this.opencodeWatchdogRecords.length * 1000).toISOString(),
+        recorded_by: "operator",
+        error: previewResult.forced_report_already_requested ? "forced report request already exists for this watchdog assessment" : reportAllowed ? previewResult.blockers[0] ?? "OpenCode forced report is blocked" : "forced report request is only allowed for stale, timed_out, needs_report, or blocked sessions",
+        watchdog_hash: createHash("sha256").update(`${watchdogId}:${previewResult.watchdog_hash}:blocked-request-report`).digest("hex"),
+        recommended_commands: previewResult.recommended_commands,
+      }
+    }
     const result: OpenCodeWatchdogResultSummary = {
       watchdog_id: watchdogId,
       status: previewResult.can_record ? dryRun ? "dry_run" : "recorded" : "blocked",
@@ -2717,7 +2743,30 @@ export class FakeRuntimeClient implements RuntimeClient {
       watchdog_hash: createHash("sha256").update(`${watchdogId}:${previewResult.watchdog_hash}:${dryRun}`).digest("hex"),
       recommended_commands: previewResult.recommended_commands,
     }
-    if (!dryRun && result.status === "recorded") this.opencodeWatchdogRecords.unshift(result)
+    if (!dryRun && result.status === "recorded") {
+      if (requestReport) {
+        const requestId = `fake_forced_report_${previewResult.watchdog_hash.slice(0, 12)}_${this.opencodeForcedReportRequests.length + 1}`
+        const request: OpenCodeForcedReportRequestSummary = {
+          request_id: requestId,
+          watchdog_id: watchdogId,
+          session_id: previewResult.session_id,
+          launch_id: previewResult.launch_id,
+          reason: "watchdog assessment requested forced report",
+          requested_at: new Date(this.opencodeForcedReportRequests.length * 1000).toISOString(),
+          requested_by: "operator",
+          latest_progress_id: previewResult.latest_progress_id,
+          report_due_after_ms: 60_000,
+          forced_pause_recommended: previewResult.forced_pause_enabled === true && (previewResult.watchdog_status === "timed_out" || previewResult.watchdog_status === "needs_report"),
+          process_paused: false,
+          command_to_operator_preview: "metadata only: no OpenCode process was paused or prompted",
+          request_hash: createHash("sha256").update(`${requestId}:${previewResult.watchdog_hash}:watchdog-record`).digest("hex"),
+        }
+        this.opencodeForcedReportRequests.unshift(request)
+        result.forced_report_requested = true
+        result.forced_report_request_id = requestId
+      }
+      this.opencodeWatchdogRecords.unshift(result)
+    }
     return result
   }
 
