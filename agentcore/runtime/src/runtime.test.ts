@@ -17920,6 +17920,9 @@ describe("OpenCode launch readiness", () => {
     const healthyRecordWithRequest = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true }) as { status: string; error?: string; forced_report_requested: boolean }
     expect(healthyRecordWithRequest).toMatchObject({ status: "blocked", forced_report_requested: false })
     expect(healthyRecordWithRequest.error).toContain("forced report request is only allowed")
+    const healthyDryRunRecordWithRequest = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true, dryRun: true }) as { status: string; error?: string; forced_report_requested: boolean }
+    expect(healthyDryRunRecordWithRequest).toMatchObject({ status: "blocked", forced_report_requested: false })
+    expect(healthyDryRunRecordWithRequest.error).toContain("forced report request is only allowed")
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_watchdog_recorded")).toHaveLength(0)
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_forced_report_requested")).toHaveLength(0)
 
@@ -17946,8 +17949,9 @@ describe("OpenCode launch readiness", () => {
     const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; recommended_action: string; report_required: boolean; has_blockers: boolean; blockers_preview: string[] }
     expect(preview).toMatchObject({ watchdog_status: "blocked", recommended_action: "escalate_to_commander", report_required: true, has_blockers: true })
     expect(preview.blockers_preview[0]).not.toContain("forced-secret")
-    const dryRunRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "dry run report", dryRun: true }) as { request_id: string; process_paused: boolean }
-    expect(dryRunRequest).toMatchObject({ process_paused: false })
+    const dryRunRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "dry run report", dryRun: true }) as { status: string; forced_report_requested: boolean; session_id: string }
+    expect(dryRunRequest).toMatchObject({ status: "dry_run", forced_report_requested: false, session_id: sessionId })
+    expect(dryRunRequest).not.toHaveProperty("request_id")
     expect(await server.eventStore.readAll()).toEqual(beforeWatchdog)
     const rawLogReason = await server.command("runtime.request_opencode_forced_report", {
       sessionId,
@@ -17966,6 +17970,9 @@ describe("OpenCode launch readiness", () => {
     const duplicate = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "duplicate" }) as { status: string; error?: string }
     expect(duplicate).toMatchObject({ status: "blocked" })
     expect(duplicate.error).toContain("already exists")
+    const duplicateDryRunRecordWithRequest = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true, dryRun: true }) as { status: string; error?: string; forced_report_requested: boolean }
+    expect(duplicateDryRunRecordWithRequest).toMatchObject({ status: "blocked", forced_report_requested: false })
+    expect(duplicateDryRunRecordWithRequest.error).toContain("already exists")
 
     const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
     expect(eventKinds.filter((kind) => kind === "opencode_session_watchdog_recorded")).toHaveLength(1)
@@ -18020,8 +18027,9 @@ describe("OpenCode launch readiness", () => {
       latest_progress_kind: "heartbeat",
       blockers_preview: ["needs commander answer"],
     })
-    const request = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker", dryRun: true }) as { request_id: string; process_paused: boolean }
-    expect(request).toMatchObject({ process_paused: false })
+    const request = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker", dryRun: true }) as { status: string; forced_report_requested: boolean; session_id: string }
+    expect(request).toMatchObject({ status: "dry_run", forced_report_requested: false, session_id: sessionId })
+    expect(request).not.toHaveProperty("request_id")
     await server.shutdown()
   })
 
@@ -18093,8 +18101,9 @@ describe("OpenCode launch readiness", () => {
     expect(preview.warnings.join(" ")).toContain("policy does not require reports")
     const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId, maxWallTimeMs: 1, maxNoProgressMs: 1 }) as { watchdog_status: string; report_required: boolean }
     expect(recorded).toMatchObject({ watchdog_status: "timed_out", report_required: false })
-    const manualRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "manual timeout report", dryRun: true }) as { request_id: string; process_paused: boolean }
-    expect(manualRequest).toMatchObject({ process_paused: false })
+    const manualRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "manual timeout report", dryRun: true }) as { status: string; forced_report_requested: boolean; session_id: string }
+    expect(manualRequest).toMatchObject({ status: "dry_run", forced_report_requested: false, session_id: sessionId })
+    expect(manualRequest).not.toHaveProperty("request_id")
     await server.shutdown()
   })
 

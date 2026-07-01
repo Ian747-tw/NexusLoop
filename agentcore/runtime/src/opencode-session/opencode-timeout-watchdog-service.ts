@@ -82,14 +82,6 @@ export class OpenCodeTimeoutWatchdogService {
         error: preview.blockers[0] ?? "OpenCode watchdog assessment is blocked",
       })
     }
-    if (input.dry_run === true) {
-      return resultFromPreview(preview, {
-        watchdog_id: watchdogId,
-        status: "dry_run",
-        recorded_at: recordedAt,
-        recorded_by: recordedBy,
-      })
-    }
     if (input.request_report === true && !shouldAllowForcedReport(preview.watchdog_status, preview.has_blockers, preview.has_question)) {
       return resultFromPreview(preview, {
         watchdog_id: watchdogId,
@@ -106,6 +98,14 @@ export class OpenCodeTimeoutWatchdogService {
         recorded_at: recordedAt,
         recorded_by: recordedBy,
         error: "forced report request already exists for this watchdog assessment",
+      })
+    }
+    if (input.dry_run === true) {
+      return resultFromPreview(preview, {
+        watchdog_id: watchdogId,
+        status: "dry_run",
+        recorded_at: recordedAt,
+        recorded_by: recordedBy,
       })
     }
     const result = resultFromPreview(preview, {
@@ -133,7 +133,6 @@ export class OpenCodeTimeoutWatchdogService {
     const rawReason = input.reason ?? "operator requested report after watchdog assessment"
     const reason = bound(rawReason) ?? "operator requested report after watchdog assessment"
     const preview = context.preview ?? await this.preview({ session_id: input.session_id, launch_id: input.launch_id })
-    const requestId = this.forcedReportIdFactory()
     if (!preview.can_record) {
       return resultFromPreview(preview, {
         watchdog_id: context.watchdogId ?? this.watchdogIdFactory(),
@@ -170,6 +169,15 @@ export class OpenCodeTimeoutWatchdogService {
         error: "forced report request already exists for this watchdog assessment",
       })
     }
+    if (input.dry_run === true) {
+      return resultFromPreview(preview, {
+        watchdog_id: context.watchdogId ?? this.watchdogIdFactory(),
+        status: "dry_run",
+        recorded_at: requestedAt,
+        recorded_by: requestedBy,
+      })
+    }
+    const requestId = this.forcedReportIdFactory()
     const forcedPauseRecommended = preview.forced_pause_enabled === true && (preview.watchdog_status === "timed_out" || preview.watchdog_status === "needs_report")
     const requestHash = hash(stableJson({
       session_id: preview.session_id,
@@ -194,7 +202,6 @@ export class OpenCodeTimeoutWatchdogService {
       command_to_operator_preview: "metadata only: ask OpenCode for a bounded status report manually or through a future protocol",
       request_hash: requestHash,
     })
-    if (input.dry_run === true) return request
     await this.options.eventStore.append(forcedReportEventPayload(request) as JsonlEvent)
     return request
   }

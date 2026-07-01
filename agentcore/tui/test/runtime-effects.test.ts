@@ -5401,7 +5401,8 @@ describe("runtime UI effects", () => {
     expect(state.opencodeWatchdog?.preview?.blockers_preview).toEqual(["needs report [REDACTED]"])
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-force-report-dry-run", args: [`session=${sessionId}`, "reason=dry", "report"] })
-    expect(state.opencodeWatchdog?.forcedReportResult).toMatchObject({ session_id: sessionId, process_paused: false, reason: "dry report" })
+    expect(state.opencodeWatchdog?.latestResult).toMatchObject({ status: "dry_run", session_id: sessionId, forced_report_requested: false })
+    expect(state.opencodeWatchdog?.forcedReportResult).toBeNull()
     expect(state.opencodeWatchdog?.forcedReportRequests).toEqual([])
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdog-record", args: [`session=${sessionId}`, "request_report=true"] })

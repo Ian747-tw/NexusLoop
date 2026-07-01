@@ -2697,7 +2697,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const previewResult = this.previewOpenCodeWatchdog(payload)
     const watchdogId = `fake_watchdog_${previewResult.watchdog_hash.slice(0, 12)}_${this.opencodeWatchdogRecords.length + 1}`
     const reportAllowed = previewResult.watchdog_status === "stale" || previewResult.watchdog_status === "timed_out" || previewResult.watchdog_status === "needs_report" || (previewResult.watchdog_status === "blocked" && (previewResult.has_blockers || previewResult.has_question))
-    if (!dryRun && requestReport && (!previewResult.can_record || !reportAllowed || previewResult.forced_report_already_requested)) {
+    if (requestReport && (!previewResult.can_record || !reportAllowed || previewResult.forced_report_already_requested)) {
       return {
         watchdog_id: watchdogId,
         status: "blocked",
@@ -2781,6 +2781,7 @@ export class FakeRuntimeClient implements RuntimeClient {
         error: previewResult.forced_report_already_requested ? "forced report request already exists for this watchdog assessment" : allowed ? previewResult.blockers[0] ?? "OpenCode forced report is blocked" : "forced report request is only allowed for stale, timed_out, needs_report, or blocked sessions",
       }
     }
+    if (dryRun) return this.recordOpenCodeWatchdog({ ...payload, dryRun: true })
     const requestId = `fake_forced_report_${previewResult.watchdog_hash.slice(0, 12)}_${this.opencodeForcedReportRequests.length + 1}`
     const request: OpenCodeForcedReportRequestSummary = {
       request_id: requestId,
@@ -2796,7 +2797,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       command_to_operator_preview: "metadata only: no OpenCode process was paused or prompted",
       request_hash: createHash("sha256").update(`${requestId}:${previewResult.watchdog_hash}:${payload.reason ?? ""}`).digest("hex"),
     }
-    if (!dryRun) this.opencodeForcedReportRequests.unshift(request)
+    this.opencodeForcedReportRequests.unshift(request)
     return request
   }
 
