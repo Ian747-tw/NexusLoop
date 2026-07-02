@@ -1897,6 +1897,106 @@ export type OpenCodeWatchdogState = {
   commandError?: string
 }
 
+export type OpenCodeCommanderQuestionCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeCommanderQuestionPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_create: boolean
+  session_id: string
+  launch_id?: string
+  progress_id?: string
+  watchdog_id?: string
+  forced_report_request_id?: string
+  question_type: string
+  urgency: string
+  question_preview: string
+  context_summary_preview: string
+  options_considered_preview: string[]
+  executor_recommendation_preview?: string
+  evidence_summary_preview?: string
+  source_kind: string
+  duplicate_question_id?: string
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeCommanderQuestionCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  question_hash: string
+}
+
+export type OpenCodeCommanderQuestionRecordSummary = {
+  question_id: string
+  status: string
+  session_id: string
+  launch_id?: string
+  question_type: string
+  urgency: string
+  question_preview: string
+  source_kind: string
+  created_at: string
+  created_by: string
+  has_options: boolean
+  has_recommendation: boolean
+  linked_progress_id?: string
+  linked_watchdog_id?: string
+  linked_forced_report_request_id?: string
+  question_hash: string
+}
+
+export type OpenCodeCommanderQuestionResultSummary = {
+  question_id: string
+  status: "created" | "blocked" | "dry_run" | "failed" | string
+  question_status: string
+  session_id: string
+  launch_id?: string
+  progress_id?: string
+  watchdog_id?: string
+  forced_report_request_id?: string
+  question_type: string
+  urgency: string
+  question_preview: string
+  context_summary_preview: string
+  options_considered_preview: string[]
+  executor_recommendation_preview?: string
+  evidence_summary_preview?: string
+  created_at: string
+  created_by: string
+  source_kind: string
+  error?: string
+  question_hash: string
+  recommended_commands: OpenCodeCommanderQuestionCommandSummary[]
+}
+
+export type OpenCodeCommanderQuestionSummaryState = {
+  total_questions: number
+  pending_commander_count: number
+  pending_human_count: number
+  withdrawn_count: number
+  superseded_count: number
+  answered_count: number
+  urgent_count: number
+  blocked_type_count: number
+  latest_questions: OpenCodeCommanderQuestionRecordSummary[]
+  generated_at: string
+}
+
+export type OpenCodeCommanderQuestionsState = {
+  preview?: OpenCodeCommanderQuestionPreviewSummary | null
+  latestResult?: OpenCodeCommanderQuestionResultSummary | null
+  records: OpenCodeCommanderQuestionRecordSummary[]
+  selected?: OpenCodeCommanderQuestionResultSummary | null
+  latest?: OpenCodeCommanderQuestionResultSummary | null
+  summary?: OpenCodeCommanderQuestionSummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -4278,6 +4378,7 @@ export type UiState = {
   opencodeLaunches?: OpenCodeLaunchesState
   opencodeProgress?: OpenCodeProgressState
   opencodeWatchdog?: OpenCodeWatchdogState
+  opencodeCommanderQuestions?: OpenCodeCommanderQuestionsState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

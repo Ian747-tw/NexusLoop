@@ -18014,7 +18014,276 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
-  test("opencode watchdog preserves blocker evidence across later heartbeats", async () => {
+  test("opencode asks Commander previews dry-runs creates dedupes and lists bounded pending questions", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "question", question: "should I use option A or option B token=question-secret" }) as { progress_id: string; question_preview: string }
+    expect(progress.question_preview).not.toContain("question-secret")
+    const eventsAfterProgress = await server.eventStore.readAll()
+
+    const preview = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "should I use option A or option B token=question-secret", options: ["option A", "option B"], recommendation: "prefer option A" }) as { status: string; can_create: boolean; question_preview: string; options_considered_preview: string[]; executor_recommendation_preview?: string }
+    expect(preview).toMatchObject({ status: "ready", can_create: true, options_considered_preview: ["option A", "option B"], executor_recommendation_preview: "prefer option A" })
+    expect(preview.question_preview).not.toContain("question-secret")
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterProgress)
+
+    const dryRun = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "should I use option A or option B", dryRun: true }) as { status: string }
+    expect(dryRun.status).toBe("dry_run")
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterProgress)
+
+    const created = await server.command("runtime.create_opencode_commander_question", { progressId: progress.progress_id }) as { status: string; question_id: string; question_status: string; source_kind: string; progress_id?: string; question_type: string; urgency: string }
+    expect(created).toMatchObject({ status: "created", question_status: "pending_commander", source_kind: "progress_question", progress_id: progress.progress_id, question_type: "clarification", urgency: "normal" })
+    const duplicatePreview = await server.command("runtime.preview_opencode_commander_question", { progressId: progress.progress_id }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
+    expect(duplicatePreview).toMatchObject({ status: "blocked", can_create: false })
+    expect(duplicatePreview.duplicate_question_id).toBe(created.question_id)
+    expect(duplicatePreview.blockers).toContain("pending Commander question already exists for this evidence")
+    const duplicate = await server.command("runtime.create_opencode_commander_question", { progressId: progress.progress_id }) as { status: string; error?: string }
+    expect(duplicate).toMatchObject({ status: "blocked" })
+    expect(duplicate.error).toContain("pending Commander question already exists")
+    const editedDuplicate = await server.command("runtime.preview_opencode_commander_question", { progressId: progress.progress_id, question: "edited Commander wording for same progress evidence" }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
+    expect(editedDuplicate).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: created.question_id })
+    expect(editedDuplicate.blockers).toContain("pending Commander question already exists for this evidence")
+
+    const questionEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_commander_question_created")
+    expect(questionEvents).toHaveLength(1)
+    expect(JSON.stringify(questionEvents)).not.toContain("question-secret")
+    expect(JSON.stringify(questionEvents)).not.toContain("CommanderGuidance")
+    expect(JSON.stringify(questionEvents)).not.toContain("research.db")
+    const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+    expect(eventKinds).not.toContain("opencode_commander_question_answered")
+    expect(eventKinds).not.toContain("commander_guidance_recorded")
+    expect(eventKinds).not.toContain("opencode_prompt_sent")
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+
+    const list = await server.command("runtime.list_opencode_commander_questions", { sessionId }) as Array<{ question_id: string; status: string; session_id: string }>
+    expect(list).toEqual([expect.objectContaining({ question_id: created.question_id, status: "pending_commander", session_id: sessionId })])
+    await expect(server.command("runtime.get_opencode_commander_question", { questionId: created.question_id })).resolves.toMatchObject({ question_id: created.question_id, session_id: sessionId })
+    await expect(server.command("runtime.latest_opencode_commander_question", { sessionId })).resolves.toMatchObject({ question_id: created.question_id })
+    await expect(server.command("runtime.opencode_commander_question_summary")).resolves.toMatchObject({ total_questions: 1, pending_commander_count: 1 })
+    await server.shutdown()
+
+    const noStartDir = await tempProject()
+    await makeProject(noStartDir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const noStartServer = new RuntimeServer({ projectDir: noStartDir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server: noStartServer, autoStart: true, ownsServer: true })
+    await expect(client.command("runtime.preview_opencode_commander_question", { sessionId: "missing", question: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.create_opencode_commander_question", { sessionId: "missing", question: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_opencode_commander_questions")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_commander_question", { questionId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.latest_opencode_commander_question", { sessionId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.opencode_commander_question_summary")).resolves.toMatchObject({ total_questions: 0 })
+    expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
+    await client.shutdown?.()
+  })
+
+	  test("opencode asks Commander accepts watchdog and forced-report evidence but rejects mismatches and raw logs", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    const timedOutWatchdog = await server.command("runtime.record_opencode_watchdog", { sessionId, maxWallTimeMs: 1, maxNoProgressMs: 1 }) as { watchdog_id: string; watchdog_status: string }
+    expect(timedOutWatchdog.watchdog_status).toBe("timed_out")
+    const urgentQuestion = await server.command("runtime.create_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; question_id: string; question_status: string }
+    expect(urgentQuestion).toMatchObject({ status: "created", question_status: "pending_human" })
+    const duplicateUrgentPreview = await server.command("runtime.preview_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
+    expect(duplicateUrgentPreview).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: urgentQuestion.question_id })
+    expect(duplicateUrgentPreview.blockers).toContain("pending Commander question already exists for this evidence")
+    const duplicateUrgent = await server.command("runtime.create_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; error?: string }
+    expect(duplicateUrgent).toMatchObject({ status: "blocked" })
+    expect(duplicateUrgent.error).toContain("pending Commander question already exists")
+
+    const blockerProgress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: ["needs report"] }) as { progress_id: string }
+    const watchdog = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true }) as { watchdog_id: string; watchdog_status: string; forced_report_request_id?: string }
+    expect(watchdog.watchdog_status).toBe("blocked")
+    expect(watchdog.forced_report_request_id).toBeTruthy()
+    const forcedReport = { request_id: watchdog.forced_report_request_id! }
+    await expect(server.command("runtime.get_opencode_forced_report_request", { requestId: forcedReport.request_id })).resolves.toMatchObject({ watchdog_id: watchdog.watchdog_id, latest_progress_id: blockerProgress.progress_id })
+
+    const fromBlocker = await server.command("runtime.preview_opencode_commander_question", { progressId: blockerProgress.progress_id }) as { status: string; question_type: string; source_kind: string }
+    expect(fromBlocker).toMatchObject({ status: "ready", question_type: "blocker", source_kind: "progress_question" })
+    const fromWatchdog = await server.command("runtime.preview_opencode_commander_question", { watchdogId: watchdog.watchdog_id }) as { status: string; urgency: string; source_kind: string }
+    expect(fromWatchdog).toMatchObject({ status: "ready", urgency: "normal", source_kind: "watchdog" })
+    const fromForcedReport = await server.command("runtime.preview_opencode_commander_question", { forcedReport: forcedReport.request_id }) as { status: string; urgency: string; source_kind: string }
+    expect(fromForcedReport).toMatchObject({ status: "ready", urgency: "high", source_kind: "forced_report" })
+    const mismatchedWatchdogReport = await server.command("runtime.preview_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id, forcedReport: forcedReport.request_id }) as { status: string; blockers: string[] }
+    expect(mismatchedWatchdogReport.status).toBe("blocked")
+    expect(mismatchedWatchdogReport.blockers).toContain("forced_report_request_id does not belong to watchdog_id")
+    const unrelatedProgress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "question", question: "unrelated progress evidence" }) as { progress_id: string }
+    const mismatchedWatchdogProgress = await server.command("runtime.preview_opencode_commander_question", { watchdogId: watchdog.watchdog_id, progressId: unrelatedProgress.progress_id }) as { status: string; blockers: string[] }
+    expect(mismatchedWatchdogProgress.status).toBe("blocked")
+    expect(mismatchedWatchdogProgress.blockers).toContain("progress_id does not belong to watchdog_id")
+    const mismatchedReportProgress = await server.command("runtime.preview_opencode_commander_question", { forcedReport: forcedReport.request_id, progressId: unrelatedProgress.progress_id }) as { status: string; blockers: string[] }
+    expect(mismatchedReportProgress.status).toBe("blocked")
+    expect(mismatchedReportProgress.blockers).toContain("progress_id does not belong to forced_report_request_id")
+
+    const mismatch = await server.command("runtime.preview_opencode_commander_question", { sessionId: "other_session", progressId: blockerProgress.progress_id }) as { status: string; blockers: string[] }
+    expect(mismatch.status).toBe("blocked")
+    expect(mismatch.blockers).toContain("session_id does not resolve to a planned OpenCode session")
+    expect(mismatch.blockers).toContain("progress_id does not belong to session_id")
+
+    const rawLog = await server.command("runtime.preview_opencode_commander_question", {
+      sessionId,
+      question: `stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}`,
+    }) as { status: string; blockers: string[]; question_preview: string }
+    expect(rawLog.status).toBe("blocked")
+    expect(rawLog.blockers).toContain("raw logs are out of scope for Commander question records; attach an artifact pointer in a later branch")
+    expect(rawLog.question_preview).toBe("raw question log omitted; attach artifact pointer in a later branch")
+    expect(JSON.stringify(rawLog)).not.toContain("stdout")
+    expect(JSON.stringify(rawLog)).not.toContain("xxxxxxxx")
+    const longSingleLine = "artifact-dump-".repeat(80)
+    for (const payload of [
+      { sessionId, question: longSingleLine },
+      { sessionId, question: "bounded question", context: longSingleLine },
+      { sessionId, question: "bounded question", recommendation: longSingleLine },
+      { sessionId, question: "bounded question", options: [longSingleLine] },
+    ]) {
+      const overlong = await server.command("runtime.preview_opencode_commander_question", payload) as { status: string; blockers: string[]; question_preview: string; context_summary_preview: string; options_considered_preview: string[]; executor_recommendation_preview?: string }
+      expect(overlong.status).toBe("blocked")
+      expect(overlong.blockers).toContain("raw logs are out of scope for Commander question records; attach an artifact pointer in a later branch")
+      expect(JSON.stringify(overlong)).not.toContain("artifact-dump-artifact-dump")
+    }
+	    await server.shutdown()
+	  })
+
+	  test("opencode asks Commander honors planned session question policy", async () => {
+	    const dir = await tempProject()
+	    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+	    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+	    const eventsPath = join(dir, ".nxl", "events.jsonl")
+	    const events = (await readFile(eventsPath, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as JsonlEvent)
+	    const rewritten = events.map((event) => {
+	      if (event.kind !== "opencode_session_planned" || event.session_id !== sessionId) return event
+	      const questionPolicy = {
+	        allow_opencode_questions: false,
+	        commander_answer_required_for_blockers: true,
+	        human_escalation_allowed: true,
+	        max_pending_questions: 3,
+	        question_policy_hash: "question-policy-disallow-opencode-questions",
+	      }
+	      return { ...event, question_policy: questionPolicy }
+	    })
+	    await writeFile(eventsPath, `${rewritten.map((event) => JSON.stringify(event)).join("\n")}\n`)
+	    const eventsBefore = await server.eventStore.readAll()
+	    const preview = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "should I ask Commander despite policy" }) as { status: string; can_create: boolean; blockers: string[] }
+	    expect(preview).toMatchObject({ status: "blocked", can_create: false })
+	    expect(preview.blockers).toContain("planned OpenCode session question policy does not allow OpenCode Commander questions")
+	    const create = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "should I ask Commander despite policy" }) as { status: string; error?: string }
+	    expect(create).toMatchObject({ status: "blocked" })
+	    expect(create.error).toContain("question policy does not allow")
+	    expect(await server.eventStore.readAll()).toEqual(eventsBefore)
+	    await server.shutdown()
+
+	    const humanDir = await tempProject()
+	    const { server: humanServer, sessionId: humanSessionId, packId: humanPackId } = await readyLaunchFixture(humanDir)
+	    await humanServer.command("runtime.launch_opencode_session", { sessionId: humanSessionId, packId: humanPackId, providerKind: "local", modelId: "local-medium" })
+	    const humanEventsPath = join(humanDir, ".nxl", "events.jsonl")
+	    const humanEvents = (await readFile(humanEventsPath, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as JsonlEvent)
+	    const humanPolicyEvents = humanEvents.map((event) => {
+	      if (event.kind !== "opencode_session_planned" || event.session_id !== humanSessionId) return event
+	      const questionPolicy = {
+	        allow_opencode_questions: true,
+	        commander_answer_required_for_blockers: true,
+	        human_escalation_allowed: false,
+	        max_pending_questions: 3,
+	        question_policy_hash: "question-policy-disallow-human-escalation",
+	      }
+	      return { ...event, question_policy: questionPolicy }
+	    })
+	    await writeFile(humanEventsPath, `${humanPolicyEvents.map((event) => JSON.stringify(event)).join("\n")}\n`)
+	    await new Promise((resolve) => setTimeout(resolve, 1100))
+	    const timedOutWatchdog = await humanServer.command("runtime.record_opencode_watchdog", { sessionId: humanSessionId, maxWallTimeMs: 1, maxNoProgressMs: 1 }) as { watchdog_id: string; watchdog_status: string }
+	    expect(timedOutWatchdog.watchdog_status).toBe("timed_out")
+	    const urgentPreview = await humanServer.command("runtime.preview_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; blockers: string[] }
+	    expect(urgentPreview.status).toBe("blocked")
+	    expect(urgentPreview.blockers).toContain("planned OpenCode session question policy does not allow human escalation for urgent Commander questions")
+	    const urgentCreate = await humanServer.command("runtime.create_opencode_commander_question", { sessionId: humanSessionId, question: "urgent human route", urgency: "urgent" }) as { status: string; error?: string }
+	    expect(urgentCreate).toMatchObject({ status: "blocked" })
+	    expect(urgentCreate.error).toContain("human escalation")
+	    await humanServer.shutdown()
+	  })
+
+	  test("opencode asks Commander dedupe scans beyond the public list cap", async () => {
+	    const dir = await tempProject()
+	    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+	    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+	    const original = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "older duplicate Commander question" }) as { status: string; question_id: string }
+	    expect(original.status).toBe("created")
+	    for (let index = 0; index < 100; index += 1) {
+	      await server.eventStore.append({
+	        kind: "opencode_commander_question_created",
+	        question_id: `synthetic_closed_question_${index}`,
+	        question_status: "withdrawn",
+	        session_id: sessionId,
+	        question_type: "clarification",
+	        urgency: "low",
+	        question_preview: `synthetic closed Commander question ${index}`,
+	        context_summary_preview: "synthetic non-pending display-cap record",
+	        options_considered_preview: [],
+	        evidence_summary_preview: "synthetic display-cap record",
+	        created_at: `9999-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+	        created_by: "test",
+	        source_kind: "manual",
+	        question_hash: `synthetic_closed_question_hash_${index}`,
+	      } as JsonlEvent)
+	    }
+	    const publicList = await server.command("runtime.list_opencode_commander_questions", { sessionId, limit: 100 }) as Array<{ question_id: string }>
+	    expect(publicList).toHaveLength(100)
+	    expect(publicList.map((record) => record.question_id)).not.toContain(original.question_id)
+	    const duplicatePreview = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "older duplicate Commander question" }) as { status: string; can_create: boolean; duplicate_question_id?: string }
+	    expect(duplicatePreview).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: original.question_id })
+	    const duplicate = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "older duplicate Commander question" }) as { status: string; error?: string }
+	    expect(duplicate.status).toBe("blocked")
+	    expect(duplicate.error).toContain("pending Commander question already exists")
+	    await server.shutdown()
+	  })
+
+	  test("opencode asks Commander enforces session max pending question policy", async () => {
+	    const dir = await tempProject()
+	    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+	    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+	    const createdQuestionIds: string[] = []
+	    for (let index = 0; index < 3; index += 1) {
+	      const created = await server.command("runtime.create_opencode_commander_question", { sessionId, question: `pending Commander policy question ${index}` }) as { status: string; question_id: string }
+	      expect(created.status).toBe("created")
+	      createdQuestionIds.push(created.question_id)
+	    }
+	    const eventsBefore = await server.eventStore.readAll()
+	    const duplicateAtCap = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "pending Commander policy question 0" }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
+	    expect(duplicateAtCap).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: createdQuestionIds[0] })
+	    expect(duplicateAtCap.blockers).toContain("pending Commander question already exists for this evidence")
+	    expect(duplicateAtCap.blockers).not.toContain("planned OpenCode session question policy max_pending_questions has been reached")
+	    const duplicateCreateAtCap = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "pending Commander policy question 0" }) as { status: string; error?: string }
+	    expect(duplicateCreateAtCap).toMatchObject({ status: "blocked" })
+	    expect(duplicateCreateAtCap.error).toContain("pending Commander question already exists")
+	    const preview = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "fourth pending Commander policy question" }) as { status: string; can_create: boolean; blockers: string[] }
+	    expect(preview).toMatchObject({ status: "blocked", can_create: false })
+	    expect(preview.blockers).toContain("planned OpenCode session question policy max_pending_questions has been reached")
+	    const blocked = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "fourth pending Commander policy question" }) as { status: string; error?: string }
+	    expect(blocked.status).toBe("blocked")
+	    expect(blocked.error).toContain("max_pending_questions")
+	    expect(await server.eventStore.readAll()).toEqual(eventsBefore)
+	    await server.shutdown()
+	  })
+
+	  test("opencode asks Commander serializes concurrent duplicate creates", async () => {
+	    const dir = await tempProject()
+	    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+	    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+	    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "question", question: "concurrent Commander question" }) as { progress_id: string }
+	    const [first, second] = await Promise.all([
+	      server.command("runtime.create_opencode_commander_question", { progressId: progress.progress_id }),
+	      server.command("runtime.create_opencode_commander_question", { progressId: progress.progress_id }),
+	    ]) as Array<{ status: string; error?: string }>
+	    expect([first.status, second.status].sort()).toEqual(["blocked", "created"])
+	    expect([first.error, second.error].filter(Boolean).join(" ")).toContain("pending Commander question already exists")
+	    const questionEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_commander_question_created")
+	    expect(questionEvents).toHaveLength(1)
+	    await server.shutdown()
+	  })
+
+	  test("opencode watchdog preserves blocker evidence across later heartbeats", async () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)
     await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
@@ -18035,10 +18304,14 @@ describe("OpenCode launch readiness", () => {
     const request = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker", dryRun: true }) as { status: string; forced_report_requested: boolean; session_id: string }
     expect(request).toMatchObject({ status: "dry_run", forced_report_requested: false, session_id: sessionId })
     expect(request).not.toHaveProperty("request_id")
-    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; has_blockers: boolean; has_question: boolean; latest_progress_kind?: string; watchdog_evidence_progress_id?: string }
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; has_blockers: boolean; has_question: boolean; latest_progress_id?: string; latest_progress_kind?: string; watchdog_evidence_progress_id?: string }
     expect(recorded).toMatchObject({ has_blockers: true, has_question: false, latest_progress_kind: "heartbeat", watchdog_evidence_progress_id: evidenceProgressId })
     const watchdogEvent = (await server.eventStore.readAll()).find((event) => event.kind === "opencode_session_watchdog_recorded" && event.watchdog_id === recorded.watchdog_id)
     expect(watchdogEvent).toMatchObject({ has_blockers: true, has_question: false, latest_progress_kind: "heartbeat", watchdog_evidence_progress_id: evidenceProgressId })
+    expect(recorded.latest_progress_id).not.toBe(evidenceProgressId)
+    const questionFromWatchdogEvidence = await server.command("runtime.preview_opencode_commander_question", { watchdogId: recorded.watchdog_id, progressId: evidenceProgressId }) as { status: string; progress_id?: string; watchdog_id?: string; blockers: string[] }
+    expect(questionFromWatchdogEvidence).toMatchObject({ status: "ready", progress_id: evidenceProgressId, watchdog_id: recorded.watchdog_id })
+    expect(questionFromWatchdogEvidence.blockers).not.toContain("progress_id does not belong to watchdog_id")
     const persistedRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker" }) as { request_id: string; latest_progress_id?: string }
     expect(persistedRequest.latest_progress_id).toBe(evidenceProgressId)
     const duplicateAfterHeartbeat = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "duplicate after fresh heartbeat" }) as { status: string; error?: string }

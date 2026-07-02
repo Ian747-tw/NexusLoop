@@ -589,4 +589,48 @@ describe("interactive runtime effect state merge", () => {
     expect(merged.opencodeResultReview?.packet?.status).toBe("needs_result")
     expect(merged.opencodeResultReview?.packet?.warnings).toContain("executor outcome has no submitted mission result yet")
   })
+
+  test("preserves OpenCode asks Commander updates from async runtime effects", () => {
+    const baseline = initialState("/tmp/demo")
+    const current = initialState("/tmp/demo")
+    const effectResult = initialState("/tmp/demo")
+    effectResult.opencodeCommanderQuestions = {
+      preview: null,
+      latestResult: {
+        question_id: "question-1",
+        status: "created",
+        question_status: "pending_commander",
+        session_id: "session-1",
+        question_type: "clarification",
+        urgency: "normal",
+        question_preview: "Should I choose option A?",
+        context_summary_preview: "bounded runtime metadata",
+        options_considered_preview: [],
+        created_at: "1970-01-01T00:00:00.000Z",
+        created_by: "operator",
+        source_kind: "manual",
+        question_hash: "question-hash-1",
+        recommended_commands: [],
+      },
+      records: [{
+        question_id: "question-1",
+        status: "pending_commander",
+        session_id: "session-1",
+        question_type: "clarification",
+        urgency: "normal",
+        question_preview: "Should I choose option A?",
+        source_kind: "manual",
+        created_at: "1970-01-01T00:00:00.000Z",
+        created_by: "operator",
+        has_options: false,
+        has_recommendation: false,
+        question_hash: "question-hash-1",
+      }],
+    }
+
+    const merged = mergeRuntimeEffectState(current, effectResult, 0, baseline)
+
+    expect(merged.opencodeCommanderQuestions?.latestResult?.question_id).toBe("question-1")
+    expect(merged.opencodeCommanderQuestions?.records.map((record) => record.question_id)).toEqual(["question-1"])
+  })
 })
