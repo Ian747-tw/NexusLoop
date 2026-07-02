@@ -18170,6 +18170,22 @@ describe("OpenCode launch readiness", () => {
 	    await server.shutdown()
 	  })
 
+	  test("opencode asks Commander serializes concurrent duplicate creates", async () => {
+	    const dir = await tempProject()
+	    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+	    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+	    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "question", question: "concurrent Commander question" }) as { progress_id: string }
+	    const [first, second] = await Promise.all([
+	      server.command("runtime.create_opencode_commander_question", { progressId: progress.progress_id }),
+	      server.command("runtime.create_opencode_commander_question", { progressId: progress.progress_id }),
+	    ]) as Array<{ status: string; error?: string }>
+	    expect([first.status, second.status].sort()).toEqual(["blocked", "created"])
+	    expect([first.error, second.error].filter(Boolean).join(" ")).toContain("pending Commander question already exists")
+	    const questionEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_commander_question_created")
+	    expect(questionEvents).toHaveLength(1)
+	    await server.shutdown()
+	  })
+
 	  test("opencode watchdog preserves blocker evidence across later heartbeats", async () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)

@@ -60,6 +60,7 @@ type SequencedQuestionRecord = {
 export class OpenCodeCommanderQuestionService {
   private readonly now: () => Date
   private readonly idFactory: () => string
+  private createQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: OpenCodeCommanderQuestionServiceOptions) {
     this.now = options.now ?? (() => new Date())
@@ -93,23 +94,35 @@ export class OpenCodeCommanderQuestionService {
         error: "pending Commander question already exists for this evidence",
       })
     }
-    if (input.dry_run === true) {
-      return resultFromPreview(preview, {
-        question_id: questionId,
-        status: "dry_run",
-        created_at: createdAt,
-        created_by: createdBy,
-      })
-    }
-    const result = resultFromPreview(preview, {
-      question_id: questionId,
-      status: "created",
-      created_at: createdAt,
-      created_by: createdBy,
-    })
-    await this.options.eventStore.append(questionEventPayload(result) as JsonlEvent)
-    return redactValue(result)
-  }
+	    if (input.dry_run === true) {
+	      return resultFromPreview(preview, {
+	        question_id: questionId,
+	        status: "dry_run",
+	        created_at: createdAt,
+	        created_by: createdBy,
+	      })
+	    }
+	    return this.serializeCreate(async () => {
+	      const rebuilt = await this.buildPreview(input)
+	      if (!rebuilt.can_create || rebuilt.duplicate_question_id) {
+	        return resultFromPreview(rebuilt, {
+	          question_id: questionId,
+	          status: "blocked",
+	          created_at: createdAt,
+	          created_by: createdBy,
+	          error: rebuilt.duplicate_question_id ? "pending Commander question already exists for this evidence" : rebuilt.blockers[0] ?? "OpenCode Commander question is blocked",
+	        })
+	      }
+	      const result = resultFromPreview(rebuilt, {
+	        question_id: questionId,
+	        status: "created",
+	        created_at: createdAt,
+	        created_by: createdBy,
+	      })
+	      await this.options.eventStore.append(questionEventPayload(result) as JsonlEvent)
+	      return redactValue(result)
+	    })
+	  }
 
   async list(input: { limit?: number; session_id?: string; launch_id?: string; status?: string; question_type?: string; urgency?: string } = {}): Promise<OpenCodeCommanderQuestionRecord[]> {
     const limit = Math.max(1, Math.min(input.limit ?? 20, MAX_LIST))
@@ -295,14 +308,26 @@ export class OpenCodeCommanderQuestionService {
       ?.record
   }
 
-  private async sequencedRecords(): Promise<SequencedQuestionRecord[]> {
-    return (await this.options.eventStore.readAll())
-      .map((event, index) => ({ event, index }))
-      .filter(({ event }) => isQuestionEvent(event))
-      .map(({ event, index }) => ({ record: recordFromEvent(event)!, event_index: index }))
-      .filter((item) => Boolean(item.record))
-  }
-}
+	  private async sequencedRecords(): Promise<SequencedQuestionRecord[]> {
+	    return (await this.options.eventStore.readAll())
+	      .map((event, index) => ({ event, index }))
+	      .filter(({ event }) => isQuestionEvent(event))
+	      .map(({ event, index }) => ({ record: recordFromEvent(event)!, event_index: index }))
+	      .filter((item) => Boolean(item.record))
+	  }
+
+	  private async serializeCreate<T>(operation: () => Promise<T>): Promise<T> {
+	    const previous = this.createQueue
+	    let release!: () => void
+	    this.createQueue = new Promise<void>((resolve) => { release = resolve })
+	    await previous
+	    try {
+	      return await operation()
+	    } finally {
+	      release()
+	    }
+	  }
+	}
 
 export function readOpenCodeCommanderQuestionPreviewInput(value: unknown): OpenCodeCommanderQuestionPreviewInput {
   const input = isRecord(value) ? value : {}
