@@ -18097,11 +18097,19 @@ describe("OpenCode launch readiness", () => {
     expect(preview.answer_preview).not.toContain("guidance-secret")
     expect(await server.eventStore.readAll()).toEqual(eventsAfterQuestion)
 
-    const dryRun = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "choose option A", dryRun: true }) as { status: string }
-    expect(dryRun.status).toBe("dry_run")
-    expect(await server.eventStore.readAll()).toEqual(eventsAfterQuestion)
+	    const dryRun = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "choose option A", dryRun: true }) as { status: string }
+	    expect(dryRun.status).toBe("dry_run")
+	    expect(await server.eventStore.readAll()).toEqual(eventsAfterQuestion)
 
-    const created = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "choose option A because it is safer token=guidance-secret", constraints: ["stay bounded"] }) as { status: string; guidance_id: string; delivery_status: string; question_status_after?: string }
+	    const oneLineRawPreview = await server.command("runtime.preview_commander_guidance", { questionId: question.question_id, answer: "stderr: permission denied" }) as { status: string; blockers: string[] }
+	    expect(oneLineRawPreview).toMatchObject({ status: "blocked" })
+	    expect(oneLineRawPreview.blockers).toContain("raw logs are out of scope for Commander guidance records; attach artifact pointers instead")
+	    const oneLineRawCreate = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "stdout stderr" }) as { status: string; error?: string }
+	    expect(oneLineRawCreate).toMatchObject({ status: "blocked" })
+	    expect(oneLineRawCreate.error).toContain("raw logs are out of scope")
+	    expect(await server.eventStore.readAll()).toEqual(eventsAfterQuestion)
+
+	    const created = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "choose option A because it is safer token=guidance-secret", constraints: ["stay bounded"] }) as { status: string; guidance_id: string; delivery_status: string; question_status_after?: string }
     expect(created).toMatchObject({ status: "created", delivery_status: "not_delivered", question_status_after: "answered" })
     const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
     expect(eventKinds.filter((kind) => kind === "opencode_commander_guidance_created")).toHaveLength(1)

@@ -27,6 +27,7 @@ const MAX_ARRAY = 10
 const LAUNCHED_STATUSES = new Set(["launch_started", "launched"])
 const RAW_LOG_PATTERNS = [
   /\n.{80,}\n.{80,}\n/s,
+  /(^|\s)(stdout|stderr|traceback|stack trace|bun test v|npm error|error:)(\s|$|:)/i,
   /(stdout|stderr|traceback|stack trace|bun test v|npm error|error:).{0,80}\n/i,
   /(\[[0-9]{2}:[0-9]{2}:[0-9]{2}\].*\n){3,}/i,
 ]
