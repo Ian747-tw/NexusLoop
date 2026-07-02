@@ -18120,6 +18120,35 @@ describe("OpenCode launch readiness", () => {
 	    await server.shutdown()
 	  })
 
+	  test("opencode asks Commander honors planned session question policy", async () => {
+	    const dir = await tempProject()
+	    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+	    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+	    const eventsPath = join(dir, ".nxl", "events.jsonl")
+	    const events = (await readFile(eventsPath, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as JsonlEvent)
+	    const rewritten = events.map((event) => {
+	      if (event.kind !== "opencode_session_planned" || event.session_id !== sessionId) return event
+	      const questionPolicy = {
+	        allow_opencode_questions: false,
+	        commander_answer_required_for_blockers: true,
+	        human_escalation_allowed: true,
+	        max_pending_questions: 3,
+	        question_policy_hash: "question-policy-disallow-opencode-questions",
+	      }
+	      return { ...event, question_policy: questionPolicy }
+	    })
+	    await writeFile(eventsPath, `${rewritten.map((event) => JSON.stringify(event)).join("\n")}\n`)
+	    const eventsBefore = await server.eventStore.readAll()
+	    const preview = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "should I ask Commander despite policy" }) as { status: string; can_create: boolean; blockers: string[] }
+	    expect(preview).toMatchObject({ status: "blocked", can_create: false })
+	    expect(preview.blockers).toContain("planned OpenCode session question policy does not allow OpenCode Commander questions")
+	    const create = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "should I ask Commander despite policy" }) as { status: string; error?: string }
+	    expect(create).toMatchObject({ status: "blocked" })
+	    expect(create.error).toContain("question policy does not allow")
+	    expect(await server.eventStore.readAll()).toEqual(eventsBefore)
+	    await server.shutdown()
+	  })
+
 	  test("opencode asks Commander dedupe scans beyond the public list cap", async () => {
 	    const dir = await tempProject()
 	    const { server, sessionId, packId } = await readyLaunchFixture(dir)

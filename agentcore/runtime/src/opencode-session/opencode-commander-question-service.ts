@@ -272,10 +272,11 @@ export class OpenCodeCommanderQuestionService {
     if (launch && !LAUNCHED_STATUSES.has(launch.status)) blockers.push(`OpenCode Commander question requires launch_started or launched status; current status is ${launch.status}`)
     if (launch && sessionId && launch.session_id !== sessionId) blockers.push("launch_id does not belong to session_id")
     sessionId = sessionId || launch?.session_id || ""
-    if (sessionId) {
-      const session = await this.options.opencodeSessionService.get(sessionId)
-      if (!session) blockers.push("session_id does not resolve to a planned OpenCode session")
-    }
+	    if (sessionId) {
+	      const session = await this.options.opencodeSessionService.get(sessionId)
+	      if (!session) blockers.push("session_id does not resolve to a planned OpenCode session")
+	      if (session && session.question_policy.allow_opencode_questions === false) blockers.push("planned OpenCode session question policy does not allow OpenCode Commander questions")
+	    }
     if (progress && sessionId && progress.session_id !== sessionId) blockers.push("progress_id does not belong to session_id")
     if (progress && launchId && progress.launch_id && progress.launch_id !== launchId) blockers.push("progress_id does not belong to launch_id")
     if (progress && !isQuestionEligibleProgress(progress)) blockers.push("progress_id must reference question/blocker/needs_commander/blocked/needs_human evidence")
