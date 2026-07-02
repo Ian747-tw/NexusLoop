@@ -5558,6 +5558,13 @@ describe("runtime UI effects", () => {
     const questionId = state.opencodeCommanderQuestions?.latestResult?.question_id
     expect(questionId).toBeTruthy()
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander", args: [`session=${sessionId}`, "question=please", "provide", "timeout", "report", "type=timeout_report"] })
+    const timeoutQuestionId = state.opencodeCommanderQuestions?.latestResult?.question_id
+    expect(timeoutQuestionId).toBeTruthy()
+    expect(state.opencodeCommanderQuestions?.latestResult).toMatchObject({ question_type: "timeout_report" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-preview", args: [`question=${timeoutQuestionId}`, "answer=send", "a", "bounded", "timeout", "report"] })
+    expect(state.commanderGuidance?.preview).toMatchObject({ question_id: timeoutQuestionId, guidance_scope: "timeout_report_response" })
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-preview", args: [`question=${questionId}`, "answer=choose", "option", "A", "because", "it", "is", "safer", "token=abc123", "constraints=stay-bounded", "rationale=manual", "answer"] })
     expect(state.commanderGuidance?.preview).toMatchObject({ status: "ready", can_create: true, question_id: questionId, delivery_status: "not_delivered" })
     expect(JSON.stringify(state.commanderGuidance?.preview)).not.toContain("abc123")

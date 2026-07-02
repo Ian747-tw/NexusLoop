@@ -9883,7 +9883,8 @@ function recordFromCommanderGuidance(item: CommanderGuidanceResultSummary): Comm
 function fakeGuidanceScope(question: OpenCodeCommanderQuestionResultSummary | null): string {
   if (question?.question_type === "blocker") return "blocker_resolution"
   if (question?.question_type === "permission") return "permission_decision"
-  if (question?.question_type === "timeout_report" || question?.question_type === "status_report_request") return "status_report_response"
+  if (question?.question_type === "timeout_report") return "timeout_report_response"
+  if (question?.question_type === "status_report_request") return "status_report_response"
   if (question?.question_type === "design_choice") return "design_direction"
   return "answer_question"
 }
