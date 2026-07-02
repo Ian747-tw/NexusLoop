@@ -18191,11 +18191,20 @@ describe("OpenCode launch readiness", () => {
 	    const dir = await tempProject()
 	    const { server, sessionId, packId } = await readyLaunchFixture(dir)
 	    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+	    const createdQuestionIds: string[] = []
 	    for (let index = 0; index < 3; index += 1) {
-	      const created = await server.command("runtime.create_opencode_commander_question", { sessionId, question: `pending Commander policy question ${index}` }) as { status: string }
+	      const created = await server.command("runtime.create_opencode_commander_question", { sessionId, question: `pending Commander policy question ${index}` }) as { status: string; question_id: string }
 	      expect(created.status).toBe("created")
+	      createdQuestionIds.push(created.question_id)
 	    }
 	    const eventsBefore = await server.eventStore.readAll()
+	    const duplicateAtCap = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "pending Commander policy question 0" }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
+	    expect(duplicateAtCap).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: createdQuestionIds[0] })
+	    expect(duplicateAtCap.blockers).toContain("pending Commander question already exists for this evidence")
+	    expect(duplicateAtCap.blockers).not.toContain("planned OpenCode session question policy max_pending_questions has been reached")
+	    const duplicateCreateAtCap = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "pending Commander policy question 0" }) as { status: string; error?: string }
+	    expect(duplicateCreateAtCap).toMatchObject({ status: "blocked" })
+	    expect(duplicateCreateAtCap.error).toContain("pending Commander question already exists")
 	    const preview = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "fourth pending Commander policy question" }) as { status: string; can_create: boolean; blockers: string[] }
 	    expect(preview).toMatchObject({ status: "blocked", can_create: false })
 	    expect(preview.blockers).toContain("planned OpenCode session question policy max_pending_questions has been reached")

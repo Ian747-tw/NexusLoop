@@ -214,6 +214,9 @@ export class OpenCodeCommanderQuestionService {
     }))
     const duplicate = sessionId ? await this.findDuplicate(sessionId, evidence, questionHash) : undefined
     if (duplicate) blockers.push("pending Commander question already exists for this evidence")
+    if (!duplicate && sessionId && await this.maxPendingQuestionsReached(sessionId)) {
+      blockers.push("planned OpenCode session question policy max_pending_questions has been reached")
+    }
     const canCreate = blockers.length === 0
     return redactValue({
       preview_id: `opencode_commander_question_preview_${questionHash.slice(0, 16)}`,
@@ -285,14 +288,11 @@ export class OpenCodeCommanderQuestionService {
     if (launch && !LAUNCHED_STATUSES.has(launch.status)) blockers.push(`OpenCode Commander question requires launch_started or launched status; current status is ${launch.status}`)
     if (launch && sessionId && launch.session_id !== sessionId) blockers.push("launch_id does not belong to session_id")
     sessionId = sessionId || launch?.session_id || ""
-	    if (sessionId) {
-	      const session = await this.options.opencodeSessionService.get(sessionId)
-	      if (!session) blockers.push("session_id does not resolve to a planned OpenCode session")
-	      if (session && session.question_policy.allow_opencode_questions === false) blockers.push("planned OpenCode session question policy does not allow OpenCode Commander questions")
-	      if (session && await this.pendingQuestionCount(session.session_id) >= session.question_policy.max_pending_questions) {
-	        blockers.push("planned OpenCode session question policy max_pending_questions has been reached")
-	      }
-	    }
+    if (sessionId) {
+      const session = await this.options.opencodeSessionService.get(sessionId)
+      if (!session) blockers.push("session_id does not resolve to a planned OpenCode session")
+      if (session && session.question_policy.allow_opencode_questions === false) blockers.push("planned OpenCode session question policy does not allow OpenCode Commander questions")
+    }
     if (progress && sessionId && progress.session_id !== sessionId) blockers.push("progress_id does not belong to session_id")
     if (progress && launchId && progress.launch_id && progress.launch_id !== launchId) blockers.push("progress_id does not belong to launch_id")
     if (progress && !isQuestionEligibleProgress(progress)) blockers.push("progress_id must reference question/blocker/needs_commander/blocked/needs_human evidence")
@@ -320,6 +320,11 @@ export class OpenCodeCommanderQuestionService {
     return (await this.sequencedRecords())
       .filter(({ record }) => record.session_id === sessionId && (record.status === "pending_commander" || record.status === "pending_human"))
       .length
+  }
+
+  private async maxPendingQuestionsReached(sessionId: string): Promise<boolean> {
+    const session = await this.options.opencodeSessionService.get(sessionId)
+    return Boolean(session && await this.pendingQuestionCount(session.session_id) >= session.question_policy.max_pending_questions)
   }
 
   private async sequencedRecords(): Promise<SequencedQuestionRecord[]> {
