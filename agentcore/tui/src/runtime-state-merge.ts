@@ -44,6 +44,8 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     baseline === undefined || stableEqual(current.opencodeProgress, baseline.opencodeProgress)
   const canUpdateOpenCodeWatchdog =
     baseline === undefined || stableEqual(current.opencodeWatchdog, baseline.opencodeWatchdog)
+  const canUpdateOpenCodeCommanderQuestions =
+    baseline === undefined || stableEqual(current.opencodeCommanderQuestions, baseline.opencodeCommanderQuestions)
   const canUpdateResearchMemory =
     baseline === undefined || stableEqual(current.researchMemory, baseline.researchMemory)
   const canUpdateCommanderExecutorReview =
@@ -108,6 +110,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     opencodeLaunches: canUpdateOpenCodeLaunches ? next.opencodeLaunches : current.opencodeLaunches,
     opencodeProgress: canUpdateOpenCodeProgress ? next.opencodeProgress : current.opencodeProgress,
     opencodeWatchdog: canUpdateOpenCodeWatchdog ? next.opencodeWatchdog : current.opencodeWatchdog,
+    opencodeCommanderQuestions: canUpdateOpenCodeCommanderQuestions ? next.opencodeCommanderQuestions : current.opencodeCommanderQuestions,
     researchMemory: canUpdateResearchMemory ? next.researchMemory : current.researchMemory,
     commanderExecutorReview: canUpdateCommanderExecutorReview ? next.commanderExecutorReview : current.commanderExecutorReview,
     executorReviewProposalDrafts: canUpdateExecutorReviewProposalDrafts ? next.executorReviewProposalDrafts : current.executorReviewProposalDrafts,
