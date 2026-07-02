@@ -301,6 +301,7 @@ export class OpenCodeCommanderQuestionService {
     if (watchdog && !["blocked", "needs_report", "stale", "timed_out"].includes(watchdog.watchdog_status)) blockers.push("watchdog_id must reference blocked, needs_report, stale, or timed_out evidence")
     if (forcedReport && sessionId && forcedReport.session_id !== sessionId) blockers.push("forced_report_request_id does not belong to session_id")
     if (forcedReport && launchId && forcedReport.launch_id && forcedReport.launch_id !== launchId) blockers.push("forced_report_request_id does not belong to launch_id")
+    if (watchdog && forcedReport?.watchdog_id && forcedReport.watchdog_id !== watchdog.watchdog_id) blockers.push("forced_report_request_id does not belong to watchdog_id")
     return { sessionId, launchId, launch, progress, watchdog, forcedReport }
   }
 

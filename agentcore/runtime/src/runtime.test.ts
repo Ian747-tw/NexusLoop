@@ -18095,9 +18095,11 @@ describe("OpenCode launch readiness", () => {
     expect(duplicateUrgent.error).toContain("pending Commander question already exists")
 
     const blockerProgress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: ["needs report"] }) as { progress_id: string }
-    const watchdog = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; watchdog_status: string }
+    const watchdog = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true }) as { watchdog_id: string; watchdog_status: string; forced_report_request_id?: string }
     expect(watchdog.watchdog_status).toBe("blocked")
-    const forcedReport = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report" }) as { request_id: string }
+    expect(watchdog.forced_report_request_id).toBeTruthy()
+    const forcedReport = { request_id: watchdog.forced_report_request_id! }
+    await expect(server.command("runtime.get_opencode_forced_report_request", { requestId: forcedReport.request_id })).resolves.toMatchObject({ watchdog_id: watchdog.watchdog_id })
 
     const fromBlocker = await server.command("runtime.preview_opencode_commander_question", { progressId: blockerProgress.progress_id }) as { status: string; question_type: string; source_kind: string }
     expect(fromBlocker).toMatchObject({ status: "ready", question_type: "blocker", source_kind: "progress_question" })
@@ -18105,6 +18107,9 @@ describe("OpenCode launch readiness", () => {
     expect(fromWatchdog).toMatchObject({ status: "ready", urgency: "normal", source_kind: "watchdog" })
     const fromForcedReport = await server.command("runtime.preview_opencode_commander_question", { forcedReport: forcedReport.request_id }) as { status: string; urgency: string; source_kind: string }
     expect(fromForcedReport).toMatchObject({ status: "ready", urgency: "high", source_kind: "forced_report" })
+    const mismatchedWatchdogReport = await server.command("runtime.preview_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id, forcedReport: forcedReport.request_id }) as { status: string; blockers: string[] }
+    expect(mismatchedWatchdogReport.status).toBe("blocked")
+    expect(mismatchedWatchdogReport.blockers).toContain("forced_report_request_id does not belong to watchdog_id")
 
     const mismatch = await server.command("runtime.preview_opencode_commander_question", { sessionId: "other_session", progressId: blockerProgress.progress_id }) as { status: string; blockers: string[] }
     expect(mismatch.status).toBe("blocked")

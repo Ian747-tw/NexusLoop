@@ -2892,6 +2892,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (forcedReport && sessionId && forcedReport.session_id !== sessionId) blockers.push("forced_report_request_id does not belong to session_id")
     if (progress && !fakeQuestionEligibleProgress(progress)) blockers.push("progress_id must reference question/blocker/needs_commander/blocked/needs_human evidence")
     if (watchdog && !["blocked", "needs_report", "stale", "timed_out"].includes(watchdog.watchdog_status)) blockers.push("watchdog_id must reference blocked, needs_report, stale, or timed_out evidence")
+    if (watchdog && forcedReport?.watchdog_id && forcedReport.watchdog_id !== watchdog.watchdog_id) blockers.push("forced_report_request_id does not belong to watchdog_id")
     if (rawLogBlocked) blockers.push("raw logs are out of scope for Commander question records; attach an artifact pointer in a later branch")
     const evidenceQuestion = progress?.question_preview
       ?? (progress?.blockers_preview?.length ? `OpenCode is blocked: ${progress.blockers_preview.join("; ")}` : undefined)
