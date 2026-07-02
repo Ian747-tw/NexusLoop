@@ -2904,7 +2904,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     const sourceKind = optionalString(payload.sourceKind ?? payload.source_kind ?? payload.source) ?? (forcedReport ? "forced_report" : watchdog ? "watchdog" : progress ? "progress_question" : "manual")
     const evidenceKey = forcedReport?.request_id ?? watchdog?.watchdog_id ?? progress?.progress_id ?? launch?.launch_id ?? sessionId
     const questionHash = createHash("sha256").update(`${sessionId}:${launch?.launch_id ?? launchId ?? ""}:${evidenceKey}:${questionType}:${question.toLowerCase()}`).digest("hex")
-    const duplicate = this.opencodeCommanderQuestions.find((item) => item.question_status === "pending_commander" && item.session_id === sessionId && item.question_hash === questionHash)
+    const duplicate = this.opencodeCommanderQuestions.find((item) => (item.question_status === "pending_commander" || item.question_status === "pending_human") && item.session_id === sessionId && item.question_hash === questionHash)
+    if (duplicate) blockers.push("pending Commander question already exists for this evidence")
     return {
       preview_id: `fake-opencode-commander-question-preview-${questionHash.slice(0, 12)}`,
       status: blockers.length ? "blocked" : "ready",
