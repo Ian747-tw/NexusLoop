@@ -18125,11 +18125,36 @@ describe("OpenCode launch readiness", () => {
     const duplicatePreview = await server.command("runtime.preview_commander_guidance", { questionId: question.question_id, answer: "another answer" }) as { status: string; duplicate_guidance_id?: string; blockers: string[] }
     expect(duplicatePreview).toMatchObject({ status: "blocked", duplicate_guidance_id: created.guidance_id })
     expect(duplicatePreview.blockers).toContain("question is already answered or no longer pending")
-    const duplicate = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "another answer" }) as { status: string; error?: string }
-    expect(duplicate).toMatchObject({ status: "blocked" })
-    await server.shutdown()
+	    const duplicate = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "another answer" }) as { status: string; error?: string }
+	    expect(duplicate).toMatchObject({ status: "blocked" })
+	    await server.shutdown()
 
-    const noStartDir = await tempProject()
+	    const partialDir = await tempProject()
+	    const { server: partialServer, sessionId: partialSessionId, packId: partialPackId } = await readyLaunchFixture(partialDir)
+	    await partialServer.command("runtime.launch_opencode_session", { sessionId: partialSessionId, packId: partialPackId, providerKind: "local", modelId: "local-medium" })
+	    const partialQuestion = await partialServer.command("runtime.create_opencode_commander_question", { sessionId: partialSessionId, question: "recover partial answer event" }) as { question_id: string }
+	    const originalAppend = partialServer.eventStore.append.bind(partialServer.eventStore)
+	    let failedAnsweredAppend = false
+	    partialServer.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+	      if (event.kind === "opencode_commander_question_answered" && !failedAnsweredAppend) {
+	        failedAnsweredAppend = true
+	        throw new Error("question answered append failed")
+	      }
+	      return originalAppend(event)
+	    }
+	    await expect(partialServer.command("runtime.create_commander_guidance", { questionId: partialQuestion.question_id, answer: "recover with option A" })).rejects.toThrow("question answered append failed")
+	    let partialKinds = (await partialServer.eventStore.readAll()).map((event) => event.kind)
+	    expect(partialKinds.filter((kind) => kind === "opencode_commander_guidance_created")).toHaveLength(1)
+	    expect(partialKinds.filter((kind) => kind === "opencode_commander_question_answered")).toHaveLength(0)
+	    await expect(partialServer.command("runtime.get_opencode_commander_question", { questionId: partialQuestion.question_id })).resolves.toMatchObject({ question_id: partialQuestion.question_id, question_status: "answered" })
+	    const repaired = await partialServer.command("runtime.create_commander_guidance", { questionId: partialQuestion.question_id, answer: "recover with option A" }) as { status: string; guidance_id: string }
+	    expect(repaired).toMatchObject({ status: "created" })
+	    partialKinds = (await partialServer.eventStore.readAll()).map((event) => event.kind)
+	    expect(partialKinds.filter((kind) => kind === "opencode_commander_guidance_created")).toHaveLength(1)
+	    expect(partialKinds.filter((kind) => kind === "opencode_commander_question_answered")).toHaveLength(1)
+	    await partialServer.shutdown()
+
+	    const noStartDir = await tempProject()
     await makeProject(noStartDir, { approvedSpec: true })
     const adapter = new LongLivedAdapter()
     const noStartServer = new RuntimeServer({ projectDir: noStartDir, adapter, researchProjectionMode: "disabled" })

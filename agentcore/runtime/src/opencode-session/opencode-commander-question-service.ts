@@ -146,7 +146,7 @@ export class OpenCodeCommanderQuestionService {
       .find((item) => item.question_id === questionId)
     if (!created) return null
     const answered = events
-      .filter(isQuestionAnsweredEvent)
+      .filter((event) => isQuestionAnsweredEvent(event) || isGuidanceCreatedEvent(event))
       .reverse()
       .find((item) => item.question_id === questionId)
     return resultFromEvent(created, answered ? "answered" : undefined)
@@ -348,7 +348,7 @@ export class OpenCodeCommanderQuestionService {
       if (isQuestionCreatedEvent(event)) {
         const record = recordFromEvent(event)
         if (record) records.set(record.question_id, { record, event_index: index })
-      } else if (isQuestionAnsweredEvent(event) && typeof event.question_id === "string") {
+      } else if ((isQuestionAnsweredEvent(event) || isGuidanceCreatedEvent(event)) && typeof event.question_id === "string") {
         const existing = records.get(event.question_id)
         if (existing) {
           records.set(event.question_id, { record: { ...existing.record, status: "answered" }, event_index: index })
@@ -501,6 +501,10 @@ function isQuestionCreatedEvent(event: JsonlEvent): boolean {
 
 function isQuestionAnsweredEvent(event: JsonlEvent): boolean {
   return event.kind === "opencode_commander_question_answered"
+}
+
+function isGuidanceCreatedEvent(event: JsonlEvent): boolean {
+  return event.kind === "opencode_commander_guidance_created"
 }
 
 function readQuestionStatus(value: unknown): OpenCodeCommanderQuestionStatus {

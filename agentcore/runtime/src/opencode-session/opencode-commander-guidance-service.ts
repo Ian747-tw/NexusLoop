@@ -64,6 +64,10 @@ export class CommanderGuidanceService {
     const guidanceId = this.idFactory()
     const createdAt = this.now().toISOString()
     const createdBy = bound(input.created_by ?? "operator") ?? "operator"
+    if (preview.duplicate_guidance_id && input.dry_run !== true) {
+      const repaired = await this.repairPartialQuestionAnswer(preview.duplicate_guidance_id)
+      if (repaired) return repaired
+    }
     if (!preview.can_create || preview.duplicate_guidance_id) {
       return resultFromPreview(preview, {
         guidance_id: guidanceId,
@@ -83,6 +87,10 @@ export class CommanderGuidanceService {
     }
     return this.serializeCreate(async () => {
       const rebuilt = await this.buildPreview(input)
+      if (rebuilt.duplicate_guidance_id) {
+        const repaired = await this.repairPartialQuestionAnswerUnlocked(rebuilt.duplicate_guidance_id)
+        if (repaired) return repaired
+      }
       if (!rebuilt.can_create || rebuilt.duplicate_guidance_id) {
         return resultFromPreview(rebuilt, {
           guidance_id: guidanceId,
@@ -228,6 +236,23 @@ export class CommanderGuidanceService {
 
   private async findDuplicate(questionId: string): Promise<CommanderGuidanceRecord | undefined> {
     return (await this.sequencedRecords()).find(({ record }) => record.question_id === questionId && record.status !== "cancelled" && record.status !== "superseded")?.record
+  }
+
+  private async repairPartialQuestionAnswer(guidanceId: string): Promise<CommanderGuidanceResult | null> {
+    return this.serializeCreate(() => this.repairPartialQuestionAnswerUnlocked(guidanceId))
+  }
+
+  private async repairPartialQuestionAnswerUnlocked(guidanceId: string): Promise<CommanderGuidanceResult | null> {
+    const existing = await this.get(guidanceId)
+    if (!existing) return null
+    if (await this.hasQuestionAnsweredEvent(existing.question_id, existing.guidance_id)) return null
+    await this.options.eventStore.append(questionAnsweredEventPayload(existing) as JsonlEvent)
+    return redactValue(existing)
+  }
+
+  private async hasQuestionAnsweredEvent(questionId: string, guidanceId: string): Promise<boolean> {
+    return (await this.options.eventStore.readAll())
+      .some((event) => isQuestionAnsweredEvent(event) && event.question_id === questionId && event.guidance_id === guidanceId)
   }
 
   private async sequencedRecords(): Promise<SequencedGuidanceRecord[]> {
@@ -401,6 +426,10 @@ function recordFromEvent(event: JsonlEvent): CommanderGuidanceRecord | null {
 
 function isGuidanceCreatedEvent(event: JsonlEvent): boolean {
   return event.kind === "opencode_commander_guidance_created"
+}
+
+function isQuestionAnsweredEvent(event: JsonlEvent): boolean {
+  return event.kind === "opencode_commander_question_answered"
 }
 
 function readGuidanceStatus(value: unknown): CommanderGuidanceStatus {
