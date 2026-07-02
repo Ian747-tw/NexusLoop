@@ -18075,7 +18075,7 @@ describe("OpenCode launch readiness", () => {
     await client.shutdown?.()
   })
 
-  test("opencode asks Commander accepts watchdog and forced-report evidence but rejects mismatches and raw logs", async () => {
+	  test("opencode asks Commander accepts watchdog and forced-report evidence but rejects mismatches and raw logs", async () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)
     await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
@@ -18117,10 +18117,31 @@ describe("OpenCode launch readiness", () => {
     expect(rawLog.question_preview).toBe("raw question log omitted; attach artifact pointer in a later branch")
     expect(JSON.stringify(rawLog)).not.toContain("stdout")
     expect(JSON.stringify(rawLog)).not.toContain("xxxxxxxx")
-    await server.shutdown()
-  })
+	    await server.shutdown()
+	  })
 
-  test("opencode watchdog preserves blocker evidence across later heartbeats", async () => {
+	  test("opencode asks Commander dedupe scans beyond the public list cap", async () => {
+	    const dir = await tempProject()
+	    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+	    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+	    const original = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "older duplicate Commander question" }) as { status: string; question_id: string }
+	    expect(original.status).toBe("created")
+	    for (let index = 0; index < 100; index += 1) {
+	      const newer = await server.command("runtime.create_opencode_commander_question", { sessionId, question: `newer Commander question ${index}` }) as { status: string }
+	      expect(newer.status).toBe("created")
+	    }
+	    const publicList = await server.command("runtime.list_opencode_commander_questions", { sessionId, limit: 100 }) as Array<{ question_id: string }>
+	    expect(publicList).toHaveLength(100)
+	    expect(publicList.map((record) => record.question_id)).not.toContain(original.question_id)
+	    const duplicatePreview = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "older duplicate Commander question" }) as { status: string; can_create: boolean; duplicate_question_id?: string }
+	    expect(duplicatePreview).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: original.question_id })
+	    const duplicate = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "older duplicate Commander question" }) as { status: string; error?: string }
+	    expect(duplicate.status).toBe("blocked")
+	    expect(duplicate.error).toContain("pending Commander question already exists")
+	    await server.shutdown()
+	  })
+
+	  test("opencode watchdog preserves blocker evidence across later heartbeats", async () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)
     await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })

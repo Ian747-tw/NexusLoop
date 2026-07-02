@@ -289,8 +289,9 @@ export class OpenCodeCommanderQuestionService {
 
   private async findDuplicate(sessionId: string, evidenceKey: string | undefined, questionHash: string): Promise<OpenCodeCommanderQuestionRecord | undefined> {
     if (!evidenceKey) return undefined
-    return (await this.list({ session_id: sessionId, limit: MAX_LIST }))
-      .find((record) => (record.status === "pending_commander" || record.status === "pending_human") && record.question_hash === questionHash)
+    return (await this.sequencedRecords())
+      .find(({ record }) => record.session_id === sessionId && (record.status === "pending_commander" || record.status === "pending_human") && record.question_hash === questionHash)
+      ?.record
   }
 
   private async sequencedRecords(): Promise<SequencedQuestionRecord[]> {

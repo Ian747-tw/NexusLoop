@@ -73,6 +73,15 @@ def test_user_creates_opencode_asks_commander_question_without_answer_or_guidanc
     launch_result = sandbox.run_cli([], cwd=project)
     assert launch_result.exit_code == 0, launch_result.stdout + launch_result.stderr
     assert "status=launched" in launch_result.stdout
+    events_path = project / ".nxl" / "events.jsonl"
+    events_before_ask = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    runtime_started_before_ask = sum(
+        1 for event in events_before_ask if event["kind"] == "runtime_started"
+    )
 
     question_text = "should I use option A or option B token=abc123"
     ask_keys = [
@@ -111,13 +120,13 @@ def test_user_creates_opencode_asks_commander_question_without_answer_or_guidanc
     assert "ask-commander-secret-abc123" not in ask_result.stdout
     assert "token=abc123" not in ask_result.stdout
 
-    events_path = project / ".nxl" / "events.jsonl"
     events = [
         json.loads(line)
         for line in events_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     event_kinds = [event["kind"] for event in events]
+    assert event_kinds.count("runtime_started") == runtime_started_before_ask
     assert event_kinds.count("opencode_session_planned") == 1
     assert event_kinds.count("opencode_session_instruction_pack_written") == 1
     assert event_kinds.count("opencode_session_launch_started") == 1
