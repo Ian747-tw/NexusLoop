@@ -90,6 +90,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeLaunchReadinessLines(state))
   out.push(...opencodeLaunchLines(state))
   out.push(...opencodeProgressLines(state))
+  out.push(...opencodeWatchdogLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -980,6 +981,84 @@ function opencodeProgressDetailLines(prefix: string, item: { current_step_previe
   if (item.blockers_preview && item.blockers_preview.length > 0) out.push(`  ${prefix}_blockers=${item.blockers_preview.slice(0, 8).map((value) => preview(redactText(value))).join(",")}`)
   if (item.question_preview) out.push(`  ${prefix}_question=${preview(redactText(item.question_preview))}`)
   if (item.next_action_preview) out.push(`  ${prefix}_next=${preview(redactText(item.next_action_preview))}`)
+  return out
+}
+
+function opencodeWatchdogLines(state: UiState): string[] {
+  const watchdog = state.opencodeWatchdog
+  const out = ["OpenCode watchdog"]
+  if (!watchdog) {
+    out.push("  preview=none")
+    out.push("  latest_result=none")
+    out.push("  forced_report=none")
+    out.push("  records=none")
+    out.push("  summary=none")
+    out.push("  note=watchdog does not pause/kill OpenCode in 9F; forced report request is metadata only; Commander guidance/answer and wake scheduler execution are future work")
+    return out
+  }
+  if (watchdog.preview) {
+    const item = watchdog.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_record=${item.can_record} watchdog_status=${item.watchdog_status} action=${item.recommended_action}`)
+    out.push(`  session=${item.session_id || "none"} launch=${item.launch_id ?? "none"} launch_status=${item.launch_status ?? "none"}`)
+    out.push(`  elapsed wall=${item.wall_clock_elapsed_ms ?? "unknown"} no_progress=${item.no_progress_elapsed_ms ?? "unknown"} heartbeat=${item.heartbeat_elapsed_ms ?? "unknown"}`)
+    out.push(`  policy max_wall=${item.max_wall_time_ms ?? "unknown"} max_no_progress=${item.max_no_progress_ms ?? "unknown"} heartbeat_interval=${item.heartbeat_interval_ms ?? "unknown"} forced_pause_enabled=${item.forced_pause_enabled ?? false} report_required_on_timeout=${item.report_required_on_timeout ?? false}`)
+    out.push(`  latest_progress=${item.latest_progress_id ?? "none"} kind=${item.latest_progress_kind ?? "none"} state=${item.latest_progress_state ?? "none"} at=${item.latest_progress_at ?? "none"}`)
+    if (item.latest_report_summary_preview) out.push(`  latest_report=${preview(redactText(item.latest_report_summary_preview))}`)
+    out.push(`  blockers=${item.has_blockers} question=${item.has_question} report_required=${item.report_required} forced_report_already_requested=${item.forced_report_already_requested}`)
+    if (item.blockers_preview.length > 0) out.push(`  blockers_preview=${item.blockers_preview.slice(0, 8).map((value) => preview(redactText(value))).join(",")}`)
+    if (item.question_preview) out.push(`  question=${preview(redactText(item.question_preview))}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 8).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (watchdog.latestResult) {
+    const item = watchdog.latestResult
+    out.push(`  latest_result=${item.watchdog_id} status=${item.status} watchdog_status=${item.watchdog_status} action=${item.recommended_action} report_required=${item.report_required}`)
+    out.push(`  latest_session=${item.session_id || "none"} latest_launch=${item.launch_id ?? "none"} latest_progress=${item.latest_progress_id ?? "none"} forced_report_requested=${item.forced_report_requested}`)
+    out.push(`  latest_elapsed wall=${item.wall_clock_elapsed_ms ?? "unknown"} no_progress=${item.no_progress_elapsed_ms ?? "unknown"} heartbeat=${item.heartbeat_elapsed_ms ?? "unknown"}`)
+    if (item.error) out.push(`  latest_error=${preview(redactText(item.error))}`)
+  } else {
+    out.push("  latest_result=none")
+  }
+  if (watchdog.forcedReportResult) {
+    const item = watchdog.forcedReportResult
+    out.push(`  forced_report=${item.request_id} session=${item.session_id} launch=${item.launch_id ?? "none"} process_paused=${item.process_paused} forced_pause_recommended=${item.forced_pause_recommended}`)
+    out.push(`  forced_report_reason=${preview(redactText(item.reason))}`)
+  } else {
+    out.push("  forced_report=none")
+  }
+  if (watchdog.records.length > 0) {
+    out.push("  watchdog_records")
+    out.push(...watchdog.records.slice(0, 10).map((record) => `    - ${record.watchdog_id} status=${record.watchdog_status} action=${record.recommended_action} session=${record.session_id} launch=${record.launch_id ?? "none"} report_required=${record.report_required}`))
+  } else {
+    out.push("  records=none")
+  }
+  if (watchdog.forcedReportRequests.length > 0) {
+    out.push("  forced_report_requests")
+    out.push(...watchdog.forcedReportRequests.slice(0, 10).map((request) => `    - ${request.request_id} session=${request.session_id} launch=${request.launch_id ?? "none"} process_paused=${request.process_paused}: ${preview(redactText(request.reason))}`))
+  } else {
+    out.push("  forced_report_requests=none")
+  }
+  if (watchdog.selected) out.push(`  selected=${watchdog.selected.watchdog_id} status=${watchdog.selected.status} watchdog_status=${watchdog.selected.watchdog_status} session=${watchdog.selected.session_id}`)
+  if (watchdog.selectedRequest) out.push(`  selected_request=${watchdog.selectedRequest.request_id} session=${watchdog.selectedRequest.session_id} process_paused=${watchdog.selectedRequest.process_paused}`)
+  if (watchdog.summary) {
+    const summary = watchdog.summary
+    out.push(`  summary launched_sessions=${summary.total_launched_sessions} healthy=${summary.healthy_count} stale=${summary.stale_count} timed_out=${summary.timed_out_count} needs_report=${summary.needs_report_count} blocked=${summary.blocked_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (watchdog.commandError) out.push(`  command_error=${redactText(watchdog.commandError)}`)
+  out.push("  note=watchdog does not pause/kill OpenCode in 9F; forced report request is metadata only; Commander guidance/answer and wake scheduler execution are future work")
   return out
 }
 

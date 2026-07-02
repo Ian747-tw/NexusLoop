@@ -17686,7 +17686,7 @@ describe("OpenCode launch readiness", () => {
     expect(summaryRecord?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_opencode_launch_readiness_tui.py")
   })
 
-  async function readyLaunchFixture(dir: string): Promise<{ server: RuntimeServer; sessionId: string; packId: string; readinessHash: string }> {
+  async function readyLaunchFixture(dir: string, options: { watchdogNow?: () => Date } = {}): Promise<{ server: RuntimeServer; sessionId: string; packId: string; readinessHash: string }> {
     await makeProject(dir, { approvedSpec: true })
     const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
     db.createTopic({ id: "topic_launch_gate", title: "Launch gate" })
@@ -17705,6 +17705,7 @@ describe("OpenCode launch readiness", () => {
       openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["opencode"] },
       researchProjectionMode: "check_only",
       opencodeLaunchId: () => "launch_test_1",
+      opencodeWatchdogNow: options.watchdogNow,
     })
     await server.start()
     const session = await server.command("runtime.create_opencode_session_plan", { objective: "adapter spectral curriculum" }) as { session_id: string }
@@ -17858,9 +17859,9 @@ describe("OpenCode launch readiness", () => {
 	    await client.shutdown?.()
 	  })
 
-	  test("opencode progress latest breaks same-timestamp ties by durable event order", async () => {
-	    const dir = await tempProject()
-	    const { server, sessionId } = await readyLaunchFixture(dir)
+  test("opencode progress latest breaks same-timestamp ties by durable event order", async () => {
+    const dir = await tempProject()
+    const { server, sessionId } = await readyLaunchFixture(dir)
 	    await server.eventStore.append({
 	      kind: "opencode_session_progress_recorded",
 	      progress_id: "progress_tie_old",
@@ -17895,6 +17896,453 @@ describe("OpenCode launch readiness", () => {
 	    expect(summary.latest_records[0]).toMatchObject({ progress_id: "progress_tie_new" })
 	    await server.shutdown()
 	  })
+
+  test("opencode watchdog previews records and forced report requests are bounded metadata only", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "alive token=watchdog-secret" })
+    const eventsAfterHeartbeat = await server.eventStore.readAll()
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { status: string; can_record: boolean; watchdog_status: string; latest_progress_kind?: string; warnings: string[] }
+    expect(preview).toMatchObject({ status: "ready", can_record: true, watchdog_status: "healthy", latest_progress_kind: "heartbeat" })
+    expect(preview.warnings.join(" ")).toContain("does not pause, kill, stop, resume")
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterHeartbeat)
+
+    const dryRun = await server.command("runtime.record_opencode_watchdog", { sessionId, dryRun: true }) as { status: string; watchdog_status: string }
+    expect(dryRun).toMatchObject({ status: "dry_run", watchdog_status: "healthy" })
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterHeartbeat)
+
+    const healthyForceReport = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "healthy should not report" }) as { status: string; error?: string }
+    expect(healthyForceReport).toMatchObject({ status: "blocked" })
+    expect(healthyForceReport.error).toContain("forced report request is only allowed")
+    const healthyRecordWithRequest = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true }) as { status: string; error?: string; forced_report_requested: boolean }
+    expect(healthyRecordWithRequest).toMatchObject({ status: "blocked", forced_report_requested: false })
+    expect(healthyRecordWithRequest.error).toContain("forced report request is only allowed")
+    const healthyDryRunRecordWithRequest = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true, dryRun: true }) as { status: string; error?: string; forced_report_requested: boolean }
+    expect(healthyDryRunRecordWithRequest).toMatchObject({ status: "blocked", forced_report_requested: false })
+    expect(healthyDryRunRecordWithRequest.error).toContain("forced report request is only allowed")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_watchdog_recorded")).toHaveLength(0)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_forced_report_requested")).toHaveLength(0)
+
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { status: string; watchdog_id: string; watchdog_status: string; report_required: boolean }
+    expect(recorded).toMatchObject({ status: "recorded", watchdog_status: "healthy", report_required: false })
+    const watchdogEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_watchdog_recorded")
+    expect(watchdogEvents).toHaveLength(1)
+    expect(JSON.stringify(watchdogEvents)).not.toContain("watchdog-secret")
+    expect(JSON.stringify(watchdogEvents)).not.toContain("CommanderGuidance")
+    expect(JSON.stringify(watchdogEvents)).not.toContain("research.db")
+    expect((await server.command("runtime.list_opencode_watchdogs", { sessionId })) as unknown[]).toHaveLength(1)
+    await expect(server.command("runtime.get_opencode_watchdog", { watchdogId: recorded.watchdog_id })).resolves.toMatchObject({ watchdog_id: recorded.watchdog_id, session_id: sessionId })
+    await expect(server.command("runtime.opencode_watchdog_summary")).resolves.toMatchObject({ total_launched_sessions: 1, healthy_count: 1 })
+    await server.shutdown()
+  })
+
+  test("opencode watchdog requests forced report for blocker metadata without process control or guidance", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: ["needs report token=forced-secret"] })
+    const beforeWatchdog = await server.eventStore.readAll()
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; recommended_action: string; report_required: boolean; has_blockers: boolean; blockers_preview: string[] }
+    expect(preview).toMatchObject({ watchdog_status: "blocked", recommended_action: "escalate_to_commander", report_required: true, has_blockers: true })
+    expect(preview.blockers_preview[0]).not.toContain("forced-secret")
+    const dryRunRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "dry run report", dryRun: true }) as { status: string; forced_report_requested: boolean; session_id: string }
+    expect(dryRunRequest).toMatchObject({ status: "dry_run", forced_report_requested: false, session_id: sessionId })
+    expect(dryRunRequest).not.toHaveProperty("request_id")
+    expect(await server.eventStore.readAll()).toEqual(beforeWatchdog)
+    const rawLogReason = await server.command("runtime.request_opencode_forced_report", {
+      sessionId,
+      reason: `stdout\n${"x".repeat(90)}\n${"y".repeat(90)}\n${"z".repeat(90)}`,
+    }) as { status: string; error?: string }
+    expect(rawLogReason).toMatchObject({ status: "blocked" })
+    expect(rawLogReason.error).toContain("raw logs are out of scope for forced report requests")
+    expect(JSON.stringify(rawLogReason)).not.toContain("stdout")
+    expect(await server.eventStore.readAll()).toEqual(beforeWatchdog)
+
+    const record = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { status: string; watchdog_id: string; watchdog_status: string }
+    expect(record).toMatchObject({ status: "recorded", watchdog_status: "blocked" })
+    const request = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after blocker token=forced-secret" }) as { request_id: string; process_paused: boolean; forced_pause_recommended: boolean; reason: string }
+    expect(request.process_paused).toBe(false)
+    expect(request.reason).not.toContain("forced-secret")
+    const duplicate = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "duplicate" }) as { status: string; error?: string }
+    expect(duplicate).toMatchObject({ status: "blocked" })
+    expect(duplicate.error).toContain("already exists")
+    const duplicateDryRunRecordWithRequest = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true, dryRun: true }) as { status: string; error?: string; forced_report_requested: boolean }
+    expect(duplicateDryRunRecordWithRequest).toMatchObject({ status: "blocked", forced_report_requested: false })
+    expect(duplicateDryRunRecordWithRequest.error).toContain("already exists")
+
+    const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+    expect(eventKinds.filter((kind) => kind === "opencode_session_watchdog_recorded")).toHaveLength(1)
+    expect(eventKinds.filter((kind) => kind === "opencode_session_forced_report_requested")).toHaveLength(1)
+    expect(eventKinds).not.toContain("commander_guidance_recorded")
+    expect(eventKinds).not.toContain("opencode_session_paused")
+    expect(eventKinds).not.toContain("opencode_session_killed")
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+    const forcedReports = await server.command("runtime.list_opencode_forced_report_requests", { sessionId }) as Array<{ request_id: string; process_paused: boolean }>
+    expect(forcedReports).toEqual([expect.objectContaining({ request_id: request.request_id, process_paused: false })])
+    await expect(server.command("runtime.get_opencode_forced_report_request", { requestId: request.request_id })).resolves.toMatchObject({ request_id: request.request_id, process_paused: false })
+    await server.shutdown()
+  })
+
+  test("opencode watchdog failure reports are blocked evidence without required forced reports", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "failure_report", summary: "failed before completion" })
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; recommended_action: string; report_required: boolean; has_blockers: boolean; has_question: boolean; warnings: string[] }
+    expect(preview).toMatchObject({
+      watchdog_status: "blocked",
+      recommended_action: "record_assessment",
+      report_required: false,
+      has_blockers: false,
+      has_question: false,
+    })
+    expect(preview.warnings.join(" ")).toContain("failure_report is evidence only")
+
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { status: string; watchdog_status: string; report_required: boolean; has_blockers: boolean; has_question: boolean }
+    expect(recorded).toMatchObject({ status: "recorded", watchdog_status: "blocked", report_required: false })
+    expect(recorded).toMatchObject({ has_blockers: false, has_question: false })
+    const watchdogEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_watchdog_recorded")
+    expect(watchdogEvents.at(-1)).toMatchObject({ has_blockers: false, has_question: false })
+    const forcedReport = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "failure report follow-up" }) as { status: string; error?: string }
+    expect(forcedReport).toMatchObject({ status: "blocked" })
+    expect(forcedReport.error).toContain("forced report request is only allowed")
+    await server.shutdown()
+  })
+
+  test("opencode watchdog preserves blocker evidence across later heartbeats", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked on choice", blockers: ["needs commander answer"] })
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "still alive" })
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; recommended_action: string; report_required: boolean; has_blockers: boolean; latest_progress_kind?: string; blockers_preview: string[]; watchdog_evidence_progress_id?: string }
+    const evidenceProgressId = preview.watchdog_evidence_progress_id
+    expect(preview).toMatchObject({
+      watchdog_status: "blocked",
+      recommended_action: "escalate_to_commander",
+      report_required: true,
+      has_blockers: true,
+      latest_progress_kind: "heartbeat",
+      watchdog_evidence_progress_id: expect.stringMatching(/^opencode_progress_/),
+      blockers_preview: ["needs commander answer"],
+    })
+    const request = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker", dryRun: true }) as { status: string; forced_report_requested: boolean; session_id: string }
+    expect(request).toMatchObject({ status: "dry_run", forced_report_requested: false, session_id: sessionId })
+    expect(request).not.toHaveProperty("request_id")
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; has_blockers: boolean; has_question: boolean; latest_progress_kind?: string; watchdog_evidence_progress_id?: string }
+    expect(recorded).toMatchObject({ has_blockers: true, has_question: false, latest_progress_kind: "heartbeat", watchdog_evidence_progress_id: evidenceProgressId })
+    const watchdogEvent = (await server.eventStore.readAll()).find((event) => event.kind === "opencode_session_watchdog_recorded" && event.watchdog_id === recorded.watchdog_id)
+    expect(watchdogEvent).toMatchObject({ has_blockers: true, has_question: false, latest_progress_kind: "heartbeat", watchdog_evidence_progress_id: evidenceProgressId })
+    const persistedRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker" }) as { request_id: string; latest_progress_id?: string }
+    expect(persistedRequest.latest_progress_id).toBe(evidenceProgressId)
+    const duplicateAfterHeartbeat = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "duplicate after fresh heartbeat" }) as { status: string; error?: string }
+    expect(duplicateAfterHeartbeat).toMatchObject({ status: "blocked" })
+    expect(duplicateAfterHeartbeat.error).toContain("already exists")
+    await server.shutdown()
+  })
+
+  test("opencode watchdog persists preserved question evidence across later heartbeats", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    const question = await server.command("runtime.record_opencode_progress", { sessionId, kind: "question", question: "which option should executor choose?" }) as { progress_id: string }
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "still alive after question" })
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId }) as { watchdog_status: string; has_question: boolean; latest_progress_kind?: string; watchdog_evidence_progress_id?: string }
+    expect(preview).toMatchObject({
+      watchdog_status: "needs_report",
+      has_question: true,
+      latest_progress_kind: "heartbeat",
+      watchdog_evidence_progress_id: question.progress_id,
+    })
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; has_blockers: boolean; has_question: boolean; watchdog_evidence_progress_id?: string }
+    expect(recorded).toMatchObject({ has_blockers: false, has_question: true, watchdog_evidence_progress_id: question.progress_id })
+    const watchdogEvent = (await server.eventStore.readAll()).find((event) => event.kind === "opencode_session_watchdog_recorded" && event.watchdog_id === recorded.watchdog_id)
+    expect(watchdogEvent).toMatchObject({ has_blockers: false, has_question: true, watchdog_evidence_progress_id: question.progress_id })
+    await server.shutdown()
+  })
+
+  test("opencode watchdog honors report_required_on_timeout false policy while allowing manual forced report", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_watchdog_policy", title: "Watchdog policy" })
+    db.close()
+    const sessionId = "session_watchdog_policy_false"
+    await new EventStore(join(dir, ".nxl", "events.jsonl")).append({
+      kind: "opencode_session_planned",
+      session_id: sessionId,
+      status: "planned",
+      source_kind: "manual",
+      title: "Watchdog policy false",
+      objective: "verify report required policy",
+      commander_context_summary: "Commander summary pointer",
+      opencode_context_seed: "OpenCode executor seed",
+      shared_context_summary: "Shared bounded summary",
+      commander_context_hash: "commander_context_hash",
+      opencode_context_hash: "opencode_context_hash",
+      max_context_bytes: 4096,
+      success_criteria: ["verify policy"],
+      constraints: ["metadata only"],
+      artifact_expectations: ["watchdog record"],
+      timeout_policy: {
+        max_wall_time_ms: 60_000,
+        max_no_progress_ms: 30_000,
+        heartbeat_interval_ms: 5_000,
+        forced_pause_enabled: true,
+        report_required_on_timeout: false,
+        timeout_policy_hash: "timeout_policy_hash_false",
+      },
+      question_policy: {
+        allow_opencode_questions: true,
+        commander_answer_required_for_blockers: true,
+        human_escalation_allowed: true,
+        max_pending_questions: 3,
+        question_policy_hash: "question_policy_hash",
+      },
+      human_control_policy: {
+        allow_human_pause: true,
+        allow_human_override: true,
+        allow_human_stop: true,
+        allow_human_guidance_note: true,
+        require_reason_for_stop: true,
+        human_policy_hash: "human_policy_hash",
+      },
+      created_at: "2026-06-29T00:00:00.000Z",
+      created_by: "operator",
+      session_hash: "session_hash_watchdog_policy_false",
+    })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["opencode"] },
+      researchProjectionMode: "check_only",
+      opencodeLaunchId: () => "launch_watchdog_policy_false",
+      opencodeWatchdogNow: () => new Date("2030-01-01T00:00:00.000Z"),
+    })
+    await server.start()
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId: pack.pack_id, providerKind: "local", modelId: "local-medium" }) as { status: string }
+    expect(launched.status).toBe("launched")
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", { sessionId, maxWallTimeMs: 1, maxNoProgressMs: 1 }) as { watchdog_status: string; report_required: boolean; report_required_on_timeout: boolean; warnings: string[] }
+    expect(preview).toMatchObject({ watchdog_status: "timed_out", report_required: false, report_required_on_timeout: false })
+    expect(preview.warnings.join(" ")).toContain("policy does not require reports")
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId, maxWallTimeMs: 1, maxNoProgressMs: 1 }) as { watchdog_status: string; report_required: boolean }
+    expect(recorded).toMatchObject({ watchdog_status: "timed_out", report_required: false })
+    const manualRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "manual timeout report", dryRun: true }) as { status: string; forced_report_requested: boolean; session_id: string }
+    expect(manualRequest).toMatchObject({ status: "dry_run", forced_report_requested: false, session_id: sessionId })
+    expect(manualRequest).not.toHaveProperty("request_id")
+    await server.shutdown()
+  })
+
+  test("opencode watchdog no-progress timeout is not reset by fresh heartbeat", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir, {
+      watchdogNow: () => new Date("2026-01-01T00:20:00.000Z"),
+    })
+    const launch = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { launch_id: string }
+    await server.eventStore.append({
+      kind: "opencode_session_progress_recorded",
+      progress_id: "progress_substantive_old",
+      session_id: sessionId,
+      launch_id: launch.launch_id,
+      progress_kind: "progress",
+      execution_state: "working",
+      report_summary_preview: "substantive work",
+      recorded_at: "2026-01-01T00:00:00.000Z",
+      recorded_by: "test",
+      source_kind: "manual",
+      progress_hash: "progress_substantive_old_hash",
+    })
+    await server.eventStore.append({
+      kind: "opencode_session_progress_recorded",
+      progress_id: "progress_heartbeat_fresh",
+      session_id: sessionId,
+      launch_id: launch.launch_id,
+      progress_kind: "heartbeat",
+      execution_state: "running",
+      report_summary_preview: "alive",
+      recorded_at: "2026-01-01T00:19:30.000Z",
+      recorded_by: "test",
+      source_kind: "manual",
+      progress_hash: "progress_heartbeat_fresh_hash",
+    })
+
+    const preview = await server.command("runtime.preview_opencode_watchdog", {
+      sessionId,
+      maxWallTimeMs: 60 * 60 * 1000,
+      maxNoProgressMs: 10 * 60 * 1000,
+      heartbeatIntervalMs: 60 * 1000,
+    }) as { watchdog_status: string; latest_progress_id?: string; latest_progress_kind?: string; heartbeat_elapsed_ms?: number; no_progress_elapsed_ms?: number; recommended_action: string }
+    expect(preview).toMatchObject({
+      watchdog_status: "needs_report",
+      recommended_action: "request_report",
+      latest_progress_id: "progress_heartbeat_fresh",
+      latest_progress_kind: "heartbeat",
+      heartbeat_elapsed_ms: 30_000,
+      no_progress_elapsed_ms: 20 * 60 * 1000,
+    })
+    await server.shutdown()
+  })
+
+  test("opencode watchdog list and summary break same-timestamp ties by append order", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    const recordedAt = "2026-01-01T00:00:00.000Z"
+    await server.eventStore.append({
+      kind: "opencode_session_watchdog_recorded",
+      watchdog_id: "watchdog_tie_old",
+      session_id: sessionId,
+      launch_id: "launch_test_1",
+      watchdog_status: "healthy",
+      recommended_action: "none",
+      report_required: false,
+      recorded_at: recordedAt,
+      recorded_by: "test",
+      watchdog_hash: "old_hash",
+    })
+    await server.eventStore.append({
+      kind: "opencode_session_watchdog_recorded",
+      watchdog_id: "watchdog_tie_new",
+      session_id: sessionId,
+      launch_id: "launch_test_1",
+      watchdog_status: "blocked",
+      recommended_action: "escalate_to_commander",
+      report_required: true,
+      recorded_at: recordedAt,
+      recorded_by: "test",
+      latest_progress_id: "progress_tie_new",
+      watchdog_hash: "new_hash",
+    })
+
+    const list = await server.command("runtime.list_opencode_watchdogs", { sessionId, limit: 2 }) as Array<{ watchdog_id: string; watchdog_status: string }>
+    expect(list.map((item) => item.watchdog_id)).toEqual(["watchdog_tie_new", "watchdog_tie_old"])
+    const summary = await server.command("runtime.opencode_watchdog_summary") as { latest_records: Array<{ watchdog_id: string; watchdog_status: string }> }
+    expect(summary.latest_records[0]).toMatchObject({ watchdog_id: "watchdog_tie_new", watchdog_status: "blocked" })
+    await server.shutdown()
+  })
+
+  test("opencode watchdog summary counts launched sessions beyond public launch list cap", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+    })
+    await server.start()
+    for (let index = 0; index < 105; index += 1) {
+      await server.eventStore.append({
+        kind: "opencode_session_launch_started",
+        launch_id: `launch_summary_${index}`,
+        status: "launch_started",
+        adapter_kind: "fake",
+        launch_mode: "fresh",
+        session_id: `session_summary_${index}`,
+        started_at: `2026-01-01T00:00:${String(index % 60).padStart(2, "0")}.000Z`,
+        launch_hash: `launch_summary_hash_${index}`,
+      })
+    }
+
+    const summary = await server.command("runtime.opencode_watchdog_summary") as { total_launched_sessions: number }
+    expect(summary.total_launched_sessions).toBe(105)
+    await server.shutdown()
+  })
+
+  test("opencode watchdog summary breaks same-timestamp latest records across sessions by append order", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+    })
+    await server.start()
+    const recordedAt = "2026-01-01T00:00:00.000Z"
+    await server.eventStore.append({
+      kind: "opencode_session_watchdog_recorded",
+      watchdog_id: "watchdog_cross_old",
+      session_id: "session_cross_old",
+      launch_id: "launch_cross_old",
+      watchdog_status: "healthy",
+      recommended_action: "none",
+      report_required: false,
+      recorded_at: recordedAt,
+      recorded_by: "test",
+      watchdog_hash: "watchdog_cross_old_hash",
+    })
+    await server.eventStore.append({
+      kind: "opencode_session_watchdog_recorded",
+      watchdog_id: "watchdog_cross_new",
+      session_id: "session_cross_new",
+      launch_id: "launch_cross_new",
+      watchdog_status: "blocked",
+      recommended_action: "escalate_to_commander",
+      report_required: true,
+      recorded_at: recordedAt,
+      recorded_by: "test",
+      watchdog_hash: "watchdog_cross_new_hash",
+    })
+
+    const summary = await server.command("runtime.opencode_watchdog_summary", { limit: 2 }) as { latest_records: Array<{ watchdog_id: string }> }
+    expect(summary.latest_records.map((record) => record.watchdog_id)).toEqual(["watchdog_cross_new", "watchdog_cross_old"])
+    await server.shutdown()
+  })
+
+  test("opencode watchdog show preserves forced-report linkage created during record", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: ["needs report"] })
+
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId, requestReport: true }) as { status: string; watchdog_id: string; forced_report_requested: boolean; forced_report_request_id?: string }
+    expect(recorded).toMatchObject({ status: "recorded", forced_report_requested: true })
+    expect(recorded.forced_report_request_id).toBeTruthy()
+    const hydrated = await server.command("runtime.get_opencode_watchdog", { watchdogId: recorded.watchdog_id }) as { watchdog_id: string; forced_report_requested: boolean; forced_report_request_id?: string }
+    expect(hydrated).toMatchObject({
+      watchdog_id: recorded.watchdog_id,
+      forced_report_requested: true,
+      forced_report_request_id: recorded.forced_report_request_id,
+    })
+    const requests = await server.command("runtime.list_opencode_forced_report_requests", { sessionId }) as Array<{ request_id: string; watchdog_id?: string }>
+    expect(requests).toEqual([expect.objectContaining({ request_id: recorded.forced_report_request_id, watchdog_id: recorded.watchdog_id })])
+    await server.shutdown()
+  })
+
+  test("opencode watchdog no-start client commands and authority registry are safe", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_watchdog", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.record_opencode_watchdog", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.request_opencode_forced_report", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_opencode_watchdogs")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_watchdog", { watchdogId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.list_opencode_forced_report_requests")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_forced_report_request", { requestId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.opencode_watchdog_summary")).resolves.toMatchObject({ total_launched_sessions: 0 })
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown?.()
+
+    const previewRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/opencode-watchdog-preview")
+    const reportRecord = COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === "/opencode-force-report")
+    expect(previewRecord).toMatchObject({ risk: "safe_read", mutates_events: false, creates_external_process: false, calls_provider: false })
+    expect(reportRecord).toMatchObject({ risk: "medium_risk_write", mutates_events: true, creates_external_process: false, calls_provider: false, requires_run_lock: true })
+    expect(reportRecord?.notes.join(" ")).toContain("process_paused=false")
+    expect(reportRecord?.out_of_scope).toEqual(expect.arrayContaining(["process pause/kill/stop", "Commander guidance/answer", "wake execution", "mission/proposal/review/apply mutation"]))
+  })
 
 	  test("launch gate blocks missing readiness stale hashes real opt-in and duplicate launches", async () => {
     const dir = await tempProject()

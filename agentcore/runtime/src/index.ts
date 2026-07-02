@@ -64,6 +64,8 @@ export { ProcessOpenCodeLaunchAdapter as OpenCodeNativeLaunchAdapter } from "./o
 export * from "./opencode-session/opencode-launch-gate-types"
 export { OpenCodeProgressService } from "./opencode-session/opencode-progress-service"
 export * from "./opencode-session/opencode-progress-types"
+export { OpenCodeTimeoutWatchdogService } from "./opencode-session/opencode-timeout-watchdog-service"
+export * from "./opencode-session/opencode-timeout-watchdog-types"
 export { ContextBudgetService } from "./context/context-budget-service"
 export { ModelCapabilityRegistry } from "./context/model-capability-registry"
 export { ContextPacketCompilerService } from "./context/context-packet-compiler-service"

@@ -84,6 +84,8 @@ import { OpenCodeLaunchGateService, readOpenCodeLaunchInput, readOpenCodeLaunchP
 import type { OpenCodeLaunchPreview, OpenCodeLaunchRecord, OpenCodeLaunchResult } from "./opencode-session/opencode-launch-gate-types"
 import { OpenCodeProgressService, readOpenCodeProgressAppendInput, readOpenCodeProgressPreviewInput } from "./opencode-session/opencode-progress-service"
 import type { OpenCodeProgressPreview, OpenCodeProgressRecord, OpenCodeProgressResult, OpenCodeProgressSummary } from "./opencode-session/opencode-progress-types"
+import { OpenCodeTimeoutWatchdogService, readOpenCodeForcedReportInput, readOpenCodeWatchdogPreviewInput, readOpenCodeWatchdogRecordInput } from "./opencode-session/opencode-timeout-watchdog-service"
+import type { OpenCodeForcedReportRequest, OpenCodeWatchdogPreview, OpenCodeWatchdogRecord, OpenCodeWatchdogResult, OpenCodeWatchdogSummary } from "./opencode-session/opencode-timeout-watchdog-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -198,6 +200,9 @@ export interface RuntimeServerOptions {
   opencodeLaunchNow?: () => Date
   opencodeLaunchId?: () => string
   opencodeLaunchSpawn?: OpenCodeSpawn
+  opencodeWatchdogNow?: () => Date
+  opencodeWatchdogId?: () => string
+  opencodeForcedReportId?: () => string
   runtimeCheckpointNow?: () => Date
   runtimeCheckpointId?: () => string
   runtimeResumeNow?: () => Date
@@ -284,6 +289,9 @@ export class RuntimeServer {
   private readonly opencodeLaunchNow?: () => Date
   private readonly opencodeLaunchId?: () => string
   private readonly opencodeLaunchSpawn?: OpenCodeSpawn
+  private readonly opencodeWatchdogNow?: () => Date
+  private readonly opencodeWatchdogId?: () => string
+  private readonly opencodeForcedReportId?: () => string
   private readonly runtimeCheckpointNow?: () => Date
   private readonly runtimeCheckpointId?: () => string
   private readonly runtimeResumeNow?: () => Date
@@ -316,6 +324,7 @@ export class RuntimeServer {
   private opencodeLaunchReadinessServiceInstance: OpenCodeLaunchReadinessService | null = null
   private opencodeLaunchGateServiceInstance: OpenCodeLaunchGateService | null = null
   private opencodeProgressServiceInstance: OpenCodeProgressService | null = null
+  private opencodeTimeoutWatchdogServiceInstance: OpenCodeTimeoutWatchdogService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -403,6 +412,9 @@ export class RuntimeServer {
     this.opencodeLaunchNow = options.opencodeLaunchNow
     this.opencodeLaunchId = options.opencodeLaunchId
     this.opencodeLaunchSpawn = options.opencodeLaunchSpawn ?? options.openCodeAdapterFactoryOptions?.spawn
+    this.opencodeWatchdogNow = options.opencodeWatchdogNow
+    this.opencodeWatchdogId = options.opencodeWatchdogId
+    this.opencodeForcedReportId = options.opencodeForcedReportId
     this.runtimeCheckpointNow = options.runtimeCheckpointNow
     this.runtimeCheckpointId = options.runtimeCheckpointId
     this.runtimeResumeNow = options.runtimeResumeNow
@@ -918,6 +930,31 @@ export class RuntimeServer {
         })
       case "runtime.opencode_progress_summary":
         return this.openCodeProgressSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
+      case "runtime.preview_opencode_watchdog":
+        return this.previewOpenCodeWatchdog(readOpenCodeWatchdogPreviewInput(payload))
+      case "runtime.record_opencode_watchdog":
+        return this.recordOpenCodeWatchdog(readOpenCodeWatchdogRecordInput(payload))
+      case "runtime.request_opencode_forced_report":
+        return this.requestOpenCodeForcedReport(readOpenCodeForcedReportInput(payload))
+      case "runtime.list_opencode_watchdogs":
+        return this.listOpenCodeWatchdogs({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+          status: optionalString(payload.status, "status"),
+        })
+      case "runtime.get_opencode_watchdog":
+        return this.getOpenCodeWatchdog(requiredString(payload.watchdogId ?? payload.watchdog_id, "watchdogId"))
+      case "runtime.list_opencode_forced_report_requests":
+        return this.listOpenCodeForcedReportRequests({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+        })
+      case "runtime.get_opencode_forced_report_request":
+        return this.getOpenCodeForcedReportRequest(requiredString(payload.requestId ?? payload.request_id, "requestId"))
+      case "runtime.opencode_watchdog_summary":
+        return this.openCodeWatchdogSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -1849,6 +1886,40 @@ export class RuntimeServer {
 
   async openCodeProgressSummary(input: Parameters<OpenCodeProgressService["summary"]>[0] = {}): Promise<OpenCodeProgressSummary> {
     return this.opencodeProgressService().summary(input)
+  }
+
+  async previewOpenCodeWatchdog(input: Parameters<OpenCodeTimeoutWatchdogService["preview"]>[0] = {}): Promise<OpenCodeWatchdogPreview> {
+    return this.opencodeTimeoutWatchdogService().preview(input)
+  }
+
+  async recordOpenCodeWatchdog(input: Parameters<OpenCodeTimeoutWatchdogService["record"]>[0] = {}): Promise<OpenCodeWatchdogResult> {
+    if (input.dry_run === true) return this.opencodeTimeoutWatchdogService().record(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeTimeoutWatchdogService().record(input))
+  }
+
+  async requestOpenCodeForcedReport(input: Parameters<OpenCodeTimeoutWatchdogService["requestForcedReport"]>[0] = {}): Promise<OpenCodeForcedReportRequest | OpenCodeWatchdogResult> {
+    if (input.dry_run === true) return this.opencodeTimeoutWatchdogService().requestForcedReport(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeTimeoutWatchdogService().requestForcedReport(input))
+  }
+
+  async listOpenCodeWatchdogs(input: Parameters<OpenCodeTimeoutWatchdogService["list"]>[0] = {}): Promise<OpenCodeWatchdogRecord[]> {
+    return this.opencodeTimeoutWatchdogService().list(input)
+  }
+
+  async getOpenCodeWatchdog(watchdogId: string): Promise<OpenCodeWatchdogResult | null> {
+    return this.opencodeTimeoutWatchdogService().get(watchdogId)
+  }
+
+  async listOpenCodeForcedReportRequests(input: Parameters<OpenCodeTimeoutWatchdogService["listForcedReports"]>[0] = {}): Promise<OpenCodeForcedReportRequest[]> {
+    return this.opencodeTimeoutWatchdogService().listForcedReports(input)
+  }
+
+  async getOpenCodeForcedReportRequest(requestId: string): Promise<OpenCodeForcedReportRequest | null> {
+    return this.opencodeTimeoutWatchdogService().getForcedReport(requestId)
+  }
+
+  async openCodeWatchdogSummary(input: Parameters<OpenCodeTimeoutWatchdogService["summary"]>[0] = {}): Promise<OpenCodeWatchdogSummary> {
+    return this.opencodeTimeoutWatchdogService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -2964,6 +3035,19 @@ export class RuntimeServer {
       launchGateService: this.opencodeLaunchGateService(),
     })
     return this.opencodeProgressServiceInstance
+  }
+
+  private opencodeTimeoutWatchdogService(): OpenCodeTimeoutWatchdogService {
+    this.opencodeTimeoutWatchdogServiceInstance ??= new OpenCodeTimeoutWatchdogService({
+      eventStore: this.eventStore,
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+      progressService: this.opencodeProgressService(),
+      now: this.opencodeWatchdogNow,
+      watchdogIdFactory: this.opencodeWatchdogId,
+      forcedReportIdFactory: this.opencodeForcedReportId,
+    })
+    return this.opencodeTimeoutWatchdogServiceInstance
   }
 
   private createOpenCodeLaunchAdapter(): OpenCodeLaunchAdapter {

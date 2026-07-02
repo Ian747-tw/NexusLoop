@@ -94,6 +94,11 @@ const WRITE_COMMANDS = new Set([
   "session-blocker",
   "opencode-question",
   "session-question",
+  "opencode-watchdog-record",
+  "watchdog-record",
+  "opencode-force-report",
+  "force-report",
+  "session-force-report",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

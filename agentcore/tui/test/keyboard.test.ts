@@ -362,8 +362,8 @@ describe("TUI keyboard command model", () => {
     ])
   })
 
-  test("path-like OpenCode progress text remains a user message", () => {
-    for (const message of ["/tmp/repro/opencode-progress", "/path/opencode-progress-preview", ".opencode-progress", ":opencode-progress"]) {
+  test("path-like OpenCode progress and watchdog text remains a user message", () => {
+    for (const message of ["/tmp/repro/opencode-progress", "/path/opencode-progress-preview", ".opencode-progress", ":opencode-progress", "/tmp/opencode-watchdog", "/path/opencode-watchdog", ".opencode-watchdog", ":opencode-watchdog"]) {
       const result = applyKeyCommandWithEffects({
         ...initialState("/tmp/demo"),
         screen: "main",
@@ -868,6 +868,23 @@ describe("TUI keyboard command model", () => {
       ["/progress-latest session=session-1", "progress-latest", ["session=session-1"]],
       ["/opencode-progress-show progress-1", "opencode-progress-show", ["progress-1"]],
       ["/opencode-progress-summary", "opencode-progress-summary", []],
+      ["/opencode-watchdog-preview session=session-1", "opencode-watchdog-preview", ["session=session-1"]],
+      ["/session-watchdog session=session-1", "session-watchdog", ["session=session-1"]],
+      ["/watchdog-preview launch=launch-1", "watchdog-preview", ["launch=launch-1"]],
+      ["/opencode-watchdog-record session=session-1", "opencode-watchdog-record", ["session=session-1"]],
+      ["/watchdog-record session=session-1 request_report=true", "watchdog-record", ["session=session-1", "request_report=true"]],
+      ["/opencode-watchdog-dry-run session=session-1", "opencode-watchdog-dry-run", ["session=session-1"]],
+      ["/opencode-force-report session=session-1 reason=needs report", "opencode-force-report", ["session=session-1", "reason=needs", "report"]],
+      ["/force-report session=session-1 reason=needs report", "force-report", ["session=session-1", "reason=needs", "report"]],
+      ["/session-force-report session=session-1 reason=needs report", "session-force-report", ["session=session-1", "reason=needs", "report"]],
+      ["/opencode-force-report-dry-run session=session-1 reason=dry run", "opencode-force-report-dry-run", ["session=session-1", "reason=dry", "run"]],
+      ["/opencode-watchdogs session=session-1", "opencode-watchdogs", ["session=session-1"]],
+      ["/opencode-watchdog-show watchdog-1", "opencode-watchdog-show", ["watchdog-1"]],
+      ["/opencode-force-report-requests session=session-1", "opencode-force-report-requests", ["session=session-1"]],
+      ["/forced-reports session=session-1", "forced-reports", ["session=session-1"]],
+      ["/opencode-force-report-show request-1", "opencode-force-report-show", ["request-1"]],
+      ["/opencode-watchdog-summary", "opencode-watchdog-summary", []],
+      ["/watchdog-summary", "watchdog-summary", []],
       ["/research-memory-summary", "research-memory-summary", []],
       ["/research-memory-search query=adapter timeout token=abc123", "research-memory-search", ["query=adapter", "timeout", "token=abc123"]],
       ["/research-memory-preview query=adapter timeout", "research-memory-preview", ["query=adapter", "timeout"]],
