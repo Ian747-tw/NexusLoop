@@ -200,6 +200,7 @@ export class OpenCodeCommanderQuestionService {
       question_type: questionType,
     }))
     const duplicate = sessionId ? await this.findDuplicate(sessionId, evidenceKey, questionHash) : undefined
+    if (duplicate) blockers.push("pending Commander question already exists for this evidence")
     const canCreate = blockers.length === 0
     return redactValue({
       preview_id: `opencode_commander_question_preview_${questionHash.slice(0, 16)}`,
@@ -289,7 +290,7 @@ export class OpenCodeCommanderQuestionService {
   private async findDuplicate(sessionId: string, evidenceKey: string | undefined, questionHash: string): Promise<OpenCodeCommanderQuestionRecord | undefined> {
     if (!evidenceKey) return undefined
     return (await this.list({ session_id: sessionId, limit: MAX_LIST }))
-      .find((record) => record.status === "pending_commander" && record.question_hash === questionHash)
+      .find((record) => (record.status === "pending_commander" || record.status === "pending_human") && record.question_hash === questionHash)
   }
 
   private async sequencedRecords(): Promise<SequencedQuestionRecord[]> {

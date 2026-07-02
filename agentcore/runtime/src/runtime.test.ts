@@ -18034,8 +18034,10 @@ describe("OpenCode launch readiness", () => {
 
     const created = await server.command("runtime.create_opencode_commander_question", { progressId: progress.progress_id }) as { status: string; question_id: string; question_status: string; source_kind: string; progress_id?: string; question_type: string; urgency: string }
     expect(created).toMatchObject({ status: "created", question_status: "pending_commander", source_kind: "progress_question", progress_id: progress.progress_id, question_type: "clarification", urgency: "normal" })
-    const duplicatePreview = await server.command("runtime.preview_opencode_commander_question", { progressId: progress.progress_id }) as { duplicate_question_id?: string }
+    const duplicatePreview = await server.command("runtime.preview_opencode_commander_question", { progressId: progress.progress_id }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
+    expect(duplicatePreview).toMatchObject({ status: "blocked", can_create: false })
     expect(duplicatePreview.duplicate_question_id).toBe(created.question_id)
+    expect(duplicatePreview.blockers).toContain("pending Commander question already exists for this evidence")
     const duplicate = await server.command("runtime.create_opencode_commander_question", { progressId: progress.progress_id }) as { status: string; error?: string }
     expect(duplicate).toMatchObject({ status: "blocked" })
     expect(duplicate.error).toContain("pending Commander question already exists")
@@ -18077,6 +18079,18 @@ describe("OpenCode launch readiness", () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)
     await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    const timedOutWatchdog = await server.command("runtime.record_opencode_watchdog", { sessionId, maxWallTimeMs: 1, maxNoProgressMs: 1 }) as { watchdog_id: string; watchdog_status: string }
+    expect(timedOutWatchdog.watchdog_status).toBe("timed_out")
+    const urgentQuestion = await server.command("runtime.create_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; question_id: string; question_status: string }
+    expect(urgentQuestion).toMatchObject({ status: "created", question_status: "pending_human" })
+    const duplicateUrgentPreview = await server.command("runtime.preview_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
+    expect(duplicateUrgentPreview).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: urgentQuestion.question_id })
+    expect(duplicateUrgentPreview.blockers).toContain("pending Commander question already exists for this evidence")
+    const duplicateUrgent = await server.command("runtime.create_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; error?: string }
+    expect(duplicateUrgent).toMatchObject({ status: "blocked" })
+    expect(duplicateUrgent.error).toContain("pending Commander question already exists")
+
     const blockerProgress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: ["needs report"] }) as { progress_id: string }
     const watchdog = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; watchdog_status: string }
     expect(watchdog.watchdog_status).toBe("blocked")
