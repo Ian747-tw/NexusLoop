@@ -301,7 +301,10 @@ export class OpenCodeCommanderQuestionService {
     if (watchdog && sessionId && watchdog.session_id !== sessionId) blockers.push("watchdog_id does not belong to session_id")
     if (watchdog && launchId && watchdog.launch_id && watchdog.launch_id !== launchId) blockers.push("watchdog_id does not belong to launch_id")
     if (watchdog && !["blocked", "needs_report", "stale", "timed_out"].includes(watchdog.watchdog_status)) blockers.push("watchdog_id must reference blocked, needs_report, stale, or timed_out evidence")
-    if (progress && watchdog?.latest_progress_id && watchdog.latest_progress_id !== progress.progress_id) blockers.push("progress_id does not belong to watchdog_id")
+    if (progress && watchdog) {
+      const watchdogProgressIds = new Set([watchdog.latest_progress_id, watchdog.watchdog_evidence_progress_id].filter((id): id is string => Boolean(id)))
+      if (watchdogProgressIds.size > 0 && !watchdogProgressIds.has(progress.progress_id)) blockers.push("progress_id does not belong to watchdog_id")
+    }
     if (forcedReport && sessionId && forcedReport.session_id !== sessionId) blockers.push("forced_report_request_id does not belong to session_id")
     if (forcedReport && launchId && forcedReport.launch_id && forcedReport.launch_id !== launchId) blockers.push("forced_report_request_id does not belong to launch_id")
     if (watchdog && forcedReport?.watchdog_id && forcedReport.watchdog_id !== watchdog.watchdog_id) blockers.push("forced_report_request_id does not belong to watchdog_id")

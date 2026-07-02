@@ -18292,10 +18292,14 @@ describe("OpenCode launch readiness", () => {
     const request = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker", dryRun: true }) as { status: string; forced_report_requested: boolean; session_id: string }
     expect(request).toMatchObject({ status: "dry_run", forced_report_requested: false, session_id: sessionId })
     expect(request).not.toHaveProperty("request_id")
-    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; has_blockers: boolean; has_question: boolean; latest_progress_kind?: string; watchdog_evidence_progress_id?: string }
+    const recorded = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; has_blockers: boolean; has_question: boolean; latest_progress_id?: string; latest_progress_kind?: string; watchdog_evidence_progress_id?: string }
     expect(recorded).toMatchObject({ has_blockers: true, has_question: false, latest_progress_kind: "heartbeat", watchdog_evidence_progress_id: evidenceProgressId })
     const watchdogEvent = (await server.eventStore.readAll()).find((event) => event.kind === "opencode_session_watchdog_recorded" && event.watchdog_id === recorded.watchdog_id)
     expect(watchdogEvent).toMatchObject({ has_blockers: true, has_question: false, latest_progress_kind: "heartbeat", watchdog_evidence_progress_id: evidenceProgressId })
+    expect(recorded.latest_progress_id).not.toBe(evidenceProgressId)
+    const questionFromWatchdogEvidence = await server.command("runtime.preview_opencode_commander_question", { watchdogId: recorded.watchdog_id, progressId: evidenceProgressId }) as { status: string; progress_id?: string; watchdog_id?: string; blockers: string[] }
+    expect(questionFromWatchdogEvidence).toMatchObject({ status: "ready", progress_id: evidenceProgressId, watchdog_id: recorded.watchdog_id })
+    expect(questionFromWatchdogEvidence.blockers).not.toContain("progress_id does not belong to watchdog_id")
     const persistedRequest = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "operator requested report after preserved blocker" }) as { request_id: string; latest_progress_id?: string }
     expect(persistedRequest.latest_progress_id).toBe(evidenceProgressId)
     const duplicateAfterHeartbeat = await server.command("runtime.request_opencode_forced_report", { sessionId, reason: "duplicate after fresh heartbeat" }) as { status: string; error?: string }
