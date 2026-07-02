@@ -99,6 +99,9 @@ const WRITE_COMMANDS = new Set([
   "opencode-force-report",
   "force-report",
   "session-force-report",
+  "opencode-ask-commander",
+  "ask-commander",
+  "commander-question",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"
@@ -118,7 +121,7 @@ export function stageExplicitCommand(commandText: string): OperatorStagedCommand
   return withExecutionCommand({
     label: "Explicit command",
     command,
-    command_type: commandTypeFromSlash(command),
+    command_type: commandTypeFromSlash(executionCommand),
     requires_review: undefined,
     requires_active_runtime: undefined,
   }, executionCommand)

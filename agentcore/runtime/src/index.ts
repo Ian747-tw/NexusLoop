@@ -66,6 +66,8 @@ export { OpenCodeProgressService } from "./opencode-session/opencode-progress-se
 export * from "./opencode-session/opencode-progress-types"
 export { OpenCodeTimeoutWatchdogService } from "./opencode-session/opencode-timeout-watchdog-service"
 export * from "./opencode-session/opencode-timeout-watchdog-types"
+export { OpenCodeCommanderQuestionService } from "./opencode-session/opencode-commander-question-service"
+export * from "./opencode-session/opencode-commander-question-types"
 export { ContextBudgetService } from "./context/context-budget-service"
 export { ModelCapabilityRegistry } from "./context/model-capability-registry"
 export { ContextPacketCompilerService } from "./context/context-packet-compiler-service"

@@ -86,6 +86,8 @@ import { OpenCodeProgressService, readOpenCodeProgressAppendInput, readOpenCodeP
 import type { OpenCodeProgressPreview, OpenCodeProgressRecord, OpenCodeProgressResult, OpenCodeProgressSummary } from "./opencode-session/opencode-progress-types"
 import { OpenCodeTimeoutWatchdogService, readOpenCodeForcedReportInput, readOpenCodeWatchdogPreviewInput, readOpenCodeWatchdogRecordInput } from "./opencode-session/opencode-timeout-watchdog-service"
 import type { OpenCodeForcedReportRequest, OpenCodeWatchdogPreview, OpenCodeWatchdogRecord, OpenCodeWatchdogResult, OpenCodeWatchdogSummary } from "./opencode-session/opencode-timeout-watchdog-types"
+import { OpenCodeCommanderQuestionService, readOpenCodeCommanderQuestionCreateInput, readOpenCodeCommanderQuestionPreviewInput } from "./opencode-session/opencode-commander-question-service"
+import type { OpenCodeCommanderQuestionPreview, OpenCodeCommanderQuestionRecord, OpenCodeCommanderQuestionResult, OpenCodeCommanderQuestionSummary } from "./opencode-session/opencode-commander-question-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -325,6 +327,7 @@ export class RuntimeServer {
   private opencodeLaunchGateServiceInstance: OpenCodeLaunchGateService | null = null
   private opencodeProgressServiceInstance: OpenCodeProgressService | null = null
   private opencodeTimeoutWatchdogServiceInstance: OpenCodeTimeoutWatchdogService | null = null
+  private opencodeCommanderQuestionServiceInstance: OpenCodeCommanderQuestionService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -955,6 +958,28 @@ export class RuntimeServer {
         return this.getOpenCodeForcedReportRequest(requiredString(payload.requestId ?? payload.request_id, "requestId"))
       case "runtime.opencode_watchdog_summary":
         return this.openCodeWatchdogSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
+      case "runtime.preview_opencode_commander_question":
+        return this.previewOpenCodeCommanderQuestion(readOpenCodeCommanderQuestionPreviewInput(payload))
+      case "runtime.create_opencode_commander_question":
+        return this.createOpenCodeCommanderQuestion(readOpenCodeCommanderQuestionCreateInput(payload))
+      case "runtime.list_opencode_commander_questions":
+        return this.listOpenCodeCommanderQuestions({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+          status: optionalString(payload.status, "status"),
+          question_type: optionalString(payload.questionType ?? payload.question_type ?? payload.type, "questionType"),
+          urgency: optionalString(payload.urgency, "urgency"),
+        })
+      case "runtime.get_opencode_commander_question":
+        return this.getOpenCodeCommanderQuestion(requiredString(payload.questionId ?? payload.question_id, "questionId"))
+      case "runtime.latest_opencode_commander_question":
+        return this.latestOpenCodeCommanderQuestion({
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+        })
+      case "runtime.opencode_commander_question_summary":
+        return this.openCodeCommanderQuestionSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -1920,6 +1945,31 @@ export class RuntimeServer {
 
   async openCodeWatchdogSummary(input: Parameters<OpenCodeTimeoutWatchdogService["summary"]>[0] = {}): Promise<OpenCodeWatchdogSummary> {
     return this.opencodeTimeoutWatchdogService().summary(input)
+  }
+
+  async previewOpenCodeCommanderQuestion(input: Parameters<OpenCodeCommanderQuestionService["preview"]>[0] = {}): Promise<OpenCodeCommanderQuestionPreview> {
+    return this.opencodeCommanderQuestionService().preview(input)
+  }
+
+  async createOpenCodeCommanderQuestion(input: Parameters<OpenCodeCommanderQuestionService["create"]>[0] = {}): Promise<OpenCodeCommanderQuestionResult> {
+    if (input.dry_run === true) return this.opencodeCommanderQuestionService().create(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeCommanderQuestionService().create(input))
+  }
+
+  async listOpenCodeCommanderQuestions(input: Parameters<OpenCodeCommanderQuestionService["list"]>[0] = {}): Promise<OpenCodeCommanderQuestionRecord[]> {
+    return this.opencodeCommanderQuestionService().list(input)
+  }
+
+  async getOpenCodeCommanderQuestion(questionId: string): Promise<OpenCodeCommanderQuestionResult | null> {
+    return this.opencodeCommanderQuestionService().get(questionId)
+  }
+
+  async latestOpenCodeCommanderQuestion(input: Parameters<OpenCodeCommanderQuestionService["latest"]>[0] = {}): Promise<OpenCodeCommanderQuestionResult | null> {
+    return this.opencodeCommanderQuestionService().latest(input)
+  }
+
+  async openCodeCommanderQuestionSummary(input: Parameters<OpenCodeCommanderQuestionService["summary"]>[0] = {}): Promise<OpenCodeCommanderQuestionSummary> {
+    return this.opencodeCommanderQuestionService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -3048,6 +3098,17 @@ export class RuntimeServer {
       forcedReportIdFactory: this.opencodeForcedReportId,
     })
     return this.opencodeTimeoutWatchdogServiceInstance
+  }
+
+  private opencodeCommanderQuestionService(): OpenCodeCommanderQuestionService {
+    this.opencodeCommanderQuestionServiceInstance ??= new OpenCodeCommanderQuestionService({
+      eventStore: this.eventStore,
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+      progressService: this.opencodeProgressService(),
+      watchdogService: this.opencodeTimeoutWatchdogService(),
+    })
+    return this.opencodeCommanderQuestionServiceInstance
   }
 
   private createOpenCodeLaunchAdapter(): OpenCodeLaunchAdapter {

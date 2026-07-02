@@ -108,6 +108,12 @@ import type {
   OpenCodeProgressState,
   OpenCodeProgressSummaryState,
   OpenCodeForcedReportRequestSummary,
+  OpenCodeCommanderQuestionCommandSummary,
+  OpenCodeCommanderQuestionPreviewSummary,
+  OpenCodeCommanderQuestionRecordSummary,
+  OpenCodeCommanderQuestionResultSummary,
+  OpenCodeCommanderQuestionSummaryState,
+  OpenCodeCommanderQuestionsState,
   OpenCodeWatchdogCommandSummary,
   OpenCodeWatchdogPreviewSummary,
   OpenCodeWatchdogRecordSummary,
@@ -440,6 +446,12 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-forced-report-requests"; sessionId?: string; launchId?: string; limit?: number }
   | { type: "load-opencode-forced-report-request"; requestId: string }
   | { type: "load-opencode-watchdog-summary"; limit?: number }
+  | { type: "preview-opencode-commander-question"; sessionId?: string; launchId?: string; progressId?: string; watchdogId?: string; forcedReportRequestId?: string; question?: string; questionType?: string; urgency?: string; contextSummary?: string; optionsConsidered?: string[]; executorRecommendation?: string; sourceKind?: string }
+  | { type: "create-opencode-commander-question"; sessionId?: string; launchId?: string; progressId?: string; watchdogId?: string; forcedReportRequestId?: string; question?: string; questionType?: string; urgency?: string; contextSummary?: string; optionsConsidered?: string[]; executorRecommendation?: string; sourceKind?: string; dryRun?: boolean }
+  | { type: "load-opencode-commander-questions"; sessionId?: string; launchId?: string; status?: string; questionType?: string; urgency?: string; limit?: number }
+  | { type: "load-opencode-commander-question"; questionId: string }
+  | { type: "load-latest-opencode-commander-question"; sessionId?: string; launchId?: string }
+  | { type: "load-opencode-commander-question-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1317,6 +1329,21 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeForcedReportSelected(state, await runtime.command("runtime.get_opencode_forced_report_request", { requestId: effect.requestId }), effect.requestId)
       case "load-opencode-watchdog-summary":
         return applyOpenCodeWatchdogSummary(state, await runtime.command("runtime.opencode_watchdog_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "preview-opencode-commander-question":
+        return applyOpenCodeCommanderQuestionPreview(state, await runtime.command("runtime.preview_opencode_commander_question", commanderQuestionPayload(effect)))
+      case "create-opencode-commander-question": {
+        const next = applyOpenCodeCommanderQuestionResult(state, await runtime.command("runtime.create_opencode_commander_question", { ...commanderQuestionPayload(effect), dryRun: effect.dryRun === true, createdBy: "operator" }))
+        if (next.opencodeCommanderQuestions?.commandError) return next
+        return effect.dryRun === true ? next : applyOpenCodeCommanderQuestionRecords(next, await runtime.command("runtime.list_opencode_commander_questions", { limit: HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId }))
+      }
+      case "load-opencode-commander-questions":
+        return applyOpenCodeCommanderQuestionRecords(state, await runtime.command("runtime.list_opencode_commander_questions", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId, status: effect.status, questionType: effect.questionType, urgency: effect.urgency }))
+      case "load-opencode-commander-question":
+        return applyOpenCodeCommanderQuestionSelected(state, await runtime.command("runtime.get_opencode_commander_question", { questionId: effect.questionId }), effect.questionId)
+      case "load-latest-opencode-commander-question":
+        return applyOpenCodeCommanderQuestionLatest(state, await runtime.command("runtime.latest_opencode_commander_question", { sessionId: effect.sessionId, launchId: effect.launchId }), effect.sessionId ?? effect.launchId ?? "latest")
+      case "load-opencode-commander-question-summary":
+        return applyOpenCodeCommanderQuestionSummary(state, await runtime.command("runtime.opencode_commander_question_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -3456,6 +3483,87 @@ function applyOpenCodeWatchdogSummary(state: UiState, value: unknown): UiState {
   }
 }
 
+function applyOpenCodeCommanderQuestionPreview(state: UiState, value: unknown): UiState {
+  const question = readOpenCodeCommanderQuestionPreview(value)
+  const commandError = question.status === "blocked" ? question.blockers[0] ?? "OpenCode Commander question preview is blocked" : undefined
+  return {
+    ...state,
+    opencodeCommanderQuestions: {
+      ...opencodeCommanderQuestionState(state),
+      preview: question,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode asks commander preview", detail: `type=${question.question_type} session=${question.session_id || "missing"}`, status: question.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeCommanderQuestionResult(state: UiState, value: unknown): UiState {
+  const result = readOpenCodeCommanderQuestionResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "OpenCode Commander question is blocked or failed" : undefined
+  return {
+    ...state,
+    opencodeCommanderQuestions: {
+      ...opencodeCommanderQuestionState(state),
+      latestResult: result,
+      latest: result.status === "created" ? result : opencodeCommanderQuestionState(state).latest ?? null,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode asks commander", detail: `status=${result.status} question=${result.question_id} session=${result.session_id || "missing"}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeCommanderQuestionRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeCommanderQuestionRecords(value)
+  return {
+    ...state,
+    opencodeCommanderQuestions: {
+      ...opencodeCommanderQuestionState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode commander questions", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeCommanderQuestionSelected(state: UiState, value: unknown, questionId: string): UiState {
+  const selected = value === null ? null : readOpenCodeCommanderQuestionResult(value)
+  return {
+    ...state,
+    opencodeCommanderQuestions: {
+      ...opencodeCommanderQuestionState(state),
+      selected,
+      commandError: selected ? undefined : `OpenCode Commander question not found: ${redactText(questionId)}`,
+    },
+    systemActions: [...state.systemActions, { title: "opencode commander question selected", detail: `question=${redactText(questionId)}`, status: selected ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeCommanderQuestionLatest(state: UiState, value: unknown, label: string): UiState {
+  const latest = value === null ? null : readOpenCodeCommanderQuestionResult(value)
+  return {
+    ...state,
+    opencodeCommanderQuestions: {
+      ...opencodeCommanderQuestionState(state),
+      latest,
+      commandError: latest ? undefined : `OpenCode Commander question latest not found: ${redactText(label)}`,
+    },
+    systemActions: [...state.systemActions, { title: "opencode commander question latest", detail: `target=${redactText(label)}`, status: latest ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeCommanderQuestionSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeCommanderQuestionSummary(value)
+  return {
+    ...state,
+    opencodeCommanderQuestions: {
+      ...opencodeCommanderQuestionState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode commander question summary", detail: `pending=${summary.pending_commander_count} urgent=${summary.urgent_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -4713,6 +4821,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeLaunchCommands.has(command)) return state.opencodeLaunches?.commandError
   if (opencodeProgressCommands.has(command)) return state.opencodeProgress?.commandError
   if (opencodeWatchdogCommands.has(command)) return state.opencodeWatchdog?.commandError
+  if (opencodeCommanderQuestionCommands.has(command)) return state.opencodeCommanderQuestions?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -4760,6 +4869,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeLaunchCommands.has(command)) return { ...state, opencodeLaunches: { ...opencodeLaunchesState(state), commandError: undefined } }
   if (opencodeProgressCommands.has(command)) return { ...state, opencodeProgress: { ...opencodeProgressState(state), commandError: undefined } }
   if (opencodeWatchdogCommands.has(command)) return { ...state, opencodeWatchdog: { ...opencodeWatchdogState(state), commandError: undefined } }
+  if (opencodeCommanderQuestionCommands.has(command)) return { ...state, opencodeCommanderQuestions: { ...opencodeCommanderQuestionState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -5035,6 +5145,28 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "opencode-watchdog-summary":
     case "watchdog-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-watchdog-summary", limit: HANDOFF_LIMIT })
+    case "opencode-ask-commander-preview":
+    case "ask-commander-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeCommanderQuestionEffect("preview-opencode-commander-question", args, false))
+    case "opencode-ask-commander-dry-run":
+    case "ask-commander-dry-run": {
+      const effect = opencodeCommanderQuestionEffect("create-opencode-commander-question", args, true) as Extract<RuntimeUiEffect, { type: "create-opencode-commander-question" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-ask-commander":
+    case "ask-commander":
+    case "commander-question":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeCommanderQuestionEffect("create-opencode-commander-question", args, true))
+    case "opencode-commander-questions":
+    case "commander-questions":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeCommanderQuestionListEffect(args))
+    case "opencode-commander-question-latest":
+    case "question-latest":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeCommanderQuestionLatestEffect(args))
+    case "opencode-commander-question-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-commander-question", questionId: requiredArg(args, 0, "questionId") })
+    case "opencode-commander-question-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-commander-question-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -6315,6 +6447,22 @@ const opencodeWatchdogCommands = new Set([
   "opencode-force-report-show",
   "opencode-watchdog-summary",
   "watchdog-summary",
+])
+
+const opencodeCommanderQuestionCommands = new Set([
+  "opencode-ask-commander-preview",
+  "ask-commander-preview",
+  "opencode-ask-commander-dry-run",
+  "ask-commander-dry-run",
+  "opencode-ask-commander",
+  "ask-commander",
+  "commander-question",
+  "opencode-commander-questions",
+  "commander-questions",
+  "opencode-commander-question-latest",
+  "question-latest",
+  "opencode-commander-question-show",
+  "opencode-commander-question-summary",
 ])
 
 const researchMemoryCommands = new Set([
@@ -9478,6 +9626,111 @@ function readOpenCodeWatchdogSummary(value: unknown): OpenCodeWatchdogSummarySta
 }
 
 function readOpenCodeWatchdogCommands(value: unknown): OpenCodeWatchdogCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readOpenCodeCommanderQuestionPreview(value: unknown): OpenCodeCommanderQuestionPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_commander_question returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_create: value.can_create === true,
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    progress_id: typeof value.progress_id === "string" ? redactText(value.progress_id) : undefined,
+    watchdog_id: typeof value.watchdog_id === "string" ? redactText(value.watchdog_id) : undefined,
+    forced_report_request_id: typeof value.forced_report_request_id === "string" ? redactText(value.forced_report_request_id) : undefined,
+    question_type: readString(value.question_type, "unknown"),
+    urgency: readString(value.urgency, "normal"),
+    question_preview: preview(readString(value.question_preview, "")),
+    context_summary_preview: preview(readString(value.context_summary_preview, "")),
+    options_considered_preview: readStringList(value.options_considered_preview, 8).map(preview),
+    executor_recommendation_preview: typeof value.executor_recommendation_preview === "string" ? preview(readString(value.executor_recommendation_preview, "")) : undefined,
+    evidence_summary_preview: typeof value.evidence_summary_preview === "string" ? preview(readString(value.evidence_summary_preview, "")) : undefined,
+    source_kind: readString(value.source_kind, "manual"),
+    duplicate_question_id: typeof value.duplicate_question_id === "string" ? redactText(value.duplicate_question_id) : undefined,
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    recommended_commands: readOpenCodeCommanderQuestionCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    question_hash: readString(value.question_hash, ""),
+  }
+}
+
+function readOpenCodeCommanderQuestionResult(value: unknown): OpenCodeCommanderQuestionResultSummary {
+  if (!isRecord(value) || typeof value.question_id !== "string") throw new Error("runtime.create_opencode_commander_question returned invalid result")
+  return {
+    question_id: redactText(value.question_id),
+    status: readString(value.status, "blocked"),
+    question_status: readString(value.question_status, "pending_commander"),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    progress_id: typeof value.progress_id === "string" ? redactText(value.progress_id) : undefined,
+    watchdog_id: typeof value.watchdog_id === "string" ? redactText(value.watchdog_id) : undefined,
+    forced_report_request_id: typeof value.forced_report_request_id === "string" ? redactText(value.forced_report_request_id) : undefined,
+    question_type: readString(value.question_type, "unknown"),
+    urgency: readString(value.urgency, "normal"),
+    question_preview: preview(readString(value.question_preview, "")),
+    context_summary_preview: preview(readString(value.context_summary_preview, "")),
+    options_considered_preview: readStringList(value.options_considered_preview, 8).map(preview),
+    executor_recommendation_preview: typeof value.executor_recommendation_preview === "string" ? preview(readString(value.executor_recommendation_preview, "")) : undefined,
+    evidence_summary_preview: typeof value.evidence_summary_preview === "string" ? preview(readString(value.evidence_summary_preview, "")) : undefined,
+    created_at: readString(value.created_at, ""),
+    created_by: preview(readString(value.created_by, "")),
+    source_kind: readString(value.source_kind, "manual"),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    question_hash: readString(value.question_hash, ""),
+    recommended_commands: readOpenCodeCommanderQuestionCommands(value.recommended_commands),
+  }
+}
+
+function readOpenCodeCommanderQuestionRecords(value: unknown): OpenCodeCommanderQuestionRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((record) => ({
+    question_id: redactText(readString(record.question_id, "")),
+    status: readString(record.status, "pending_commander"),
+    session_id: redactText(readString(record.session_id, "")),
+    launch_id: typeof record.launch_id === "string" ? redactText(record.launch_id) : undefined,
+    question_type: readString(record.question_type, "unknown"),
+    urgency: readString(record.urgency, "normal"),
+    question_preview: preview(readString(record.question_preview, "")),
+    source_kind: readString(record.source_kind, "manual"),
+    created_at: readString(record.created_at, ""),
+    created_by: preview(readString(record.created_by, "")),
+    has_options: record.has_options === true,
+    has_recommendation: record.has_recommendation === true,
+    linked_progress_id: typeof record.linked_progress_id === "string" ? redactText(record.linked_progress_id) : undefined,
+    linked_watchdog_id: typeof record.linked_watchdog_id === "string" ? redactText(record.linked_watchdog_id) : undefined,
+    linked_forced_report_request_id: typeof record.linked_forced_report_request_id === "string" ? redactText(record.linked_forced_report_request_id) : undefined,
+    question_hash: readString(record.question_hash, ""),
+  }))
+}
+
+function readOpenCodeCommanderQuestionSummary(value: unknown): OpenCodeCommanderQuestionSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.opencode_commander_question_summary returned invalid summary")
+  return {
+    total_questions: readNumber(value.total_questions, 0),
+    pending_commander_count: readNumber(value.pending_commander_count, 0),
+    pending_human_count: readNumber(value.pending_human_count, 0),
+    withdrawn_count: readNumber(value.withdrawn_count, 0),
+    superseded_count: readNumber(value.superseded_count, 0),
+    answered_count: readNumber(value.answered_count, 0),
+    urgent_count: readNumber(value.urgent_count, 0),
+    blocked_type_count: readNumber(value.blocked_type_count, 0),
+    latest_questions: readOpenCodeCommanderQuestionRecords(value.latest_questions),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeCommanderQuestionCommands(value: unknown): OpenCodeCommanderQuestionCommandSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -12778,7 +13031,7 @@ function readCommandAuthorityRecord(value: unknown): CommandAuthorityRecordSumma
   if (!isRecord(value) || typeof value.authority_id !== "string" || typeof value.slash_command !== "string") return null
   return {
     authority_id: redactText(value.authority_id),
-    slash_command: redactText(value.slash_command),
+    slash_command: value.slash_command,
     runtime_command: typeof value.runtime_command === "string" ? redactText(value.runtime_command) : undefined,
     aliases: readStringList(value.aliases, 12),
     risk: readString(value.risk, "unknown"),
@@ -13073,6 +13326,10 @@ function opencodeWatchdogState(state: UiState): OpenCodeWatchdogState {
   return state.opencodeWatchdog ?? { preview: null, latestResult: null, forcedReportResult: null, records: [], forcedReportRequests: [], selected: null, selectedRequest: null, summary: null }
 }
 
+function opencodeCommanderQuestionState(state: UiState): OpenCodeCommanderQuestionsState {
+  return state.opencodeCommanderQuestions ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
 function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
   return {
     sessionId: effect.sessionId,
@@ -13100,6 +13357,23 @@ function watchdogPayload(effect: Extract<RuntimeUiEffect, { type: "preview-openc
     maxWallTimeMs: effect.maxWallTimeMs,
     maxNoProgressMs: effect.maxNoProgressMs,
     heartbeatIntervalMs: effect.heartbeatIntervalMs,
+  }
+}
+
+function commanderQuestionPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-commander-question" | "create-opencode-commander-question" }>): Record<string, unknown> {
+  return {
+    sessionId: effect.sessionId,
+    launchId: effect.launchId,
+    progressId: effect.progressId,
+    watchdogId: effect.watchdogId,
+    forcedReportRequestId: effect.forcedReportRequestId,
+    question: effect.question,
+    questionType: effect.questionType,
+    urgency: effect.urgency,
+    contextSummary: effect.contextSummary,
+    optionsConsidered: effect.optionsConsidered,
+    executorRecommendation: effect.executorRecommendation,
+    sourceKind: effect.sourceKind,
   }
 }
 
@@ -14217,6 +14491,71 @@ function opencodeForcedReportListEffect(args: string[]): Extract<RuntimeUiEffect
     else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
     else throw new Error("OpenCode forced report list arg is unsupported")
   }
+  return effect
+}
+
+function opencodeCommanderQuestionEffect(
+  type: "preview-opencode-commander-question" | "create-opencode-commander-question",
+  args: string[],
+  requireSource: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-opencode-commander-question" | "create-opencode-commander-question" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-commander-question" | "create-opencode-commander-question" }> = { type }
+  const freeTextKeys = new Set(["question", "context", "recommendation"])
+  const knownKeys = new Set(["session", "launch", "progress", "watchdog", "forced_report", "question", "type", "urgency", "context", "options", "recommendation", "source"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "OpenCode asks Commander args must use session=<id>, launch=<id>, progress=<id>, watchdog=<id>, forced_report=<id>, question=<text>, type=<type>, urgency=<urgency>, context=<text>, options=<csv>, recommendation=<text>, or source=<kind>")
+    index = nextIndex
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "progress") effect.progressId = value
+    else if (key === "watchdog") effect.watchdogId = value
+    else if (key === "forced_report") effect.forcedReportRequestId = value
+    else if (key === "question") effect.question = value
+    else if (key === "type") effect.questionType = value
+    else if (key === "urgency") effect.urgency = value
+    else if (key === "context") effect.contextSummary = value
+    else if (key === "options") effect.optionsConsidered = commaList(value)
+    else if (key === "recommendation") effect.executorRecommendation = value
+    else if (key === "source") effect.sourceKind = value
+    else throw new Error("OpenCode asks Commander arg is unsupported")
+  }
+  if (requireSource && !effect.sessionId && !effect.launchId && !effect.progressId && !effect.watchdogId && !effect.forcedReportRequestId) {
+    throw new Error("OpenCode asks Commander requires session=<id>, launch=<id>, progress=<id>, watchdog=<id>, or forced_report=<id>")
+  }
+  if (requireSource && !effect.question && !effect.progressId && !effect.watchdogId && !effect.forcedReportRequestId) {
+    throw new Error("OpenCode asks Commander requires question=<text> unless progress/watchdog/forced_report evidence supplies context")
+  }
+  return effect
+}
+
+function opencodeCommanderQuestionListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-opencode-commander-questions" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-opencode-commander-questions" }> = { type: "load-opencode-commander-questions", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode Commander questions list args must use session=<id>, launch=<id>, status=<status>, type=<type>, urgency=<urgency>, or limit=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "status") effect.status = value
+    else if (key === "type") effect.questionType = value
+    else if (key === "urgency") effect.urgency = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode Commander questions list arg is unsupported")
+  }
+  return effect
+}
+
+function opencodeCommanderQuestionLatestEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-latest-opencode-commander-question" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-latest-opencode-commander-question" }> = { type: "load-latest-opencode-commander-question" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode Commander question latest args must use session=<id> or launch=<id>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else throw new Error("OpenCode Commander question latest arg is unsupported")
+  }
+  if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode Commander question latest requires session=<id> or launch=<id>")
   return effect
 }
 

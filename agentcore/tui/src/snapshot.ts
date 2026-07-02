@@ -91,6 +91,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeLaunchLines(state))
   out.push(...opencodeProgressLines(state))
   out.push(...opencodeWatchdogLines(state))
+  out.push(...opencodeCommanderQuestionLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -166,7 +167,7 @@ function commandAuthorityLines(state: UiState): string[] {
   }
   if (authority.selected) {
     const selected = authority.selected
-    out.push(`  selected=${preview(redactText(selected.slash_command))} risk=${selected.risk} gate=${selected.gate} owner=${selected.owner} mutates_events=${selected.mutates_events} creates_external_process=${selected.creates_external_process} calls_provider=${selected.calls_provider}`)
+    out.push(`  selected=${preview(selected.slash_command)} risk=${selected.risk} gate=${selected.gate} owner=${selected.owner} mutates_events=${selected.mutates_events} creates_external_process=${selected.creates_external_process} calls_provider=${selected.calls_provider}`)
     out.push(`  runtime=${selected.runtime_command ?? "none"} requires_active_runtime=${selected.requires_active_runtime} requires_run_lock=${selected.requires_run_lock} requires_approval=${selected.requires_approval}`)
     out.push(`  phase=${selected.current_phase_status} blocked_by_default=${selected.blocked_by_default}`)
     if (selected.approval_surface) out.push(`  approval_surface=${preview(redactText(selected.approval_surface))}`)
@@ -1059,6 +1060,71 @@ function opencodeWatchdogLines(state: UiState): string[] {
   }
   if (watchdog.commandError) out.push(`  command_error=${redactText(watchdog.commandError)}`)
   out.push("  note=watchdog does not pause/kill OpenCode in 9F; forced report request is metadata only; Commander guidance/answer and wake scheduler execution are future work")
+  return out
+}
+
+function opencodeCommanderQuestionLines(state: UiState): string[] {
+  const questions = state.opencodeCommanderQuestions
+  const out = ["OpenCode asks Commander"]
+  if (!questions) {
+    out.push("  preview=none")
+    out.push("  latest_result=none")
+    out.push("  records=none")
+    out.push("  latest=none")
+    out.push("  summary=none")
+    out.push("  note=question records do not call Commander providers, answer questions, inject guidance, send OpenCode prompts, control processes, run wake, write research.db, or mutate missions")
+    return out
+  }
+  if (questions.preview) {
+    const item = questions.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_create=${item.can_create} type=${item.question_type} urgency=${item.urgency} source=${item.source_kind}`)
+    out.push(`  session=${item.session_id || "none"} launch=${item.launch_id ?? "none"} progress=${item.progress_id ?? "none"} watchdog=${item.watchdog_id ?? "none"} forced_report=${item.forced_report_request_id ?? "none"}`)
+    out.push(`  question=${preview(redactText(item.question_preview))}`)
+    out.push(`  context=${preview(redactText(item.context_summary_preview))}`)
+    if (item.options_considered_preview.length > 0) out.push(`  options=${item.options_considered_preview.slice(0, 6).map((value) => preview(redactText(value))).join(" | ")}`)
+    if (item.executor_recommendation_preview) out.push(`  executor_recommendation=${preview(redactText(item.executor_recommendation_preview))}`)
+    if (item.evidence_summary_preview) out.push(`  evidence=${preview(redactText(item.evidence_summary_preview))}`)
+    if (item.duplicate_question_id) out.push(`  duplicate_question=${item.duplicate_question_id}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 8).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (questions.latestResult) {
+    const item = questions.latestResult
+    out.push(`  latest_result=${item.question_id} status=${item.status} question_status=${item.question_status} type=${item.question_type} urgency=${item.urgency}`)
+    out.push(`  latest_session=${item.session_id || "none"} latest_launch=${item.launch_id ?? "none"} progress=${item.progress_id ?? "none"} watchdog=${item.watchdog_id ?? "none"} forced_report=${item.forced_report_request_id ?? "none"}`)
+    out.push(`  latest_question=${preview(redactText(item.question_preview))}`)
+    if (item.error) out.push(`  latest_error=${preview(redactText(item.error))}`)
+  } else {
+    out.push("  latest_result=none")
+  }
+  if (questions.records.length > 0) {
+    out.push("  question_records")
+    out.push(...questions.records.slice(0, 10).map((record) => `    - ${record.question_id} status=${record.status} type=${record.question_type} urgency=${record.urgency} session=${record.session_id} launch=${record.launch_id ?? "none"}: ${preview(redactText(record.question_preview))}`))
+  } else {
+    out.push("  records=none")
+  }
+  if (questions.selected) out.push(`  selected=${questions.selected.question_id} status=${questions.selected.question_status} session=${questions.selected.session_id}: ${preview(redactText(questions.selected.question_preview))}`)
+  if (questions.latest) out.push(`  latest=${questions.latest.question_id} status=${questions.latest.question_status} session=${questions.latest.session_id}: ${preview(redactText(questions.latest.question_preview))}`)
+  else out.push("  latest=none")
+  if (questions.summary) {
+    const summary = questions.summary
+    out.push(`  summary total=${summary.total_questions} pending_commander=${summary.pending_commander_count} pending_human=${summary.pending_human_count} answered=${summary.answered_count} urgent=${summary.urgent_count} blockers=${summary.blocked_type_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (questions.commandError) out.push(`  command_error=${redactText(questions.commandError)}`)
+  out.push("  note=question records do not call Commander providers, answer questions, inject guidance, send OpenCode prompts, control processes, run wake, write research.db, or mutate missions")
   return out
 }
 

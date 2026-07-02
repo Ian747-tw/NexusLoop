@@ -5449,6 +5449,73 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toEqual([])
   })
 
+  test("OpenCode asks Commander slash commands create bounded pending question metadata only", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=ask", "commander", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-question", args: [`session=${sessionId}`, "question=should", "I", "use", "option", "A", "or", "B", "token=abc123"] })
+    const progressId = state.opencodeProgress?.latestResult?.progress_id
+    expect(progressId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander-preview", args: [`session=${sessionId}`, "question=should", "I", "use", "option", "A", "or", "B", "token=abc123", "options=A,B", "recommendation=prefer", "A"] })
+    expect(state.opencodeCommanderQuestions?.preview).toMatchObject({ status: "ready", can_create: true, session_id: sessionId, question_type: "clarification", urgency: "normal" })
+    expect(state.opencodeCommanderQuestions?.preview?.options_considered_preview).toEqual(["A", "B"])
+    expect(JSON.stringify(state.opencodeCommanderQuestions?.preview)).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander-dry-run", args: [`session=${sessionId}`, "question=should", "I", "use", "option", "A", "or", "B"] })
+    expect(state.opencodeCommanderQuestions?.latestResult).toMatchObject({ status: "dry_run", session_id: sessionId })
+    expect(state.opencodeCommanderQuestions?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander", args: [`progress=${progressId}`] })
+    const questionId = state.opencodeCommanderQuestions?.latestResult?.question_id
+    expect(questionId).toBeTruthy()
+    expect(state.opencodeCommanderQuestions?.latestResult).toMatchObject({ status: "created", question_status: "pending_commander", source_kind: "progress_question", progress_id: progressId })
+    expect(state.opencodeCommanderQuestions?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander", args: [`progress=${progressId}`] })
+    expect(state.opencodeCommanderQuestions?.latestResult).toMatchObject({ status: "blocked" })
+    expect(state.opencodeCommanderQuestions?.commandError).toContain("pending Commander question already exists")
+    expect(state.opencodeCommanderQuestions?.records).toHaveLength(1)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-commander-questions", args: [`session=${sessionId}`] })
+    expect(state.opencodeCommanderQuestions?.records.map((record) => record.question_id)).toContain(questionId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-commander-question-latest", args: [`session=${sessionId}`] })
+    expect(state.opencodeCommanderQuestions?.latest?.question_id).toBe(questionId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-commander-question-show", args: [questionId!] })
+    expect(state.opencodeCommanderQuestions?.selected?.question_id).toBe(questionId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-commander-question-summary", args: [] })
+    expect(state.opencodeCommanderQuestions?.summary).toMatchObject({ total_questions: 1, pending_commander_count: 1 })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander-preview", args: [`session=${sessionId}`, "question=stdout", "stderr"] })
+    expect(state.opencodeCommanderQuestions?.commandError).toContain("raw logs are out of scope")
+    expect(JSON.stringify(state.opencodeCommanderQuestions?.preview)).not.toContain("stdout")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/opencode-ask-commander", `session=${sessionId}`, "question=staged", "question"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-ask-commander"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/opencode-ask-commander",
+      risk: "medium_risk_write",
+      calls_provider: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("pending question")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode asks Commander")
+    expect(snapshot).toContain("pending_commander=1")
+    expect(snapshot).toContain("do not call Commander providers")
+    expect(snapshot).toContain("selected=/opencode-ask-commander risk=medium_risk_write")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")
