@@ -18184,9 +18184,11 @@ describe("OpenCode launch readiness", () => {
     await new Promise((resolve) => setTimeout(resolve, 1100))
     const timedOutWatchdog = await server.command("runtime.record_opencode_watchdog", { sessionId, maxWallTimeMs: 1, maxNoProgressMs: 1 }) as { watchdog_id: string; watchdog_status: string }
     expect(timedOutWatchdog.watchdog_status).toBe("timed_out")
-    const urgentQuestion = await server.command("runtime.create_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; question_id: string; question_status: string }
-    expect(urgentQuestion).toMatchObject({ status: "created", question_status: "pending_human" })
-    const duplicateUrgentPreview = await server.command("runtime.preview_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
+	    const urgentQuestion = await server.command("runtime.create_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; question_id: string; question_status: string }
+	    expect(urgentQuestion).toMatchObject({ status: "created", question_status: "pending_human" })
+	    const timeoutGuidancePreview = await server.command("runtime.preview_commander_guidance", { questionId: urgentQuestion.question_id, answer: "provide a timeout report" }) as { status: string; guidance_scope: string }
+	    expect(timeoutGuidancePreview).toMatchObject({ status: "ready", guidance_scope: "timeout_report_response" })
+	    const duplicateUrgentPreview = await server.command("runtime.preview_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
     expect(duplicateUrgentPreview).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: urgentQuestion.question_id })
     expect(duplicateUrgentPreview.blockers).toContain("pending Commander question already exists for this evidence")
     const duplicateUrgent = await server.command("runtime.create_opencode_commander_question", { watchdogId: timedOutWatchdog.watchdog_id }) as { status: string; error?: string }
