@@ -18132,6 +18132,18 @@ describe("OpenCode launch readiness", () => {
     expect(rawLog.question_preview).toBe("raw question log omitted; attach artifact pointer in a later branch")
     expect(JSON.stringify(rawLog)).not.toContain("stdout")
     expect(JSON.stringify(rawLog)).not.toContain("xxxxxxxx")
+    const longSingleLine = "artifact-dump-".repeat(80)
+    for (const payload of [
+      { sessionId, question: longSingleLine },
+      { sessionId, question: "bounded question", context: longSingleLine },
+      { sessionId, question: "bounded question", recommendation: longSingleLine },
+      { sessionId, question: "bounded question", options: [longSingleLine] },
+    ]) {
+      const overlong = await server.command("runtime.preview_opencode_commander_question", payload) as { status: string; blockers: string[]; question_preview: string; context_summary_preview: string; options_considered_preview: string[]; executor_recommendation_preview?: string }
+      expect(overlong.status).toBe("blocked")
+      expect(overlong.blockers).toContain("raw logs are out of scope for Commander question records; attach an artifact pointer in a later branch")
+      expect(JSON.stringify(overlong)).not.toContain("artifact-dump-artifact-dump")
+    }
 	    await server.shutdown()
 	  })
 

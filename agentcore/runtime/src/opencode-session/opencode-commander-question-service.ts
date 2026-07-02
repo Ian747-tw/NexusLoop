@@ -25,6 +25,7 @@ import type {
 
 const MAX_LIST = 100
 const MAX_TEXT = 360
+const MAX_RAW_TEXT = MAX_TEXT * 2
 const MAX_ARRAY = 8
 const LAUNCHED_STATUSES = new Set(["launch_started", "launched"])
 const RAW_LOG_PATTERNS = [
@@ -364,12 +365,12 @@ export function readOpenCodeCommanderQuestionPreviewInput(value: unknown): OpenC
     progress_id: optional(input.progressId ?? input.progress_id ?? input.progress),
     watchdog_id: optional(input.watchdogId ?? input.watchdog_id ?? input.watchdog),
     forced_report_request_id: optional(input.forcedReportRequestId ?? input.forced_report_request_id ?? input.forcedReport ?? input.forced_report),
-    question: optional(input.question),
+    question: optionalRawText(input.question),
     question_type: optional(input.questionType ?? input.question_type ?? input.type),
     urgency: optional(input.urgency),
-    context_summary: optional(input.contextSummary ?? input.context_summary ?? input.context),
-    options_considered: optionalStringArray(input.optionsConsidered ?? input.options_considered ?? input.options),
-    executor_recommendation: optional(input.executorRecommendation ?? input.executor_recommendation ?? input.recommendation),
+    context_summary: optionalRawText(input.contextSummary ?? input.context_summary ?? input.context),
+    options_considered: optionalRawStringArray(input.optionsConsidered ?? input.options_considered ?? input.options),
+    executor_recommendation: optionalRawText(input.executorRecommendation ?? input.executor_recommendation ?? input.recommendation),
     source_kind: optional(input.sourceKind ?? input.source_kind ?? input.source),
   }
 }
@@ -551,7 +552,14 @@ function questionInputLooksLikeRawLog(input: OpenCodeCommanderQuestionPreviewInp
 }
 
 function looksLikeRawLog(value: string): boolean {
+  if (value.trim().length > MAX_RAW_TEXT) return true
   return RAW_LOG_PATTERNS.some((pattern) => pattern.test(value))
+}
+
+function optionalRawText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed : undefined
 }
 
 function optional(value: unknown): string | undefined {
@@ -565,6 +573,12 @@ function optionalBoundedMetadata(value: unknown): string | undefined {
 function optionalStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value)) return boundArray(value)
   if (typeof value === "string") return boundArray(value.split(",").map((item) => item.trim()).filter(Boolean))
+  return undefined
+}
+
+function optionalRawStringArray(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()).slice(0, MAX_ARRAY)
+  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean).slice(0, MAX_ARRAY)
   return undefined
 }
 
