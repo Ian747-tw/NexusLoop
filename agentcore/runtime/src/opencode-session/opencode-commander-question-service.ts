@@ -292,6 +292,8 @@ export class OpenCodeCommanderQuestionService {
       const session = await this.options.opencodeSessionService.get(sessionId)
       if (!session) blockers.push("session_id does not resolve to a planned OpenCode session")
       if (session && session.question_policy.allow_opencode_questions === false) blockers.push("planned OpenCode session question policy does not allow OpenCode Commander questions")
+      const urgency = readUrgency(input.urgency, defaultUrgency({ sessionId, launchId, launch, progress, watchdog, forcedReport }))
+      if (session && urgency === "urgent" && session.question_policy.human_escalation_allowed === false) blockers.push("planned OpenCode session question policy does not allow human escalation for urgent Commander questions")
     }
     if (progress && sessionId && progress.session_id !== sessionId) blockers.push("progress_id does not belong to session_id")
     if (progress && launchId && progress.launch_id && progress.launch_id !== launchId) blockers.push("progress_id does not belong to launch_id")
@@ -299,9 +301,11 @@ export class OpenCodeCommanderQuestionService {
     if (watchdog && sessionId && watchdog.session_id !== sessionId) blockers.push("watchdog_id does not belong to session_id")
     if (watchdog && launchId && watchdog.launch_id && watchdog.launch_id !== launchId) blockers.push("watchdog_id does not belong to launch_id")
     if (watchdog && !["blocked", "needs_report", "stale", "timed_out"].includes(watchdog.watchdog_status)) blockers.push("watchdog_id must reference blocked, needs_report, stale, or timed_out evidence")
+    if (progress && watchdog?.latest_progress_id && watchdog.latest_progress_id !== progress.progress_id) blockers.push("progress_id does not belong to watchdog_id")
     if (forcedReport && sessionId && forcedReport.session_id !== sessionId) blockers.push("forced_report_request_id does not belong to session_id")
     if (forcedReport && launchId && forcedReport.launch_id && forcedReport.launch_id !== launchId) blockers.push("forced_report_request_id does not belong to launch_id")
     if (watchdog && forcedReport?.watchdog_id && forcedReport.watchdog_id !== watchdog.watchdog_id) blockers.push("forced_report_request_id does not belong to watchdog_id")
+    if (progress && forcedReport?.latest_progress_id && forcedReport.latest_progress_id !== progress.progress_id) blockers.push("progress_id does not belong to forced_report_request_id")
     return { sessionId, launchId, launch, progress, watchdog, forcedReport }
   }
 

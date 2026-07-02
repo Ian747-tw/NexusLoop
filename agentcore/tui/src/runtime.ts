@@ -2892,7 +2892,9 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (forcedReport && sessionId && forcedReport.session_id !== sessionId) blockers.push("forced_report_request_id does not belong to session_id")
     if (progress && !fakeQuestionEligibleProgress(progress)) blockers.push("progress_id must reference question/blocker/needs_commander/blocked/needs_human evidence")
     if (watchdog && !["blocked", "needs_report", "stale", "timed_out"].includes(watchdog.watchdog_status)) blockers.push("watchdog_id must reference blocked, needs_report, stale, or timed_out evidence")
+    if (progress && watchdog?.latest_progress_id && watchdog.latest_progress_id !== progress.progress_id) blockers.push("progress_id does not belong to watchdog_id")
     if (watchdog && forcedReport?.watchdog_id && forcedReport.watchdog_id !== watchdog.watchdog_id) blockers.push("forced_report_request_id does not belong to watchdog_id")
+    if (progress && forcedReport?.latest_progress_id && forcedReport.latest_progress_id !== progress.progress_id) blockers.push("progress_id does not belong to forced_report_request_id")
     if (rawLogBlocked) blockers.push("raw logs are out of scope for Commander question records; attach an artifact pointer in a later branch")
     const evidenceQuestion = progress?.question_preview
       ?? (progress?.blockers_preview?.length ? `OpenCode is blocked: ${progress.blockers_preview.join("; ")}` : undefined)
@@ -2906,6 +2908,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const evidenceKey = forcedReport?.request_id ?? watchdog?.watchdog_id ?? progress?.progress_id ?? launch?.launch_id ?? sessionId
     const questionHash = createHash("sha256").update(`${sessionId}:${launch?.launch_id ?? launchId ?? ""}:${evidenceKey}:${questionType}:${question.toLowerCase()}`).digest("hex")
     if (session?.question_policy.allow_opencode_questions === false) blockers.push("planned OpenCode session question policy does not allow OpenCode Commander questions")
+    if (session?.question_policy.human_escalation_allowed === false && urgency === "urgent") blockers.push("planned OpenCode session question policy does not allow human escalation for urgent Commander questions")
     const duplicate = this.opencodeCommanderQuestions.find((item) => {
       if (!fakePendingCommanderQuestion(item) || item.session_id !== sessionId) return false
       if (forcedReport?.request_id) return item.forced_report_request_id === forcedReport.request_id
