@@ -2904,8 +2904,18 @@ export class FakeRuntimeClient implements RuntimeClient {
     const sourceKind = optionalString(payload.sourceKind ?? payload.source_kind ?? payload.source) ?? (forcedReport ? "forced_report" : watchdog ? "watchdog" : progress ? "progress_question" : "manual")
     const evidenceKey = forcedReport?.request_id ?? watchdog?.watchdog_id ?? progress?.progress_id ?? launch?.launch_id ?? sessionId
     const questionHash = createHash("sha256").update(`${sessionId}:${launch?.launch_id ?? launchId ?? ""}:${evidenceKey}:${questionType}:${question.toLowerCase()}`).digest("hex")
-    const duplicate = this.opencodeCommanderQuestions.find((item) => (item.question_status === "pending_commander" || item.question_status === "pending_human") && item.session_id === sessionId && item.question_hash === questionHash)
+    if (session?.question_policy.allow_opencode_questions === false) blockers.push("planned OpenCode session question policy does not allow OpenCode Commander questions")
+    const duplicate = this.opencodeCommanderQuestions.find((item) => {
+      if (!fakePendingCommanderQuestion(item) || item.session_id !== sessionId) return false
+      if (forcedReport?.request_id) return item.forced_report_request_id === forcedReport.request_id
+      if (watchdog?.watchdog_id) return item.watchdog_id === watchdog.watchdog_id
+      if (progress?.progress_id) return item.progress_id === progress.progress_id
+      return item.question_hash === questionHash
+    })
     if (duplicate) blockers.push("pending Commander question already exists for this evidence")
+    if (session && !duplicate && this.opencodeCommanderQuestions.filter((item) => fakePendingCommanderQuestion(item) && item.session_id === sessionId).length >= session.question_policy.max_pending_questions) {
+      blockers.push("planned OpenCode session question policy max_pending_questions has been reached")
+    }
     return {
       preview_id: `fake-opencode-commander-question-preview-${questionHash.slice(0, 12)}`,
       status: blockers.length ? "blocked" : "ready",
@@ -9641,6 +9651,10 @@ function recordFromOpenCodeCommanderQuestion(item: OpenCodeCommanderQuestionResu
 
 function fakeQuestionEligibleProgress(progress: OpenCodeProgressResultSummary): boolean {
   return progress.kind === "question" || progress.kind === "blocker" || progress.execution_state === "needs_commander" || progress.execution_state === "blocked" || progress.execution_state === "needs_human"
+}
+
+function fakePendingCommanderQuestion(item: OpenCodeCommanderQuestionResultSummary): boolean {
+  return item.question_status === "pending_commander" || item.question_status === "pending_human"
 }
 
 function fakeDefaultQuestionType(progress: OpenCodeProgressResultSummary | null, watchdog: OpenCodeWatchdogResultSummary | null, forcedReport: OpenCodeForcedReportRequestSummary | null): string {

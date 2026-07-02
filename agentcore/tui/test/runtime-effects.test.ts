@@ -5496,6 +5496,9 @@ describe("runtime UI effects", () => {
 	    expect(state.opencodeCommanderQuestions?.latestResult).toMatchObject({ status: "blocked" })
 	    expect(state.opencodeCommanderQuestions?.commandError).toContain("pending Commander question already exists")
 	    expect(state.opencodeCommanderQuestions?.records).toHaveLength(1)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander-preview", args: [`progress=${progressId}`, "question=edited", "wording", "same", "evidence"] })
+    expect(state.opencodeCommanderQuestions?.preview).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: questionId })
+    expect(state.opencodeCommanderQuestions?.commandError).toContain("pending Commander question already exists")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-commander-questions", args: [`session=${sessionId}`] })
     expect(state.opencodeCommanderQuestions?.records.map((record) => record.question_id)).toContain(questionId)
@@ -5511,6 +5514,11 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander-preview", args: [`session=${sessionId}`, "question=urgent", "choice", "urgency=urgent"] })
     expect(state.opencodeCommanderQuestions?.preview).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: urgentQuestionId })
     expect(state.opencodeCommanderQuestions?.commandError).toContain("pending Commander question already exists")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander", args: [`session=${sessionId}`, "question=third", "pending", "question"] })
+    expect(state.opencodeCommanderQuestions?.latestResult).toMatchObject({ status: "created", question_status: "pending_commander" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander", args: [`session=${sessionId}`, "question=fourth", "pending", "question"] })
+    expect(state.opencodeCommanderQuestions?.latestResult).toMatchObject({ status: "blocked" })
+    expect(state.opencodeCommanderQuestions?.commandError).toContain("max_pending_questions")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander-preview", args: [`session=${sessionId}`, "question=stdout", "stderr"] })
     expect(state.opencodeCommanderQuestions?.commandError).toContain("raw logs are out of scope")
