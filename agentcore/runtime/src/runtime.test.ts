@@ -18156,8 +18156,22 @@ describe("OpenCode launch readiness", () => {
 	    const original = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "older duplicate Commander question" }) as { status: string; question_id: string }
 	    expect(original.status).toBe("created")
 	    for (let index = 0; index < 100; index += 1) {
-	      const newer = await server.command("runtime.create_opencode_commander_question", { sessionId, question: `newer Commander question ${index}` }) as { status: string }
-	      expect(newer.status).toBe("created")
+	      await server.eventStore.append({
+	        kind: "opencode_commander_question_created",
+	        question_id: `synthetic_closed_question_${index}`,
+	        question_status: "withdrawn",
+	        session_id: sessionId,
+	        question_type: "clarification",
+	        urgency: "low",
+	        question_preview: `synthetic closed Commander question ${index}`,
+	        context_summary_preview: "synthetic non-pending display-cap record",
+	        options_considered_preview: [],
+	        evidence_summary_preview: "synthetic display-cap record",
+	        created_at: `9999-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+	        created_by: "test",
+	        source_kind: "manual",
+	        question_hash: `synthetic_closed_question_hash_${index}`,
+	      } as JsonlEvent)
 	    }
 	    const publicList = await server.command("runtime.list_opencode_commander_questions", { sessionId, limit: 100 }) as Array<{ question_id: string }>
 	    expect(publicList).toHaveLength(100)
@@ -18167,6 +18181,25 @@ describe("OpenCode launch readiness", () => {
 	    const duplicate = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "older duplicate Commander question" }) as { status: string; error?: string }
 	    expect(duplicate.status).toBe("blocked")
 	    expect(duplicate.error).toContain("pending Commander question already exists")
+	    await server.shutdown()
+	  })
+
+	  test("opencode asks Commander enforces session max pending question policy", async () => {
+	    const dir = await tempProject()
+	    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+	    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+	    for (let index = 0; index < 3; index += 1) {
+	      const created = await server.command("runtime.create_opencode_commander_question", { sessionId, question: `pending Commander policy question ${index}` }) as { status: string }
+	      expect(created.status).toBe("created")
+	    }
+	    const eventsBefore = await server.eventStore.readAll()
+	    const preview = await server.command("runtime.preview_opencode_commander_question", { sessionId, question: "fourth pending Commander policy question" }) as { status: string; can_create: boolean; blockers: string[] }
+	    expect(preview).toMatchObject({ status: "blocked", can_create: false })
+	    expect(preview.blockers).toContain("planned OpenCode session question policy max_pending_questions has been reached")
+	    const blocked = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "fourth pending Commander policy question" }) as { status: string; error?: string }
+	    expect(blocked.status).toBe("blocked")
+	    expect(blocked.error).toContain("max_pending_questions")
+	    expect(await server.eventStore.readAll()).toEqual(eventsBefore)
 	    await server.shutdown()
 	  })
 

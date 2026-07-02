@@ -289,6 +289,9 @@ export class OpenCodeCommanderQuestionService {
 	      const session = await this.options.opencodeSessionService.get(sessionId)
 	      if (!session) blockers.push("session_id does not resolve to a planned OpenCode session")
 	      if (session && session.question_policy.allow_opencode_questions === false) blockers.push("planned OpenCode session question policy does not allow OpenCode Commander questions")
+	      if (session && await this.pendingQuestionCount(session.session_id) >= session.question_policy.max_pending_questions) {
+	        blockers.push("planned OpenCode session question policy max_pending_questions has been reached")
+	      }
 	    }
     if (progress && sessionId && progress.session_id !== sessionId) blockers.push("progress_id does not belong to session_id")
     if (progress && launchId && progress.launch_id && progress.launch_id !== launchId) blockers.push("progress_id does not belong to launch_id")
@@ -301,12 +304,18 @@ export class OpenCodeCommanderQuestionService {
     return { sessionId, launchId, launch, progress, watchdog, forcedReport }
   }
 
-  private async findDuplicate(sessionId: string, evidenceKey: string | undefined, questionHash: string): Promise<OpenCodeCommanderQuestionRecord | undefined> {
-    if (!evidenceKey) return undefined
-    return (await this.sequencedRecords())
-      .find(({ record }) => record.session_id === sessionId && (record.status === "pending_commander" || record.status === "pending_human") && record.question_hash === questionHash)
-      ?.record
-  }
+	  private async findDuplicate(sessionId: string, evidenceKey: string | undefined, questionHash: string): Promise<OpenCodeCommanderQuestionRecord | undefined> {
+	    if (!evidenceKey) return undefined
+	    return (await this.sequencedRecords())
+	      .find(({ record }) => record.session_id === sessionId && (record.status === "pending_commander" || record.status === "pending_human") && record.question_hash === questionHash)
+	      ?.record
+	  }
+
+	  private async pendingQuestionCount(sessionId: string): Promise<number> {
+	    return (await this.sequencedRecords())
+	      .filter(({ record }) => record.session_id === sessionId && (record.status === "pending_commander" || record.status === "pending_human"))
+	      .length
+	  }
 
 	  private async sequencedRecords(): Promise<SequencedQuestionRecord[]> {
 	    return (await this.options.eventStore.readAll())
