@@ -18041,6 +18041,9 @@ describe("OpenCode launch readiness", () => {
     const duplicate = await server.command("runtime.create_opencode_commander_question", { progressId: progress.progress_id }) as { status: string; error?: string }
     expect(duplicate).toMatchObject({ status: "blocked" })
     expect(duplicate.error).toContain("pending Commander question already exists")
+    const editedDuplicate = await server.command("runtime.preview_opencode_commander_question", { progressId: progress.progress_id, question: "edited Commander wording for same progress evidence" }) as { status: string; can_create: boolean; duplicate_question_id?: string; blockers: string[] }
+    expect(editedDuplicate).toMatchObject({ status: "blocked", can_create: false, duplicate_question_id: created.question_id })
+    expect(editedDuplicate.blockers).toContain("pending Commander question already exists for this evidence")
 
     const questionEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_commander_question_created")
     expect(questionEvents).toHaveLength(1)

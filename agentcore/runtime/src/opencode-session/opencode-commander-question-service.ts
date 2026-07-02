@@ -212,7 +212,7 @@ export class OpenCodeCommanderQuestionService {
       question: normalize(question ?? ""),
       question_type: questionType,
     }))
-    const duplicate = sessionId ? await this.findDuplicate(sessionId, evidenceKey, questionHash) : undefined
+    const duplicate = sessionId ? await this.findDuplicate(sessionId, evidence, questionHash) : undefined
     if (duplicate) blockers.push("pending Commander question already exists for this evidence")
     const canCreate = blockers.length === 0
     return redactValue({
@@ -304,39 +304,44 @@ export class OpenCodeCommanderQuestionService {
     return { sessionId, launchId, launch, progress, watchdog, forcedReport }
   }
 
-	  private async findDuplicate(sessionId: string, evidenceKey: string | undefined, questionHash: string): Promise<OpenCodeCommanderQuestionRecord | undefined> {
-	    if (!evidenceKey) return undefined
-	    return (await this.sequencedRecords())
-	      .find(({ record }) => record.session_id === sessionId && (record.status === "pending_commander" || record.status === "pending_human") && record.question_hash === questionHash)
-	      ?.record
-	  }
+  private async findDuplicate(sessionId: string, evidence: EvidenceBundle, questionHash: string): Promise<OpenCodeCommanderQuestionRecord | undefined> {
+    return (await this.sequencedRecords())
+      .find(({ record }) => {
+        if (record.session_id !== sessionId || !isPendingQuestion(record)) return false
+        if (evidence.forcedReport?.request_id) return record.linked_forced_report_request_id === evidence.forcedReport.request_id
+        if (evidence.watchdog?.watchdog_id) return record.linked_watchdog_id === evidence.watchdog.watchdog_id
+        if (evidence.progress?.progress_id) return record.linked_progress_id === evidence.progress.progress_id
+        return record.question_hash === questionHash
+      })
+      ?.record
+  }
 
-	  private async pendingQuestionCount(sessionId: string): Promise<number> {
-	    return (await this.sequencedRecords())
-	      .filter(({ record }) => record.session_id === sessionId && (record.status === "pending_commander" || record.status === "pending_human"))
-	      .length
-	  }
+  private async pendingQuestionCount(sessionId: string): Promise<number> {
+    return (await this.sequencedRecords())
+      .filter(({ record }) => record.session_id === sessionId && (record.status === "pending_commander" || record.status === "pending_human"))
+      .length
+  }
 
-	  private async sequencedRecords(): Promise<SequencedQuestionRecord[]> {
-	    return (await this.options.eventStore.readAll())
-	      .map((event, index) => ({ event, index }))
-	      .filter(({ event }) => isQuestionEvent(event))
-	      .map(({ event, index }) => ({ record: recordFromEvent(event)!, event_index: index }))
-	      .filter((item) => Boolean(item.record))
-	  }
+  private async sequencedRecords(): Promise<SequencedQuestionRecord[]> {
+    return (await this.options.eventStore.readAll())
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => isQuestionEvent(event))
+      .map(({ event, index }) => ({ record: recordFromEvent(event)!, event_index: index }))
+      .filter((item) => Boolean(item.record))
+  }
 
-	  private async serializeCreate<T>(operation: () => Promise<T>): Promise<T> {
-	    const previous = this.createQueue
-	    let release!: () => void
-	    this.createQueue = new Promise<void>((resolve) => { release = resolve })
-	    await previous
-	    try {
-	      return await operation()
-	    } finally {
-	      release()
-	    }
-	  }
-	}
+  private async serializeCreate<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.createQueue
+    let release!: () => void
+    this.createQueue = new Promise<void>((resolve) => { release = resolve })
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release()
+    }
+  }
+}
 
 export function readOpenCodeCommanderQuestionPreviewInput(value: unknown): OpenCodeCommanderQuestionPreviewInput {
   const input = isRecord(value) ? value : {}
@@ -468,6 +473,10 @@ function isQuestionEvent(event: JsonlEvent): boolean {
 
 function readQuestionStatus(value: unknown): OpenCodeCommanderQuestionStatus {
   return value === "pending_human" || value === "withdrawn" || value === "superseded" || value === "answered" ? value : "pending_commander"
+}
+
+function isPendingQuestion(record: OpenCodeCommanderQuestionRecord): boolean {
+  return record.status === "pending_commander" || record.status === "pending_human"
 }
 
 function readQuestionType(value: unknown, fallback: OpenCodeCommanderQuestionType = "unknown"): OpenCodeCommanderQuestionType {

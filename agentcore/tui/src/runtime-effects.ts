@@ -1334,7 +1334,10 @@ export async function applyRuntimeUiEffect(
       case "create-opencode-commander-question": {
         const next = applyOpenCodeCommanderQuestionResult(state, await runtime.command("runtime.create_opencode_commander_question", { ...commanderQuestionPayload(effect), dryRun: effect.dryRun === true, createdBy: "operator" }))
         if (next.opencodeCommanderQuestions?.commandError) return next
-        return effect.dryRun === true ? next : applyOpenCodeCommanderQuestionRecords(next, await runtime.command("runtime.list_opencode_commander_questions", { limit: HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId }))
+        const result = next.opencodeCommanderQuestions?.latestResult
+        const sessionId = result?.session_id || effect.sessionId
+        const launchId = result?.launch_id || effect.launchId
+        return effect.dryRun === true ? next : applyOpenCodeCommanderQuestionRecords(next, await runtime.command("runtime.list_opencode_commander_questions", { limit: HANDOFF_LIMIT, sessionId, launchId }))
       }
       case "load-opencode-commander-questions":
         return applyOpenCodeCommanderQuestionRecords(state, await runtime.command("runtime.list_opencode_commander_questions", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId, status: effect.status, questionType: effect.questionType, urgency: effect.urgency }))
