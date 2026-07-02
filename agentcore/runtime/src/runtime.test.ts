@@ -18078,6 +18078,72 @@ describe("OpenCode launch readiness", () => {
     await client.shutdown?.()
   })
 
+  test("commander guidance previews dry-runs creates answers question projection and dedupes without delivery", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    const question = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "should I choose option A or B token=guidance-secret" }) as { status: string; question_id: string; question_status: string }
+    expect(question).toMatchObject({ status: "created", question_status: "pending_commander" })
+    const eventsAfterQuestion = await server.eventStore.readAll()
+
+    const preview = await server.command("runtime.preview_commander_guidance", {
+      questionId: question.question_id,
+      answer: "choose option A because it is safer token=guidance-secret",
+      rationale: "bounded manual rationale",
+      constraints: ["stay within executor scope"],
+      specRefs: ["spec:approved"],
+    }) as { status: string; can_create: boolean; answer_preview: string; constraints_preview: string[]; delivery_status: string }
+    expect(preview).toMatchObject({ status: "ready", can_create: true, constraints_preview: ["stay within executor scope"], delivery_status: "not_delivered" })
+    expect(preview.answer_preview).not.toContain("guidance-secret")
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterQuestion)
+
+    const dryRun = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "choose option A", dryRun: true }) as { status: string }
+    expect(dryRun.status).toBe("dry_run")
+    expect(await server.eventStore.readAll()).toEqual(eventsAfterQuestion)
+
+    const created = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "choose option A because it is safer token=guidance-secret", constraints: ["stay bounded"] }) as { status: string; guidance_id: string; delivery_status: string; question_status_after?: string }
+    expect(created).toMatchObject({ status: "created", delivery_status: "not_delivered", question_status_after: "answered" })
+    const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+    expect(eventKinds.filter((kind) => kind === "opencode_commander_guidance_created")).toHaveLength(1)
+    expect(eventKinds.filter((kind) => kind === "opencode_commander_question_answered")).toHaveLength(1)
+    expect(eventKinds).not.toContain("commander_guidance_sent")
+    expect(eventKinds).not.toContain("opencode_prompt_sent")
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+    expect(eventKinds).not.toContain("research_db_written")
+    const serializedEvents = JSON.stringify(await server.eventStore.readAll())
+    expect(serializedEvents).not.toContain("guidance-secret")
+    expect(serializedEvents).not.toContain("token=guidance-secret")
+
+    await expect(server.command("runtime.get_opencode_commander_question", { questionId: question.question_id })).resolves.toMatchObject({ question_id: question.question_id, question_status: "answered" })
+    await expect(server.command("runtime.list_opencode_commander_questions", { sessionId })).resolves.toEqual([expect.objectContaining({ question_id: question.question_id, status: "answered" })])
+    await expect(server.command("runtime.opencode_commander_question_summary")).resolves.toMatchObject({ answered_count: 1, pending_commander_count: 0 })
+    await expect(server.command("runtime.list_commander_guidance", { questionId: question.question_id })).resolves.toEqual([expect.objectContaining({ guidance_id: created.guidance_id, delivery_status: "not_delivered" })])
+    await expect(server.command("runtime.get_commander_guidance", { guidanceId: created.guidance_id })).resolves.toMatchObject({ guidance_id: created.guidance_id, delivery_status: "not_delivered" })
+    await expect(server.command("runtime.latest_commander_guidance", { questionId: question.question_id })).resolves.toMatchObject({ guidance_id: created.guidance_id })
+    await expect(server.command("runtime.commander_guidance_summary")).resolves.toMatchObject({ total_guidance: 1, not_delivered_count: 1, delivered_count: 0 })
+
+    const duplicatePreview = await server.command("runtime.preview_commander_guidance", { questionId: question.question_id, answer: "another answer" }) as { status: string; duplicate_guidance_id?: string; blockers: string[] }
+    expect(duplicatePreview).toMatchObject({ status: "blocked", duplicate_guidance_id: created.guidance_id })
+    expect(duplicatePreview.blockers).toContain("question is already answered or no longer pending")
+    const duplicate = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "another answer" }) as { status: string; error?: string }
+    expect(duplicate).toMatchObject({ status: "blocked" })
+    await server.shutdown()
+
+    const noStartDir = await tempProject()
+    await makeProject(noStartDir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const noStartServer = new RuntimeServer({ projectDir: noStartDir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server: noStartServer, autoStart: true, ownsServer: true })
+    await expect(client.command("runtime.preview_commander_guidance", { questionId: "missing", answer: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.create_commander_guidance", { questionId: "missing", answer: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_commander_guidance")).resolves.toEqual([])
+    await expect(client.command("runtime.get_commander_guidance", { guidanceId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.latest_commander_guidance", { questionId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.commander_guidance_summary")).resolves.toMatchObject({ total_guidance: 0 })
+    expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
+    await client.shutdown?.()
+  })
+
 	  test("opencode asks Commander accepts watchdog and forced-report evidence but rejects mismatches and raw logs", async () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)

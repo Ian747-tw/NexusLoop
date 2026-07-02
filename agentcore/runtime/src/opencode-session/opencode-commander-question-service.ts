@@ -139,11 +139,17 @@ export class OpenCodeCommanderQuestionService {
   }
 
   async get(questionId: string): Promise<OpenCodeCommanderQuestionResult | null> {
-    const event = (await this.options.eventStore.readAll())
-      .filter(isQuestionEvent)
+    const events = await this.options.eventStore.readAll()
+    const created = events
+      .filter(isQuestionCreatedEvent)
       .reverse()
       .find((item) => item.question_id === questionId)
-    return event ? resultFromEvent(event) : null
+    if (!created) return null
+    const answered = events
+      .filter(isQuestionAnsweredEvent)
+      .reverse()
+      .find((item) => item.question_id === questionId)
+    return resultFromEvent(created, answered ? "answered" : undefined)
   }
 
   async latest(input: { session_id?: string; launch_id?: string } = {}): Promise<OpenCodeCommanderQuestionResult | null> {
@@ -337,11 +343,19 @@ export class OpenCodeCommanderQuestionService {
   }
 
   private async sequencedRecords(): Promise<SequencedQuestionRecord[]> {
-    return (await this.options.eventStore.readAll())
-      .map((event, index) => ({ event, index }))
-      .filter(({ event }) => isQuestionEvent(event))
-      .map(({ event, index }) => ({ record: recordFromEvent(event)!, event_index: index }))
-      .filter((item) => Boolean(item.record))
+    const records = new Map<string, SequencedQuestionRecord>()
+    for (const { event, index } of (await this.options.eventStore.readAll()).map((event, index) => ({ event, index }))) {
+      if (isQuestionCreatedEvent(event)) {
+        const record = recordFromEvent(event)
+        if (record) records.set(record.question_id, { record, event_index: index })
+      } else if (isQuestionAnsweredEvent(event) && typeof event.question_id === "string") {
+        const existing = records.get(event.question_id)
+        if (existing) {
+          records.set(event.question_id, { record: { ...existing.record, status: "answered" }, event_index: index })
+        }
+      }
+    }
+    return [...records.values()]
   }
 
   private async serializeCreate<T>(operation: () => Promise<T>): Promise<T> {
@@ -434,11 +448,11 @@ function questionEventPayload(result: OpenCodeCommanderQuestionResult): Record<s
   })
 }
 
-function resultFromEvent(event: JsonlEvent): OpenCodeCommanderQuestionResult {
+function resultFromEvent(event: JsonlEvent, projectedStatus?: OpenCodeCommanderQuestionStatus): OpenCodeCommanderQuestionResult {
   return redactValue({
     question_id: String(event.question_id ?? ""),
     status: "created",
-    question_status: readQuestionStatus(event.question_status),
+    question_status: projectedStatus ?? readQuestionStatus(event.question_status),
     session_id: String(event.session_id ?? ""),
     launch_id: typeof event.launch_id === "string" ? event.launch_id : undefined,
     progress_id: typeof event.progress_id === "string" ? event.progress_id : undefined,
@@ -481,8 +495,12 @@ function recordFromEvent(event: JsonlEvent): OpenCodeCommanderQuestionRecord | n
   })
 }
 
-function isQuestionEvent(event: JsonlEvent): boolean {
+function isQuestionCreatedEvent(event: JsonlEvent): boolean {
   return event.kind === "opencode_commander_question_created"
+}
+
+function isQuestionAnsweredEvent(event: JsonlEvent): boolean {
+  return event.kind === "opencode_commander_question_answered"
 }
 
 function readQuestionStatus(value: unknown): OpenCodeCommanderQuestionStatus {
