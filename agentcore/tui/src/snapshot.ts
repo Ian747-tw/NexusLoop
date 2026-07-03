@@ -92,6 +92,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeProgressLines(state))
   out.push(...opencodeWatchdogLines(state))
   out.push(...opencodeCommanderQuestionLines(state))
+  out.push(...commanderGuidanceLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -1125,6 +1126,73 @@ function opencodeCommanderQuestionLines(state: UiState): string[] {
   }
   if (questions.commandError) out.push(`  command_error=${redactText(questions.commandError)}`)
   out.push("  note=question records do not call Commander providers, answer questions, inject guidance, send OpenCode prompts, control processes, run wake, write research.db, or mutate missions")
+  return out
+}
+
+function commanderGuidanceLines(state: UiState): string[] {
+  const guidance = state.commanderGuidance
+  const out = ["Commander guidance"]
+  if (!guidance) {
+    out.push("  preview=none")
+    out.push("  latest_result=none")
+    out.push("  records=none")
+    out.push("  latest=none")
+    out.push("  summary=none")
+    out.push("  note=guidance records are not delivered to OpenCode in 9H; no provider was called, no OpenCode prompt was sent, and mission state was not mutated")
+    return out
+  }
+  if (guidance.preview) {
+    const item = guidance.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_create=${item.can_create} scope=${item.guidance_scope} author=${item.author_kind} delivery_status=${item.delivery_status}`)
+    out.push(`  question=${item.question_id || "none"} question_status=${item.question_status ?? "none"} session=${item.session_id || "none"} launch=${item.launch_id ?? "none"}`)
+    out.push(`  answer=${preview(redactText(item.answer_preview))}`)
+    if (item.rationale_preview) out.push(`  rationale=${preview(redactText(item.rationale_preview))}`)
+    if (item.constraints_preview.length > 0) out.push(`  constraints=${item.constraints_preview.slice(0, 6).map((value) => preview(redactText(value))).join(" | ")}`)
+    if (item.spec_refs_preview.length > 0) out.push(`  spec_refs=${item.spec_refs_preview.slice(0, 6).map((value) => preview(redactText(value))).join(" | ")}`)
+    if (item.research_refs_preview.length > 0) out.push(`  research_refs=${item.research_refs_preview.slice(0, 6).map((value) => preview(redactText(value))).join(" | ")}`)
+    if (item.artifact_refs_preview.length > 0) out.push(`  artifact_refs=${item.artifact_refs_preview.slice(0, 6).map((value) => preview(redactText(value))).join(" | ")}`)
+    out.push(`  delivery_note=${preview(redactText(item.delivery_note_preview))}`)
+    if (item.duplicate_guidance_id) out.push(`  duplicate_guidance=${item.duplicate_guidance_id}`)
+    if (item.blockers.length > 0) {
+      out.push("  blockers")
+      out.push(...item.blockers.slice(0, 10).map((blocker) => `    - ${preview(redactText(blocker))}`))
+    }
+    if (item.warnings.length > 0) {
+      out.push("  warnings")
+      out.push(...item.warnings.slice(0, 10).map((warning) => `    - ${preview(redactText(warning))}`))
+    }
+    out.push("  recommended_commands")
+    if (item.recommended_commands.length === 0) out.push("    - empty")
+    else out.push(...item.recommended_commands.slice(0, 8).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  } else {
+    out.push("  preview=none")
+  }
+  if (guidance.latestResult) {
+    const item = guidance.latestResult
+    out.push(`  latest_result=${item.guidance_id} status=${item.status} guidance_status=${item.guidance_status} delivery_status=${item.delivery_status} question=${item.question_id}`)
+    out.push(`  latest_session=${item.session_id || "none"} latest_launch=${item.launch_id ?? "none"} question_status_after=${item.question_status_after ?? "none"}`)
+    out.push(`  latest_answer=${preview(redactText(item.answer_preview))}`)
+    if (item.error) out.push(`  latest_error=${preview(redactText(item.error))}`)
+  } else {
+    out.push("  latest_result=none")
+  }
+  if (guidance.records.length > 0) {
+    out.push("  guidance_records")
+    out.push(...guidance.records.slice(0, 10).map((record) => `    - ${record.guidance_id} status=${record.status} delivery_status=${record.delivery_status} scope=${record.guidance_scope} question=${record.question_id} session=${record.session_id}: ${preview(redactText(record.answer_preview))}`))
+  } else {
+    out.push("  records=none")
+  }
+  if (guidance.selected) out.push(`  selected=${guidance.selected.guidance_id} delivery_status=${guidance.selected.delivery_status} question=${guidance.selected.question_id}: ${preview(redactText(guidance.selected.answer_preview))}`)
+  if (guidance.latest) out.push(`  latest=${guidance.latest.guidance_id} delivery_status=${guidance.latest.delivery_status} question=${guidance.latest.question_id}: ${preview(redactText(guidance.latest.answer_preview))}`)
+  else out.push("  latest=none")
+  if (guidance.summary) {
+    const summary = guidance.summary
+    out.push(`  summary total=${summary.total_guidance} created=${summary.created_count} not_delivered=${summary.not_delivered_count} delivered=${summary.delivered_count} cancelled=${summary.cancelled_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  if (guidance.commandError) out.push(`  command_error=${redactText(guidance.commandError)}`)
+  out.push("  note=guidance was recorded but not delivered to OpenCode; no provider was called, no OpenCode prompt was sent, and mission state was not mutated")
   return out
 }
 

@@ -102,6 +102,9 @@ const WRITE_COMMANDS = new Set([
   "opencode-ask-commander",
   "ask-commander",
   "commander-question",
+  "commander-guidance",
+  "answer-commander-question",
+  "answer-question",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

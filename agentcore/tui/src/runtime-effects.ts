@@ -114,6 +114,12 @@ import type {
   OpenCodeCommanderQuestionResultSummary,
   OpenCodeCommanderQuestionSummaryState,
   OpenCodeCommanderQuestionsState,
+  CommanderGuidancePreviewSummary,
+  CommanderGuidanceCommandSummary,
+  CommanderGuidanceRecordSummary,
+  CommanderGuidanceResultSummary,
+  CommanderGuidanceState,
+  CommanderGuidanceSummaryState,
   OpenCodeWatchdogCommandSummary,
   OpenCodeWatchdogPreviewSummary,
   OpenCodeWatchdogRecordSummary,
@@ -452,6 +458,12 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-commander-question"; questionId: string }
   | { type: "load-latest-opencode-commander-question"; sessionId?: string; launchId?: string }
   | { type: "load-opencode-commander-question-summary"; limit?: number }
+  | { type: "preview-commander-guidance"; questionId?: string; answer?: string; guidanceScope?: string; authorKind?: string; rationale?: string; constraints?: string[]; specRefs?: string[]; researchRefs?: string[]; artifactRefs?: string[]; deliveryNote?: string }
+  | { type: "create-commander-guidance"; questionId?: string; answer?: string; guidanceScope?: string; authorKind?: string; rationale?: string; constraints?: string[]; specRefs?: string[]; researchRefs?: string[]; artifactRefs?: string[]; deliveryNote?: string; dryRun?: boolean }
+  | { type: "load-commander-guidance"; sessionId?: string; launchId?: string; questionId?: string; status?: string; deliveryStatus?: string; guidanceScope?: string; limit?: number }
+  | { type: "load-commander-guidance-record"; guidanceId: string }
+  | { type: "load-latest-commander-guidance"; sessionId?: string; launchId?: string; questionId?: string }
+  | { type: "load-commander-guidance-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1347,6 +1359,27 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeCommanderQuestionLatest(state, await runtime.command("runtime.latest_opencode_commander_question", { sessionId: effect.sessionId, launchId: effect.launchId }), effect.sessionId ?? effect.launchId ?? "latest")
       case "load-opencode-commander-question-summary":
         return applyOpenCodeCommanderQuestionSummary(state, await runtime.command("runtime.opencode_commander_question_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "preview-commander-guidance":
+        return applyCommanderGuidancePreview(state, await runtime.command("runtime.preview_commander_guidance", commanderGuidancePayload(effect)))
+      case "create-commander-guidance": {
+        const next = applyCommanderGuidanceResult(state, await runtime.command("runtime.create_commander_guidance", { ...commanderGuidancePayload(effect), dryRun: effect.dryRun === true, createdBy: "operator" }))
+        if (next.commanderGuidance?.commandError) return next
+        const result = next.commanderGuidance?.latestResult
+        let updated = next
+        if (effect.dryRun !== true && result?.question_id) {
+          updated = applyOpenCodeCommanderQuestionSelected(updated, await runtime.command("runtime.get_opencode_commander_question", { questionId: result.question_id }), result.question_id)
+          updated = applyOpenCodeCommanderQuestionRecords(updated, await runtime.command("runtime.list_opencode_commander_questions", { limit: HANDOFF_LIMIT, sessionId: result.session_id, launchId: result.launch_id }))
+        }
+        return effect.dryRun === true ? next : applyCommanderGuidanceRecords(updated, await runtime.command("runtime.list_commander_guidance", { limit: HANDOFF_LIMIT, questionId: result?.question_id ?? effect.questionId, sessionId: result?.session_id, launchId: result?.launch_id }))
+      }
+      case "load-commander-guidance":
+        return applyCommanderGuidanceRecords(state, await runtime.command("runtime.list_commander_guidance", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId, questionId: effect.questionId, status: effect.status, deliveryStatus: effect.deliveryStatus, guidanceScope: effect.guidanceScope }))
+      case "load-commander-guidance-record":
+        return applyCommanderGuidanceSelected(state, await runtime.command("runtime.get_commander_guidance", { guidanceId: effect.guidanceId }), effect.guidanceId)
+      case "load-latest-commander-guidance":
+        return applyCommanderGuidanceLatest(state, await runtime.command("runtime.latest_commander_guidance", { sessionId: effect.sessionId, launchId: effect.launchId, questionId: effect.questionId }), effect.questionId ?? effect.sessionId ?? effect.launchId ?? "latest")
+      case "load-commander-guidance-summary":
+        return applyCommanderGuidanceSummary(state, await runtime.command("runtime.commander_guidance_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -3567,6 +3600,87 @@ function applyOpenCodeCommanderQuestionSummary(state: UiState, value: unknown): 
   }
 }
 
+function applyCommanderGuidancePreview(state: UiState, value: unknown): UiState {
+  const guidance = readCommanderGuidancePreview(value)
+  const commandError = guidance.status === "blocked" ? guidance.blockers[0] ?? "Commander guidance preview is blocked" : undefined
+  return {
+    ...state,
+    commanderGuidance: {
+      ...commanderGuidanceState(state),
+      preview: guidance,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance preview", detail: `question=${guidance.question_id || "missing"} status=${guidance.status}`, status: guidance.status }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceResult(state: UiState, value: unknown): UiState {
+  const result = readCommanderGuidanceResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "Commander guidance is blocked or failed" : undefined
+  return {
+    ...state,
+    commanderGuidance: {
+      ...commanderGuidanceState(state),
+      latestResult: result,
+      latest: result.status === "created" ? result : commanderGuidanceState(state).latest ?? null,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance", detail: `status=${result.status} guidance=${result.guidance_id} question=${result.question_id || "missing"}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceRecords(state: UiState, value: unknown): UiState {
+  const records = readCommanderGuidanceRecords(value)
+  return {
+    ...state,
+    commanderGuidance: {
+      ...commanderGuidanceState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceSelected(state: UiState, value: unknown, guidanceId: string): UiState {
+  const selected = value === null ? null : readCommanderGuidanceResult(value)
+  return {
+    ...state,
+    commanderGuidance: {
+      ...commanderGuidanceState(state),
+      selected,
+      commandError: selected ? undefined : `Commander guidance not found: ${redactText(guidanceId)}`,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance selected", detail: `guidance=${redactText(guidanceId)}`, status: selected ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceLatest(state: UiState, value: unknown, label: string): UiState {
+  const latest = value === null ? null : readCommanderGuidanceResult(value)
+  return {
+    ...state,
+    commanderGuidance: {
+      ...commanderGuidanceState(state),
+      latest,
+      commandError: latest ? undefined : `Commander guidance latest not found: ${redactText(label)}`,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance latest", detail: `target=${redactText(label)}`, status: latest ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceSummary(state: UiState, value: unknown): UiState {
+  const summary = readCommanderGuidanceSummary(value)
+  return {
+    ...state,
+    commanderGuidance: {
+      ...commanderGuidanceState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance summary", detail: `created=${summary.created_count} not_delivered=${summary.not_delivered_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -4825,6 +4939,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeProgressCommands.has(command)) return state.opencodeProgress?.commandError
   if (opencodeWatchdogCommands.has(command)) return state.opencodeWatchdog?.commandError
   if (opencodeCommanderQuestionCommands.has(command)) return state.opencodeCommanderQuestions?.commandError
+  if (commanderGuidanceCommands.has(command)) return state.commanderGuidance?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -5170,6 +5285,28 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-commander-question", questionId: requiredArg(args, 0, "questionId") })
     case "opencode-commander-question-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-commander-question-summary", limit: HANDOFF_LIMIT })
+    case "commander-guidance-preview":
+    case "guidance-preview":
+      return applyRuntimeUiEffect(commandState, runtime, commanderGuidanceEffect("preview-commander-guidance", args, true))
+    case "commander-guidance-dry-run":
+    case "guidance-dry-run": {
+      const effect = commanderGuidanceEffect("create-commander-guidance", args, true) as Extract<RuntimeUiEffect, { type: "create-commander-guidance" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "commander-guidance":
+    case "answer-commander-question":
+    case "answer-question":
+      return applyRuntimeUiEffect(commandState, runtime, commanderGuidanceEffect("create-commander-guidance", args, true))
+    case "commander-guidance-list":
+    case "guidance-list":
+      return applyRuntimeUiEffect(commandState, runtime, commanderGuidanceListEffect(args))
+    case "commander-guidance-latest":
+    case "guidance-latest":
+      return applyRuntimeUiEffect(commandState, runtime, commanderGuidanceLatestEffect(args))
+    case "commander-guidance-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-guidance-record", guidanceId: requiredArg(args, 0, "guidanceId") })
+    case "commander-guidance-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-guidance-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -6466,6 +6603,22 @@ const opencodeCommanderQuestionCommands = new Set([
   "question-latest",
   "opencode-commander-question-show",
   "opencode-commander-question-summary",
+])
+
+const commanderGuidanceCommands = new Set([
+  "commander-guidance-preview",
+  "guidance-preview",
+  "commander-guidance-dry-run",
+  "guidance-dry-run",
+  "commander-guidance",
+  "answer-commander-question",
+  "answer-question",
+  "commander-guidance-list",
+  "guidance-list",
+  "commander-guidance-latest",
+  "guidance-latest",
+  "commander-guidance-show",
+  "commander-guidance-summary",
 ])
 
 const researchMemoryCommands = new Set([
@@ -9734,6 +9887,116 @@ function readOpenCodeCommanderQuestionSummary(value: unknown): OpenCodeCommander
 }
 
 function readOpenCodeCommanderQuestionCommands(value: unknown): OpenCodeCommanderQuestionCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readCommanderGuidancePreview(value: unknown): CommanderGuidancePreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_commander_guidance returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_create: value.can_create === true,
+    question_id: redactText(readString(value.question_id, "")),
+    question_status: typeof value.question_status === "string" ? readString(value.question_status, "") : undefined,
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    progress_id: typeof value.progress_id === "string" ? redactText(value.progress_id) : undefined,
+    watchdog_id: typeof value.watchdog_id === "string" ? redactText(value.watchdog_id) : undefined,
+    forced_report_request_id: typeof value.forced_report_request_id === "string" ? redactText(value.forced_report_request_id) : undefined,
+    guidance_scope: readString(value.guidance_scope, "answer_question"),
+    author_kind: readString(value.author_kind, "human"),
+    answer_preview: preview(readString(value.answer_preview, "")),
+    rationale_preview: typeof value.rationale_preview === "string" ? preview(readString(value.rationale_preview, "")) : undefined,
+    constraints_preview: readStringList(value.constraints_preview, 10).map(preview),
+    spec_refs_preview: readStringList(value.spec_refs_preview, 10).map(preview),
+    research_refs_preview: readStringList(value.research_refs_preview, 10).map(preview),
+    artifact_refs_preview: readStringList(value.artifact_refs_preview, 10).map(preview),
+    delivery_status: readString(value.delivery_status, "not_delivered"),
+    delivery_note_preview: preview(readString(value.delivery_note_preview, "")),
+    duplicate_guidance_id: typeof value.duplicate_guidance_id === "string" ? redactText(value.duplicate_guidance_id) : undefined,
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    recommended_commands: readCommanderGuidanceCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    guidance_hash: readString(value.guidance_hash, ""),
+  }
+}
+
+function readCommanderGuidanceResult(value: unknown): CommanderGuidanceResultSummary {
+  if (!isRecord(value) || typeof value.guidance_id !== "string") throw new Error("runtime.create_commander_guidance returned invalid result")
+  return {
+    guidance_id: redactText(value.guidance_id),
+    status: readString(value.status, "blocked"),
+    guidance_status: readString(value.guidance_status, "created"),
+    delivery_status: readString(value.delivery_status, "not_delivered"),
+    question_id: redactText(readString(value.question_id, "")),
+    question_status_after: typeof value.question_status_after === "string" ? readString(value.question_status_after, "") : undefined,
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    progress_id: typeof value.progress_id === "string" ? redactText(value.progress_id) : undefined,
+    watchdog_id: typeof value.watchdog_id === "string" ? redactText(value.watchdog_id) : undefined,
+    forced_report_request_id: typeof value.forced_report_request_id === "string" ? redactText(value.forced_report_request_id) : undefined,
+    guidance_scope: readString(value.guidance_scope, "answer_question"),
+    author_kind: readString(value.author_kind, "human"),
+    answer_preview: preview(readString(value.answer_preview, "")),
+    rationale_preview: typeof value.rationale_preview === "string" ? preview(readString(value.rationale_preview, "")) : undefined,
+    constraints_preview: readStringList(value.constraints_preview, 10).map(preview),
+    spec_refs_preview: readStringList(value.spec_refs_preview, 10).map(preview),
+    research_refs_preview: readStringList(value.research_refs_preview, 10).map(preview),
+    artifact_refs_preview: readStringList(value.artifact_refs_preview, 10).map(preview),
+    delivery_note_preview: preview(readString(value.delivery_note_preview, "")),
+    created_at: readString(value.created_at, ""),
+    created_by: preview(readString(value.created_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    guidance_hash: readString(value.guidance_hash, ""),
+    recommended_commands: readCommanderGuidanceCommands(value.recommended_commands),
+  }
+}
+
+function readCommanderGuidanceRecords(value: unknown): CommanderGuidanceRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((record) => ({
+    guidance_id: redactText(readString(record.guidance_id, "")),
+    status: readString(record.status, "created"),
+    delivery_status: readString(record.delivery_status, "not_delivered"),
+    question_id: redactText(readString(record.question_id, "")),
+    session_id: redactText(readString(record.session_id, "")),
+    launch_id: typeof record.launch_id === "string" ? redactText(record.launch_id) : undefined,
+    guidance_scope: readString(record.guidance_scope, "answer_question"),
+    author_kind: readString(record.author_kind, "human"),
+    answer_preview: preview(readString(record.answer_preview, "")),
+    created_at: readString(record.created_at, ""),
+    created_by: preview(readString(record.created_by, "")),
+    has_constraints: record.has_constraints === true,
+    has_refs: record.has_refs === true,
+    guidance_hash: readString(record.guidance_hash, ""),
+  }))
+}
+
+function readCommanderGuidanceSummary(value: unknown): CommanderGuidanceSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.commander_guidance_summary returned invalid summary")
+  return {
+    total_guidance: readNumber(value.total_guidance, 0),
+    created_count: readNumber(value.created_count, 0),
+    not_delivered_count: readNumber(value.not_delivered_count, 0),
+    pending_delivery_count: readNumber(value.pending_delivery_count, 0),
+    delivered_count: readNumber(value.delivered_count, 0),
+    cancelled_count: readNumber(value.cancelled_count, 0),
+    by_scope_counts: readNumberMap(value.by_scope_counts, 12),
+    latest_guidance: readCommanderGuidanceRecords(value.latest_guidance),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readCommanderGuidanceCommands(value: unknown): CommanderGuidanceCommandSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -13333,6 +13596,10 @@ function opencodeCommanderQuestionState(state: UiState): OpenCodeCommanderQuesti
   return state.opencodeCommanderQuestions ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
 }
 
+function commanderGuidanceState(state: UiState): CommanderGuidanceState {
+  return state.commanderGuidance ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
 function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
   return {
     sessionId: effect.sessionId,
@@ -13377,6 +13644,21 @@ function commanderQuestionPayload(effect: Extract<RuntimeUiEffect, { type: "prev
     optionsConsidered: effect.optionsConsidered,
     executorRecommendation: effect.executorRecommendation,
     sourceKind: effect.sourceKind,
+  }
+}
+
+function commanderGuidancePayload(effect: Extract<RuntimeUiEffect, { type: "preview-commander-guidance" | "create-commander-guidance" }>): Record<string, unknown> {
+  return {
+    questionId: effect.questionId,
+    answer: effect.answer,
+    guidanceScope: effect.guidanceScope,
+    authorKind: effect.authorKind,
+    rationale: effect.rationale,
+    constraints: effect.constraints,
+    specRefs: effect.specRefs,
+    researchRefs: effect.researchRefs,
+    artifactRefs: effect.artifactRefs,
+    deliveryNote: effect.deliveryNote,
   }
 }
 
@@ -14559,6 +14841,67 @@ function opencodeCommanderQuestionLatestEffect(args: string[]): Extract<RuntimeU
     else throw new Error("OpenCode Commander question latest arg is unsupported")
   }
   if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode Commander question latest requires session=<id> or launch=<id>")
+  return effect
+}
+
+function commanderGuidanceEffect(
+  type: "preview-commander-guidance" | "create-commander-guidance",
+  args: string[],
+  requirePayload: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-commander-guidance" | "create-commander-guidance" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-commander-guidance" | "create-commander-guidance" }> = { type }
+  const freeTextKeys = new Set(["answer", "rationale", "delivery_note"])
+  const knownKeys = new Set(["question", "answer", "scope", "author", "rationale", "constraints", "spec_refs", "research_refs", "artifact_refs", "delivery_note"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "Commander guidance args must use question=<id>, answer=<text>, scope=<scope>, author=<kind>, rationale=<text>, constraints=<csv>, spec_refs=<csv>, research_refs=<csv>, artifact_refs=<csv>, or delivery_note=<text>")
+    index = nextIndex
+    if (key === "question") effect.questionId = value
+    else if (key === "answer") effect.answer = value
+    else if (key === "scope") effect.guidanceScope = value
+    else if (key === "author") effect.authorKind = value
+    else if (key === "rationale") effect.rationale = value
+    else if (key === "constraints") effect.constraints = commaList(value)
+    else if (key === "spec_refs") effect.specRefs = commaList(value)
+    else if (key === "research_refs") effect.researchRefs = commaList(value)
+    else if (key === "artifact_refs") effect.artifactRefs = commaList(value)
+    else if (key === "delivery_note") effect.deliveryNote = value
+    else throw new Error("Commander guidance arg is unsupported")
+  }
+  if (requirePayload && !effect.questionId) throw new Error("Commander guidance requires question=<question_id>")
+  if (requirePayload && !effect.answer) throw new Error("Commander guidance requires answer=<text>")
+  return effect
+}
+
+function commanderGuidanceListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-commander-guidance" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-commander-guidance" }> = { type: "load-commander-guidance", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("Commander guidance list args must use question=<id>, session=<id>, launch=<id>, status=<status>, delivery_status=<status>, scope=<scope>, or limit=<n>")
+    if (key === "question") effect.questionId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "status") effect.status = value
+    else if (key === "delivery_status") effect.deliveryStatus = value
+    else if (key === "scope") effect.guidanceScope = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("Commander guidance list arg is unsupported")
+  }
+  return effect
+}
+
+function commanderGuidanceLatestEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-latest-commander-guidance" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-latest-commander-guidance" }> = { type: "load-latest-commander-guidance" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("Commander guidance latest args must use question=<id>, session=<id>, or launch=<id>")
+    if (key === "question") effect.questionId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else throw new Error("Commander guidance latest arg is unsupported")
+  }
+  if (!effect.questionId && !effect.sessionId && !effect.launchId) throw new Error("Commander guidance latest requires question=<id>, session=<id>, or launch=<id>")
   return effect
 }
 

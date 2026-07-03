@@ -5545,6 +5545,80 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toEqual([])
   })
 
+  test("Commander guidance slash commands answer pending questions without delivery", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=guidance", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander", args: [`session=${sessionId}`, "question=should", "I", "choose", "option", "A", "or", "B", "token=abc123"] })
+    const questionId = state.opencodeCommanderQuestions?.latestResult?.question_id
+    expect(questionId).toBeTruthy()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander", args: [`session=${sessionId}`, "question=please", "provide", "timeout", "report", "type=timeout_report"] })
+    const timeoutQuestionId = state.opencodeCommanderQuestions?.latestResult?.question_id
+    expect(timeoutQuestionId).toBeTruthy()
+    expect(state.opencodeCommanderQuestions?.latestResult).toMatchObject({ question_type: "timeout_report" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-preview", args: [`question=${timeoutQuestionId}`, "answer=send", "a", "bounded", "timeout", "report"] })
+    expect(state.commanderGuidance?.preview).toMatchObject({ question_id: timeoutQuestionId, guidance_scope: "timeout_report_response" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-preview", args: [`question=${questionId}`, "answer=choose", "option", "A", "because", "it", "is", "safer", "token=abc123", "constraints=stay-bounded", "rationale=manual", "answer"] })
+    expect(state.commanderGuidance?.preview).toMatchObject({ status: "ready", can_create: true, question_id: questionId, delivery_status: "not_delivered" })
+    expect(JSON.stringify(state.commanderGuidance?.preview)).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-dry-run", args: [`question=${questionId}`, "answer=choose", "option", "A"] })
+    expect(state.commanderGuidance?.latestResult).toMatchObject({ status: "dry_run", question_id: questionId, delivery_status: "not_delivered" })
+    expect(state.commanderGuidance?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-preview", args: [`question=${questionId}`, "answer=stdout", "stderr"] })
+    expect(state.commanderGuidance?.commandError).toContain("raw logs are out of scope")
+    expect(JSON.stringify(state.commanderGuidance?.preview)).not.toContain("stdout")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance", args: [`question=${questionId}`, "answer=choose", "option", "A", "because", "it", "is", "safer", "token=abc123"] })
+    const guidanceId = state.commanderGuidance?.latestResult?.guidance_id
+    expect(guidanceId).toBeTruthy()
+    expect(state.commanderGuidance?.latestResult).toMatchObject({ status: "created", delivery_status: "not_delivered", question_status_after: "answered" })
+    expect(state.opencodeCommanderQuestions?.selected).toMatchObject({ question_id: questionId, question_status: "answered" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-list", args: [`question=${questionId}`] })
+    expect(state.commanderGuidance?.records.map((record) => record.guidance_id)).toContain(guidanceId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-latest", args: [`question=${questionId}`] })
+    expect(state.commanderGuidance?.latest?.guidance_id).toBe(guidanceId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-show", args: [guidanceId!] })
+    expect(state.commanderGuidance?.selected?.guidance_id).toBe(guidanceId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-summary", args: [] })
+    expect(state.commanderGuidance?.summary).toMatchObject({ total_guidance: 1, not_delivered_count: 1, delivered_count: 0 })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-preview", args: [`question=${questionId}`, "answer=another", "answer"] })
+    expect(state.commanderGuidance?.preview).toMatchObject({ status: "blocked", can_create: false, duplicate_guidance_id: guidanceId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance", args: [`question=${questionId}`, "answer=another", "answer"] })
+    expect(state.commanderGuidance?.latestResult).toMatchObject({ status: "blocked" })
+    expect(state.commanderGuidance?.commandError).toContain("Commander guidance already exists")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/commander-guidance", `question=${questionId}`, "answer=staged", "answer"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/commander-guidance"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/commander-guidance",
+      risk: "medium_risk_write",
+      calls_provider: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("not_delivered")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Commander guidance")
+    expect(snapshot).toContain("delivery_status=not_delivered")
+    expect(snapshot).toContain("not delivered to OpenCode")
+    expect(snapshot).toContain("selected=/commander-guidance risk=medium_risk_write")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

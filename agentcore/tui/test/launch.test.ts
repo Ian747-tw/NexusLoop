@@ -199,6 +199,12 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "runtime.launch_opencode_session") return opencodeSessionLaunchResult(payload, payload?.dry_run === true || payload?.dryRun === true ? "dry_run" : "blocked")
     if (name === "runtime.list_opencode_session_launches") return []
     if (name === "runtime.get_opencode_session_launch") return null
+    if (name === "runtime.preview_commander_guidance") return commanderGuidancePreview(payload, "ready")
+    if (name === "runtime.create_commander_guidance") return commanderGuidanceResult(payload, payload?.dry_run === true || payload?.dryRun === true ? "dry_run" : "created")
+    if (name === "runtime.list_commander_guidance") return []
+    if (name === "runtime.get_commander_guidance") return null
+    if (name === "runtime.latest_commander_guidance") return null
+    if (name === "runtime.commander_guidance_summary") return { total_guidance: 0, created_count: 0, not_delivered_count: 0, pending_delivery_count: 0, delivered_count: 0, cancelled_count: 0, by_scope_counts: {}, latest_guidance: [], generated_at: "2026-06-20T00:00:00.000Z" }
     if (name === "runtime.command_authority_get") {
       return {
         authority_id: "authority_opencode_smoke",
@@ -403,6 +409,62 @@ function opencodeSessionLaunchResult(payload: Record<string, unknown> | undefine
     output_summary_preview: "dry-run launch metadata only",
     event_count: 0,
     launch_hash: "hash-launch",
+    recommended_commands: [],
+  }
+}
+
+function commanderGuidancePreview(payload: Record<string, unknown> | undefined, status: "ready" | "blocked") {
+  const questionId = String(payload?.question_id ?? payload?.questionId ?? "question_test")
+  return {
+    preview_id: "guidance_preview_test",
+    status,
+    can_create: status === "ready",
+    question_id: questionId,
+    question_status: "pending_commander",
+    session_id: "session_test",
+    launch_id: "launch_test",
+    guidance_scope: "answer_question",
+    author_kind: "human",
+    answer_preview: String(payload?.answer ?? "choose option A"),
+    rationale_preview: "manual answer record",
+    constraints_preview: [],
+    spec_refs_preview: [],
+    research_refs_preview: [],
+    artifact_refs_preview: [],
+    delivery_status: "not_delivered",
+    delivery_note_preview: "Guidance recorded only; delivery is future work.",
+    blockers: status === "ready" ? [] : ["question was not found"],
+    warnings: ["guidance has not been delivered to OpenCode"],
+    recommended_commands: [],
+    generated_at: "2026-06-20T00:00:00.000Z",
+    redacted_summary_preview: "Commander guidance preview",
+    guidance_hash: "hash-guidance-preview",
+  }
+}
+
+function commanderGuidanceResult(payload: Record<string, unknown> | undefined, status: "dry_run" | "created") {
+  const preview = commanderGuidancePreview(payload, "ready")
+  return {
+    guidance_id: "guidance_test",
+    status,
+    guidance_status: "created",
+    delivery_status: "not_delivered",
+    question_id: preview.question_id,
+    question_status_after: status === "created" ? "answered" : undefined,
+    session_id: preview.session_id,
+    launch_id: preview.launch_id,
+    guidance_scope: preview.guidance_scope,
+    author_kind: preview.author_kind,
+    answer_preview: preview.answer_preview,
+    rationale_preview: preview.rationale_preview,
+    constraints_preview: preview.constraints_preview,
+    spec_refs_preview: preview.spec_refs_preview,
+    research_refs_preview: preview.research_refs_preview,
+    artifact_refs_preview: preview.artifact_refs_preview,
+    delivery_note_preview: preview.delivery_note_preview,
+    created_at: "2026-06-20T00:00:00.000Z",
+    created_by: "operator",
+    guidance_hash: "hash-guidance",
     recommended_commands: [],
   }
 }
@@ -1235,6 +1297,57 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.list_opencode_watchdogs")
     expect(runtime.commandNames).toContain("runtime.list_opencode_forced_report_requests")
     expect(runtime.commandNames).toContain("runtime.opencode_watchdog_summary")
+    expect(runtime.commandNames).not.toContain("runtime.resume")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless Commander guidance scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/commander-guidance-preview question=question_test answer=choose option A" },
+      { type: "submit" },
+      { type: "insert", text: "/guidance-preview question=question_test answer=choose option A" },
+      { type: "submit" },
+      { type: "insert", text: "/commander-guidance-dry-run question=question_test answer=choose option A" },
+      { type: "submit" },
+      { type: "insert", text: "/guidance-dry-run question=question_test answer=choose option A" },
+      { type: "submit" },
+      { type: "insert", text: "/commander-guidance question=question_test answer=choose option A" },
+      { type: "submit" },
+      { type: "insert", text: "/answer-commander-question question=question_test answer=choose option A" },
+      { type: "submit" },
+      { type: "insert", text: "/commander-guidance-list question=question_test" },
+      { type: "submit" },
+      { type: "insert", text: "/guidance-list question=question_test" },
+      { type: "submit" },
+      { type: "insert", text: "/commander-guidance-latest question=question_test" },
+      { type: "submit" },
+      { type: "insert", text: "/guidance-latest question=question_test" },
+      { type: "submit" },
+      { type: "insert", text: "/commander-guidance-show guidance_test" },
+      { type: "submit" },
+      { type: "insert", text: "/commander-guidance-summary" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-commander-guidance-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Commander guidance")
+    expect(runtime.commandNames).toContain("runtime.preview_commander_guidance")
+    expect(runtime.commandNames).toContain("runtime.create_commander_guidance")
+    expect(runtime.commandNames).toContain("runtime.list_commander_guidance")
+    expect(runtime.commandNames).toContain("runtime.latest_commander_guidance")
+    expect(runtime.commandNames).toContain("runtime.get_commander_guidance")
+    expect(runtime.commandNames).toContain("runtime.commander_guidance_summary")
     expect(runtime.commandNames).not.toContain("runtime.resume")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")

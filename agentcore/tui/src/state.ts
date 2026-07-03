@@ -1997,6 +1997,111 @@ export type OpenCodeCommanderQuestionsState = {
   commandError?: string
 }
 
+export type CommanderGuidanceCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type CommanderGuidancePreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_create: boolean
+  question_id: string
+  question_status?: string
+  session_id: string
+  launch_id?: string
+  progress_id?: string
+  watchdog_id?: string
+  forced_report_request_id?: string
+  guidance_scope: string
+  author_kind: string
+  answer_preview: string
+  rationale_preview?: string
+  constraints_preview: string[]
+  spec_refs_preview: string[]
+  research_refs_preview: string[]
+  artifact_refs_preview: string[]
+  delivery_status: string
+  delivery_note_preview: string
+  duplicate_guidance_id?: string
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: CommanderGuidanceCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  guidance_hash: string
+}
+
+export type CommanderGuidanceRecordSummary = {
+  guidance_id: string
+  status: string
+  delivery_status: string
+  question_id: string
+  session_id: string
+  launch_id?: string
+  guidance_scope: string
+  author_kind: string
+  answer_preview: string
+  created_at: string
+  created_by: string
+  has_constraints: boolean
+  has_refs: boolean
+  guidance_hash: string
+}
+
+export type CommanderGuidanceResultSummary = {
+  guidance_id: string
+  status: "created" | "blocked" | "dry_run" | "failed" | string
+  guidance_status: string
+  delivery_status: string
+  question_id: string
+  question_status_after?: string
+  session_id: string
+  launch_id?: string
+  progress_id?: string
+  watchdog_id?: string
+  forced_report_request_id?: string
+  guidance_scope: string
+  author_kind: string
+  answer_preview: string
+  rationale_preview?: string
+  constraints_preview: string[]
+  spec_refs_preview: string[]
+  research_refs_preview: string[]
+  artifact_refs_preview: string[]
+  delivery_note_preview: string
+  created_at: string
+  created_by: string
+  error?: string
+  guidance_hash: string
+  recommended_commands: CommanderGuidanceCommandSummary[]
+}
+
+export type CommanderGuidanceSummaryState = {
+  total_guidance: number
+  created_count: number
+  not_delivered_count: number
+  pending_delivery_count: number
+  delivered_count: number
+  cancelled_count: number
+  by_scope_counts: Record<string, number>
+  latest_guidance: CommanderGuidanceRecordSummary[]
+  generated_at: string
+}
+
+export type CommanderGuidanceState = {
+  preview?: CommanderGuidancePreviewSummary | null
+  latestResult?: CommanderGuidanceResultSummary | null
+  records: CommanderGuidanceRecordSummary[]
+  selected?: CommanderGuidanceResultSummary | null
+  latest?: CommanderGuidanceResultSummary | null
+  summary?: CommanderGuidanceSummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -4379,6 +4484,7 @@ export type UiState = {
   opencodeProgress?: OpenCodeProgressState
   opencodeWatchdog?: OpenCodeWatchdogState
   opencodeCommanderQuestions?: OpenCodeCommanderQuestionsState
+  commanderGuidance?: CommanderGuidanceState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
