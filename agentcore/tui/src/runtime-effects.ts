@@ -470,8 +470,8 @@ export type RuntimeUiEffect =
   | { type: "load-commander-guidance-record"; guidanceId: string }
   | { type: "load-latest-commander-guidance"; sessionId?: string; launchId?: string; questionId?: string }
   | { type: "load-commander-guidance-summary"; limit?: number }
-  | { type: "preview-commander-guidance-delivery"; guidanceId?: string; deliveryMode?: string; allowRealDelivery?: boolean; operatorNote?: string }
-  | { type: "deliver-commander-guidance"; guidanceId?: string; deliveryMode?: string; allowRealDelivery?: boolean; operatorNote?: string; dryRun?: boolean }
+  | { type: "preview-commander-guidance-delivery"; guidanceId?: string; deliveryMode?: string; allowRealDelivery?: boolean; operatorNote?: string; deliveredBy?: string }
+  | { type: "deliver-commander-guidance"; guidanceId?: string; deliveryMode?: string; allowRealDelivery?: boolean; operatorNote?: string; deliveredBy?: string; dryRun?: boolean }
   | { type: "load-commander-guidance-deliveries"; sessionId?: string; launchId?: string; guidanceId?: string; status?: string; deliveryMode?: string; limit?: number }
   | { type: "load-commander-guidance-delivery"; deliveryId: string }
   | { type: "load-latest-commander-guidance-delivery"; sessionId?: string; launchId?: string; guidanceId?: string }
@@ -1395,7 +1395,7 @@ export async function applyRuntimeUiEffect(
       case "preview-commander-guidance-delivery":
         return applyCommanderGuidanceDeliveryPreview(state, await runtime.command("runtime.preview_commander_guidance_delivery", commanderGuidanceDeliveryPayload(effect)))
       case "deliver-commander-guidance": {
-        const next = applyCommanderGuidanceDeliveryResult(state, await runtime.command("runtime.deliver_commander_guidance", { ...commanderGuidanceDeliveryPayload(effect), dryRun: effect.dryRun === true, deliveredBy: "operator" }))
+        const next = applyCommanderGuidanceDeliveryResult(state, await runtime.command("runtime.deliver_commander_guidance", { ...commanderGuidanceDeliveryPayload(effect), dryRun: effect.dryRun === true, deliveredBy: effect.deliveredBy ?? "operator" }))
         if (next.commanderGuidanceDelivery?.commandError) return next
         const result = next.commanderGuidanceDelivery?.latestResult
         let updated = next
@@ -13922,6 +13922,7 @@ function commanderGuidanceDeliveryPayload(effect: Extract<RuntimeUiEffect, { typ
     deliveryMode: effect.deliveryMode,
     allowRealDelivery: effect.allowRealDelivery,
     operatorNote: effect.operatorNote,
+    deliveredBy: effect.deliveredBy,
   }
 }
 
@@ -15182,9 +15183,8 @@ function commanderGuidanceDeliveryEffect(
     else if (key === "mode") effect.deliveryMode = value
     else if (key === "allow_real_delivery") effect.allowRealDelivery = readBooleanText(value, key)
     else if (key === "operator_note") effect.operatorNote = value
-    else if (key === "delivered_by") {
-      // The runtime records delivered_by from the operator path; this parser accepts the key to fail closed for malformed text.
-    } else throw new Error("Commander guidance delivery arg is unsupported")
+    else if (key === "delivered_by") effect.deliveredBy = value
+    else throw new Error("Commander guidance delivery arg is unsupported")
   }
   if (requirePayload && !effect.guidanceId) throw new Error("Commander guidance delivery requires guidance=<guidance_id>")
   return effect

@@ -182,8 +182,10 @@ export class CommanderGuidanceDeliveryService {
     if (guidance?.launch_id && !launch) blockers.push("linked launch does not resolve to an OpenCode launch record")
     if (launch && !LAUNCHED_STATUSES.has(launch.status)) blockers.push(`Commander guidance delivery requires launch_started or launched status; current status is ${launch.status}`)
     if (launch && guidance?.session_id && launch.session_id !== guidance.session_id) blockers.push("linked launch does not belong to guidance session")
+    const rawMode = optional(input.delivery_mode)
     const mode = readDeliveryMode(input.delivery_mode)
     const adapterCapability: CommanderGuidanceDeliveryAdapterCapability = mode === "operator_handoff" ? "operator_handoff_only" : mode === "disabled" ? "disabled" : "disabled"
+    if (rawMode && !isSupportedDeliveryMode(rawMode)) blockers.push(`unsupported delivery mode: ${rawMode}`)
     if (mode === "adapter_send") blockers.push("adapter_send delivery is blocked in 9I because no safe running-session OpenCode send path is available")
     if (mode === "fake") blockers.push("fake delivery mode is available only in the TUI fake runtime")
     if (mode === "disabled") blockers.push("delivery mode disabled")
@@ -402,6 +404,10 @@ function readProjectionStatus(value: unknown): CommanderGuidanceDeliveryProjecti
 
 function readDeliveryMode(value: unknown): CommanderGuidanceDeliveryMode {
   return value === "adapter_send" || value === "fake" || value === "disabled" ? value : "operator_handoff"
+}
+
+function isSupportedDeliveryMode(value: string): boolean {
+  return value === "operator_handoff" || value === "adapter_send" || value === "fake" || value === "disabled"
 }
 
 function readAdapterCapability(value: unknown): CommanderGuidanceDeliveryAdapterCapability {

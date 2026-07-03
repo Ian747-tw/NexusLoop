@@ -5641,14 +5641,20 @@ describe("runtime UI effects", () => {
     expect(state.commanderGuidanceDelivery?.latestResult).toMatchObject({ status: "dry_run", guidance_id: guidanceId, delivery_status_after: "not_delivered" })
     expect(state.commanderGuidanceDelivery?.records).toEqual([])
 
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-deliver", args: [`guidance=${guidanceId}`, "mode=operator_handoff"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-deliver", args: [`guidance=${guidanceId}`, "mode=adapter-send"] })
+    expect(state.commanderGuidanceDelivery?.latestResult).toMatchObject({ status: "blocked" })
+    expect(state.commanderGuidanceDelivery?.commandError).toContain("unsupported guidance delivery mode")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-deliver", args: [`guidance=${guidanceId}`, "mode=operator_handoff", "delivered_by=delivery-operator"] })
     const deliveryId = state.commanderGuidanceDelivery?.latestResult?.delivery_id
     expect(deliveryId).toBeTruthy()
     expect(state.commanderGuidanceDelivery?.latestResult).toMatchObject({ status: "delivery_requested", delivery_status_after: "pending_delivery", delivery_mode: "operator_handoff" })
+    expect(state.commanderGuidanceDelivery?.latestResult?.delivered_by).toBe("delivery-operator")
     expect(state.commanderGuidanceDelivery?.latestResult?.operator_handoff_preview).toContain("no OpenCode prompt was sent")
     expect(state.commanderGuidance?.selected).toMatchObject({ guidance_id: guidanceId, delivery_status: "pending_delivery" })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-deliveries", args: [`guidance=${guidanceId}`] })
     expect(state.commanderGuidanceDelivery?.records.map((record) => record.delivery_id)).toContain(deliveryId)
+    expect(state.commanderGuidanceDelivery?.records.find((record) => record.delivery_id === deliveryId)?.delivered_by).toBe("delivery-operator")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-delivery-latest", args: [`guidance=${guidanceId}`] })
     expect(state.commanderGuidanceDelivery?.latest?.delivery_id).toBe(deliveryId)
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-delivery-show", args: [deliveryId!] })
