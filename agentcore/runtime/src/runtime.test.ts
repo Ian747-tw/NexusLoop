@@ -18140,12 +18140,14 @@ describe("OpenCode launch readiness", () => {
     const unsupportedModePreview = await server.command("runtime.preview_commander_guidance_delivery", { guidanceId: created.guidance_id, deliveryMode: "adapter-send" }) as { status: string; blockers: string[]; delivery_mode: string }
     expect(unsupportedModePreview).toMatchObject({ status: "blocked", delivery_mode: "operator_handoff" })
     expect(unsupportedModePreview.blockers.join(" ")).toContain("unsupported delivery mode: adapter-send")
-    const unsupportedModeDelivery = await server.command("runtime.deliver_commander_guidance", { guidanceId: created.guidance_id, deliveryMode: "adapter-send" }) as { status: string; error?: string }
+    const unsupportedModeDelivery = await server.command("runtime.deliver_commander_guidance", { guidanceId: created.guidance_id, deliveryMode: "adapter-send" }) as { status: string; error?: string; operator_handoff_preview?: string }
     expect(unsupportedModeDelivery).toMatchObject({ status: "blocked" })
     expect(unsupportedModeDelivery.error).toContain("unsupported delivery mode: adapter-send")
+    expect(unsupportedModeDelivery.operator_handoff_preview).toBeUndefined()
     expect((await server.eventStore.readAll()).map((event) => event.kind).filter((kind) => kind === "opencode_commander_guidance_delivery_requested")).toHaveLength(0)
-    const deliveryDryRun = await server.command("runtime.deliver_commander_guidance", { guidanceId: created.guidance_id, dryRun: true }) as { status: string }
+    const deliveryDryRun = await server.command("runtime.deliver_commander_guidance", { guidanceId: created.guidance_id, dryRun: true }) as { status: string; operator_handoff_preview?: string }
     expect(deliveryDryRun.status).toBe("dry_run")
+    expect(deliveryDryRun.operator_handoff_preview).toBeUndefined()
     expect((await server.eventStore.readAll()).map((event) => event.kind).filter((kind) => kind === "opencode_commander_guidance_delivery_requested")).toHaveLength(0)
     const delivery = await server.command("runtime.deliver_commander_guidance", { guidanceId: created.guidance_id, deliveryMode: "operator_handoff", deliveredBy: "delivery-operator" }) as { status: string; delivery_id: string; delivery_status_after: string; operator_handoff_preview?: string; delivered_by?: string }
     expect(delivery).toMatchObject({ status: "delivery_requested", delivery_status_after: "pending_delivery" })

@@ -311,7 +311,7 @@ function resultFromPreview(preview: CommanderGuidanceDeliveryPreview, overrides:
     delivery_payload_preview: preview.delivery_payload_preview,
     target_summary_preview: preview.target_summary_preview,
     adapter_ack_preview: overrides.status === "delivered" ? "bounded adapter acknowledgement" : undefined,
-    operator_handoff_preview: preview.delivery_mode === "operator_handoff" ? "operator handoff requested; no OpenCode prompt was sent" : undefined,
+    operator_handoff_preview: overrides.status === "delivery_requested" && preview.delivery_mode === "operator_handoff" ? "operator handoff requested; no OpenCode prompt was sent" : undefined,
     created_at: overrides.created_at,
     delivered_by: bound(overrides.delivered_by) ?? "operator",
     error: bound(overrides.error),
