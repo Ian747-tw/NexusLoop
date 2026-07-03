@@ -69,6 +69,21 @@ export * from "./opencode-session/opencode-timeout-watchdog-types"
 export { OpenCodeCommanderQuestionService } from "./opencode-session/opencode-commander-question-service"
 export { CommanderGuidanceService } from "./opencode-session/opencode-commander-guidance-service"
 export * from "./opencode-session/opencode-commander-question-types"
+export * from "./opencode-session/opencode-commander-guidance-types"
+export { CommanderGuidanceDeliveryService } from "./opencode-session/opencode-guidance-delivery-service"
+export type {
+  CommanderGuidanceDeliveryAdapterCapability,
+  CommanderGuidanceDeliveryCommand,
+  CommanderGuidanceDeliveryInput,
+  CommanderGuidanceDeliveryMode,
+  CommanderGuidanceDeliveryPreview,
+  CommanderGuidanceDeliveryPreviewInput,
+  CommanderGuidanceDeliveryProjectionStatus,
+  CommanderGuidanceDeliveryRecord,
+  CommanderGuidanceDeliveryResult,
+  CommanderGuidanceDeliveryStatus as CommanderGuidanceDeliveryGateStatus,
+  CommanderGuidanceDeliverySummary,
+} from "./opencode-session/opencode-guidance-delivery-types"
 export { ContextBudgetService } from "./context/context-budget-service"
 export { ModelCapabilityRegistry } from "./context/model-capability-registry"
 export { ContextPacketCompilerService } from "./context/context-packet-compiler-service"

@@ -18130,6 +18130,34 @@ describe("OpenCode launch readiness", () => {
     await expect(server.command("runtime.latest_commander_guidance", { questionId: question.question_id })).resolves.toMatchObject({ guidance_id: created.guidance_id })
     await expect(server.command("runtime.commander_guidance_summary")).resolves.toMatchObject({ total_guidance: 1, not_delivered_count: 1, delivered_count: 0 })
 
+    const deliveryPreview = await server.command("runtime.preview_commander_guidance_delivery", { guidanceId: created.guidance_id }) as { status: string; can_deliver: boolean; delivery_mode: string; adapter_capability: string; delivery_payload_preview: string }
+    expect(deliveryPreview).toMatchObject({ status: "ready", can_deliver: true, delivery_mode: "operator_handoff", adapter_capability: "operator_handoff_only" })
+    expect(deliveryPreview.delivery_payload_preview).not.toContain("guidance-secret")
+    expect((await server.eventStore.readAll()).map((event) => event.kind).filter((kind) => kind === "opencode_commander_guidance_delivery_requested")).toHaveLength(0)
+    const adapterSendPreview = await server.command("runtime.preview_commander_guidance_delivery", { guidanceId: created.guidance_id, deliveryMode: "adapter_send", allowRealDelivery: true }) as { status: string; blockers: string[] }
+    expect(adapterSendPreview).toMatchObject({ status: "blocked" })
+    expect(adapterSendPreview.blockers.join(" ")).toContain("adapter_send delivery is blocked")
+    const deliveryDryRun = await server.command("runtime.deliver_commander_guidance", { guidanceId: created.guidance_id, dryRun: true }) as { status: string }
+    expect(deliveryDryRun.status).toBe("dry_run")
+    expect((await server.eventStore.readAll()).map((event) => event.kind).filter((kind) => kind === "opencode_commander_guidance_delivery_requested")).toHaveLength(0)
+    const delivery = await server.command("runtime.deliver_commander_guidance", { guidanceId: created.guidance_id, deliveryMode: "operator_handoff", deliveredBy: "operator" }) as { status: string; delivery_id: string; delivery_status_after: string; operator_handoff_preview?: string }
+    expect(delivery).toMatchObject({ status: "delivery_requested", delivery_status_after: "pending_delivery" })
+    expect(delivery.operator_handoff_preview).toContain("no OpenCode prompt was sent")
+    const deliveryEventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+    expect(deliveryEventKinds.filter((kind) => kind === "opencode_commander_guidance_delivery_requested")).toHaveLength(1)
+    expect(deliveryEventKinds).not.toContain("opencode_commander_guidance_delivered")
+    expect(deliveryEventKinds).not.toContain("opencode_prompt_sent")
+    await expect(server.command("runtime.get_commander_guidance", { guidanceId: created.guidance_id })).resolves.toMatchObject({ guidance_id: created.guidance_id, delivery_status: "pending_delivery" })
+    await expect(server.command("runtime.list_commander_guidance", { questionId: question.question_id })).resolves.toEqual([expect.objectContaining({ guidance_id: created.guidance_id, delivery_status: "pending_delivery" })])
+    await expect(server.command("runtime.list_commander_guidance_deliveries", { guidanceId: created.guidance_id })).resolves.toEqual([expect.objectContaining({ delivery_id: delivery.delivery_id, delivery_status_after: "pending_delivery" })])
+    await expect(server.command("runtime.get_commander_guidance_delivery", { deliveryId: delivery.delivery_id })).resolves.toMatchObject({ delivery_id: delivery.delivery_id, status: "delivery_requested" })
+    await expect(server.command("runtime.latest_commander_guidance_delivery", { guidanceId: created.guidance_id })).resolves.toMatchObject({ delivery_id: delivery.delivery_id })
+    await expect(server.command("runtime.commander_guidance_delivery_summary")).resolves.toMatchObject({ total_deliveries: 1, requested_count: 1, delivered_count: 0 })
+    await expect(server.command("runtime.commander_guidance_summary")).resolves.toMatchObject({ total_guidance: 1, pending_delivery_count: 1, delivered_count: 0 })
+    const duplicateDelivery = await server.command("runtime.deliver_commander_guidance", { guidanceId: created.guidance_id }) as { status: string; error?: string }
+    expect(duplicateDelivery).toMatchObject({ status: "blocked" })
+    expect(duplicateDelivery.error).toContain("delivery_status must be not_delivered")
+
     const duplicatePreview = await server.command("runtime.preview_commander_guidance", { questionId: question.question_id, answer: "another answer" }) as { status: string; duplicate_guidance_id?: string; blockers: string[] }
     expect(duplicatePreview).toMatchObject({ status: "blocked", duplicate_guidance_id: created.guidance_id })
     expect(duplicatePreview.blockers).toContain("question is already answered or no longer pending")
@@ -18173,6 +18201,12 @@ describe("OpenCode launch readiness", () => {
     await expect(client.command("runtime.get_commander_guidance", { guidanceId: "missing" })).resolves.toBeNull()
     await expect(client.command("runtime.latest_commander_guidance", { questionId: "missing" })).resolves.toBeNull()
     await expect(client.command("runtime.commander_guidance_summary")).resolves.toMatchObject({ total_guidance: 0 })
+    await expect(client.command("runtime.preview_commander_guidance_delivery", { guidanceId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.deliver_commander_guidance", { guidanceId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_commander_guidance_deliveries")).resolves.toEqual([])
+    await expect(client.command("runtime.get_commander_guidance_delivery", { deliveryId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.latest_commander_guidance_delivery", { guidanceId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.commander_guidance_delivery_summary")).resolves.toMatchObject({ total_deliveries: 0 })
     expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
     await client.shutdown?.()
   })

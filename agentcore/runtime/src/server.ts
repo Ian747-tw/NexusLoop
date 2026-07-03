@@ -90,6 +90,8 @@ import { OpenCodeCommanderQuestionService, readOpenCodeCommanderQuestionCreateIn
 import type { OpenCodeCommanderQuestionPreview, OpenCodeCommanderQuestionRecord, OpenCodeCommanderQuestionResult, OpenCodeCommanderQuestionSummary } from "./opencode-session/opencode-commander-question-types"
 import { CommanderGuidanceService, readCommanderGuidanceCreateInput, readCommanderGuidancePreviewInput } from "./opencode-session/opencode-commander-guidance-service"
 import type { CommanderGuidancePreview, CommanderGuidanceRecord, CommanderGuidanceResult, CommanderGuidanceSummary } from "./opencode-session/opencode-commander-guidance-types"
+import { CommanderGuidanceDeliveryService, readCommanderGuidanceDeliveryInput, readCommanderGuidanceDeliveryPreviewInput } from "./opencode-session/opencode-guidance-delivery-service"
+import type { CommanderGuidanceDeliveryPreview, CommanderGuidanceDeliveryRecord, CommanderGuidanceDeliveryResult, CommanderGuidanceDeliverySummary } from "./opencode-session/opencode-guidance-delivery-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -331,6 +333,7 @@ export class RuntimeServer {
   private opencodeTimeoutWatchdogServiceInstance: OpenCodeTimeoutWatchdogService | null = null
   private opencodeCommanderQuestionServiceInstance: OpenCodeCommanderQuestionService | null = null
   private commanderGuidanceServiceInstance: CommanderGuidanceService | null = null
+  private commanderGuidanceDeliveryServiceInstance: CommanderGuidanceDeliveryService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -1007,6 +1010,29 @@ export class RuntimeServer {
         })
       case "runtime.commander_guidance_summary":
         return this.commanderGuidanceSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
+      case "runtime.preview_commander_guidance_delivery":
+        return this.previewCommanderGuidanceDelivery(readCommanderGuidanceDeliveryPreviewInput(payload))
+      case "runtime.deliver_commander_guidance":
+        return this.deliverCommanderGuidance(readCommanderGuidanceDeliveryInput(payload))
+      case "runtime.list_commander_guidance_deliveries":
+        return this.listCommanderGuidanceDeliveries({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+          guidance_id: optionalString(payload.guidanceId ?? payload.guidance_id ?? payload.guidance, "guidanceId"),
+          status: optionalString(payload.status, "status"),
+          delivery_mode: optionalString(payload.deliveryMode ?? payload.delivery_mode ?? payload.mode, "deliveryMode"),
+        })
+      case "runtime.get_commander_guidance_delivery":
+        return this.getCommanderGuidanceDelivery(requiredString(payload.deliveryId ?? payload.delivery_id, "deliveryId"))
+      case "runtime.latest_commander_guidance_delivery":
+        return this.latestCommanderGuidanceDelivery({
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+          guidance_id: optionalString(payload.guidanceId ?? payload.guidance_id ?? payload.guidance, "guidanceId"),
+        })
+      case "runtime.commander_guidance_delivery_summary":
+        return this.commanderGuidanceDeliverySummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -2022,6 +2048,31 @@ export class RuntimeServer {
 
   async commanderGuidanceSummary(input: Parameters<CommanderGuidanceService["summary"]>[0] = {}): Promise<CommanderGuidanceSummary> {
     return this.commanderGuidanceService().summary(input)
+  }
+
+  async previewCommanderGuidanceDelivery(input: Parameters<CommanderGuidanceDeliveryService["preview"]>[0] = {}): Promise<CommanderGuidanceDeliveryPreview> {
+    return this.commanderGuidanceDeliveryService().preview(input)
+  }
+
+  async deliverCommanderGuidance(input: Parameters<CommanderGuidanceDeliveryService["deliver"]>[0] = {}): Promise<CommanderGuidanceDeliveryResult> {
+    if (input.dry_run === true) return this.commanderGuidanceDeliveryService().deliver(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.commanderGuidanceDeliveryService().deliver(input))
+  }
+
+  async listCommanderGuidanceDeliveries(input: Parameters<CommanderGuidanceDeliveryService["list"]>[0] = {}): Promise<CommanderGuidanceDeliveryRecord[]> {
+    return this.commanderGuidanceDeliveryService().list(input)
+  }
+
+  async getCommanderGuidanceDelivery(deliveryId: string): Promise<CommanderGuidanceDeliveryResult | null> {
+    return this.commanderGuidanceDeliveryService().get(deliveryId)
+  }
+
+  async latestCommanderGuidanceDelivery(input: Parameters<CommanderGuidanceDeliveryService["latest"]>[0] = {}): Promise<CommanderGuidanceDeliveryResult | null> {
+    return this.commanderGuidanceDeliveryService().latest(input)
+  }
+
+  async commanderGuidanceDeliverySummary(input: Parameters<CommanderGuidanceDeliveryService["summary"]>[0] = {}): Promise<CommanderGuidanceDeliverySummary> {
+    return this.commanderGuidanceDeliveryService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -3171,6 +3222,17 @@ export class RuntimeServer {
       questionService: this.opencodeCommanderQuestionService(),
     })
     return this.commanderGuidanceServiceInstance
+  }
+
+  private commanderGuidanceDeliveryService(): CommanderGuidanceDeliveryService {
+    this.commanderGuidanceDeliveryServiceInstance ??= new CommanderGuidanceDeliveryService({
+      eventStore: this.eventStore,
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+      questionService: this.opencodeCommanderQuestionService(),
+      guidanceService: this.commanderGuidanceService(),
+    })
+    return this.commanderGuidanceDeliveryServiceInstance
   }
 
   private createOpenCodeLaunchAdapter(): OpenCodeLaunchAdapter {

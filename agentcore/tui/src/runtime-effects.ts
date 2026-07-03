@@ -120,6 +120,12 @@ import type {
   CommanderGuidanceResultSummary,
   CommanderGuidanceState,
   CommanderGuidanceSummaryState,
+  CommanderGuidanceDeliveryCommandSummary,
+  CommanderGuidanceDeliveryPreviewSummary,
+  CommanderGuidanceDeliveryRecordSummary,
+  CommanderGuidanceDeliveryResultSummary,
+  CommanderGuidanceDeliveryState,
+  CommanderGuidanceDeliverySummaryState,
   OpenCodeWatchdogCommandSummary,
   OpenCodeWatchdogPreviewSummary,
   OpenCodeWatchdogRecordSummary,
@@ -464,6 +470,12 @@ export type RuntimeUiEffect =
   | { type: "load-commander-guidance-record"; guidanceId: string }
   | { type: "load-latest-commander-guidance"; sessionId?: string; launchId?: string; questionId?: string }
   | { type: "load-commander-guidance-summary"; limit?: number }
+  | { type: "preview-commander-guidance-delivery"; guidanceId?: string; deliveryMode?: string; allowRealDelivery?: boolean; operatorNote?: string }
+  | { type: "deliver-commander-guidance"; guidanceId?: string; deliveryMode?: string; allowRealDelivery?: boolean; operatorNote?: string; dryRun?: boolean }
+  | { type: "load-commander-guidance-deliveries"; sessionId?: string; launchId?: string; guidanceId?: string; status?: string; deliveryMode?: string; limit?: number }
+  | { type: "load-commander-guidance-delivery"; deliveryId: string }
+  | { type: "load-latest-commander-guidance-delivery"; sessionId?: string; launchId?: string; guidanceId?: string }
+  | { type: "load-commander-guidance-delivery-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1380,6 +1392,27 @@ export async function applyRuntimeUiEffect(
         return applyCommanderGuidanceLatest(state, await runtime.command("runtime.latest_commander_guidance", { sessionId: effect.sessionId, launchId: effect.launchId, questionId: effect.questionId }), effect.questionId ?? effect.sessionId ?? effect.launchId ?? "latest")
       case "load-commander-guidance-summary":
         return applyCommanderGuidanceSummary(state, await runtime.command("runtime.commander_guidance_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "preview-commander-guidance-delivery":
+        return applyCommanderGuidanceDeliveryPreview(state, await runtime.command("runtime.preview_commander_guidance_delivery", commanderGuidanceDeliveryPayload(effect)))
+      case "deliver-commander-guidance": {
+        const next = applyCommanderGuidanceDeliveryResult(state, await runtime.command("runtime.deliver_commander_guidance", { ...commanderGuidanceDeliveryPayload(effect), dryRun: effect.dryRun === true, deliveredBy: "operator" }))
+        if (next.commanderGuidanceDelivery?.commandError) return next
+        const result = next.commanderGuidanceDelivery?.latestResult
+        let updated = next
+        if (effect.dryRun !== true && result?.guidance_id) {
+          updated = applyCommanderGuidanceSelected(updated, await runtime.command("runtime.get_commander_guidance", { guidanceId: result.guidance_id }), result.guidance_id)
+          updated = applyCommanderGuidanceRecords(updated, await runtime.command("runtime.list_commander_guidance", { limit: HANDOFF_LIMIT, sessionId: result.session_id, launchId: result.launch_id }))
+        }
+        return effect.dryRun === true ? next : applyCommanderGuidanceDeliveryRecords(updated, await runtime.command("runtime.list_commander_guidance_deliveries", { limit: HANDOFF_LIMIT, guidanceId: result?.guidance_id ?? effect.guidanceId, sessionId: result?.session_id, launchId: result?.launch_id }))
+      }
+      case "load-commander-guidance-deliveries":
+        return applyCommanderGuidanceDeliveryRecords(state, await runtime.command("runtime.list_commander_guidance_deliveries", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId, guidanceId: effect.guidanceId, status: effect.status, deliveryMode: effect.deliveryMode }))
+      case "load-commander-guidance-delivery":
+        return applyCommanderGuidanceDeliverySelected(state, await runtime.command("runtime.get_commander_guidance_delivery", { deliveryId: effect.deliveryId }), effect.deliveryId)
+      case "load-latest-commander-guidance-delivery":
+        return applyCommanderGuidanceDeliveryLatest(state, await runtime.command("runtime.latest_commander_guidance_delivery", { sessionId: effect.sessionId, launchId: effect.launchId, guidanceId: effect.guidanceId }), effect.guidanceId ?? effect.sessionId ?? effect.launchId ?? "latest")
+      case "load-commander-guidance-delivery-summary":
+        return applyCommanderGuidanceDeliverySummary(state, await runtime.command("runtime.commander_guidance_delivery_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -3681,6 +3714,87 @@ function applyCommanderGuidanceSummary(state: UiState, value: unknown): UiState 
   }
 }
 
+function applyCommanderGuidanceDeliveryPreview(state: UiState, value: unknown): UiState {
+  const delivery = readCommanderGuidanceDeliveryPreview(value)
+  const commandError = delivery.status === "blocked" ? delivery.blockers[0] ?? "Commander guidance delivery preview is blocked" : undefined
+  return {
+    ...state,
+    commanderGuidanceDelivery: {
+      ...commanderGuidanceDeliveryState(state),
+      preview: delivery,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance delivery preview", detail: `guidance=${delivery.guidance_id || "missing"} status=${delivery.status}`, status: delivery.status }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceDeliveryResult(state: UiState, value: unknown): UiState {
+  const result = readCommanderGuidanceDeliveryResult(value)
+  const commandError = result.status === "blocked" || result.status === "delivery_failed" ? result.error ?? "Commander guidance delivery is blocked or failed" : undefined
+  return {
+    ...state,
+    commanderGuidanceDelivery: {
+      ...commanderGuidanceDeliveryState(state),
+      latestResult: result,
+      latest: result.status === "delivery_requested" || result.status === "delivered" ? result : commanderGuidanceDeliveryState(state).latest ?? null,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance delivery", detail: `status=${result.status} delivery=${result.delivery_id} guidance=${result.guidance_id || "missing"}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceDeliveryRecords(state: UiState, value: unknown): UiState {
+  const records = readCommanderGuidanceDeliveryRecords(value)
+  return {
+    ...state,
+    commanderGuidanceDelivery: {
+      ...commanderGuidanceDeliveryState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance delivery records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceDeliverySelected(state: UiState, value: unknown, deliveryId: string): UiState {
+  const selected = value === null ? null : readCommanderGuidanceDeliveryResult(value)
+  return {
+    ...state,
+    commanderGuidanceDelivery: {
+      ...commanderGuidanceDeliveryState(state),
+      selected,
+      commandError: selected ? undefined : `Commander guidance delivery not found: ${redactText(deliveryId)}`,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance delivery selected", detail: `delivery=${redactText(deliveryId)}`, status: selected ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceDeliveryLatest(state: UiState, value: unknown, label: string): UiState {
+  const latest = value === null ? null : readCommanderGuidanceDeliveryResult(value)
+  return {
+    ...state,
+    commanderGuidanceDelivery: {
+      ...commanderGuidanceDeliveryState(state),
+      latest,
+      commandError: latest ? undefined : `Commander guidance delivery latest not found: ${redactText(label)}`,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance delivery latest", detail: `target=${redactText(label)}`, status: latest ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyCommanderGuidanceDeliverySummary(state: UiState, value: unknown): UiState {
+  const summary = readCommanderGuidanceDeliverySummary(value)
+  return {
+    ...state,
+    commanderGuidanceDelivery: {
+      ...commanderGuidanceDeliveryState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander guidance delivery summary", detail: `requested=${summary.requested_count} delivered=${summary.delivered_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -4940,6 +5054,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeWatchdogCommands.has(command)) return state.opencodeWatchdog?.commandError
   if (opencodeCommanderQuestionCommands.has(command)) return state.opencodeCommanderQuestions?.commandError
   if (commanderGuidanceCommands.has(command)) return state.commanderGuidance?.commandError
+  if (commanderGuidanceDeliveryCommands.has(command)) return state.commanderGuidanceDelivery?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -4988,6 +5103,8 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeProgressCommands.has(command)) return { ...state, opencodeProgress: { ...opencodeProgressState(state), commandError: undefined } }
   if (opencodeWatchdogCommands.has(command)) return { ...state, opencodeWatchdog: { ...opencodeWatchdogState(state), commandError: undefined } }
   if (opencodeCommanderQuestionCommands.has(command)) return { ...state, opencodeCommanderQuestions: { ...opencodeCommanderQuestionState(state), commandError: undefined } }
+  if (commanderGuidanceCommands.has(command)) return { ...state, commanderGuidance: { ...commanderGuidanceState(state), commandError: undefined } }
+  if (commanderGuidanceDeliveryCommands.has(command)) return { ...state, commanderGuidanceDelivery: { ...commanderGuidanceDeliveryState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -5307,6 +5424,28 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-guidance-record", guidanceId: requiredArg(args, 0, "guidanceId") })
     case "commander-guidance-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-guidance-summary", limit: HANDOFF_LIMIT })
+    case "commander-guidance-delivery-preview":
+    case "guidance-delivery-preview":
+      return applyRuntimeUiEffect(commandState, runtime, commanderGuidanceDeliveryEffect("preview-commander-guidance-delivery", args, true))
+    case "commander-guidance-delivery-dry-run":
+    case "guidance-delivery-dry-run": {
+      const effect = commanderGuidanceDeliveryEffect("deliver-commander-guidance", args, true) as Extract<RuntimeUiEffect, { type: "deliver-commander-guidance" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "commander-guidance-deliver":
+    case "deliver-guidance":
+    case "send-guidance":
+      return applyRuntimeUiEffect(commandState, runtime, commanderGuidanceDeliveryEffect("deliver-commander-guidance", args, true))
+    case "commander-guidance-deliveries":
+    case "guidance-deliveries":
+      return applyRuntimeUiEffect(commandState, runtime, commanderGuidanceDeliveryListEffect(args))
+    case "commander-guidance-delivery-latest":
+    case "guidance-delivery-latest":
+      return applyRuntimeUiEffect(commandState, runtime, commanderGuidanceDeliveryLatestEffect(args))
+    case "commander-guidance-delivery-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-guidance-delivery", deliveryId: requiredArg(args, 0, "deliveryId") })
+    case "commander-guidance-delivery-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-guidance-delivery-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -6619,6 +6758,22 @@ const commanderGuidanceCommands = new Set([
   "guidance-latest",
   "commander-guidance-show",
   "commander-guidance-summary",
+])
+
+const commanderGuidanceDeliveryCommands = new Set([
+  "commander-guidance-delivery-preview",
+  "guidance-delivery-preview",
+  "commander-guidance-delivery-dry-run",
+  "guidance-delivery-dry-run",
+  "commander-guidance-deliver",
+  "deliver-guidance",
+  "send-guidance",
+  "commander-guidance-deliveries",
+  "guidance-deliveries",
+  "commander-guidance-delivery-latest",
+  "guidance-delivery-latest",
+  "commander-guidance-delivery-show",
+  "commander-guidance-delivery-summary",
 ])
 
 const researchMemoryCommands = new Set([
@@ -9997,6 +10152,101 @@ function readCommanderGuidanceSummary(value: unknown): CommanderGuidanceSummaryS
 }
 
 function readCommanderGuidanceCommands(value: unknown): CommanderGuidanceCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readCommanderGuidanceDeliveryPreview(value: unknown): CommanderGuidanceDeliveryPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_commander_guidance_delivery returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_deliver: value.can_deliver === true,
+    guidance_id: redactText(readString(value.guidance_id, "")),
+    question_id: redactText(readString(value.question_id, "")),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    guidance_status: typeof value.guidance_status === "string" ? readString(value.guidance_status, "") : undefined,
+    current_delivery_status: typeof value.current_delivery_status === "string" ? readString(value.current_delivery_status, "") : undefined,
+    delivery_mode: readString(value.delivery_mode, "operator_handoff"),
+    delivery_payload_preview: preview(readString(value.delivery_payload_preview, "")),
+    answer_preview: preview(readString(value.answer_preview, "")),
+    constraints_preview: readStringList(value.constraints_preview, 10).map(preview),
+    rationale_preview: typeof value.rationale_preview === "string" ? preview(readString(value.rationale_preview, "")) : undefined,
+    refs_preview: readStringList(value.refs_preview, 16).map(preview),
+    target_summary_preview: preview(readString(value.target_summary_preview, "")),
+    adapter_capability: readString(value.adapter_capability, "operator_handoff_only"),
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    recommended_commands: readCommanderGuidanceDeliveryCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    delivery_hash: readString(value.delivery_hash, ""),
+  }
+}
+
+function readCommanderGuidanceDeliveryResult(value: unknown): CommanderGuidanceDeliveryResultSummary {
+  if (!isRecord(value) || typeof value.delivery_id !== "string") throw new Error("runtime.deliver_commander_guidance returned invalid result")
+  return {
+    delivery_id: redactText(value.delivery_id),
+    status: readString(value.status, "blocked"),
+    guidance_id: redactText(readString(value.guidance_id, "")),
+    question_id: redactText(readString(value.question_id, "")),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    delivery_mode: readString(value.delivery_mode, "operator_handoff"),
+    delivery_status_after: readString(value.delivery_status_after, "not_delivered"),
+    adapter_capability: readString(value.adapter_capability, "operator_handoff_only"),
+    delivery_payload_preview: preview(readString(value.delivery_payload_preview, "")),
+    target_summary_preview: preview(readString(value.target_summary_preview, "")),
+    adapter_ack_preview: typeof value.adapter_ack_preview === "string" ? preview(readString(value.adapter_ack_preview, "")) : undefined,
+    operator_handoff_preview: typeof value.operator_handoff_preview === "string" ? preview(readString(value.operator_handoff_preview, "")) : undefined,
+    created_at: readString(value.created_at, ""),
+    delivered_by: preview(readString(value.delivered_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    delivery_hash: readString(value.delivery_hash, ""),
+    recommended_commands: readCommanderGuidanceDeliveryCommands(value.recommended_commands),
+  }
+}
+
+function readCommanderGuidanceDeliveryRecords(value: unknown): CommanderGuidanceDeliveryRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((record) => ({
+    delivery_id: redactText(readString(record.delivery_id, "")),
+    status: readString(record.status, "delivery_requested"),
+    guidance_id: redactText(readString(record.guidance_id, "")),
+    question_id: redactText(readString(record.question_id, "")),
+    session_id: redactText(readString(record.session_id, "")),
+    launch_id: typeof record.launch_id === "string" ? redactText(record.launch_id) : undefined,
+    delivery_mode: readString(record.delivery_mode, "operator_handoff"),
+    delivery_status_after: readString(record.delivery_status_after, "pending_delivery"),
+    created_at: readString(record.created_at, ""),
+    delivered_by: preview(readString(record.delivered_by, "")),
+    summary_preview: preview(readString(record.summary_preview, "")),
+    delivery_hash: readString(record.delivery_hash, ""),
+  }))
+}
+
+function readCommanderGuidanceDeliverySummary(value: unknown): CommanderGuidanceDeliverySummaryState {
+  if (!isRecord(value)) throw new Error("runtime.commander_guidance_delivery_summary returned invalid summary")
+  return {
+    total_deliveries: readNumber(value.total_deliveries, 0),
+    requested_count: readNumber(value.requested_count, 0),
+    delivered_count: readNumber(value.delivered_count, 0),
+    failed_count: readNumber(value.failed_count, 0),
+    by_mode_counts: readNumberMap(value.by_mode_counts, 12),
+    latest_deliveries: readCommanderGuidanceDeliveryRecords(value.latest_deliveries),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readCommanderGuidanceDeliveryCommands(value: unknown): CommanderGuidanceDeliveryCommandSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -13600,6 +13850,10 @@ function commanderGuidanceState(state: UiState): CommanderGuidanceState {
   return state.commanderGuidance ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
 }
 
+function commanderGuidanceDeliveryState(state: UiState): CommanderGuidanceDeliveryState {
+  return state.commanderGuidanceDelivery ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
 function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
   return {
     sessionId: effect.sessionId,
@@ -13659,6 +13913,15 @@ function commanderGuidancePayload(effect: Extract<RuntimeUiEffect, { type: "prev
     researchRefs: effect.researchRefs,
     artifactRefs: effect.artifactRefs,
     deliveryNote: effect.deliveryNote,
+  }
+}
+
+function commanderGuidanceDeliveryPayload(effect: Extract<RuntimeUiEffect, { type: "preview-commander-guidance-delivery" | "deliver-commander-guidance" }>): Record<string, unknown> {
+  return {
+    guidanceId: effect.guidanceId,
+    deliveryMode: effect.deliveryMode,
+    allowRealDelivery: effect.allowRealDelivery,
+    operatorNote: effect.operatorNote,
   }
 }
 
@@ -14905,6 +15168,60 @@ function commanderGuidanceLatestEffect(args: string[]): Extract<RuntimeUiEffect,
   return effect
 }
 
+function commanderGuidanceDeliveryEffect(
+  type: "preview-commander-guidance-delivery" | "deliver-commander-guidance",
+  args: string[],
+  requirePayload: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-commander-guidance-delivery" | "deliver-commander-guidance" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-commander-guidance-delivery" | "deliver-commander-guidance" }> = { type }
+  const knownKeys = new Set(["guidance", "mode", "allow_real_delivery", "operator_note", "delivered_by"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, new Set(["operator_note"]), "Commander guidance delivery args must use guidance=<id>, mode=<mode>, allow_real_delivery=<bool>, operator_note=<text>, or delivered_by=<id>")
+    index = nextIndex
+    if (key === "guidance") effect.guidanceId = value
+    else if (key === "mode") effect.deliveryMode = value
+    else if (key === "allow_real_delivery") effect.allowRealDelivery = readBooleanText(value, key)
+    else if (key === "operator_note") effect.operatorNote = value
+    else if (key === "delivered_by") {
+      // The runtime records delivered_by from the operator path; this parser accepts the key to fail closed for malformed text.
+    } else throw new Error("Commander guidance delivery arg is unsupported")
+  }
+  if (requirePayload && !effect.guidanceId) throw new Error("Commander guidance delivery requires guidance=<guidance_id>")
+  return effect
+}
+
+function commanderGuidanceDeliveryListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-commander-guidance-deliveries" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-commander-guidance-deliveries" }> = { type: "load-commander-guidance-deliveries", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("Commander guidance delivery list args must use guidance=<id>, session=<id>, launch=<id>, status=<status>, mode=<mode>, or limit=<n>")
+    if (key === "guidance") effect.guidanceId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "status") effect.status = value
+    else if (key === "mode") effect.deliveryMode = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("Commander guidance delivery list arg is unsupported")
+  }
+  return effect
+}
+
+function commanderGuidanceDeliveryLatestEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-latest-commander-guidance-delivery" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-latest-commander-guidance-delivery" }> = { type: "load-latest-commander-guidance-delivery" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("Commander guidance delivery latest args must use guidance=<id>, session=<id>, or launch=<id>")
+    if (key === "guidance") effect.guidanceId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else throw new Error("Commander guidance delivery latest arg is unsupported")
+  }
+  if (!effect.guidanceId && !effect.sessionId && !effect.launchId) throw new Error("Commander guidance delivery latest requires guidance=<id>, session=<id>, or launch=<id>")
+  return effect
+}
+
 function researchMemoryRetrievalEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-research-memory-retrieval" }> {
   const effect: Extract<RuntimeUiEffect, { type: "preview-research-memory-retrieval" }> = { type: "preview-research-memory-retrieval", limit: HANDOFF_LIMIT }
   const freeTextKeys = new Set(["query"])
@@ -15080,6 +15397,12 @@ function readPositiveInteger(value: string, field: string, max: number): number 
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${field} must be a positive integer`)
   return Math.min(parsed, max)
+}
+
+function readBooleanText(value: string, field: string): boolean {
+  if (value === "true" || value === "1" || value === "yes") return true
+  if (value === "false" || value === "0" || value === "no") return false
+  throw new Error(`${field} must be true or false`)
 }
 
 function cycleArgs(args: string[]): { topicId?: string; missionId?: string; objective?: string } {

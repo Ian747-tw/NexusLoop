@@ -93,6 +93,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeWatchdogLines(state))
   out.push(...opencodeCommanderQuestionLines(state))
   out.push(...commanderGuidanceLines(state))
+  out.push(...commanderGuidanceDeliveryLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -1193,6 +1194,52 @@ function commanderGuidanceLines(state: UiState): string[] {
   }
   if (guidance.commandError) out.push(`  command_error=${redactText(guidance.commandError)}`)
   out.push("  note=guidance was recorded but not delivered to OpenCode; no provider was called, no OpenCode prompt was sent, and mission state was not mutated")
+  return out
+}
+
+function commanderGuidanceDeliveryLines(state: UiState): string[] {
+  const delivery = state.commanderGuidanceDelivery
+  const out = ["Commander guidance delivery"]
+  if (!delivery) {
+    out.push("  no guidance delivery commands run")
+    out.push("  note=delivery is separate from CommanderGuidance answer creation; operator_handoff does not send a prompt, adapter_send requires explicit real-delivery opt-in, no provider is called, and mission state is not mutated")
+    return out
+  }
+  if (delivery.preview) {
+    const item = delivery.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_deliver=${item.can_deliver} mode=${item.delivery_mode} adapter=${item.adapter_capability} current=${item.current_delivery_status ?? "unknown"}`)
+    out.push(`  guidance=${item.guidance_id} question=${item.question_id} session=${item.session_id} launch=${item.launch_id ?? "none"}`)
+    out.push(`  payload=${preview(redactText(item.delivery_payload_preview))}`)
+    if (item.answer_preview) out.push(`  answer=${preview(redactText(item.answer_preview))}`)
+    if (item.constraints_preview.length > 0) out.push(`  constraints=${item.constraints_preview.map((value) => preview(redactText(value))).join("; ")}`)
+    if (item.rationale_preview) out.push(`  rationale=${preview(redactText(item.rationale_preview))}`)
+    if (item.refs_preview.length > 0) out.push(`  refs=${item.refs_preview.map((value) => preview(redactText(value))).join("; ")}`)
+    out.push(`  target=${preview(redactText(item.target_summary_preview))}`)
+    if (item.blockers.length > 0) out.push(`  blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  warnings=${item.warnings.map(redactText).join("; ")}`)
+    if (item.recommended_commands.length > 0) out.push(`  recommended=${item.recommended_commands.map((command) => redactText(command.command)).join(" | ")}`)
+  }
+  if (delivery.latestResult) {
+    const item = delivery.latestResult
+    out.push(`  latest_result=${item.delivery_id} status=${item.status} after=${item.delivery_status_after} mode=${item.delivery_mode} guidance=${item.guidance_id}`)
+    if (item.operator_handoff_preview) out.push(`  operator_handoff=${preview(redactText(item.operator_handoff_preview))}`)
+    if (item.adapter_ack_preview) out.push(`  adapter_ack=${preview(redactText(item.adapter_ack_preview))}`)
+    if (item.error) out.push(`  latest_error=${redactText(item.error)}`)
+  }
+  if (delivery.records.length > 0) {
+    out.push("  delivery_records")
+    out.push(...delivery.records.slice(0, 10).map((record) => `    - ${record.delivery_id} status=${record.status} after=${record.delivery_status_after} mode=${record.delivery_mode} guidance=${record.guidance_id} session=${record.session_id}: ${preview(redactText(record.summary_preview))}`))
+  }
+  if (delivery.selected) out.push(`  selected=${delivery.selected.delivery_id} status=${delivery.selected.status} after=${delivery.selected.delivery_status_after} guidance=${delivery.selected.guidance_id}: ${preview(redactText(delivery.selected.delivery_payload_preview))}`)
+  if (delivery.latest) out.push(`  latest=${delivery.latest.delivery_id} status=${delivery.latest.status} after=${delivery.latest.delivery_status_after} guidance=${delivery.latest.guidance_id}: ${preview(redactText(delivery.latest.delivery_payload_preview))}`)
+  if (delivery.summary) {
+    const summary = delivery.summary
+    out.push(`  summary total=${summary.total_deliveries} requested=${summary.requested_count} delivered=${summary.delivered_count} failed=${summary.failed_count}`)
+    const modes = Object.entries(summary.by_mode_counts).map(([key, value]) => `${key}:${value}`).join(", ")
+    if (modes) out.push(`  by_mode=${modes}`)
+  }
+  if (delivery.commandError) out.push(`  command_error=${redactText(delivery.commandError)}`)
+  out.push("  note=delivery is separate from answer creation; operator_handoff does not send a prompt, adapter_send requires explicit real-delivery opt-in, no provider was called, and mission state was not mutated")
   return out
 }
 

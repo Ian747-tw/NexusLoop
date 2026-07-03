@@ -2102,6 +2102,96 @@ export type CommanderGuidanceState = {
   commandError?: string
 }
 
+export type CommanderGuidanceDeliveryCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type CommanderGuidanceDeliveryPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_deliver: boolean
+  guidance_id: string
+  question_id: string
+  session_id: string
+  launch_id?: string
+  guidance_status?: string
+  current_delivery_status?: string
+  delivery_mode: string
+  delivery_payload_preview: string
+  answer_preview: string
+  constraints_preview: string[]
+  rationale_preview?: string
+  refs_preview: string[]
+  target_summary_preview: string
+  adapter_capability: string
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: CommanderGuidanceDeliveryCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  delivery_hash: string
+}
+
+export type CommanderGuidanceDeliveryResultSummary = {
+  delivery_id: string
+  status: "dry_run" | "delivery_requested" | "delivered" | "delivery_failed" | "blocked" | string
+  guidance_id: string
+  question_id: string
+  session_id: string
+  launch_id?: string
+  delivery_mode: string
+  delivery_status_after: string
+  adapter_capability: string
+  delivery_payload_preview: string
+  target_summary_preview: string
+  adapter_ack_preview?: string
+  operator_handoff_preview?: string
+  created_at: string
+  delivered_by: string
+  error?: string
+  delivery_hash: string
+  recommended_commands: CommanderGuidanceDeliveryCommandSummary[]
+}
+
+export type CommanderGuidanceDeliveryRecordSummary = {
+  delivery_id: string
+  status: string
+  guidance_id: string
+  question_id: string
+  session_id: string
+  launch_id?: string
+  delivery_mode: string
+  delivery_status_after: string
+  created_at: string
+  delivered_by: string
+  summary_preview: string
+  delivery_hash: string
+}
+
+export type CommanderGuidanceDeliverySummaryState = {
+  total_deliveries: number
+  requested_count: number
+  delivered_count: number
+  failed_count: number
+  by_mode_counts: Record<string, number>
+  latest_deliveries: CommanderGuidanceDeliveryRecordSummary[]
+  generated_at: string
+}
+
+export type CommanderGuidanceDeliveryState = {
+  preview?: CommanderGuidanceDeliveryPreviewSummary | null
+  latestResult?: CommanderGuidanceDeliveryResultSummary | null
+  records: CommanderGuidanceDeliveryRecordSummary[]
+  selected?: CommanderGuidanceDeliveryResultSummary | null
+  latest?: CommanderGuidanceDeliveryResultSummary | null
+  summary?: CommanderGuidanceDeliverySummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -4485,6 +4575,7 @@ export type UiState = {
   opencodeWatchdog?: OpenCodeWatchdogState
   opencodeCommanderQuestions?: OpenCodeCommanderQuestionsState
   commanderGuidance?: CommanderGuidanceState
+  commanderGuidanceDelivery?: CommanderGuidanceDeliveryState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
