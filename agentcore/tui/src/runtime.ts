@@ -3389,16 +3389,21 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (launch && sessionIdInput && launch.session_id !== sessionIdInput) blockers.push("launch_id does not belong to session_id")
     if (launch && launch.status !== "launch_started" && launch.status !== "launched") blockers.push(`OpenCode human controls require launch_started or launched status; current status is ${launch.status}`)
     blockers.push(...humanControlTextBlockers(kind, { reason, humanNote, correction, overrideText }))
-    if (fakeProgressPayloadLooksLikeRawLog([reason, humanNote, correction, overrideText])) blockers.push("raw logs, file contents, provider output, raw OpenCode output, full event logs, and full research.db dumps are out of scope for human control records")
+    const rawLogBlocked = fakeProgressPayloadLooksLikeRawLog([reason, humanNote, correction, overrideText])
+    if (rawLogBlocked) blockers.push("raw logs, file contents, provider output, raw OpenCode output, full event logs, and full research.db dumps are out of scope for human control records")
+    const safeReason = rawLogBlocked ? undefined : reason
+    const safeHumanNote = rawLogBlocked ? "raw human note omitted" : humanNote
+    const safeCorrection = rawLogBlocked ? undefined : correction
+    const safeOverride = rawLogBlocked ? undefined : overrideText
     const projected = humanControlProjectedState(kind)
     const controlHash = createHash("sha256").update(JSON.stringify({
       sessionId,
       launchId: launch?.launch_id ?? launchIdInput,
       kind,
-      reason: redactText(reason ?? "").toLowerCase(),
-      humanNote: redactText(humanNote ?? "").toLowerCase(),
-      correction: redactText(correction ?? "").toLowerCase(),
-      override: redactText(overrideText ?? "").toLowerCase(),
+      reason: redactText(safeReason ?? "").toLowerCase(),
+      humanNote: redactText(safeHumanNote ?? "").toLowerCase(),
+      correction: redactText(safeCorrection ?? "").toLowerCase(),
+      override: redactText(safeOverride ?? "").toLowerCase(),
       evidence,
     })).digest("hex")
     return {
@@ -3410,10 +3415,10 @@ export class FakeRuntimeClient implements RuntimeClient {
       control_kind: kind,
       projected_state_after: projected,
       urgency,
-      human_note_preview: humanNote,
-      correction_preview: correction,
-      override_preview: overrideText,
-      reason_preview: reason,
+      human_note_preview: safeHumanNote,
+      correction_preview: safeCorrection,
+      override_preview: safeOverride,
+      reason_preview: safeReason,
       linked_progress_id: progressId,
       linked_watchdog_id: watchdogId,
       linked_forced_report_request_id: forcedReportId,

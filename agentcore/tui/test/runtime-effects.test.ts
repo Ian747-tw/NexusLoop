@@ -5697,6 +5697,10 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: [`session=${sessionId}`, "kind=note", "note=stdout:", "raw", "runtime", "log"] })
+    expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "blocked", human_note_preview: "raw human note omitted" })
+    expect(JSON.stringify(state)).not.toContain("stdout:")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: [`session=${sessionId}`, "kind=pause_request", "reason=operator", "wants", "review", "token=abc123"] })
     expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "ready", can_record: true, control_kind: "pause_request", process_control_performed: false, open_code_prompt_sent: false, mission_mutated: false })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-dry-run", args: [`session=${sessionId}`, "kind=pause_request", "reason=operator", "wants", "review", "token=abc123"] })
