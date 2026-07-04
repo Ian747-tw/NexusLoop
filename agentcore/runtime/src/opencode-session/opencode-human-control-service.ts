@@ -82,6 +82,16 @@ export class OpenCodeHumanControlService {
         error: preview.blockers[0] ?? "OpenCode human control is blocked",
       })
     }
+    const existingDuplicate = await this.findDuplicate(preview)
+    if (existingDuplicate) {
+      return resultFromPreview(preview, {
+        control_id: controlId,
+        status: "blocked",
+        recorded_at: recordedAt,
+        recorded_by: recordedBy,
+        error: `duplicate human control already exists: ${existingDuplicate.control_id}`,
+      })
+    }
     if (input.dry_run === true) {
       return resultFromPreview(preview, {
         control_id: controlId,

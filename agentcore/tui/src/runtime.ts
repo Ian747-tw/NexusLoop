@@ -3440,7 +3440,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private recordOpenCodeHumanControl(payload: Record<string, unknown>): OpenCodeHumanControlResultSummary {
     const dryRun = payload.dryRun === true || payload.dry_run === true
     const previewResult = this.previewOpenCodeHumanControl(payload)
-    const duplicate = !dryRun && previewResult.can_record ? this.opencodeHumanControlRecords.find((item) =>
+    const duplicate = previewResult.can_record ? this.opencodeHumanControlRecords.find((item) =>
       item.session_id === previewResult.session_id &&
       item.control_kind === previewResult.control_kind &&
       item.control_hash === previewResult.control_hash &&

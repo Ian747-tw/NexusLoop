@@ -18248,6 +18248,9 @@ describe("OpenCode launch readiness", () => {
     const duplicate = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "pause_request", reason: "operator wants review token=human-secret", progressId: progress.progress_id, watchdogId: watchdog.watchdog_id }) as { status: string; error?: string }
     expect(duplicate).toMatchObject({ status: "blocked" })
     expect(duplicate.error).toContain("duplicate human control")
+    const duplicateDryRun = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "pause_request", reason: "operator wants review token=human-secret", progressId: progress.progress_id, watchdogId: watchdog.watchdog_id, dryRun: true }) as { status: string; error?: string }
+    expect(duplicateDryRun).toMatchObject({ status: "blocked" })
+    expect(duplicateDryRun.error).toContain("duplicate human control")
 
     const correction = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "correction", correction: "prefer safer approach token=human-secret" }) as { status: string; projected_state_after: string; open_code_prompt_sent: boolean }
     expect(correction).toMatchObject({ status: "recorded", projected_state_after: "correction_pending", open_code_prompt_sent: false })

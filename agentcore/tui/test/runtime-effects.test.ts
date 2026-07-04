@@ -5721,6 +5721,9 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-pause", args: [`session=${sessionId}`, "reason=operator", "wants", "review", "token=abc123"] })
     expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "blocked" })
     expect(state.opencodeHumanControls?.commandError).toContain("duplicate human control already exists")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-dry-run", args: [`session=${sessionId}`, "kind=pause_request", "reason=operator", "wants", "review", "token=abc123"] })
+    expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "blocked", control_kind: "pause_request" })
+    expect(state.opencodeHumanControls?.commandError).toContain("duplicate human control already exists")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-controls", args: [`session=${sessionId}`] })
     expect(state.opencodeHumanControls?.records.map((record) => record.control_id)).toContain(correctionId)
