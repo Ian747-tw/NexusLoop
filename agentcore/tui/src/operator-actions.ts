@@ -105,6 +105,9 @@ const WRITE_COMMANDS = new Set([
   "commander-guidance",
   "answer-commander-question",
   "answer-question",
+  "commander-guidance-deliver",
+  "deliver-guidance",
+  "send-guidance",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

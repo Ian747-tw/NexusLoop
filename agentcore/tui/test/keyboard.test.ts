@@ -374,6 +374,34 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("Commander guidance delivery slash commands are exact whitelist entries", () => {
+    let result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/commander-guidance-deliver guidance=guidance-1 mode=operator_handoff",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "commander-guidance-deliver", args: ["guidance=guidance-1", "mode=operator_handoff"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/deliver-guidance guidance=guidance-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "deliver-guidance", args: ["guidance=guidance-1"] }])
+
+    for (const message of ["/tmp/deliver-guidance", "/path/commander-guidance-deliver", ".commander-guidance-deliver guidance=guidance-1", ":commander-guidance-deliver guidance=guidance-1"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("review slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

@@ -19,6 +19,7 @@ import type {
   CommanderGuidanceStatus,
   CommanderGuidanceSummary,
 } from "./opencode-commander-guidance-types"
+import { latestGuidanceDeliveryStatusFromEvents } from "./opencode-guidance-delivery-service"
 
 const MAX_LIST = 100
 const MAX_TEXT = 480
@@ -128,11 +129,12 @@ export class CommanderGuidanceService {
   }
 
   async get(guidanceId: string): Promise<CommanderGuidanceResult | null> {
-    const event = (await this.options.eventStore.readAll())
+    const events = await this.options.eventStore.readAll()
+    const event = events
       .filter(isGuidanceCreatedEvent)
       .reverse()
       .find((item) => item.guidance_id === guidanceId)
-    return event ? resultFromEvent(event) : null
+    return event ? resultFromEvent(event, latestGuidanceDeliveryStatusFromEvents(events, guidanceId)) : null
   }
 
   async latest(input: { session_id?: string; launch_id?: string; question_id?: string } = {}): Promise<CommanderGuidanceResult | null> {
@@ -257,10 +259,11 @@ export class CommanderGuidanceService {
   }
 
   private async sequencedRecords(): Promise<SequencedGuidanceRecord[]> {
-    return (await this.options.eventStore.readAll())
+    const events = await this.options.eventStore.readAll()
+    return events
       .map((event, index) => ({ event, index }))
       .filter(({ event }) => isGuidanceCreatedEvent(event))
-      .map(({ event, index }) => ({ record: recordFromEvent(event)!, event_index: index }))
+      .map(({ event, index }) => ({ record: recordFromEvent(event, latestGuidanceDeliveryStatusFromEvents(events, String(event.guidance_id ?? "")))!, event_index: index }))
       .filter((item) => Boolean(item.record))
   }
 
@@ -374,12 +377,12 @@ function questionAnsweredEventPayload(result: CommanderGuidanceResult): Record<s
   })
 }
 
-function resultFromEvent(event: JsonlEvent): CommanderGuidanceResult {
+function resultFromEvent(event: JsonlEvent, deliveryStatus?: CommanderGuidanceDeliveryStatus): CommanderGuidanceResult {
   return redactValue({
     guidance_id: String(event.guidance_id ?? ""),
     status: "created",
     guidance_status: readGuidanceStatus(event.guidance_status),
-    delivery_status: readDeliveryStatus(event.delivery_status),
+    delivery_status: deliveryStatus ?? readDeliveryStatus(event.delivery_status),
     question_id: String(event.question_id ?? ""),
     question_status_after: "answered",
     session_id: String(event.session_id ?? ""),
@@ -403,12 +406,12 @@ function resultFromEvent(event: JsonlEvent): CommanderGuidanceResult {
   })
 }
 
-function recordFromEvent(event: JsonlEvent): CommanderGuidanceRecord | null {
+function recordFromEvent(event: JsonlEvent, deliveryStatus?: CommanderGuidanceDeliveryStatus): CommanderGuidanceRecord | null {
   if (typeof event.guidance_id !== "string" || typeof event.question_id !== "string" || typeof event.session_id !== "string") return null
   return redactValue({
     guidance_id: event.guidance_id,
     status: readGuidanceStatus(event.guidance_status),
-    delivery_status: readDeliveryStatus(event.delivery_status),
+    delivery_status: deliveryStatus ?? readDeliveryStatus(event.delivery_status),
     question_id: event.question_id,
     session_id: event.session_id,
     launch_id: typeof event.launch_id === "string" ? event.launch_id : undefined,
