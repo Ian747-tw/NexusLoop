@@ -3383,6 +3383,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     const overrideText = optionalString(payload.override)
     const blockers: string[] = [...evidence.blockers]
     if (!sessionId && !launchIdInput && !evidence.hasEvidence) blockers.push("session_id or launch_id is required")
+    if (sessionIdInput && evidence.sessionId && evidence.sessionId !== sessionIdInput) blockers.push("linked evidence belongs to a different session")
+    if (launchIdInput && evidence.launchId && evidence.launchId !== launchIdInput) blockers.push("linked evidence belongs to a different launch")
     if (sessionId && !this.opencodeSessions.some((item) => item.session_id === sessionId)) blockers.push("session_id does not resolve to a planned OpenCode session")
     if (!launch) blockers.push("OpenCode human controls require a launch record for the session")
     if (launch && launchIdInput && launch.launch_id !== launchIdInput) blockers.push("launch_id does not resolve to a fake OpenCode launch record")

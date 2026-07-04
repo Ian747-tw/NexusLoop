@@ -5707,6 +5707,25 @@ describe("runtime UI effects", () => {
     expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "dry_run", control_kind: "pause_request", process_control_performed: false })
     expect(state.opencodeHumanControls?.records).toEqual([])
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=other", "session"] })
+    const otherSessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(otherSessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${otherSessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${otherSessionId}`] })
+    const otherLaunchId = state.opencodeLaunches?.latestResult?.launch_id
+    expect(otherLaunchId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-question", args: [`session=${otherSessionId}`, "question=other", "session", "question"] })
+    const otherProgressId = state.opencodeProgress?.latestResult?.progress_id
+    expect(otherProgressId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: [`session=${sessionId}`, `progress=${otherProgressId}`, "kind=pause_request", "reason=mismatched", "evidence"] })
+    expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "blocked" })
+    expect(state.opencodeHumanControls?.preview?.blockers.join(" ")).toContain("linked evidence belongs to a different session")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: [`launch=${otherLaunchId}`, `progress=${otherProgressId}`, "kind=note", "note=matching", "evidence"] })
+    expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "ready" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: ["launch=fake_launch_mismatch", `progress=${otherProgressId}`, "kind=note", "note=mismatched", "launch"] })
+    expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "blocked" })
+    expect(state.opencodeHumanControls?.preview?.blockers.join(" ")).toContain("linked evidence belongs to a different launch")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-pause", args: [`session=${sessionId}`, "reason=operator", "wants", "review", "token=abc123"] })
     const pauseId = state.opencodeHumanControls?.latestResult?.control_id
     expect(pauseId).toBeTruthy()
