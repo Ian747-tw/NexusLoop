@@ -18221,6 +18221,94 @@ describe("OpenCode launch readiness", () => {
     await client.shutdown?.()
   })
 
+  test("human control previews dry-runs records metadata and never controls processes or prompts OpenCode", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
+    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked", blockers: ["needs human review token=human-secret"] }) as { progress_id: string }
+    const watchdog = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string }
+
+    const eventsBefore = await server.eventStore.readAll()
+    const preview = await server.command("runtime.preview_opencode_human_control", { sessionId, kind: "pause_request", reason: "operator wants review token=human-secret", progressId: progress.progress_id, watchdogId: watchdog.watchdog_id }) as { status: string; can_record: boolean; process_control_performed: boolean; open_code_prompt_sent: boolean; mission_mutated: boolean; reason_preview?: string }
+    expect(preview).toMatchObject({ status: "ready", can_record: true, process_control_performed: false, open_code_prompt_sent: false, mission_mutated: false })
+    expect(preview.reason_preview).not.toContain("human-secret")
+    expect(await server.eventStore.readAll()).toEqual(eventsBefore)
+
+    const dryRun = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "pause_request", reason: "dry run review", dryRun: true }) as { status: string }
+    expect(dryRun.status).toBe("dry_run")
+    expect(await server.eventStore.readAll()).toEqual(eventsBefore)
+
+    const rawLog = await server.command("runtime.preview_opencode_human_control", { sessionId, kind: "note", note: "stdout: noisy raw log" }) as { status: string; blockers: string[] }
+    expect(rawLog).toMatchObject({ status: "blocked" })
+    expect(rawLog.blockers.join(" ")).toContain("raw logs")
+
+    const pause = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "pause_request", reason: "operator wants review token=human-secret", progressId: progress.progress_id, watchdogId: watchdog.watchdog_id, recordedBy: "human-operator" }) as { status: string; control_id: string; projected_state_after: string; process_control_performed: boolean; open_code_prompt_sent: boolean; mission_mutated: boolean; reason_preview?: string }
+    expect(pause).toMatchObject({ status: "recorded", projected_state_after: "pause_requested", process_control_performed: false, open_code_prompt_sent: false, mission_mutated: false })
+    expect(pause.reason_preview).not.toContain("human-secret")
+    const duplicate = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "pause_request", reason: "operator wants review token=human-secret", progressId: progress.progress_id, watchdogId: watchdog.watchdog_id }) as { status: string; error?: string }
+    expect(duplicate).toMatchObject({ status: "blocked" })
+    expect(duplicate.error).toContain("duplicate human control")
+    const duplicateDryRun = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "pause_request", reason: "operator wants review token=human-secret", progressId: progress.progress_id, watchdogId: watchdog.watchdog_id, dryRun: true }) as { status: string; error?: string }
+    expect(duplicateDryRun).toMatchObject({ status: "blocked" })
+    expect(duplicateDryRun.error).toContain("duplicate human control")
+
+    const correction = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "correction", correction: "prefer safer approach token=human-secret" }) as { status: string; projected_state_after: string; open_code_prompt_sent: boolean }
+    expect(correction).toMatchObject({ status: "recorded", projected_state_after: "correction_pending", open_code_prompt_sent: false })
+    const forceReport = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "force_report", reason: "please report current state" }) as { status: string; projected_state_after: string }
+    expect(forceReport).toMatchObject({ status: "recorded", projected_state_after: "report_requested" })
+    const noteA = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "note", note: "first note" }) as { status: string }
+    const noteB = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "note", note: "first note" }) as { status: string }
+    expect(noteA.status).toBe("recorded")
+    expect(noteB.status).toBe("recorded")
+
+    await expect(server.command("runtime.list_opencode_human_controls", { sessionId })).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ control_id: pause.control_id, process_control_performed: false, open_code_prompt_sent: false, mission_mutated: false }),
+    ]))
+    await expect(server.command("runtime.get_opencode_human_control", { controlId: pause.control_id })).resolves.toMatchObject({ control_id: pause.control_id, recorded_by: "human-operator" })
+    await expect(server.command("runtime.latest_opencode_human_control", { sessionId })).resolves.toMatchObject({ status: "recorded" })
+    await expect(server.command("runtime.opencode_human_control_summary")).resolves.toMatchObject({ total_controls: 5, pause_requested_count: 1, correction_pending_count: 1, report_requested_count: 1 })
+
+    const mismatch = await server.command("runtime.preview_opencode_human_control", { sessionId: "other_session", kind: "pause_request", reason: "wrong", progressId: progress.progress_id }) as { status: string; blockers: string[] }
+    expect(mismatch.status).toBe("blocked")
+    expect(mismatch.blockers.join(" ")).toContain("linked evidence does not belong to session_id")
+
+    const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+    expect(eventKinds.filter((kind) => kind === "opencode_human_control_recorded")).toHaveLength(5)
+    expect(eventKinds).not.toContain("opencode_session_process_paused")
+    expect(eventKinds).not.toContain("opencode_session_process_killed")
+    expect(eventKinds).not.toContain("opencode_session_process_stopped")
+    expect(eventKinds).not.toContain("opencode_prompt_sent")
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+    expect(eventKinds).not.toContain("research_db_written")
+    const serialized = JSON.stringify(await server.eventStore.readAll())
+    expect(serialized).not.toContain("human-secret")
+    for (const event of await server.eventStore.readAll()) {
+      if (event.kind !== "opencode_human_control_recorded") continue
+      expect(event.process_control_performed).toBe(false)
+      expect(event.open_code_prompt_sent).toBe(false)
+      expect(event.mission_mutated).toBe(false)
+    }
+
+    await server.shutdown()
+
+    const noStartDir = await tempProject()
+    await makeProject(noStartDir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const noStartServer = new RuntimeServer({ projectDir: noStartDir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server: noStartServer, autoStart: true, ownsServer: true })
+    await expect(client.command("runtime.preview_opencode_human_control", { sessionId: "missing", kind: "pause_request", reason: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.record_opencode_human_control", { sessionId: "missing", kind: "pause_request", reason: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_opencode_human_controls")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_human_control", { controlId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.latest_opencode_human_control", { sessionId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.opencode_human_control_summary")).resolves.toMatchObject({ total_controls: 0 })
+    expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
+    const authority = await noStartServer.command("runtime.command_authority_get", { command: "/opencode-human-pause" }) as { risk: string; notes: string[] }
+    expect(authority.risk).toBe("medium_risk_write")
+    expect(authority.notes.join(" ")).toContain("process_control_performed=false")
+    await client.shutdown?.()
+  })
+
 	  test("opencode asks Commander accepts watchdog and forced-report evidence but rejects mismatches and raw logs", async () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)

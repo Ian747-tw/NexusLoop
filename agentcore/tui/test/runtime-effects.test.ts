@@ -5687,6 +5687,101 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toEqual([])
   })
 
+  test("OpenCode human control slash commands record metadata without process control or prompts", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=human", "control", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: [`session=${sessionId}`, "kind=note", "note=stdout:", "raw", "runtime", "log"] })
+    expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "blocked", human_note_preview: "raw human note omitted" })
+    expect(JSON.stringify(state)).not.toContain("stdout:")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: [`session=${sessionId}`, "kind=pause_request", "reason=operator", "wants", "review", "token=abc123"] })
+    expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "ready", can_record: true, control_kind: "pause_request", process_control_performed: false, open_code_prompt_sent: false, mission_mutated: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-dry-run", args: [`session=${sessionId}`, "kind=pause_request", "reason=operator", "wants", "review", "token=abc123"] })
+    expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "dry_run", control_kind: "pause_request", process_control_performed: false })
+    expect(state.opencodeHumanControls?.records).toEqual([])
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=other", "session"] })
+    const otherSessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(otherSessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${otherSessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${otherSessionId}`] })
+    const otherLaunchId = state.opencodeLaunches?.latestResult?.launch_id
+    expect(otherLaunchId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-question", args: [`session=${otherSessionId}`, "question=other", "session", "question"] })
+    const otherProgressId = state.opencodeProgress?.latestResult?.progress_id
+    expect(otherProgressId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: [`session=${sessionId}`, `progress=${otherProgressId}`, "kind=pause_request", "reason=mismatched", "evidence"] })
+    expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "blocked" })
+    expect(state.opencodeHumanControls?.preview?.blockers.join(" ")).toContain("linked evidence belongs to a different session")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: [`launch=${otherLaunchId}`, `progress=${otherProgressId}`, "kind=note", "note=matching", "evidence"] })
+    expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "ready" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-preview", args: ["launch=fake_launch_mismatch", `progress=${otherProgressId}`, "kind=note", "note=mismatched", "launch"] })
+    expect(state.opencodeHumanControls?.preview).toMatchObject({ status: "blocked" })
+    expect(state.opencodeHumanControls?.preview?.blockers.join(" ")).toContain("linked evidence belongs to a different launch")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-pause", args: [`session=${sessionId}`, "reason=operator", "wants", "review", "token=abc123"] })
+    const pauseId = state.opencodeHumanControls?.latestResult?.control_id
+    expect(pauseId).toBeTruthy()
+    expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "recorded", projected_state_after: "pause_requested", process_control_performed: false, open_code_prompt_sent: false, mission_mutated: false })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-correction", args: [`session=${sessionId}`, "correction=prefer", "safer", "approach", "token=abc123"] })
+    const correctionId = state.opencodeHumanControls?.latestResult?.control_id
+    expect(correctionId).toBeTruthy()
+    expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "recorded", control_kind: "correction", projected_state_after: "correction_pending", open_code_prompt_sent: false })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-force-report", args: [`session=${sessionId}`, "reason=please", "report", "current", "state", "token=abc123"] })
+    expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "recorded", control_kind: "force_report", projected_state_after: "report_requested" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-note", args: [`session=${sessionId}`, "note=operator", "note", "token=abc123"] })
+    expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "recorded", control_kind: "note", projected_state_after: "noted" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-pause", args: [`session=${sessionId}`, "reason=operator", "wants", "review", "token=abc123"] })
+    expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "blocked" })
+    expect(state.opencodeHumanControls?.commandError).toContain("duplicate human control already exists")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-dry-run", args: [`session=${sessionId}`, "kind=pause_request", "reason=operator", "wants", "review", "token=abc123"] })
+    expect(state.opencodeHumanControls?.latestResult).toMatchObject({ status: "blocked", control_kind: "pause_request" })
+    expect(state.opencodeHumanControls?.commandError).toContain("duplicate human control already exists")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-controls", args: [`session=${sessionId}`] })
+    expect(state.opencodeHumanControls?.records.map((record) => record.control_id)).toContain(correctionId)
+    expect(state.opencodeHumanControls?.records).toHaveLength(4)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-latest", args: [`session=${sessionId}`] })
+    expect(state.opencodeHumanControls?.latest?.control_kind).toBe("note")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-show", args: [correctionId!] })
+    expect(state.opencodeHumanControls?.selected?.control_id).toBe(correctionId)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-control-summary", args: [] })
+    expect(state.opencodeHumanControls?.summary).toMatchObject({ total_controls: 4, pause_requested_count: 1, correction_pending_count: 1, report_requested_count: 1 })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/opencode-human-pause", `session=${sessionId}`, "reason=staged", "review"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-human-pause"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/opencode-human-control",
+      risk: "medium_risk_write",
+      calls_provider: false,
+      creates_external_process: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("process_control_performed=false")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode human controls")
+    expect(snapshot).toContain("process_control_performed=false")
+    expect(snapshot).toContain("open_code_prompt_sent=false")
+    expect(snapshot).toContain("mission_mutated=false")
+    expect(snapshot).toContain("no process pause/kill/stop/resume occurred")
+    expect(snapshot).toContain("selected=/opencode-human-control risk=medium_risk_write")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+    expect(runtime.sentCommands).toEqual([])
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

@@ -2192,6 +2192,118 @@ export type CommanderGuidanceDeliveryState = {
   commandError?: string
 }
 
+export type OpenCodeHumanControlCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeHumanControlPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_record: boolean
+  session_id: string
+  launch_id?: string
+  control_kind: string
+  projected_state_after: string
+  urgency: string
+  human_note_preview?: string
+  correction_preview?: string
+  override_preview?: string
+  reason_preview?: string
+  linked_progress_id?: string
+  linked_watchdog_id?: string
+  linked_forced_report_request_id?: string
+  linked_question_id?: string
+  linked_guidance_id?: string
+  linked_delivery_id?: string
+  process_control_performed: false
+  open_code_prompt_sent: false
+  mission_mutated: false
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeHumanControlCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  control_hash: string
+}
+
+export type OpenCodeHumanControlResultSummary = {
+  control_id: string
+  status: "recorded" | "blocked" | "dry_run" | "failed" | string
+  session_id: string
+  launch_id?: string
+  control_kind: string
+  projected_state_after: string
+  urgency: string
+  human_note_preview?: string
+  correction_preview?: string
+  override_preview?: string
+  reason_preview?: string
+  linked_progress_id?: string
+  linked_watchdog_id?: string
+  linked_forced_report_request_id?: string
+  linked_question_id?: string
+  linked_guidance_id?: string
+  linked_delivery_id?: string
+  process_control_performed: false
+  open_code_prompt_sent: false
+  mission_mutated: false
+  recorded_at: string
+  recorded_by: string
+  error?: string
+  control_hash: string
+  recommended_commands: OpenCodeHumanControlCommandSummary[]
+}
+
+export type OpenCodeHumanControlRecordSummary = {
+  control_id: string
+  session_id: string
+  launch_id?: string
+  control_kind: string
+  projected_state_after: string
+  urgency: string
+  human_note_preview?: string
+  recorded_at: string
+  recorded_by: string
+  linked_progress_id?: string
+  linked_watchdog_id?: string
+  linked_forced_report_request_id?: string
+  linked_question_id?: string
+  linked_guidance_id?: string
+  linked_delivery_id?: string
+  process_control_performed: false
+  open_code_prompt_sent: false
+  mission_mutated: false
+  control_hash: string
+}
+
+export type OpenCodeHumanControlSummaryState = {
+  total_controls: number
+  session_count: number
+  pause_requested_count: number
+  stop_requested_count: number
+  correction_pending_count: number
+  override_pending_count: number
+  report_requested_count: number
+  escalation_count: number
+  urgent_count: number
+  latest_controls: OpenCodeHumanControlRecordSummary[]
+  generated_at: string
+}
+
+export type OpenCodeHumanControlState = {
+  preview?: OpenCodeHumanControlPreviewSummary | null
+  latestResult?: OpenCodeHumanControlResultSummary | null
+  records: OpenCodeHumanControlRecordSummary[]
+  selected?: OpenCodeHumanControlResultSummary | null
+  latest?: OpenCodeHumanControlResultSummary | null
+  summary?: OpenCodeHumanControlSummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -4576,6 +4688,7 @@ export type UiState = {
   opencodeCommanderQuestions?: OpenCodeCommanderQuestionsState
   commanderGuidance?: CommanderGuidanceState
   commanderGuidanceDelivery?: CommanderGuidanceDeliveryState
+  opencodeHumanControls?: OpenCodeHumanControlState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
