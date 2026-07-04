@@ -94,6 +94,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeCommanderQuestionLines(state))
   out.push(...commanderGuidanceLines(state))
   out.push(...commanderGuidanceDeliveryLines(state))
+  out.push(...opencodeHumanControlLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -1240,6 +1241,62 @@ function commanderGuidanceDeliveryLines(state: UiState): string[] {
   }
   if (delivery.commandError) out.push(`  command_error=${redactText(delivery.commandError)}`)
   out.push("  note=delivery is separate from answer creation; operator_handoff does not send a prompt, adapter_send requires explicit real-delivery opt-in, no provider was called, and mission state was not mutated")
+  return out
+}
+
+function opencodeHumanControlLines(state: UiState): string[] {
+  const controls = state.opencodeHumanControls
+  const out = ["OpenCode human controls"]
+  if (!controls) {
+    out.push("  no human control commands run")
+    out.push("  note=human control is recorded only; no process pause/kill/stop/resume occurred, no OpenCode prompt was sent, and future wake/Commander branches may consume the record")
+    return out
+  }
+  if (controls.preview) {
+    const item = controls.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_record=${item.can_record} kind=${item.control_kind} state=${item.projected_state_after} urgency=${item.urgency}`)
+    out.push(`  session=${item.session_id} launch=${item.launch_id ?? "none"}`)
+    if (item.reason_preview) out.push(`  reason=${preview(redactText(item.reason_preview))}`)
+    if (item.human_note_preview) out.push(`  human_note=${preview(redactText(item.human_note_preview))}`)
+    if (item.correction_preview) out.push(`  correction=${preview(redactText(item.correction_preview))}`)
+    if (item.override_preview) out.push(`  override=${preview(redactText(item.override_preview))}`)
+    const linked = [
+      item.linked_progress_id ? `progress=${item.linked_progress_id}` : "",
+      item.linked_watchdog_id ? `watchdog=${item.linked_watchdog_id}` : "",
+      item.linked_forced_report_request_id ? `forced_report=${item.linked_forced_report_request_id}` : "",
+      item.linked_question_id ? `question=${item.linked_question_id}` : "",
+      item.linked_guidance_id ? `guidance=${item.linked_guidance_id}` : "",
+      item.linked_delivery_id ? `delivery=${item.linked_delivery_id}` : "",
+    ].filter(Boolean).join(" ")
+    if (linked) out.push(`  linked=${linked}`)
+    out.push(`  process_control_performed=${item.process_control_performed} open_code_prompt_sent=${item.open_code_prompt_sent} mission_mutated=${item.mission_mutated}`)
+    if (item.blockers.length > 0) out.push(`  blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  warnings=${item.warnings.map(redactText).join("; ")}`)
+    if (item.recommended_commands.length > 0) out.push(`  recommended=${item.recommended_commands.map((command) => redactText(command.command)).join(" | ")}`)
+  }
+  if (controls.latestResult) {
+    const item = controls.latestResult
+    out.push(`  latest_result=${item.control_id} status=${item.status} kind=${item.control_kind} state=${item.projected_state_after} session=${item.session_id}`)
+    if (item.reason_preview) out.push(`  latest_reason=${preview(redactText(item.reason_preview))}`)
+    if (item.correction_preview) out.push(`  latest_correction=${preview(redactText(item.correction_preview))}`)
+    if (item.override_preview) out.push(`  latest_override=${preview(redactText(item.override_preview))}`)
+    out.push(`  process_control_performed=${item.process_control_performed} open_code_prompt_sent=${item.open_code_prompt_sent} mission_mutated=${item.mission_mutated}`)
+    if (item.error) out.push(`  latest_error=${redactText(item.error)}`)
+  }
+  if (controls.records.length > 0) {
+    out.push("  control_records")
+    out.push(...controls.records.slice(0, 10).map((record) => `    - ${record.control_id} kind=${record.control_kind} state=${record.projected_state_after} urgency=${record.urgency} session=${record.session_id}: ${preview(redactText(record.human_note_preview ?? ""))} process_control_performed=${record.process_control_performed} open_code_prompt_sent=${record.open_code_prompt_sent} mission_mutated=${record.mission_mutated}`))
+  } else {
+    out.push("  records=none")
+  }
+  if (controls.selected) out.push(`  selected=${controls.selected.control_id} kind=${controls.selected.control_kind} state=${controls.selected.projected_state_after} session=${controls.selected.session_id}`)
+  if (controls.latest) out.push(`  latest=${controls.latest.control_id} kind=${controls.latest.control_kind} state=${controls.latest.projected_state_after} session=${controls.latest.session_id}`)
+  if (controls.summary) {
+    const summary = controls.summary
+    out.push(`  summary total=${summary.total_controls} sessions=${summary.session_count} pause=${summary.pause_requested_count} stop=${summary.stop_requested_count} correction=${summary.correction_pending_count} override=${summary.override_pending_count} report=${summary.report_requested_count} escalation=${summary.escalation_count} urgent=${summary.urgent_count}`)
+  }
+  if (controls.commandError) out.push(`  command_error=${redactText(controls.commandError)}`)
+  out.push("  note=human control was recorded only; no process pause/kill/stop/resume occurred, no OpenCode prompt was sent, mission state was not mutated, and future wake/Commander branches may consume this control record")
   return out
 }
 

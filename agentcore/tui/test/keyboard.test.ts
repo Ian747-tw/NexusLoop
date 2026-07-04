@@ -402,6 +402,42 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("OpenCode human-control slash commands are exact whitelist entries", () => {
+    let result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-human-pause session=session-1 reason=operator review",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-human-pause", args: ["session=session-1", "reason=operator", "review"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/human-correction session=session-1 correction=prefer safer path",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "human-correction", args: ["session=session-1", "correction=prefer", "safer", "path"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-human-controls session=session-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-human-controls", args: ["session=session-1"] }])
+
+    for (const message of ["/tmp/human-pause", "/path/opencode-human-pause", ".opencode-human-pause session=session-1", ":opencode-human-pause session=session-1"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("review slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

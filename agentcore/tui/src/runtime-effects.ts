@@ -126,6 +126,12 @@ import type {
   CommanderGuidanceDeliveryResultSummary,
   CommanderGuidanceDeliveryState,
   CommanderGuidanceDeliverySummaryState,
+  OpenCodeHumanControlCommandSummary,
+  OpenCodeHumanControlPreviewSummary,
+  OpenCodeHumanControlRecordSummary,
+  OpenCodeHumanControlResultSummary,
+  OpenCodeHumanControlState,
+  OpenCodeHumanControlSummaryState,
   OpenCodeWatchdogCommandSummary,
   OpenCodeWatchdogPreviewSummary,
   OpenCodeWatchdogRecordSummary,
@@ -476,6 +482,12 @@ export type RuntimeUiEffect =
   | { type: "load-commander-guidance-delivery"; deliveryId: string }
   | { type: "load-latest-commander-guidance-delivery"; sessionId?: string; launchId?: string; guidanceId?: string }
   | { type: "load-commander-guidance-delivery-summary"; limit?: number }
+  | { type: "preview-opencode-human-control"; sessionId?: string; launchId?: string; controlKind?: string; urgency?: string; humanNote?: string; correction?: string; override?: string; reason?: string; progressId?: string; watchdogId?: string; forcedReportRequestId?: string; questionId?: string; guidanceId?: string; deliveryId?: string }
+  | { type: "record-opencode-human-control"; sessionId?: string; launchId?: string; controlKind?: string; urgency?: string; humanNote?: string; correction?: string; override?: string; reason?: string; progressId?: string; watchdogId?: string; forcedReportRequestId?: string; questionId?: string; guidanceId?: string; deliveryId?: string; dryRun?: boolean }
+  | { type: "load-opencode-human-controls"; sessionId?: string; launchId?: string; controlKind?: string; projectedStateAfter?: string; urgency?: string; limit?: number }
+  | { type: "load-opencode-human-control"; controlId: string }
+  | { type: "load-latest-opencode-human-control"; sessionId?: string; launchId?: string }
+  | { type: "load-opencode-human-control-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1413,6 +1425,22 @@ export async function applyRuntimeUiEffect(
         return applyCommanderGuidanceDeliveryLatest(state, await runtime.command("runtime.latest_commander_guidance_delivery", { sessionId: effect.sessionId, launchId: effect.launchId, guidanceId: effect.guidanceId }), effect.guidanceId ?? effect.sessionId ?? effect.launchId ?? "latest")
       case "load-commander-guidance-delivery-summary":
         return applyCommanderGuidanceDeliverySummary(state, await runtime.command("runtime.commander_guidance_delivery_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "preview-opencode-human-control":
+        return applyOpenCodeHumanControlPreview(state, await runtime.command("runtime.preview_opencode_human_control", opencodeHumanControlPayload(effect)))
+      case "record-opencode-human-control": {
+        const next = applyOpenCodeHumanControlResult(state, await runtime.command("runtime.record_opencode_human_control", { ...opencodeHumanControlPayload(effect), dryRun: effect.dryRun === true, recordedBy: "operator" }))
+        if (next.opencodeHumanControls?.commandError) return next
+        const result = next.opencodeHumanControls?.latestResult
+        return effect.dryRun === true ? next : applyOpenCodeHumanControlRecords(next, await runtime.command("runtime.list_opencode_human_controls", { limit: HANDOFF_LIMIT, sessionId: result?.session_id ?? effect.sessionId, launchId: result?.launch_id ?? effect.launchId }))
+      }
+      case "load-opencode-human-controls":
+        return applyOpenCodeHumanControlRecords(state, await runtime.command("runtime.list_opencode_human_controls", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId, controlKind: effect.controlKind, projectedStateAfter: effect.projectedStateAfter, urgency: effect.urgency }))
+      case "load-opencode-human-control":
+        return applyOpenCodeHumanControlSelected(state, await runtime.command("runtime.get_opencode_human_control", { controlId: effect.controlId }), effect.controlId)
+      case "load-latest-opencode-human-control":
+        return applyOpenCodeHumanControlLatest(state, await runtime.command("runtime.latest_opencode_human_control", { sessionId: effect.sessionId, launchId: effect.launchId }), effect.sessionId ?? effect.launchId ?? "latest")
+      case "load-opencode-human-control-summary":
+        return applyOpenCodeHumanControlSummary(state, await runtime.command("runtime.opencode_human_control_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -3795,6 +3823,87 @@ function applyCommanderGuidanceDeliverySummary(state: UiState, value: unknown): 
   }
 }
 
+function applyOpenCodeHumanControlPreview(state: UiState, value: unknown): UiState {
+  const preview = readOpenCodeHumanControlPreview(value)
+  const commandError = preview.status === "blocked" ? preview.blockers[0] ?? "OpenCode human control preview is blocked" : undefined
+  return {
+    ...state,
+    opencodeHumanControls: {
+      ...opencodeHumanControlState(state),
+      preview,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode human control preview", detail: `session=${preview.session_id || "missing"} kind=${preview.control_kind} status=${preview.status}`, status: preview.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeHumanControlResult(state: UiState, value: unknown): UiState {
+  const result = readOpenCodeHumanControlResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "OpenCode human control is blocked or failed" : undefined
+  return {
+    ...state,
+    opencodeHumanControls: {
+      ...opencodeHumanControlState(state),
+      latestResult: result,
+      latest: result.status === "recorded" ? result : opencodeHumanControlState(state).latest ?? null,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode human control", detail: `status=${result.status} control=${result.control_id} kind=${result.control_kind}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeHumanControlRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeHumanControlRecords(value)
+  return {
+    ...state,
+    opencodeHumanControls: {
+      ...opencodeHumanControlState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode human control records", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeHumanControlSelected(state: UiState, value: unknown, controlId: string): UiState {
+  const selected = value === null ? null : readOpenCodeHumanControlResult(value)
+  return {
+    ...state,
+    opencodeHumanControls: {
+      ...opencodeHumanControlState(state),
+      selected,
+      commandError: selected ? undefined : `OpenCode human control not found: ${redactText(controlId)}`,
+    },
+    systemActions: [...state.systemActions, { title: "opencode human control selected", detail: `control=${redactText(controlId)}`, status: selected ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeHumanControlLatest(state: UiState, value: unknown, label: string): UiState {
+  const latest = value === null ? null : readOpenCodeHumanControlResult(value)
+  return {
+    ...state,
+    opencodeHumanControls: {
+      ...opencodeHumanControlState(state),
+      latest,
+      commandError: latest ? undefined : `OpenCode human control latest not found: ${redactText(label)}`,
+    },
+    systemActions: [...state.systemActions, { title: "opencode human control latest", detail: `target=${redactText(label)}`, status: latest ? "loaded" : "missing" }].slice(-12),
+  }
+}
+
+function applyOpenCodeHumanControlSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeHumanControlSummary(value)
+  return {
+    ...state,
+    opencodeHumanControls: {
+      ...opencodeHumanControlState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode human control summary", detail: `controls=${summary.total_controls} sessions=${summary.session_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -5055,6 +5164,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeCommanderQuestionCommands.has(command)) return state.opencodeCommanderQuestions?.commandError
   if (commanderGuidanceCommands.has(command)) return state.commanderGuidance?.commandError
   if (commanderGuidanceDeliveryCommands.has(command)) return state.commanderGuidanceDelivery?.commandError
+  if (opencodeHumanControlCommands.has(command)) return state.opencodeHumanControls?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -5105,6 +5215,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeCommanderQuestionCommands.has(command)) return { ...state, opencodeCommanderQuestions: { ...opencodeCommanderQuestionState(state), commandError: undefined } }
   if (commanderGuidanceCommands.has(command)) return { ...state, commanderGuidance: { ...commanderGuidanceState(state), commandError: undefined } }
   if (commanderGuidanceDeliveryCommands.has(command)) return { ...state, commanderGuidanceDelivery: { ...commanderGuidanceDeliveryState(state), commandError: undefined } }
+  if (opencodeHumanControlCommands.has(command)) return { ...state, opencodeHumanControls: { ...opencodeHumanControlState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -5446,6 +5557,45 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-guidance-delivery", deliveryId: requiredArg(args, 0, "deliveryId") })
     case "commander-guidance-delivery-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-commander-guidance-delivery-summary", limit: HANDOFF_LIMIT })
+    case "opencode-human-control-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlEffect("preview-opencode-human-control", args, undefined, false))
+    case "opencode-human-control-dry-run": {
+      const effect = opencodeHumanControlEffect("record-opencode-human-control", args, undefined, true) as Extract<RuntimeUiEffect, { type: "record-opencode-human-control" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-human-control":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlEffect("record-opencode-human-control", args, undefined, true))
+    case "opencode-human-pause":
+    case "human-pause":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlEffect("record-opencode-human-control", args, "pause_request", true))
+    case "opencode-human-resume":
+    case "human-resume":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlEffect("record-opencode-human-control", args, "resume_request", true))
+    case "opencode-human-stop":
+    case "human-stop":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlEffect("record-opencode-human-control", args, "stop_request", true))
+    case "opencode-human-correction":
+    case "human-correction":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlEffect("record-opencode-human-control", args, "correction", true))
+    case "opencode-human-override":
+    case "human-override":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlEffect("record-opencode-human-control", args, "override", true))
+    case "opencode-human-force-report":
+    case "human-force-report":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlEffect("record-opencode-human-control", args, "force_report", true))
+    case "opencode-human-note":
+    case "human-note":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlEffect("record-opencode-human-control", args, "note", true))
+    case "opencode-human-controls":
+    case "human-controls":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlListEffect(args))
+    case "opencode-human-control-latest":
+    case "human-control-latest":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeHumanControlLatestEffect(args))
+    case "opencode-human-control-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-human-control", controlId: requiredArg(args, 0, "controlId") })
+    case "opencode-human-control-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-human-control-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -6774,6 +6924,32 @@ const commanderGuidanceDeliveryCommands = new Set([
   "guidance-delivery-latest",
   "commander-guidance-delivery-show",
   "commander-guidance-delivery-summary",
+])
+
+const opencodeHumanControlCommands = new Set([
+  "opencode-human-control-preview",
+  "opencode-human-control-dry-run",
+  "opencode-human-control",
+  "opencode-human-pause",
+  "human-pause",
+  "opencode-human-resume",
+  "human-resume",
+  "opencode-human-stop",
+  "human-stop",
+  "opencode-human-correction",
+  "human-correction",
+  "opencode-human-override",
+  "human-override",
+  "opencode-human-force-report",
+  "human-force-report",
+  "opencode-human-note",
+  "human-note",
+  "opencode-human-controls",
+  "human-controls",
+  "opencode-human-control-latest",
+  "human-control-latest",
+  "opencode-human-control-show",
+  "opencode-human-control-summary",
 ])
 
 const researchMemoryCommands = new Set([
@@ -10247,6 +10423,123 @@ function readCommanderGuidanceDeliverySummary(value: unknown): CommanderGuidance
 }
 
 function readCommanderGuidanceDeliveryCommands(value: unknown): CommanderGuidanceDeliveryCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readOpenCodeHumanControlPreview(value: unknown): OpenCodeHumanControlPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_human_control returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_record: value.can_record === true,
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    control_kind: readString(value.control_kind, "unknown"),
+    projected_state_after: readString(value.projected_state_after, "none"),
+    urgency: readString(value.urgency, "normal"),
+    human_note_preview: typeof value.human_note_preview === "string" ? preview(readString(value.human_note_preview, "")) : undefined,
+    correction_preview: typeof value.correction_preview === "string" ? preview(readString(value.correction_preview, "")) : undefined,
+    override_preview: typeof value.override_preview === "string" ? preview(readString(value.override_preview, "")) : undefined,
+    reason_preview: typeof value.reason_preview === "string" ? preview(readString(value.reason_preview, "")) : undefined,
+    linked_progress_id: typeof value.linked_progress_id === "string" ? redactText(value.linked_progress_id) : undefined,
+    linked_watchdog_id: typeof value.linked_watchdog_id === "string" ? redactText(value.linked_watchdog_id) : undefined,
+    linked_forced_report_request_id: typeof value.linked_forced_report_request_id === "string" ? redactText(value.linked_forced_report_request_id) : undefined,
+    linked_question_id: typeof value.linked_question_id === "string" ? redactText(value.linked_question_id) : undefined,
+    linked_guidance_id: typeof value.linked_guidance_id === "string" ? redactText(value.linked_guidance_id) : undefined,
+    linked_delivery_id: typeof value.linked_delivery_id === "string" ? redactText(value.linked_delivery_id) : undefined,
+    process_control_performed: false,
+    open_code_prompt_sent: false,
+    mission_mutated: false,
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    recommended_commands: readOpenCodeHumanControlCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    control_hash: readString(value.control_hash, ""),
+  }
+}
+
+function readOpenCodeHumanControlResult(value: unknown): OpenCodeHumanControlResultSummary {
+  if (!isRecord(value) || typeof value.control_id !== "string") throw new Error("runtime.record_opencode_human_control returned invalid result")
+  return {
+    control_id: redactText(value.control_id),
+    status: readString(value.status, "blocked"),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    control_kind: readString(value.control_kind, "unknown"),
+    projected_state_after: readString(value.projected_state_after, "none"),
+    urgency: readString(value.urgency, "normal"),
+    human_note_preview: typeof value.human_note_preview === "string" ? preview(readString(value.human_note_preview, "")) : undefined,
+    correction_preview: typeof value.correction_preview === "string" ? preview(readString(value.correction_preview, "")) : undefined,
+    override_preview: typeof value.override_preview === "string" ? preview(readString(value.override_preview, "")) : undefined,
+    reason_preview: typeof value.reason_preview === "string" ? preview(readString(value.reason_preview, "")) : undefined,
+    linked_progress_id: typeof value.linked_progress_id === "string" ? redactText(value.linked_progress_id) : undefined,
+    linked_watchdog_id: typeof value.linked_watchdog_id === "string" ? redactText(value.linked_watchdog_id) : undefined,
+    linked_forced_report_request_id: typeof value.linked_forced_report_request_id === "string" ? redactText(value.linked_forced_report_request_id) : undefined,
+    linked_question_id: typeof value.linked_question_id === "string" ? redactText(value.linked_question_id) : undefined,
+    linked_guidance_id: typeof value.linked_guidance_id === "string" ? redactText(value.linked_guidance_id) : undefined,
+    linked_delivery_id: typeof value.linked_delivery_id === "string" ? redactText(value.linked_delivery_id) : undefined,
+    process_control_performed: false,
+    open_code_prompt_sent: false,
+    mission_mutated: false,
+    recorded_at: readString(value.recorded_at, ""),
+    recorded_by: preview(readString(value.recorded_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    control_hash: readString(value.control_hash, ""),
+    recommended_commands: readOpenCodeHumanControlCommands(value.recommended_commands),
+  }
+}
+
+function readOpenCodeHumanControlRecords(value: unknown): OpenCodeHumanControlRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((record) => ({
+    control_id: redactText(readString(record.control_id, "")),
+    session_id: redactText(readString(record.session_id, "")),
+    launch_id: typeof record.launch_id === "string" ? redactText(record.launch_id) : undefined,
+    control_kind: readString(record.control_kind, "unknown"),
+    projected_state_after: readString(record.projected_state_after, "none"),
+    urgency: readString(record.urgency, "normal"),
+    human_note_preview: typeof record.human_note_preview === "string" ? preview(readString(record.human_note_preview, "")) : undefined,
+    recorded_at: readString(record.recorded_at, ""),
+    recorded_by: preview(readString(record.recorded_by, "")),
+    linked_progress_id: typeof record.linked_progress_id === "string" ? redactText(record.linked_progress_id) : undefined,
+    linked_watchdog_id: typeof record.linked_watchdog_id === "string" ? redactText(record.linked_watchdog_id) : undefined,
+    linked_forced_report_request_id: typeof record.linked_forced_report_request_id === "string" ? redactText(record.linked_forced_report_request_id) : undefined,
+    linked_question_id: typeof record.linked_question_id === "string" ? redactText(record.linked_question_id) : undefined,
+    linked_guidance_id: typeof record.linked_guidance_id === "string" ? redactText(record.linked_guidance_id) : undefined,
+    linked_delivery_id: typeof record.linked_delivery_id === "string" ? redactText(record.linked_delivery_id) : undefined,
+    process_control_performed: false,
+    open_code_prompt_sent: false,
+    mission_mutated: false,
+    control_hash: readString(record.control_hash, ""),
+  }))
+}
+
+function readOpenCodeHumanControlSummary(value: unknown): OpenCodeHumanControlSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.opencode_human_control_summary returned invalid summary")
+  return {
+    total_controls: readNumber(value.total_controls, 0),
+    session_count: readNumber(value.session_count, 0),
+    pause_requested_count: readNumber(value.pause_requested_count, 0),
+    stop_requested_count: readNumber(value.stop_requested_count, 0),
+    correction_pending_count: readNumber(value.correction_pending_count, 0),
+    override_pending_count: readNumber(value.override_pending_count, 0),
+    report_requested_count: readNumber(value.report_requested_count, 0),
+    escalation_count: readNumber(value.escalation_count, 0),
+    urgent_count: readNumber(value.urgent_count, 0),
+    latest_controls: readOpenCodeHumanControlRecords(value.latest_controls),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeHumanControlCommands(value: unknown): OpenCodeHumanControlCommandSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -13854,6 +14147,10 @@ function commanderGuidanceDeliveryState(state: UiState): CommanderGuidanceDelive
   return state.commanderGuidanceDelivery ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
 }
 
+function opencodeHumanControlState(state: UiState): OpenCodeHumanControlState {
+  return state.opencodeHumanControls ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
 function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
   return {
     sessionId: effect.sessionId,
@@ -13923,6 +14220,25 @@ function commanderGuidanceDeliveryPayload(effect: Extract<RuntimeUiEffect, { typ
     allowRealDelivery: effect.allowRealDelivery,
     operatorNote: effect.operatorNote,
     deliveredBy: effect.deliveredBy,
+  }
+}
+
+function opencodeHumanControlPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-human-control" | "record-opencode-human-control" }>): Record<string, unknown> {
+  return {
+    sessionId: effect.sessionId,
+    launchId: effect.launchId,
+    controlKind: effect.controlKind,
+    urgency: effect.urgency,
+    humanNote: effect.humanNote,
+    correction: effect.correction,
+    override: effect.override,
+    reason: effect.reason,
+    progressId: effect.progressId,
+    watchdogId: effect.watchdogId,
+    forcedReportRequestId: effect.forcedReportRequestId,
+    questionId: effect.questionId,
+    guidanceId: effect.guidanceId,
+    deliveryId: effect.deliveryId,
   }
 }
 
@@ -15219,6 +15535,80 @@ function commanderGuidanceDeliveryLatestEffect(args: string[]): Extract<RuntimeU
     else throw new Error("Commander guidance delivery latest arg is unsupported")
   }
   if (!effect.guidanceId && !effect.sessionId && !effect.launchId) throw new Error("Commander guidance delivery latest requires guidance=<id>, session=<id>, or launch=<id>")
+  return effect
+}
+
+function opencodeHumanControlEffect(
+  type: "preview-opencode-human-control" | "record-opencode-human-control",
+  args: string[],
+  defaultKind: string | undefined,
+  requireTarget: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-opencode-human-control" | "record-opencode-human-control" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-human-control" | "record-opencode-human-control" }> = { type, controlKind: defaultKind }
+  const freeTextKeys = new Set(["note", "human_note", "correction", "override", "reason"])
+  const knownKeys = new Set(["session", "launch", "kind", "urgency", "note", "human_note", "correction", "override", "reason", "progress", "watchdog", "forced_report", "question", "guidance", "delivery", "recorded_by"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "OpenCode human control args must use session=<id>, launch=<id>, kind=<kind>, urgency=<urgency>, reason=<text>, note=<text>, correction=<text>, override=<text>, progress=<id>, watchdog=<id>, forced_report=<id>, question=<id>, guidance=<id>, delivery=<id>, or recorded_by=<name>")
+    index = nextIndex
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "kind") effect.controlKind = value
+    else if (key === "urgency") effect.urgency = value
+    else if (key === "note" || key === "human_note") effect.humanNote = value
+    else if (key === "correction") effect.correction = value
+    else if (key === "override") effect.override = value
+    else if (key === "reason") effect.reason = value
+    else if (key === "progress") effect.progressId = value
+    else if (key === "watchdog") effect.watchdogId = value
+    else if (key === "forced_report") effect.forcedReportRequestId = value
+    else if (key === "question") effect.questionId = value
+    else if (key === "guidance") effect.guidanceId = value
+    else if (key === "delivery") effect.deliveryId = value
+    else if (key === "recorded_by") {
+      // Accepted for forward compatibility; runtime records operator for this branch.
+    } else throw new Error("OpenCode human control arg is unsupported")
+  }
+  if (requireTarget && !effect.sessionId && !effect.launchId && !effect.progressId && !effect.watchdogId && !effect.forcedReportRequestId && !effect.questionId && !effect.guidanceId && !effect.deliveryId) {
+    throw new Error("OpenCode human control requires session=<id>, launch=<id>, or linked evidence")
+  }
+  if (!effect.controlKind) effect.controlKind = "unknown"
+  const kind = effect.controlKind
+  if ((kind === "pause_request" || kind === "resume_request" || kind === "force_report" || kind === "priority_change" || kind === "escalation") && !effect.reason && !effect.humanNote) throw new Error(`${kind} requires reason=<text> or note=<text>`)
+  if (kind === "stop_request" && !effect.reason) throw new Error("OpenCode human stop requires reason=<text>")
+  if (kind === "correction" && !effect.correction) throw new Error("OpenCode human correction requires correction=<text>")
+  if (kind === "override" && !effect.override) throw new Error("OpenCode human override requires override=<text>")
+  if (kind === "note" && !effect.humanNote) throw new Error("OpenCode human note requires note=<text>")
+  return effect
+}
+
+function opencodeHumanControlListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-opencode-human-controls" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-opencode-human-controls" }> = { type: "load-opencode-human-controls", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode human controls list args must use session=<id>, launch=<id>, kind=<kind>, state=<state>, urgency=<urgency>, or limit=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "kind") effect.controlKind = value
+    else if (key === "state") effect.projectedStateAfter = value
+    else if (key === "urgency") effect.urgency = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode human controls list arg is unsupported")
+  }
+  return effect
+}
+
+function opencodeHumanControlLatestEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-latest-opencode-human-control" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-latest-opencode-human-control" }> = { type: "load-latest-opencode-human-control" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode human control latest args must use session=<id> or launch=<id>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else throw new Error("OpenCode human control latest arg is unsupported")
+  }
+  if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode human control latest requires session=<id> or launch=<id>")
   return effect
 }
 

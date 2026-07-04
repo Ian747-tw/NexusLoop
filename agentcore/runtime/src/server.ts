@@ -92,6 +92,8 @@ import { CommanderGuidanceService, readCommanderGuidanceCreateInput, readCommand
 import type { CommanderGuidancePreview, CommanderGuidanceRecord, CommanderGuidanceResult, CommanderGuidanceSummary } from "./opencode-session/opencode-commander-guidance-types"
 import { CommanderGuidanceDeliveryService, readCommanderGuidanceDeliveryInput, readCommanderGuidanceDeliveryPreviewInput } from "./opencode-session/opencode-guidance-delivery-service"
 import type { CommanderGuidanceDeliveryPreview, CommanderGuidanceDeliveryRecord, CommanderGuidanceDeliveryResult, CommanderGuidanceDeliverySummary } from "./opencode-session/opencode-guidance-delivery-types"
+import { OpenCodeHumanControlService, readOpenCodeHumanControlPreviewInput, readOpenCodeHumanControlRecordInput } from "./opencode-session/opencode-human-control-service"
+import type { OpenCodeHumanControlPreview, OpenCodeHumanControlRecord, OpenCodeHumanControlResult, OpenCodeHumanControlSummary } from "./opencode-session/opencode-human-control-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -334,6 +336,7 @@ export class RuntimeServer {
   private opencodeCommanderQuestionServiceInstance: OpenCodeCommanderQuestionService | null = null
   private commanderGuidanceServiceInstance: CommanderGuidanceService | null = null
   private commanderGuidanceDeliveryServiceInstance: CommanderGuidanceDeliveryService | null = null
+  private opencodeHumanControlServiceInstance: OpenCodeHumanControlService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -1033,6 +1036,28 @@ export class RuntimeServer {
         })
       case "runtime.commander_guidance_delivery_summary":
         return this.commanderGuidanceDeliverySummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
+      case "runtime.preview_opencode_human_control":
+        return this.previewOpenCodeHumanControl(readOpenCodeHumanControlPreviewInput(payload))
+      case "runtime.record_opencode_human_control":
+        return this.recordOpenCodeHumanControl(readOpenCodeHumanControlRecordInput(payload))
+      case "runtime.list_opencode_human_controls":
+        return this.listOpenCodeHumanControls({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+          control_kind: optionalString(payload.controlKind ?? payload.control_kind ?? payload.kind, "controlKind"),
+          projected_state_after: optionalString(payload.projectedStateAfter ?? payload.projected_state_after ?? payload.state, "projectedStateAfter"),
+          urgency: optionalString(payload.urgency, "urgency"),
+        })
+      case "runtime.get_opencode_human_control":
+        return this.getOpenCodeHumanControl(requiredString(payload.controlId ?? payload.control_id, "controlId"))
+      case "runtime.latest_opencode_human_control":
+        return this.latestOpenCodeHumanControl({
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+        })
+      case "runtime.opencode_human_control_summary":
+        return this.openCodeHumanControlSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -2073,6 +2098,31 @@ export class RuntimeServer {
 
   async commanderGuidanceDeliverySummary(input: Parameters<CommanderGuidanceDeliveryService["summary"]>[0] = {}): Promise<CommanderGuidanceDeliverySummary> {
     return this.commanderGuidanceDeliveryService().summary(input)
+  }
+
+  async previewOpenCodeHumanControl(input: Parameters<OpenCodeHumanControlService["preview"]>[0] = {}): Promise<OpenCodeHumanControlPreview> {
+    return this.opencodeHumanControlService().preview(input)
+  }
+
+  async recordOpenCodeHumanControl(input: Parameters<OpenCodeHumanControlService["record"]>[0] = {}): Promise<OpenCodeHumanControlResult> {
+    if (input.dry_run === true) return this.opencodeHumanControlService().record(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeHumanControlService().record(input))
+  }
+
+  async listOpenCodeHumanControls(input: Parameters<OpenCodeHumanControlService["list"]>[0] = {}): Promise<OpenCodeHumanControlRecord[]> {
+    return this.opencodeHumanControlService().list(input)
+  }
+
+  async getOpenCodeHumanControl(controlId: string): Promise<OpenCodeHumanControlResult | null> {
+    return this.opencodeHumanControlService().get(controlId)
+  }
+
+  async latestOpenCodeHumanControl(input: Parameters<OpenCodeHumanControlService["latest"]>[0] = {}): Promise<OpenCodeHumanControlResult | null> {
+    return this.opencodeHumanControlService().latest(input)
+  }
+
+  async openCodeHumanControlSummary(input: Parameters<OpenCodeHumanControlService["summary"]>[0] = {}): Promise<OpenCodeHumanControlSummary> {
+    return this.opencodeHumanControlService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -3233,6 +3283,20 @@ export class RuntimeServer {
       guidanceService: this.commanderGuidanceService(),
     })
     return this.commanderGuidanceDeliveryServiceInstance
+  }
+
+  private opencodeHumanControlService(): OpenCodeHumanControlService {
+    this.opencodeHumanControlServiceInstance ??= new OpenCodeHumanControlService({
+      eventStore: this.eventStore,
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+      progressService: this.opencodeProgressService(),
+      watchdogService: this.opencodeTimeoutWatchdogService(),
+      questionService: this.opencodeCommanderQuestionService(),
+      guidanceService: this.commanderGuidanceService(),
+      guidanceDeliveryService: this.commanderGuidanceDeliveryService(),
+    })
+    return this.opencodeHumanControlServiceInstance
   }
 
   private createOpenCodeLaunchAdapter(): OpenCodeLaunchAdapter {

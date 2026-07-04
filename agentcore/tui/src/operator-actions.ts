@@ -108,6 +108,21 @@ const WRITE_COMMANDS = new Set([
   "commander-guidance-deliver",
   "deliver-guidance",
   "send-guidance",
+  "opencode-human-control",
+  "opencode-human-pause",
+  "human-pause",
+  "opencode-human-resume",
+  "human-resume",
+  "opencode-human-stop",
+  "human-stop",
+  "opencode-human-correction",
+  "human-correction",
+  "opencode-human-override",
+  "human-override",
+  "opencode-human-force-report",
+  "human-force-report",
+  "opencode-human-note",
+  "human-note",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"
