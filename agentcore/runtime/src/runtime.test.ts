@@ -18410,22 +18410,26 @@ describe("OpenCode launch readiness", () => {
   })
 
   test("wake supervisor summary counts all matching launched sessions before applying card limit", async () => {
-    const launches = [1, 2, 3].map((index) => ({
+    const launches = Array.from({ length: 101 }, (_, offset) => {
+      const index = offset + 1
+      return {
       launch_id: `launch_${index}`,
       status: "launched",
       adapter_kind: "fake",
       launch_mode: "fresh",
       session_id: `session_${index}`,
-      started_at: `2026-07-06T10:00:0${index}.000Z`,
+      started_at: `2026-07-06T10:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
       summary_preview: `launch ${index}`,
       launch_hash: `launch_hash_${index}`,
-    }))
+      }
+    })
     const service = new OpenCodeWakeSupervisorService({
       opencodeSessionService: {
         get: async (sessionId: string) => ({ session_id: sessionId, status: "planned", objective: `objective ${sessionId}`, created_at: "2026-07-06T10:00:00.000Z" }),
       } as never,
       launchGateService: {
-        list: async (input: { session_id?: string } = {}) => input.session_id ? launches.filter((launch) => launch.session_id === input.session_id) : launches,
+        list: async (input: { session_id?: string } = {}) => input.session_id ? launches.filter((launch) => launch.session_id === input.session_id).slice(0, 100) : launches.slice(0, 100),
+        listAll: async (input: { session_id?: string } = {}) => input.session_id ? launches.filter((launch) => launch.session_id === input.session_id) : launches,
         get: async (launchId: string) => launches.find((launch) => launch.launch_id === launchId) ?? null,
       } as never,
       progressService: {
@@ -18463,10 +18467,138 @@ describe("OpenCode launch readiness", () => {
     })
 
     const summary = await service.summary({ limit: 1 })
-    expect(summary.total_launched_sessions).toBe(3)
-    expect(summary.human_attention_count).toBe(3)
+    expect(summary.total_launched_sessions).toBe(101)
+    expect(summary.human_attention_count).toBe(101)
     expect(summary.session_cards).toHaveLength(1)
     expect(summary.session_cards[0]?.supervisor_status).toBe("human_paused")
+  })
+
+  test("wake supervisor derives pending question and guidance state from uncapped evidence", async () => {
+    const launch = {
+      launch_id: "launch_capped_evidence",
+      status: "launched",
+      adapter_kind: "fake",
+      launch_mode: "fresh",
+      session_id: "session_capped_evidence",
+      started_at: "2026-07-06T10:00:00.000Z",
+      summary_preview: "launch capped evidence",
+      launch_hash: "launch_hash_capped_evidence",
+    }
+    const baseOptions = {
+      opencodeSessionService: {
+        get: async (sessionId: string) => ({ session_id: sessionId, status: "planned", objective: `objective ${sessionId}`, created_at: "2026-07-06T10:00:00.000Z" }),
+      } as never,
+      launchGateService: {
+        list: async () => [launch],
+        listAll: async () => [launch],
+        get: async (launchId: string) => launch.launch_id === launchId ? launch : null,
+      } as never,
+      progressService: {
+        latest: async () => ({
+          progress_id: "progress_capped_evidence",
+          kind: "heartbeat",
+          execution_state: "running",
+          report_summary_preview: "alive",
+          recorded_at: "2026-07-06T10:00:10.000Z",
+        }),
+      } as never,
+      watchdogService: {
+        list: async () => [{
+          watchdog_id: "watchdog_capped_evidence",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          watchdog_status: "healthy",
+          recommended_action: "none",
+          report_required: false,
+          latest_progress_id: "progress_capped_evidence",
+          recorded_at: "2026-07-06T10:00:20.000Z",
+          recorded_by: "operator",
+          watchdog_hash: "watchdog_hash_capped_evidence",
+        }],
+        listForcedReports: async () => [],
+      } as never,
+      guidanceDeliveryService: {
+        list: async () => [],
+      } as never,
+      humanControlService: {
+        list: async () => [],
+      } as never,
+      now: () => new Date("2026-07-06T10:01:00.000Z"),
+    }
+
+    const pendingQuestionService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      questionService: {
+        list: async () => [],
+        listAll: async () => [{
+          question_id: "question_uncapped",
+          status: "pending_commander",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          question_type: "clarification",
+          urgency: "normal",
+          question_preview: "older pending question",
+          source_kind: "manual",
+          created_at: "2026-07-06T09:59:00.000Z",
+          created_by: "operator",
+          has_options: false,
+          has_recommendation: false,
+          question_hash: "question_hash_uncapped",
+        }],
+      } as never,
+      guidanceService: {
+        latest: async () => null,
+        list: async () => [],
+        listAll: async () => [],
+      } as never,
+    })
+    const pendingQuestion = await pendingQuestionService.preview({ session_id: launch.session_id, limit_evidence: 1 })
+    expect(pendingQuestion).toMatchObject({ supervisor_status: "needs_commander_answer", recommended_action: "answer_commander_question", pending_question_count: 1 })
+    expect(pendingQuestion.recommended_commands).toContainEqual(expect.objectContaining({ command: "/commander-guidance question=question_uncapped answer=<answer>" }))
+
+    const pendingGuidanceService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      questionService: {
+        list: async () => [],
+        listAll: async () => [],
+      } as never,
+      guidanceService: {
+        latest: async () => ({
+          guidance_id: "guidance_delivered_latest",
+          question_id: "question_delivered_latest",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          status: "created",
+          delivery_status: "delivered",
+          guidance_scope: "clarification",
+          author_kind: "human",
+          answer_preview: "newer delivered guidance",
+          created_at: "2026-07-06T10:00:50.000Z",
+          created_by: "operator",
+          guidance_hash: "guidance_hash_delivered_latest",
+        }),
+        list: async () => [],
+        listAll: async () => [{
+          guidance_id: "guidance_uncapped_pending",
+          question_id: "question_uncapped_pending",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          status: "created",
+          delivery_status: "not_delivered",
+          guidance_scope: "clarification",
+          author_kind: "human",
+          answer_preview: "older pending guidance",
+          created_at: "2026-07-06T09:58:00.000Z",
+          created_by: "operator",
+          has_constraints: false,
+          has_refs: false,
+          guidance_hash: "guidance_hash_uncapped_pending",
+        }],
+      } as never,
+    })
+    const pendingGuidance = await pendingGuidanceService.preview({ session_id: launch.session_id, limit_evidence: 1 })
+    expect(pendingGuidance).toMatchObject({ supervisor_status: "guidance_pending_delivery", recommended_action: "deliver_guidance", pending_delivery_count: 1 })
+    expect(pendingGuidance.recommended_commands).toContainEqual(expect.objectContaining({ command: "/commander-guidance-deliver guidance=guidance_uncapped_pending mode=operator_handoff" }))
   })
 
   test("wake supervisor requires current watchdog evidence before suppressing report requests or marking healthy", async () => {

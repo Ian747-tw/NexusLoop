@@ -128,6 +128,18 @@ export class CommanderGuidanceService {
       .slice(0, limit)
   }
 
+  async listAll(input: { session_id?: string; launch_id?: string; question_id?: string; status?: string; delivery_status?: string; guidance_scope?: string } = {}): Promise<CommanderGuidanceRecord[]> {
+    return (await this.sequencedRecords())
+      .filter((item) => !input.session_id || item.record.session_id === input.session_id)
+      .filter((item) => !input.launch_id || item.record.launch_id === input.launch_id)
+      .filter((item) => !input.question_id || item.record.question_id === input.question_id)
+      .filter((item) => !input.status || item.record.status === input.status)
+      .filter((item) => !input.delivery_status || item.record.delivery_status === input.delivery_status)
+      .filter((item) => !input.guidance_scope || item.record.guidance_scope === input.guidance_scope)
+      .sort(compareSequencedDesc)
+      .map((item) => item.record)
+  }
+
   async get(guidanceId: string): Promise<CommanderGuidanceResult | null> {
     const events = await this.options.eventStore.readAll()
     const event = events

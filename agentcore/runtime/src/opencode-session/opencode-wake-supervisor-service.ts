@@ -89,11 +89,17 @@ export class OpenCodeWakeSupervisorService {
     const latestForcedReport = forcedReports[0]
     const currentForcedReport = forcedReports.find((request) => forcedReportMatchesCurrentEvidence(request, latestWatchdog, latestProgress)) ?? null
     const questions = sessionId ? await this.options.questionService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
-    const pendingQuestions = questions.filter((question) => question.status === "pending_commander" || question.status === "pending_human")
+    const allQuestions = sessionId ? await listAllQuestions(this.options.questionService, { session_id: sessionId, launch_id: launch?.launch_id }) : []
+    const pendingQuestions = allQuestions.filter((question) => question.status === "pending_commander" || question.status === "pending_human")
+    const renderedPendingQuestions = questions.filter((question) => question.status === "pending_commander" || question.status === "pending_human")
+    const renderedPendingQuestion = renderedPendingQuestions[0] ?? pendingQuestions[0]
     const latestGuidance = sessionId ? await this.options.guidanceService.latest({ session_id: sessionId, launch_id: launch?.launch_id }) : null
     const guidanceRecords = sessionId ? await this.options.guidanceService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
-    const pendingGuidance = guidanceRecords.filter((guidance) => guidance.delivery_status === "not_delivered" || guidance.delivery_status === "pending_delivery")
+    const allGuidance = sessionId ? await listAllGuidance(this.options.guidanceService, { session_id: sessionId, launch_id: launch?.launch_id }) : []
+    const pendingGuidance = allGuidance.filter((guidance) => guidance.delivery_status === "not_delivered" || guidance.delivery_status === "pending_delivery")
     const pendingGuidanceRecord = pendingGuidance[0]
+    const renderedPendingGuidance = guidanceRecords.find((guidance) => guidance.delivery_status === "not_delivered" || guidance.delivery_status === "pending_delivery") ?? pendingGuidanceRecord
+    const renderedGuidance = renderedPendingGuidance ?? latestGuidance
     const deliveries = includeGuidanceDelivery && sessionId ? await this.options.guidanceDeliveryService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const latestDelivery = deliveries[0]
     const humanControls = includeHumanControls && sessionId ? await this.options.humanControlService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
@@ -110,8 +116,8 @@ export class OpenCodeWakeSupervisorService {
       latestProgress ? evidence("progress", latestProgress.progress_id, latestProgress.execution_state, latestProgress.report_summary_preview, latestProgress.recorded_at) : undefined,
       latestWatchdog ? evidence("watchdog", latestWatchdog.watchdog_id, latestWatchdog.watchdog_status, latestWatchdog.report_required ? "report required" : latestWatchdog.recommended_action, latestWatchdog.recorded_at) : undefined,
       latestForcedReport ? evidence("forced_report", latestForcedReport.request_id, "requested", latestForcedReport.reason, latestForcedReport.requested_at) : undefined,
-      pendingQuestions[0] ? evidence("commander_question", pendingQuestions[0].question_id, pendingQuestions[0].status, pendingQuestions[0].question_preview, pendingQuestions[0].created_at) : undefined,
-      latestGuidance ? evidence("commander_guidance", latestGuidance.guidance_id, latestGuidance.delivery_status, latestGuidance.answer_preview, latestGuidance.created_at) : undefined,
+      renderedPendingQuestion ? evidence("commander_question", renderedPendingQuestion.question_id, renderedPendingQuestion.status, renderedPendingQuestion.question_preview, renderedPendingQuestion.created_at) : undefined,
+      renderedGuidance ? evidence("commander_guidance", renderedGuidance.guidance_id, renderedGuidance.delivery_status, renderedGuidance.answer_preview, renderedGuidance.created_at) : undefined,
       latestDelivery ? evidence("guidance_delivery", latestDelivery.delivery_id, latestDelivery.delivery_status_after, latestDelivery.summary_preview, latestDelivery.created_at) : undefined,
       latestHuman ? evidence("human_control", latestHuman.control_id, latestHuman.projected_state_after, latestHuman.human_note_preview, latestHuman.recorded_at) : undefined,
     ], limitEvidence)
@@ -151,7 +157,7 @@ export class OpenCodeWakeSupervisorService {
       includeResearchMemory,
       latestProgress,
       latestWatchdog,
-      pendingQuestions,
+      pendingQuestions: renderedPendingQuestion ? [renderedPendingQuestion] : [],
       latestGuidance,
       latestDelivery,
       latestHuman,
@@ -217,7 +223,7 @@ export class OpenCodeWakeSupervisorService {
 
   async summary(input: OpenCodeWakeSupervisorSummaryInput = {}): Promise<OpenCodeWakeSupervisorSummary> {
     const limit = positiveInteger(input.limit, 20, MAX_LIST)
-    const launches = (await this.options.launchGateService.list({ limit: MAX_LIST })).filter((launch) => LAUNCHED_STATUSES.has(launch.status))
+    const launches = (await listAllLaunches(this.options.launchGateService)).filter((launch) => LAUNCHED_STATUSES.has(launch.status))
     const matchingCards: OpenCodeWakeSupervisorSessionCard[] = []
     for (const launch of launches) {
       const preview = await this.preview({
@@ -478,6 +484,31 @@ function forcedReportMatchesCurrentEvidence(
   if (latestWatchdog?.watchdog_id && request.watchdog_id) return request.watchdog_id === latestWatchdog.watchdog_id
   const currentProgressId = latestWatchdog?.latest_progress_id ?? latestProgress?.progress_id
   return currentProgressId ? request.latest_progress_id === currentProgressId : false
+}
+
+async function listAllLaunches(service: OpenCodeLaunchGateService): Promise<OpenCodeLaunchRecord[]> {
+  const maybeUncapped = service as OpenCodeLaunchGateService & { listAll?: (input?: { session_id?: string; status?: string }) => Promise<OpenCodeLaunchRecord[]> }
+  return maybeUncapped.listAll ? maybeUncapped.listAll() : service.list({ limit: MAX_LIST })
+}
+
+async function listAllQuestions(
+  service: OpenCodeCommanderQuestionService,
+  input: { session_id?: string; launch_id?: string },
+): Promise<Array<{ question_id: string; status: string; question_preview: string; created_at: string }>> {
+  const maybeUncapped = service as OpenCodeCommanderQuestionService & {
+    listAll?: (input?: { session_id?: string; launch_id?: string; status?: string }) => Promise<Array<{ question_id: string; status: string; question_preview: string; created_at: string }>>
+  }
+  return maybeUncapped.listAll ? maybeUncapped.listAll(input) : service.list({ ...input, limit: MAX_LIST })
+}
+
+async function listAllGuidance(
+  service: CommanderGuidanceService,
+  input: { session_id?: string; launch_id?: string },
+): Promise<Array<{ guidance_id: string; delivery_status: string; answer_preview: string; created_at: string }>> {
+  const maybeUncapped = service as CommanderGuidanceService & {
+    listAll?: (input?: { session_id?: string; launch_id?: string; delivery_status?: string }) => Promise<Array<{ guidance_id: string; delivery_status: string; answer_preview: string; created_at: string }>>
+  }
+  return maybeUncapped.listAll ? maybeUncapped.listAll(input) : service.list({ ...input, limit: MAX_LIST })
 }
 
 function boundEvidence(values: Array<OpenCodeWakeSupervisorEvidenceRef | undefined>, maxItems: number): OpenCodeWakeSupervisorEvidenceRef[] {
