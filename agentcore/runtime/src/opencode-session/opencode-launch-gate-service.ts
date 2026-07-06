@@ -170,6 +170,13 @@ export class OpenCodeLaunchGateService {
       .slice(0, limit)
   }
 
+  async listAll(input: { session_id?: string; status?: string } = {}): Promise<OpenCodeLaunchRecord[]> {
+    return (await this.records())
+      .filter((record) => !input.session_id || record.session_id === input.session_id)
+      .filter((record) => !input.status || record.status === input.status)
+      .sort((left, right) => right.started_at.localeCompare(left.started_at))
+  }
+
   async get(launchId: string): Promise<OpenCodeLaunchResult | null> {
     const events = await this.options.eventStore.readAll()
     const event = events

@@ -438,6 +438,42 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("OpenCode wake supervisor slash commands are exact whitelist entries", () => {
+    let result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-wake-supervisor-preview session=session-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-wake-supervisor-preview", args: ["session=session-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/session-supervisor launch=launch-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "session-supervisor", args: ["launch=launch-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-wake-supervisor-summary status=human_attention",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-wake-supervisor-summary", args: ["status=human_attention"] }])
+
+    for (const message of ["/tmp/wake-supervisor", "/path/opencode-wake-supervisor-preview", ".opencode-wake-supervisor-preview session=session-1", ":opencode-wake-supervisor-preview session=session-1"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("review slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -949,6 +985,13 @@ describe("TUI keyboard command model", () => {
       ["/opencode-force-report-show request-1", "opencode-force-report-show", ["request-1"]],
       ["/opencode-watchdog-summary", "opencode-watchdog-summary", []],
       ["/watchdog-summary", "watchdog-summary", []],
+      ["/opencode-wake-supervisor-preview session=session-1", "opencode-wake-supervisor-preview", ["session=session-1"]],
+      ["/wake-supervisor-preview session=session-1", "wake-supervisor-preview", ["session=session-1"]],
+      ["/session-supervisor launch=launch-1", "session-supervisor", ["launch=launch-1"]],
+      ["/opencode-supervisor session=session-1", "opencode-supervisor", ["session=session-1"]],
+      ["/opencode-wake-supervisor-summary status=human_attention", "opencode-wake-supervisor-summary", ["status=human_attention"]],
+      ["/wake-supervisor-summary", "wake-supervisor-summary", []],
+      ["/supervisor-summary", "supervisor-summary", []],
       ["/opencode-ask-commander-preview session=session-1 question=prefer A or B", "opencode-ask-commander-preview", ["session=session-1", "question=prefer", "A", "or", "B"]],
       ["/ask-commander-preview session=session-1 question=prefer A or B", "ask-commander-preview", ["session=session-1", "question=prefer", "A", "or", "B"]],
       ["/opencode-ask-commander-dry-run session=session-1 question=prefer A or B", "opencode-ask-commander-dry-run", ["session=session-1", "question=prefer", "A", "or", "B"]],

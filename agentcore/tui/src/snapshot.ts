@@ -95,6 +95,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...commanderGuidanceLines(state))
   out.push(...commanderGuidanceDeliveryLines(state))
   out.push(...opencodeHumanControlLines(state))
+  out.push(...opencodeWakeSupervisorLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -1297,6 +1298,56 @@ function opencodeHumanControlLines(state: UiState): string[] {
   }
   if (controls.commandError) out.push(`  command_error=${redactText(controls.commandError)}`)
   out.push("  note=human control was recorded only; no process pause/kill/stop/resume occurred, no OpenCode prompt was sent, mission state was not mutated, and future wake/Commander branches may consume this control record")
+  return out
+}
+
+function opencodeWakeSupervisorLines(state: UiState): string[] {
+  const supervisor = state.opencodeWakeSupervisor
+  const out = ["OpenCode wake supervisor"]
+  if (!supervisor) {
+    out.push("  preview=none")
+    out.push("  summary=none")
+    out.push("  note=wake supervisor preview is read-only; no wake tick executed, no provider called, no OpenCode prompt sent, no process control occurred, and mission state was not mutated")
+    return out
+  }
+  if (supervisor.preview) {
+    const item = supervisor.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} supervisor_status=${item.supervisor_status} recommended_action=${item.recommended_action}`)
+    out.push(`  session=${item.session_id} launch=${item.launch_id ?? "none"} launch_status=${item.active_launch_status ?? "unknown"}`)
+    out.push(`  progress=${item.latest_progress_id ?? "none"} kind=${item.latest_progress_kind ?? "none"} state=${item.latest_progress_state ?? "none"}`)
+    out.push(`  watchdog=${item.latest_watchdog_id ?? "none"} watchdog_status=${item.latest_watchdog_status ?? "none"} forced_report=${item.latest_forced_report_request_id ?? "none"}`)
+    out.push(`  pending_questions=${item.pending_question_count} unanswered_questions=${item.unanswered_question_count} pending_question=${item.pending_question_id ?? "none"}`)
+    out.push(`  guidance=${item.latest_guidance_id ?? "none"} delivery_status=${item.latest_guidance_delivery_status ?? "none"} pending_delivery=${item.pending_delivery_count}`)
+    out.push(`  human_control=${item.latest_human_control_id ?? "none"} human_state=${item.latest_human_projected_state ?? "none"} pause=${item.human_pause_requested} stop=${item.human_stop_requested} correction=${item.human_correction_pending} override=${item.human_override_pending}`)
+    out.push(`  flags report_required=${item.report_required} timed_out=${item.timed_out} stale=${item.stale} blocked_by_human=${item.blocked_by_human}`)
+    if (item.checks.length > 0) {
+      out.push("  checks")
+      out.push(...item.checks.slice(0, 10).map((check) => `    - ${check.check_id} status=${check.status}: ${preview(redactText(check.summary_preview))}`))
+    }
+    if (item.context_sections.length > 0) {
+      out.push("  context_sections")
+      out.push(...item.context_sections.slice(0, 14).map((section) => `    - ${section.section} status=${section.status}: ${preview(redactText(section.summary_preview))}`))
+    }
+    if (item.evidence_refs.length > 0) {
+      out.push("  evidence_refs")
+      out.push(...item.evidence_refs.slice(0, 12).map((ref) => `    - ${ref.evidence_kind}:${ref.evidence_id} status=${ref.status ?? "unknown"} pointer_only=${ref.pointer_only}: ${preview(redactText(ref.summary_preview ?? ""))}`))
+    }
+    if (item.blockers.length > 0) out.push(`  blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  warnings=${item.warnings.map(redactText).join("; ")}`)
+    if (item.recommended_commands.length > 0) out.push(`  recommended=${item.recommended_commands.map((command) => `${redactText(command.command)}${command.command_type === "write" ? " (manual explicit command required)" : ""}`).join(" | ")}`)
+  }
+  if (supervisor.summary) {
+    const summary = supervisor.summary
+    out.push(`  summary total_launched=${summary.total_launched_sessions} healthy=${summary.healthy_count} stale=${summary.stale_count} timed_out=${summary.timed_out_count} needs_report=${summary.needs_report_count} needs_commander_answer=${summary.needs_commander_answer_count} guidance_pending_delivery=${summary.guidance_pending_delivery_count} human_attention=${summary.human_attention_count} stop_requested=${summary.stop_requested_count}`)
+    if (summary.session_cards.length > 0) {
+      out.push("  session_cards")
+      out.push(...summary.session_cards.slice(0, 10).map((card) => `    - session=${card.session_id} launch=${card.launch_id ?? "none"} status=${card.supervisor_status} action=${card.recommended_action} pending_questions=${card.pending_question_count} pending_delivery=${card.pending_delivery_count} human=${card.latest_human_projected_state ?? "none"}: ${preview(redactText(card.summary_preview))}`))
+    }
+  } else {
+    out.push("  summary=none")
+  }
+  if (supervisor.commandError) out.push(`  command_error=${redactText(supervisor.commandError)}`)
+  out.push("  note=wake supervisor preview is read-only; no wake tick executed, no provider called, no OpenCode prompt sent, no process control occurred, no research.db write occurred, and mission state was not mutated")
   return out
 }
 

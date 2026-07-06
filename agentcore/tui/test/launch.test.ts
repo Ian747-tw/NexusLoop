@@ -263,6 +263,51 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "research.list_events") {
       return [{ event_id: "research-event-1", event_type: "note_added", entity_type: "note", entity_id: "note-1", payload: { token: "event-secret" }, created_at: "2026-05-16T00:00:00Z" }]
     }
+    if (name === "runtime.preview_opencode_wake_supervisor") {
+      return {
+        preview_id: "wake_supervisor_preview_test",
+        status: "blocked",
+        session_id: String(payload?.session_id ?? payload?.sessionId ?? payload?.session ?? "missing-session"),
+        launch_id: typeof payload?.launch_id === "string" ? payload.launch_id : undefined,
+        supervisor_status: "unknown",
+        recommended_action: "read_latest_progress",
+        pending_question_count: 0,
+        unanswered_question_count: 0,
+        pending_delivery_count: 0,
+        human_pause_requested: false,
+        human_stop_requested: false,
+        human_correction_pending: false,
+        human_override_pending: false,
+        report_required: false,
+        timed_out: false,
+        stale: false,
+        blocked_by_human: false,
+        checks: [],
+        context_sections: [],
+        evidence_refs: [],
+        blockers: ["wake supervisor preview requires a launch_started or launched OpenCode launch record"],
+        warnings: [],
+        recommended_commands: [],
+        generated_at: "2026-06-20T00:00:00.000Z",
+        redacted_summary_preview: "wake supervisor preview blocked",
+        supervisor_hash: "wake-supervisor-hash",
+      }
+    }
+    if (name === "runtime.opencode_wake_supervisor_summary") {
+      return {
+        total_launched_sessions: 0,
+        healthy_count: 0,
+        stale_count: 0,
+        timed_out_count: 0,
+        needs_report_count: 0,
+        needs_commander_answer_count: 0,
+        guidance_pending_delivery_count: 0,
+        human_attention_count: 0,
+        stop_requested_count: 0,
+        session_cards: [],
+        generated_at: "2026-06-20T00:00:00.000Z",
+      }
+    }
     return { ok: true }
   }
 
@@ -1353,6 +1398,43 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.list_opencode_watchdogs")
     expect(runtime.commandNames).toContain("runtime.list_opencode_forced_report_requests")
     expect(runtime.commandNames).toContain("runtime.opencode_watchdog_summary")
+    expect(runtime.commandNames).not.toContain("runtime.resume")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless OpenCode wake supervisor scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/opencode-wake-supervisor-preview session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/wake-supervisor-preview session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/session-supervisor launch=missing-launch" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-supervisor session=missing-session" },
+      { type: "submit" },
+      { type: "insert", text: "/opencode-wake-supervisor-summary" },
+      { type: "submit" },
+      { type: "insert", text: "/wake-supervisor-summary" },
+      { type: "submit" },
+      { type: "insert", text: "/supervisor-summary" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-opencode-wake-supervisor-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("OpenCode wake supervisor")
+    expect(runtime.commandNames).toContain("runtime.preview_opencode_wake_supervisor")
+    expect(runtime.commandNames).toContain("runtime.opencode_wake_supervisor_summary")
     expect(runtime.commandNames).not.toContain("runtime.resume")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")

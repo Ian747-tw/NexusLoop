@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -543,6 +543,10 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.latestOpenCodeHumanControl(payload)
       case "runtime.opencode_human_control_summary":
         return this.opencodeHumanControlSummary(payload)
+      case "runtime.preview_opencode_wake_supervisor":
+        return this.previewOpenCodeWakeSupervisor(payload)
+      case "runtime.opencode_wake_supervisor_summary":
+        return this.opencodeWakeSupervisorSummary(payload)
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -3526,6 +3530,118 @@ export class FakeRuntimeClient implements RuntimeClient {
       escalation_count: records.filter((item) => item.projected_state_after === "escalated").length,
       urgent_count: records.filter((item) => item.urgency === "urgent").length,
       latest_controls: records.slice(0, readLimit(payload.limit, 10)),
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private previewOpenCodeWakeSupervisor(payload: Record<string, unknown>): OpenCodeWakeSupervisorPreviewSummary {
+    const sessionIdInput = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchIdInput = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    const includeHumanControls = payload.includeHumanControls === false || payload.include_human_controls === false ? false : true
+    const limitEvidence = readLimit(payload.limitEvidence ?? payload.limit_evidence, 20)
+    const blockers: string[] = []
+    if (!sessionIdInput && !launchIdInput) blockers.push("session_id or launch_id is required")
+    const launch = launchIdInput
+      ? this.opencodeLaunches.find((item) => item.launch_id === launchIdInput)
+      : this.opencodeLaunches.find((item) => item.session_id === sessionIdInput && (item.status === "launched" || item.status === "launch_started"))
+    if (launchIdInput && !launch) blockers.push("launch_id does not resolve to an OpenCode launch record")
+    const sessionId = sessionIdInput ?? launch?.session_id ?? ""
+    const session = this.opencodeSessions.find((item) => item.session_id === sessionId)
+    if (sessionId && !session) blockers.push("session_id does not resolve to a planned OpenCode session")
+    if (!launch && sessionId) blockers.push("wake supervisor preview requires a launch_started or launched OpenCode launch record")
+    if (launch && sessionIdInput && launch.session_id !== sessionIdInput) blockers.push("launch_id does not belong to session_id")
+    if (launch && launch.status !== "launched" && launch.status !== "launch_started") blockers.push(`wake supervisor preview requires launch_started or launched status; current status is ${launch.status}`)
+    const latestProgress = this.opencodeProgressRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
+    const latestWatchdog = this.opencodeWatchdogRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
+    const latestForcedReport = this.opencodeForcedReportRequests.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
+    const currentForcedReport = this.opencodeForcedReportRequests.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && fakeForcedReportMatchesCurrentEvidence(item, latestWatchdog, latestProgress)) ?? null
+    const pendingQuestions = this.opencodeCommanderQuestions.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && (item.question_status === "pending_commander" || item.question_status === "pending_human"))
+    const latestGuidance = this.commanderGuidanceRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
+    const pendingGuidance = this.commanderGuidanceRecords.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && (item.delivery_status === "not_delivered" || item.delivery_status === "pending_delivery"))
+    const pendingGuidanceRecord = pendingGuidance[0]
+    const latestDelivery = this.commanderGuidanceDeliveryRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
+    const humanControls = includeHumanControls ? this.opencodeHumanControlRecords.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) : []
+    const latestHuman = projectedFakeHumanControl(humanControls) ?? null
+    const decision = fakeSupervisorDecision(latestProgress, latestWatchdog, currentForcedReport, pendingQuestions.length, pendingGuidance.length, pendingGuidanceRecord?.delivery_status ?? latestGuidance?.delivery_status, latestDelivery?.delivery_status_after, latestHuman?.projected_state_after)
+    const loadedEvidenceRefs = fakeSupervisorEvidenceRefs({ session, launch, latestProgress, latestWatchdog, latestForcedReport, pendingQuestion: pendingQuestions[0], latestGuidance, latestDelivery, latestHuman })
+    const evidenceRefs = loadedEvidenceRefs.slice(0, limitEvidence)
+    const supervisorHash = fakeNavigationStageHash(JSON.stringify({
+      sessionId,
+      launchId: launch?.launch_id,
+      status: decision.status,
+      action: decision.action,
+      latestProgress: latestProgress?.progress_id,
+      latestWatchdog: latestWatchdog?.watchdog_id,
+      pendingQuestions: pendingQuestions.length,
+      pendingGuidance: pendingGuidance.length,
+      latestHuman: latestHuman?.control_id,
+      blockers,
+    }))
+    const commands = fakeSupervisorCommands(sessionId || "<session_id>", decision.action, latestProgress?.progress_id, pendingQuestions[0]?.question_id, pendingGuidanceRecord?.guidance_id ?? latestGuidance?.guidance_id)
+    return {
+      preview_id: `fake-wake-supervisor-preview-${supervisorHash.slice(0, 12)}`,
+      status: blockers.length ? "blocked" : latestProgress && latestWatchdog ? "ready" : "partial",
+      session_id: sessionId,
+      launch_id: launch?.launch_id ?? launchIdInput,
+      supervisor_status: blockers.length ? "unknown" : decision.status,
+      recommended_action: blockers.length ? "unknown" : decision.action,
+      active_launch_status: launch?.status,
+      latest_progress_id: latestProgress?.progress_id,
+      latest_progress_kind: latestProgress?.kind,
+      latest_progress_state: latestProgress?.execution_state,
+      latest_watchdog_id: latestWatchdog?.watchdog_id,
+      latest_watchdog_status: latestWatchdog?.watchdog_status,
+      latest_forced_report_request_id: latestForcedReport?.request_id,
+      pending_question_id: pendingQuestions[0]?.question_id,
+      pending_question_count: pendingQuestions.length,
+      unanswered_question_count: pendingQuestions.length,
+      latest_guidance_id: latestGuidance?.guidance_id,
+      latest_guidance_delivery_status: latestGuidance?.delivery_status,
+      pending_delivery_count: pendingGuidance.length,
+      latest_human_control_id: latestHuman?.control_id,
+      latest_human_projected_state: latestHuman?.projected_state_after,
+      human_pause_requested: latestHuman?.projected_state_after === "pause_requested",
+      human_stop_requested: latestHuman?.projected_state_after === "stop_requested",
+      human_correction_pending: latestHuman?.projected_state_after === "correction_pending",
+      human_override_pending: latestHuman?.projected_state_after === "override_pending",
+      report_required: latestWatchdog?.report_required === true,
+      timed_out: latestWatchdog?.watchdog_status === "timed_out",
+      stale: latestWatchdog?.watchdog_status === "stale",
+      blocked_by_human: latestHuman?.projected_state_after === "pause_requested" || latestHuman?.projected_state_after === "stop_requested",
+      checks: fakeSupervisorChecks(loadedEvidenceRefs, decision, sessionId || "<session_id>"),
+      context_sections: fakeSupervisorContextSections(loadedEvidenceRefs),
+      evidence_refs: evidenceRefs,
+      blockers: blockers.map(redactText),
+      warnings: [
+        "wake supervisor preview is read-only; no wake tick, provider call, OpenCode prompt, process control, research.db write, or mission mutation occurs",
+        "recommended write commands are shown but not executed",
+      ],
+      recommended_commands: commands,
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `fake wake supervisor ${decision.status}; recommended action ${decision.action}`,
+      supervisor_hash: supervisorHash,
+    }
+  }
+
+  private opencodeWakeSupervisorSummary(payload: Record<string, unknown>): OpenCodeWakeSupervisorSummaryState {
+    const limit = readLimit(payload.limit, 20)
+    const statusFilter = optionalString(payload.statusFilter ?? payload.status_filter ?? payload.status)
+    const activeLaunches = this.opencodeLaunches.filter((item) => item.status === "launched" || item.status === "launch_started")
+    const matchingCards = activeLaunches
+      .map((launch) => fakeSupervisorCard(this.previewOpenCodeWakeSupervisor({ sessionId: launch.session_id, launchId: launch.launch_id })))
+      .filter((card) => !statusFilter || card.supervisor_status === statusFilter)
+    const cards = matchingCards.slice(0, limit)
+    return {
+      total_launched_sessions: activeLaunches.length,
+      healthy_count: matchingCards.filter((card) => card.supervisor_status === "healthy").length,
+      stale_count: matchingCards.filter((card) => card.supervisor_status === "stale").length,
+      timed_out_count: matchingCards.filter((card) => card.supervisor_status === "timed_out").length,
+      needs_report_count: matchingCards.filter((card) => card.supervisor_status === "needs_report").length,
+      needs_commander_answer_count: matchingCards.filter((card) => card.supervisor_status === "needs_commander_answer").length,
+      guidance_pending_delivery_count: matchingCards.filter((card) => card.supervisor_status === "guidance_pending_delivery").length,
+      human_attention_count: matchingCards.filter((card) => card.supervisor_status === "human_attention" || card.supervisor_status === "human_paused").length,
+      stop_requested_count: matchingCards.filter((card) => card.supervisor_status === "stop_requested").length,
+      session_cards: cards,
       generated_at: new Date(0).toISOString(),
     }
   }
@@ -9883,6 +9999,20 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       reads: ["/opencode-human-controls"],
       targeted: ["tests/e2e_user/scenarios/test_opencode_human_control_tui.py"],
     }),
+    fakeCommandAuthorityRecord("/opencode-wake-supervisor-preview", "runtime.preview_opencode_wake_supervisor", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-progress-latest", "/opencode-watchdog-preview", "/opencode-human-controls"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_preview_tui.py"],
+      aliases: ["/wake-supervisor-preview", "/session-supervisor", "/opencode-supervisor"],
+      notes: ["Read-only OpenCode wake supervisor preview. It consumes launch/progress/watchdog/question/guidance/delivery/human-control evidence and returns bounded context/evidence refs plus recommended commands only."],
+      out: ["scheduled wake execution", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "research.db writes", "mission/proposal/review/apply mutation", "result ingestion", "checkpoint creation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-supervisor-summary", "runtime.opencode_wake_supervisor_summary", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-supervisor-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_preview_tui.py"],
+      aliases: ["/wake-supervisor-summary", "/supervisor-summary"],
+      notes: ["Read-only aggregate wake supervisor summary over active launched OpenCode sessions. It appends no events, executes no scheduled wake tick, sends no OpenCode prompt, controls no process, calls no provider/MCP, writes no research.db, and mutates no missions."],
+      out: ["scheduled wake execution", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "research.db writes", "mission/proposal/review/apply mutation", "result ingestion", "checkpoint creation"],
+    }),
     fakeCommandAuthorityRecord("/research-memory-summary", "runtime.research_memory_summary", "safe_read", "none", "research", {
       targeted: ["tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"],
       notes: ["Read-only research memory summary; no provider calls, no MCP/online research, no research.db writes, no mission/proposal creation, no OpenCode launch."],
@@ -10390,6 +10520,152 @@ function recordFromOpenCodeHumanControl(item: OpenCodeHumanControlResultSummary)
     open_code_prompt_sent: false,
     mission_mutated: false,
     control_hash: item.control_hash,
+  }
+}
+
+function fakeSupervisorDecision(
+  latestProgress: OpenCodeProgressResultSummary | null,
+  latestWatchdog: OpenCodeWatchdogResultSummary | null,
+  latestForcedReport: OpenCodeForcedReportRequestSummary | null,
+  pendingQuestionCount: number,
+  pendingDeliveryCount: number,
+  latestGuidanceDeliveryStatus: string | undefined,
+  latestDeliveryStatus: string | undefined,
+  latestHumanState: string | undefined,
+): { status: string; action: string } {
+  if (latestHumanState === "stop_requested") return { status: "stop_requested", action: "review_human_control" }
+  if (latestHumanState === "pause_requested") return { status: "human_paused", action: "review_human_control" }
+  if (latestHumanState === "correction_pending" || latestHumanState === "override_pending" || latestHumanState === "escalated" || latestHumanState === "report_requested") return { status: "human_attention", action: "review_human_control" }
+  if (latestWatchdog?.watchdog_status === "timed_out") return { status: "timed_out", action: latestForcedReport ? "read_latest_progress" : "request_forced_report" }
+  if (latestWatchdog?.watchdog_status === "needs_report") return { status: "needs_report", action: latestForcedReport ? "read_latest_progress" : "request_forced_report" }
+  if (latestWatchdog?.watchdog_status === "stale") return { status: "stale", action: latestForcedReport ? "read_latest_progress" : "request_forced_report" }
+  if (latestWatchdog?.watchdog_status === "blocked") {
+    return {
+      status: "blocked",
+      action: latestWatchdog.report_required
+        ? latestForcedReport ? "read_latest_progress" : "request_forced_report"
+        : "create_commander_question",
+    }
+  }
+  if (pendingQuestionCount > 0) return { status: "needs_commander_answer", action: "answer_commander_question" }
+  if (pendingDeliveryCount > 0) return { status: "guidance_pending_delivery", action: latestDeliveryStatus === "pending_delivery" || latestGuidanceDeliveryStatus === "pending_delivery" ? "review_human_control" : "deliver_guidance" }
+  if (latestProgress?.kind === "blocker" || latestProgress?.execution_state === "blocked") return { status: "blocked", action: "create_commander_question" }
+  if (latestProgress?.kind === "question" || latestProgress?.execution_state === "needs_commander") return { status: "needs_commander_answer", action: "create_commander_question" }
+  if (latestProgress?.kind === "completion_report" || latestProgress?.execution_state === "reported_done") return { status: "watch", action: "prepare_result_review" }
+  if (latestProgress && !latestWatchdog) return { status: "watch", action: "record_watchdog" }
+  if (latestProgress) return { status: "healthy", action: "none" }
+  return { status: "unknown", action: "read_latest_progress" }
+}
+
+function projectedFakeHumanControl(records: OpenCodeHumanControlResultSummary[]): OpenCodeHumanControlResultSummary | undefined {
+  return records.find((record) => record.projected_state_after !== "noted") ?? records[0]
+}
+
+function fakeForcedReportMatchesCurrentEvidence(
+  request: OpenCodeForcedReportRequestSummary,
+  latestWatchdog: OpenCodeWatchdogResultSummary | null,
+  latestProgress: OpenCodeProgressResultSummary | null,
+): boolean {
+  if (latestWatchdog?.watchdog_id && request.watchdog_id) return request.watchdog_id === latestWatchdog.watchdog_id
+  const currentProgressId = latestWatchdog?.latest_progress_id ?? latestProgress?.progress_id
+  return currentProgressId ? request.latest_progress_id === currentProgressId : false
+}
+
+function fakeSupervisorEvidenceRefs(input: {
+  session?: OpenCodeSessionPlanSummary
+  launch?: OpenCodeLaunchResultSummary
+  latestProgress?: OpenCodeProgressResultSummary | null
+  latestWatchdog?: OpenCodeWatchdogResultSummary | null
+  latestForcedReport?: OpenCodeForcedReportRequestSummary | null
+  pendingQuestion?: OpenCodeCommanderQuestionResultSummary
+  latestGuidance?: CommanderGuidanceResultSummary | null
+  latestDelivery?: CommanderGuidanceDeliveryResultSummary | null
+  latestHuman?: OpenCodeHumanControlResultSummary | null
+}): OpenCodeWakeSupervisorEvidenceRefSummary[] {
+  return [
+    input.session ? fakeSupervisorEvidence("session_plan", input.session.session_id, input.session.status, input.session.objective, input.session.created_at) : undefined,
+    input.launch ? fakeSupervisorEvidence("launch", input.launch.launch_id, input.launch.status, input.launch.output_summary_preview ?? input.launch.command_preview ?? "fake launch", input.launch.started_at) : undefined,
+    input.latestProgress ? fakeSupervisorEvidence("progress", input.latestProgress.progress_id, input.latestProgress.execution_state, input.latestProgress.report_summary_preview, input.latestProgress.recorded_at) : undefined,
+    input.latestWatchdog ? fakeSupervisorEvidence("watchdog", input.latestWatchdog.watchdog_id, input.latestWatchdog.watchdog_status, input.latestWatchdog.report_required ? "report required" : input.latestWatchdog.recommended_action, input.latestWatchdog.recorded_at) : undefined,
+    input.latestForcedReport ? fakeSupervisorEvidence("forced_report", input.latestForcedReport.request_id, "requested", input.latestForcedReport.reason, input.latestForcedReport.requested_at) : undefined,
+    input.pendingQuestion ? fakeSupervisorEvidence("commander_question", input.pendingQuestion.question_id, input.pendingQuestion.question_status, input.pendingQuestion.question_preview, input.pendingQuestion.created_at) : undefined,
+    input.latestGuidance ? fakeSupervisorEvidence("commander_guidance", input.latestGuidance.guidance_id, input.latestGuidance.delivery_status, input.latestGuidance.answer_preview, input.latestGuidance.created_at) : undefined,
+    input.latestDelivery ? fakeSupervisorEvidence("guidance_delivery", input.latestDelivery.delivery_id, input.latestDelivery.delivery_status_after, input.latestDelivery.delivery_payload_preview, input.latestDelivery.created_at) : undefined,
+    input.latestHuman ? fakeSupervisorEvidence("human_control", input.latestHuman.control_id, input.latestHuman.projected_state_after, input.latestHuman.human_note_preview ?? input.latestHuman.reason_preview, input.latestHuman.recorded_at) : undefined,
+  ].filter((item): item is OpenCodeWakeSupervisorEvidenceRefSummary => Boolean(item))
+}
+
+function fakeSupervisorEvidence(kind: string, id: string, status?: string, summary?: string, recordedAt?: string): OpenCodeWakeSupervisorEvidenceRefSummary {
+  return {
+    evidence_kind: kind,
+    evidence_id: redactText(id),
+    status: status ? redactText(status) : undefined,
+    summary_preview: summary ? preview(summary) : undefined,
+    recorded_at: recordedAt,
+    pointer_only: true,
+  }
+}
+
+function fakeSupervisorChecks(refs: OpenCodeWakeSupervisorEvidenceRefSummary[], decision: { status: string; action: string }, sessionId: string): OpenCodeWakeSupervisorCheckSummary[] {
+  const ref = (kind: string) => refs.filter((item) => item.evidence_kind === kind)
+  return [
+    { check_id: "session_launch_chain", label: "Session and launch chain", status: ref("session_plan").length && ref("launch").length ? "pass" : "fail", summary_preview: ref("launch").length ? "planned session and active launch resolve" : "session or launch evidence missing", evidence_refs: [...ref("session_plan"), ...ref("launch")], recommended_commands: [{ label: "Show launches", command: "/opencode-launches", command_type: "read" }] },
+    { check_id: "latest_progress", label: "Latest progress evidence", status: ref("progress").length ? "pass" : "warn", summary_preview: ref("progress")[0]?.summary_preview ?? "no progress or heartbeat evidence found", evidence_refs: ref("progress"), recommended_commands: [{ label: "Read latest progress", command: `/opencode-progress-latest session=${sessionId}`, command_type: "read" }] },
+    { check_id: "watchdog_state", label: "Watchdog state", status: decision.status === "timed_out" || decision.status === "needs_report" || decision.status === "stale" ? "warn" : ref("watchdog").length ? "pass" : "unknown", summary_preview: ref("watchdog")[0]?.summary_preview ?? "no watchdog record found", evidence_refs: ref("watchdog"), recommended_commands: [{ label: "Preview watchdog", command: `/opencode-watchdog-preview session=${sessionId}`, command_type: "read" }] },
+    { check_id: "commander_question_guidance", label: "Commander question and guidance state", status: decision.status === "needs_commander_answer" || decision.status === "guidance_pending_delivery" ? "warn" : "unknown", summary_preview: `recommended action ${decision.action}`, evidence_refs: [...ref("commander_question"), ...ref("commander_guidance"), ...ref("guidance_delivery")], recommended_commands: fakeSupervisorCommands(sessionId, decision.action) },
+    { check_id: "human_control_state", label: "Human control state", status: decision.status === "stop_requested" || decision.status === "human_paused" || decision.status === "human_attention" ? "warn" : ref("human_control").length ? "pass" : "unknown", summary_preview: ref("human_control")[0]?.summary_preview ?? "no human control metadata found", evidence_refs: ref("human_control"), recommended_commands: [{ label: "Review human controls", command: `/opencode-human-controls session=${sessionId}`, command_type: "read" }] },
+  ]
+}
+
+function fakeSupervisorContextSections(refs: OpenCodeWakeSupervisorEvidenceRefSummary[]): OpenCodeWakeSupervisorContextSectionSummary[] {
+  const ref = (kind: string) => refs.filter((item) => item.evidence_kind === kind)
+  const section = (name: string, status: string, summary: string, evidenceRefs: OpenCodeWakeSupervisorEvidenceRefSummary[], warnings: string[] = []): OpenCodeWakeSupervisorContextSectionSummary => ({ section: name, status, summary_preview: summary, evidence_refs: evidenceRefs, warnings })
+  return [
+    section("session_plan", ref("session_plan").length ? "included" : "missing", ref("session_plan").length ? "planned OpenCode session policy/context metadata is available" : "planned session metadata is missing", ref("session_plan")),
+    section("launch_state", ref("launch").length ? "included" : "missing", ref("launch").length ? "active launch metadata is available" : "active launch metadata is missing", ref("launch")),
+    section("latest_progress", ref("progress").length ? "included" : "missing", ref("progress").length ? "latest bounded progress/heartbeat evidence included" : "no latest progress evidence", ref("progress")),
+    section("watchdog_state", ref("watchdog").length ? "included" : "missing", ref("watchdog").length ? "latest watchdog assessment pointer included" : "no watchdog record", ref("watchdog")),
+    section("forced_report_state", ref("forced_report").length ? "pointer_only" : "missing", ref("forced_report").length ? "forced report request pointer included" : "no forced report request", ref("forced_report")),
+    section("pending_questions", ref("commander_question").length ? "pointer_only" : "missing", ref("commander_question").length ? "pending Commander question pointers included" : "no pending Commander questions", ref("commander_question")),
+    section("guidance_state", ref("commander_guidance").length ? "pointer_only" : "missing", ref("commander_guidance").length ? "latest Commander guidance pointer included" : "no Commander guidance record", ref("commander_guidance")),
+    section("guidance_delivery_state", ref("guidance_delivery").length ? "pointer_only" : "missing", ref("guidance_delivery").length ? "guidance delivery metadata pointer included" : "no guidance delivery metadata", ref("guidance_delivery")),
+    section("human_control_state", ref("human_control").length ? "pointer_only" : "missing", ref("human_control").length ? "latest human control metadata pointer included" : "no human control metadata", ref("human_control")),
+    section("research_memory_advisory", "excluded", "research-memory advisory omitted by default", [], ["full research.db is excluded"]),
+    section("omitted_raw_logs", "excluded", "raw logs and raw OpenCode output are excluded", [], ["raw logs are out of scope"]),
+    section("omitted_full_research_db", "excluded", "full research.db dumps are excluded", [], ["use bounded advisory refs only"]),
+    section("omitted_full_event_log", "excluded", "full event log dumps are excluded", [], ["use pointer-only event refs"]),
+  ]
+}
+
+function fakeSupervisorCommands(sessionId: string, action: string, progressId?: string, questionId?: string, guidanceId?: string): OpenCodeWakeSupervisorPreviewSummary["recommended_commands"] {
+  const commands: OpenCodeWakeSupervisorPreviewSummary["recommended_commands"] = [
+    { label: "Read latest progress", command: `/opencode-progress-latest session=${sessionId}`, command_type: "read" },
+    { label: "Preview watchdog", command: `/opencode-watchdog-preview session=${sessionId}`, command_type: "read" },
+  ]
+  if (action === "request_forced_report") commands.push({ label: "Request forced report", command: `/opencode-force-report session=${sessionId} reason=<reason>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
+  if (action === "record_watchdog") commands.push({ label: "Record watchdog", command: `/opencode-watchdog-record session=${sessionId}`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
+  if (action === "create_commander_question") commands.push({ label: "Create Commander question", command: progressId ? `/opencode-ask-commander progress=${progressId}` : `/opencode-ask-commander session=${sessionId} question=<question>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
+  if (action === "answer_commander_question") commands.push({ label: "Answer Commander question", command: `/commander-guidance question=${questionId ?? "<question_id>"} answer=<answer>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
+  if (action === "deliver_guidance") commands.push({ label: "Deliver guidance", command: `/commander-guidance-deliver guidance=${guidanceId ?? "<guidance_id>"} mode=operator_handoff`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
+  if (action === "review_human_control") commands.push({ label: "Review human controls", command: `/opencode-human-controls session=${sessionId}`, command_type: "read" })
+  commands.push({ label: "Record human note", command: `/opencode-human-note session=${sessionId} note=<note>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; metadata only" })
+  return commands.slice(0, 8)
+}
+
+function fakeSupervisorCard(preview: OpenCodeWakeSupervisorPreviewSummary): OpenCodeWakeSupervisorSessionCardSummary {
+  const progressRef = preview.evidence_refs.find((item) => item.evidence_kind === "progress")
+  return {
+    session_id: preview.session_id,
+    launch_id: preview.launch_id,
+    supervisor_status: preview.supervisor_status,
+    recommended_action: preview.recommended_action,
+    latest_progress_at: progressRef?.recorded_at,
+    latest_watchdog_status: preview.latest_watchdog_status,
+    pending_question_count: preview.pending_question_count,
+    pending_delivery_count: preview.pending_delivery_count,
+    latest_human_projected_state: preview.latest_human_projected_state,
+    summary_preview: preview.redacted_summary_preview,
+    supervisor_hash: preview.supervisor_hash,
   }
 }
 

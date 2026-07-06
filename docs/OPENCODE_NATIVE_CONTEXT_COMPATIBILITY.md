@@ -326,7 +326,7 @@ Branch 9B0 does not implement this protocol. Branch 9G implements the durable qu
 - 9H: Commander guidance answer protocol (records bounded answer metadata and answered-question projection; no delivery)
 - 9I: Commander guidance delivery gate (operator handoff/pending-delivery metadata only unless a future safe adapter_send path is added)
 - 9J: human live control metadata gate (pause/resume/stop/correction/override/report intent only; no process control or OpenCode prompt send)
-- 9K: wake supervisor preview
+- 9K: wake supervisor preview (read-only aggregate evidence/context surface across 9A/9D/9E/9F/9G/9H/9I/9J records; no scheduled wake tick, provider call, OpenCode prompt send, process control, `research.db` write, or mission mutation)
 - 9L: scheduled wake supervision execution
 - 9L: `research.db` search UI/API
 - 9M: session result -> typed research records

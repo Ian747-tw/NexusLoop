@@ -138,6 +138,17 @@ export class OpenCodeCommanderQuestionService {
       .slice(0, limit)
   }
 
+  async listAll(input: { session_id?: string; launch_id?: string; status?: string; question_type?: string; urgency?: string } = {}): Promise<OpenCodeCommanderQuestionRecord[]> {
+    return (await this.sequencedRecords())
+      .filter((item) => !input.session_id || item.record.session_id === input.session_id)
+      .filter((item) => !input.launch_id || item.record.launch_id === input.launch_id)
+      .filter((item) => !input.status || item.record.status === input.status)
+      .filter((item) => !input.question_type || item.record.question_type === input.question_type)
+      .filter((item) => !input.urgency || item.record.urgency === input.urgency)
+      .sort(compareSequencedDesc)
+      .map((item) => item.record)
+  }
+
   async get(questionId: string): Promise<OpenCodeCommanderQuestionResult | null> {
     const events = await this.options.eventStore.readAll()
     const created = events

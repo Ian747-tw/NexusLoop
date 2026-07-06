@@ -38,6 +38,7 @@ import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCode
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
 import { ProcessOpenCodeLaunchAdapter } from "./opencode-session/opencode-native-launch-adapter"
+import { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-supervisor-service"
 import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
@@ -18309,7 +18310,563 @@ describe("OpenCode launch readiness", () => {
     await client.shutdown?.()
   })
 
-	  test("opencode asks Commander accepts watchdog and forced-report evidence but rejects mismatches and raw logs", async () => {
+  test("wake supervisor preview aggregates OpenCode evidence read-only and prioritizes human controls", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    const heartbeat = await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "alive token=supervisor-secret" }) as { progress_id: string }
+    const watchdog = await server.command("runtime.record_opencode_watchdog", { sessionId }) as { watchdog_id: string; watchdog_status: string }
+    expect(watchdog.watchdog_status).toBe("healthy")
+    const question = await server.command("runtime.create_opencode_commander_question", { sessionId, question: "should I choose option A or B token=supervisor-secret" }) as { question_id: string }
+    const guidance = await server.command("runtime.create_commander_guidance", { questionId: question.question_id, answer: "choose option A token=supervisor-secret" }) as { guidance_id: string; delivery_status: string }
+    expect(guidance.delivery_status).toBe("not_delivered")
+
+    const deliveryPending = await server.command("runtime.preview_opencode_wake_supervisor", { sessionId }) as { status: string; supervisor_status: string; recommended_action: string; pending_delivery_count: number; pending_question_count: number; context_sections: Array<{ section: string; status: string }>; recommended_commands: Array<{ command: string; command_type: string }> }
+    expect(deliveryPending).toMatchObject({ status: "ready", supervisor_status: "guidance_pending_delivery", recommended_action: "deliver_guidance", pending_delivery_count: 1, pending_question_count: 0 })
+    expect(deliveryPending.context_sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ section: "omitted_raw_logs", status: "excluded" }),
+      expect.objectContaining({ section: "omitted_full_research_db", status: "excluded" }),
+      expect.objectContaining({ section: "omitted_full_event_log", status: "excluded" }),
+    ]))
+    expect(deliveryPending.recommended_commands).toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: expect.stringContaining("/commander-guidance-deliver"), command_type: "write" }),
+    ]))
+
+    const delivery = await server.command("runtime.deliver_commander_guidance", { guidanceId: guidance.guidance_id, mode: "operator_handoff" }) as { status: string; delivery_id: string; delivery_status_after: string }
+    expect(delivery).toMatchObject({ status: "delivery_requested", delivery_status_after: "pending_delivery" })
+    const pause = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "pause_request", reason: "operator wants review token=supervisor-secret" }) as { control_id: string; projected_state_after: string }
+    expect(pause.projected_state_after).toBe("pause_requested")
+    const neutralNote = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "note", humanNote: "operator note after pause token=supervisor-secret" }) as { control_id: string; projected_state_after: string }
+    expect(neutralNote.projected_state_after).toBe("noted")
+    for (let index = 0; index < 25; index += 1) {
+      await server.command("runtime.record_opencode_human_control", { sessionId, kind: "note", humanNote: `neutral note ${index} after pause` })
+    }
+    const eventsBeforePreview = await server.eventStore.readAll()
+
+    const preview = await server.command("runtime.preview_opencode_wake_supervisor", { sessionId }) as {
+      status: string
+      supervisor_status: string
+      recommended_action: string
+      latest_progress_id?: string
+      latest_watchdog_id?: string
+      pending_delivery_count: number
+      latest_human_control_id?: string
+      human_pause_requested: boolean
+      blocked_by_human: boolean
+      checks: Array<{ check_id: string; status: string }>
+      evidence_refs: Array<{ evidence_kind: string; pointer_only: boolean; summary_preview?: string }>
+      warnings: string[]
+    }
+    expect(preview).toMatchObject({
+      status: "ready",
+      supervisor_status: "human_paused",
+      recommended_action: "review_human_control",
+      latest_progress_id: heartbeat.progress_id,
+      latest_watchdog_id: watchdog.watchdog_id,
+      pending_delivery_count: 1,
+      latest_human_control_id: pause.control_id,
+      human_pause_requested: true,
+      blocked_by_human: true,
+    })
+    expect(preview.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ check_id: "session_launch_chain", status: "pass" }),
+      expect.objectContaining({ check_id: "human_control_state", status: "warn" }),
+    ]))
+    expect(preview.evidence_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ evidence_kind: "progress", pointer_only: true }),
+      expect.objectContaining({ evidence_kind: "watchdog", pointer_only: true }),
+      expect.objectContaining({ evidence_kind: "guidance_delivery", pointer_only: true }),
+      expect.objectContaining({ evidence_kind: "human_control", pointer_only: true }),
+    ]))
+    expect(JSON.stringify(preview)).not.toContain("supervisor-secret")
+    expect(JSON.stringify(preview)).not.toContain("raw log content")
+    expect(preview.warnings.join(" ")).toContain("read-only")
+    expect(await server.eventStore.readAll()).toEqual(eventsBeforePreview)
+
+    const cappedPreview = await server.command("runtime.preview_opencode_wake_supervisor", { sessionId, limitEvidence: 1 }) as {
+      latest_progress_id?: string
+      latest_watchdog_id?: string
+      latest_human_control_id?: string
+      evidence_refs: Array<{ evidence_kind: string }>
+      checks: Array<{ check_id: string; status: string }>
+      supervisor_status: string
+      blocked_by_human: boolean
+    }
+    expect(cappedPreview).toMatchObject({
+      latest_progress_id: heartbeat.progress_id,
+      latest_watchdog_id: watchdog.watchdog_id,
+      latest_human_control_id: pause.control_id,
+      supervisor_status: "human_paused",
+      blocked_by_human: true,
+    })
+    expect(cappedPreview.evidence_refs).toHaveLength(1)
+    expect(cappedPreview.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ check_id: "latest_progress", status: "pass" }),
+      expect.objectContaining({ check_id: "watchdog_state", status: "pass" }),
+    ]))
+
+    const summary = await server.command("runtime.opencode_wake_supervisor_summary") as { total_launched_sessions: number; human_attention_count: number; session_cards: Array<{ session_id: string; supervisor_status: string; recommended_action: string }> }
+    expect(summary.total_launched_sessions).toBe(1)
+    expect(summary.human_attention_count).toBe(1)
+    expect(summary.session_cards).toEqual([expect.objectContaining({ session_id: sessionId, supervisor_status: "human_paused", recommended_action: "review_human_control" })])
+    expect(await server.eventStore.readAll()).toEqual(eventsBeforePreview)
+
+    const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+    expect(eventKinds).not.toContain("opencode_wake_supervisor_previewed")
+    expect(eventKinds).not.toContain("wake_scheduler_tick_executed")
+    expect(eventKinds).not.toContain("opencode_prompt_sent")
+    expect(eventKinds).not.toContain("opencode_session_process_paused")
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+    expect(eventKinds).not.toContain("research_db_written")
+    const authority = await server.command("runtime.command_authority_get", { command: "/opencode-wake-supervisor-preview" }) as { risk: string; notes: string[]; aliases: string[] }
+    expect(authority.risk).toBe("safe_read")
+    expect(authority.aliases).toEqual(expect.arrayContaining(["/wake-supervisor-preview", "/session-supervisor", "/opencode-supervisor"]))
+    expect(authority.notes.join(" ")).toContain("Read-only OpenCode wake supervisor preview")
+    await server.shutdown()
+
+    const noStartDir = await tempProject()
+    await makeProject(noStartDir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const noStartServer = new RuntimeServer({ projectDir: noStartDir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server: noStartServer, autoStart: true, ownsServer: true })
+    await expect(client.command("runtime.preview_opencode_wake_supervisor", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.opencode_wake_supervisor_summary")).resolves.toMatchObject({ total_launched_sessions: 0 })
+    expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
+    await client.shutdown?.()
+  })
+
+  test("wake supervisor summary counts all matching launched sessions before applying card limit", async () => {
+    const launches = Array.from({ length: 101 }, (_, offset) => {
+      const index = offset + 1
+      return {
+      launch_id: `launch_${index}`,
+      status: "launched",
+      adapter_kind: "fake",
+      launch_mode: "fresh",
+      session_id: `session_${index}`,
+      started_at: `2026-07-06T10:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
+      summary_preview: `launch ${index}`,
+      launch_hash: `launch_hash_${index}`,
+      }
+    })
+    const service = new OpenCodeWakeSupervisorService({
+      opencodeSessionService: {
+        get: async (sessionId: string) => ({ session_id: sessionId, status: "planned", objective: `objective ${sessionId}`, created_at: "2026-07-06T10:00:00.000Z" }),
+      } as never,
+      launchGateService: {
+        list: async (input: { session_id?: string } = {}) => input.session_id ? launches.filter((launch) => launch.session_id === input.session_id).slice(0, 100) : launches.slice(0, 100),
+        listAll: async (input: { session_id?: string } = {}) => input.session_id ? launches.filter((launch) => launch.session_id === input.session_id) : launches,
+        get: async (launchId: string) => launches.find((launch) => launch.launch_id === launchId) ?? null,
+      } as never,
+      progressService: {
+        latest: async (input: { session_id?: string }) => ({
+          progress_id: `progress_${input.session_id}`,
+          kind: "heartbeat",
+          execution_state: "running",
+          report_summary_preview: "alive",
+          recorded_at: "2026-07-06T10:00:10.000Z",
+        }),
+      } as never,
+      watchdogService: {
+        list: async () => [],
+        listForcedReports: async () => [],
+      } as never,
+      questionService: {
+        list: async () => [],
+      } as never,
+      guidanceService: {
+        latest: async () => null,
+        list: async () => [],
+      } as never,
+      guidanceDeliveryService: {
+        list: async () => [],
+      } as never,
+      humanControlService: {
+        list: async (input: { session_id?: string }) => [{
+          control_id: `control_${input.session_id}`,
+          projected_state_after: "pause_requested",
+          human_note_preview: "operator pause",
+          recorded_at: "2026-07-06T10:00:20.000Z",
+        }],
+      } as never,
+      now: () => new Date("2026-07-06T10:01:00.000Z"),
+    })
+
+    const summary = await service.summary({ limit: 1 })
+    expect(summary.total_launched_sessions).toBe(101)
+    expect(summary.human_attention_count).toBe(101)
+    expect(summary.session_cards).toHaveLength(1)
+    expect(summary.session_cards[0]?.supervisor_status).toBe("human_paused")
+  })
+
+  test("wake supervisor derives pending question and guidance state from uncapped evidence", async () => {
+    const launch = {
+      launch_id: "launch_capped_evidence",
+      status: "launched",
+      adapter_kind: "fake",
+      launch_mode: "fresh",
+      session_id: "session_capped_evidence",
+      started_at: "2026-07-06T10:00:00.000Z",
+      summary_preview: "launch capped evidence",
+      launch_hash: "launch_hash_capped_evidence",
+    }
+    const baseOptions = {
+      opencodeSessionService: {
+        get: async (sessionId: string) => ({ session_id: sessionId, status: "planned", objective: `objective ${sessionId}`, created_at: "2026-07-06T10:00:00.000Z" }),
+      } as never,
+      launchGateService: {
+        list: async () => [launch],
+        listAll: async () => [launch],
+        get: async (launchId: string) => launch.launch_id === launchId ? launch : null,
+      } as never,
+      progressService: {
+        latest: async () => ({
+          progress_id: "progress_capped_evidence",
+          kind: "heartbeat",
+          execution_state: "running",
+          report_summary_preview: "alive",
+          recorded_at: "2026-07-06T10:00:10.000Z",
+        }),
+      } as never,
+      watchdogService: {
+        list: async () => [{
+          watchdog_id: "watchdog_capped_evidence",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          watchdog_status: "healthy",
+          recommended_action: "none",
+          report_required: false,
+          latest_progress_id: "progress_capped_evidence",
+          recorded_at: "2026-07-06T10:00:20.000Z",
+          recorded_by: "operator",
+          watchdog_hash: "watchdog_hash_capped_evidence",
+        }],
+        listForcedReports: async () => [],
+      } as never,
+      guidanceDeliveryService: {
+        list: async () => [],
+      } as never,
+      humanControlService: {
+        list: async () => [],
+      } as never,
+      now: () => new Date("2026-07-06T10:01:00.000Z"),
+    }
+
+    const pendingQuestionService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      questionService: {
+        list: async () => [],
+        listAll: async () => [{
+          question_id: "question_uncapped",
+          status: "pending_commander",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          question_type: "clarification",
+          urgency: "normal",
+          question_preview: "older pending question",
+          source_kind: "manual",
+          created_at: "2026-07-06T09:59:00.000Z",
+          created_by: "operator",
+          has_options: false,
+          has_recommendation: false,
+          question_hash: "question_hash_uncapped",
+        }],
+      } as never,
+      guidanceService: {
+        latest: async () => null,
+        list: async () => [],
+        listAll: async () => [],
+      } as never,
+    })
+    const pendingQuestion = await pendingQuestionService.preview({ session_id: launch.session_id, limit_evidence: 1 })
+    expect(pendingQuestion).toMatchObject({ supervisor_status: "needs_commander_answer", recommended_action: "answer_commander_question", pending_question_count: 1 })
+    expect(pendingQuestion.recommended_commands).toContainEqual(expect.objectContaining({ command: "/commander-guidance question=question_uncapped answer=<answer>" }))
+
+    const pendingGuidanceService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      questionService: {
+        list: async () => [],
+        listAll: async () => [],
+      } as never,
+      guidanceService: {
+        latest: async () => ({
+          guidance_id: "guidance_delivered_latest",
+          question_id: "question_delivered_latest",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          status: "created",
+          delivery_status: "delivered",
+          guidance_scope: "clarification",
+          author_kind: "human",
+          answer_preview: "newer delivered guidance",
+          created_at: "2026-07-06T10:00:50.000Z",
+          created_by: "operator",
+          guidance_hash: "guidance_hash_delivered_latest",
+        }),
+        list: async () => [],
+        listAll: async () => [{
+          guidance_id: "guidance_uncapped_pending",
+          question_id: "question_uncapped_pending",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          status: "created",
+          delivery_status: "not_delivered",
+          guidance_scope: "clarification",
+          author_kind: "human",
+          answer_preview: "older pending guidance",
+          created_at: "2026-07-06T09:58:00.000Z",
+          created_by: "operator",
+          has_constraints: false,
+          has_refs: false,
+          guidance_hash: "guidance_hash_uncapped_pending",
+        }],
+      } as never,
+    })
+    const pendingGuidance = await pendingGuidanceService.preview({ session_id: launch.session_id, limit_evidence: 1 })
+    expect(pendingGuidance).toMatchObject({ supervisor_status: "guidance_pending_delivery", recommended_action: "deliver_guidance", pending_delivery_count: 1 })
+    expect(pendingGuidance.recommended_commands).toContainEqual(expect.objectContaining({ command: "/commander-guidance-deliver guidance=guidance_uncapped_pending mode=operator_handoff" }))
+  })
+
+  test("wake supervisor requires current watchdog evidence before suppressing report requests or marking healthy", async () => {
+    const launch = {
+      launch_id: "launch_current",
+      status: "launched",
+      adapter_kind: "fake",
+      launch_mode: "fresh",
+      session_id: "session_current",
+      started_at: "2026-07-06T10:00:00.000Z",
+      summary_preview: "launch current",
+      launch_hash: "launch_hash_current",
+    }
+    const progress = {
+      progress_id: "progress_current",
+      kind: "heartbeat",
+      execution_state: "running",
+      report_summary_preview: "alive",
+      recorded_at: "2026-07-06T10:00:10.000Z",
+    }
+    const baseOptions = {
+      opencodeSessionService: {
+        get: async (sessionId: string) => ({ session_id: sessionId, status: "planned", objective: `objective ${sessionId}`, created_at: "2026-07-06T10:00:00.000Z" }),
+      } as never,
+      launchGateService: {
+        list: async () => [launch],
+        get: async (launchId: string) => launch.launch_id === launchId ? launch : null,
+      } as never,
+      progressService: {
+        latest: async () => progress,
+      } as never,
+      questionService: {
+        list: async () => [],
+      } as never,
+      guidanceService: {
+        latest: async () => null,
+        list: async () => [],
+      } as never,
+      guidanceDeliveryService: {
+        list: async () => [],
+      } as never,
+      humanControlService: {
+        list: async () => [],
+      } as never,
+      now: () => new Date("2026-07-06T10:01:00.000Z"),
+    }
+
+    const missingWatchdogService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      watchdogService: {
+        list: async () => [],
+        listForcedReports: async () => [],
+      } as never,
+    })
+    const missingWatchdog = await missingWatchdogService.preview({ session_id: launch.session_id })
+    expect(missingWatchdog).toMatchObject({ status: "partial", supervisor_status: "watch", recommended_action: "record_watchdog" })
+    expect(missingWatchdog.recommended_commands).toContainEqual(expect.objectContaining({ command: `/opencode-watchdog-record session=${launch.session_id}` }))
+
+    const missingExplicitLaunchService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      launchGateService: {
+        list: async () => [launch],
+        get: async () => null,
+      } as never,
+      progressService: {
+        latest: async () => {
+          throw new Error("progress should not be loaded for unresolved explicit launch_id")
+        },
+      } as never,
+      watchdogService: {
+        list: async () => {
+          throw new Error("watchdog should not be loaded for unresolved explicit launch_id")
+        },
+        listForcedReports: async () => {
+          throw new Error("forced reports should not be loaded for unresolved explicit launch_id")
+        },
+      } as never,
+    })
+    const missingExplicitLaunch = await missingExplicitLaunchService.preview({ session_id: launch.session_id, launch_id: "launch_missing" })
+    expect(missingExplicitLaunch).toMatchObject({ status: "blocked", launch_id: "launch_missing", supervisor_status: "unknown", recommended_action: "unknown" })
+    expect(missingExplicitLaunch.blockers).toContain("launch_id does not resolve to an OpenCode launch record")
+    expect(missingExplicitLaunch.latest_progress_id).toBeUndefined()
+    expect(missingExplicitLaunch.evidence_refs.map((ref) => ref.evidence_kind)).not.toContain("launch")
+    expect(missingExplicitLaunch.evidence_refs.map((ref) => ref.evidence_kind)).not.toContain("progress")
+
+    const staleReportService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      watchdogService: {
+        list: async () => [{
+          watchdog_id: "watchdog_current",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          watchdog_status: "timed_out",
+          recommended_action: "request_report",
+          report_required: true,
+          latest_progress_id: progress.progress_id,
+          recorded_at: "2026-07-06T10:00:40.000Z",
+          recorded_by: "operator",
+          watchdog_hash: "watchdog_hash_current",
+        }],
+        listForcedReports: async () => [{
+          request_id: "request_old",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          watchdog_id: "watchdog_old",
+          latest_progress_id: "progress_old",
+          reason: "old timeout",
+          requested_at: "2026-07-06T10:00:20.000Z",
+          requested_by: "operator",
+          forced_pause_recommended: false,
+          process_paused: false,
+          request_hash: "request_hash_old",
+        }],
+      } as never,
+    })
+    const staleReport = await staleReportService.preview({ session_id: launch.session_id })
+    expect(staleReport).toMatchObject({ status: "ready", supervisor_status: "timed_out", recommended_action: "request_forced_report" })
+
+    const currentReportService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      watchdogService: {
+        list: async () => [{
+          watchdog_id: "watchdog_current",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          watchdog_status: "timed_out",
+          recommended_action: "request_report",
+          report_required: true,
+          latest_progress_id: progress.progress_id,
+          recorded_at: "2026-07-06T10:00:40.000Z",
+          recorded_by: "operator",
+          watchdog_hash: "watchdog_hash_current",
+        }],
+        listForcedReports: async () => [{
+          request_id: "request_current",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          latest_progress_id: progress.progress_id,
+          reason: "current timeout",
+          requested_at: "2026-07-06T10:00:50.000Z",
+          requested_by: "operator",
+          forced_pause_recommended: false,
+          process_paused: false,
+          request_hash: "request_hash_current",
+        }],
+      } as never,
+    })
+    const currentReport = await currentReportService.preview({ session_id: launch.session_id })
+    expect(currentReport).toMatchObject({ status: "ready", supervisor_status: "timed_out", recommended_action: "read_latest_progress" })
+
+    const blockedWatchdogService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      watchdogService: {
+        list: async () => [{
+          watchdog_id: "watchdog_blocked",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          watchdog_status: "blocked",
+          recommended_action: "escalate_to_commander",
+          report_required: true,
+          latest_progress_id: progress.progress_id,
+          recorded_at: "2026-07-06T10:00:45.000Z",
+          recorded_by: "operator",
+          watchdog_hash: "watchdog_hash_blocked",
+        }],
+        listForcedReports: async () => [],
+      } as never,
+    })
+    const blockedWatchdog = await blockedWatchdogService.preview({ session_id: launch.session_id })
+    expect(blockedWatchdog).toMatchObject({ status: "ready", supervisor_status: "blocked", recommended_action: "request_forced_report", report_required: true })
+
+    const pendingGuidanceService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      watchdogService: {
+        list: async () => [{
+          watchdog_id: "watchdog_healthy",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          watchdog_status: "healthy",
+          recommended_action: "none",
+          report_required: false,
+          latest_progress_id: progress.progress_id,
+          recorded_at: "2026-07-06T10:00:40.000Z",
+          recorded_by: "operator",
+          watchdog_hash: "watchdog_hash_healthy",
+        }],
+        listForcedReports: async () => [],
+      } as never,
+      guidanceService: {
+        latest: async () => ({
+          guidance_id: "guidance_delivered",
+          question_id: "question_delivered",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          status: "created",
+          delivery_status: "delivered",
+          guidance_scope: "clarification",
+          author_kind: "human",
+          answer_preview: "already delivered",
+          created_at: "2026-07-06T10:00:50.000Z",
+          created_by: "operator",
+          guidance_hash: "guidance_hash_delivered",
+        }),
+        list: async () => [
+          {
+            guidance_id: "guidance_delivered",
+            question_id: "question_delivered",
+            session_id: launch.session_id,
+            launch_id: launch.launch_id,
+            status: "created",
+            delivery_status: "delivered",
+            guidance_scope: "clarification",
+            author_kind: "human",
+            answer_preview: "already delivered",
+            created_at: "2026-07-06T10:00:50.000Z",
+            created_by: "operator",
+            guidance_hash: "guidance_hash_delivered",
+          },
+          {
+            guidance_id: "guidance_pending",
+            question_id: "question_pending",
+            session_id: launch.session_id,
+            launch_id: launch.launch_id,
+            status: "created",
+            delivery_status: "not_delivered",
+            guidance_scope: "clarification",
+            author_kind: "human",
+            answer_preview: "pending delivery",
+            created_at: "2026-07-06T10:00:30.000Z",
+            created_by: "operator",
+            guidance_hash: "guidance_hash_pending",
+          },
+        ],
+      } as never,
+    })
+    const pendingGuidance = await pendingGuidanceService.preview({ session_id: launch.session_id })
+    expect(pendingGuidance).toMatchObject({ status: "ready", supervisor_status: "guidance_pending_delivery", recommended_action: "deliver_guidance" })
+    expect(pendingGuidance.recommended_commands).toContainEqual(expect.objectContaining({ command: "/commander-guidance-deliver guidance=guidance_pending mode=operator_handoff" }))
+  })
+
+  test("opencode asks Commander accepts watchdog and forced-report evidence but rejects mismatches and raw logs", async () => {
     const dir = await tempProject()
     const { server, sessionId, packId } = await readyLaunchFixture(dir)
     await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })
