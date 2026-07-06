@@ -18590,6 +18590,74 @@ describe("OpenCode launch readiness", () => {
     })
     const currentReport = await currentReportService.preview({ session_id: launch.session_id })
     expect(currentReport).toMatchObject({ status: "ready", supervisor_status: "timed_out", recommended_action: "read_latest_progress" })
+
+    const pendingGuidanceService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      watchdogService: {
+        list: async () => [{
+          watchdog_id: "watchdog_healthy",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          watchdog_status: "healthy",
+          recommended_action: "none",
+          report_required: false,
+          latest_progress_id: progress.progress_id,
+          recorded_at: "2026-07-06T10:00:40.000Z",
+          recorded_by: "operator",
+          watchdog_hash: "watchdog_hash_healthy",
+        }],
+        listForcedReports: async () => [],
+      } as never,
+      guidanceService: {
+        latest: async () => ({
+          guidance_id: "guidance_delivered",
+          question_id: "question_delivered",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          status: "created",
+          delivery_status: "delivered",
+          guidance_scope: "clarification",
+          author_kind: "human",
+          answer_preview: "already delivered",
+          created_at: "2026-07-06T10:00:50.000Z",
+          created_by: "operator",
+          guidance_hash: "guidance_hash_delivered",
+        }),
+        list: async () => [
+          {
+            guidance_id: "guidance_delivered",
+            question_id: "question_delivered",
+            session_id: launch.session_id,
+            launch_id: launch.launch_id,
+            status: "created",
+            delivery_status: "delivered",
+            guidance_scope: "clarification",
+            author_kind: "human",
+            answer_preview: "already delivered",
+            created_at: "2026-07-06T10:00:50.000Z",
+            created_by: "operator",
+            guidance_hash: "guidance_hash_delivered",
+          },
+          {
+            guidance_id: "guidance_pending",
+            question_id: "question_pending",
+            session_id: launch.session_id,
+            launch_id: launch.launch_id,
+            status: "created",
+            delivery_status: "not_delivered",
+            guidance_scope: "clarification",
+            author_kind: "human",
+            answer_preview: "pending delivery",
+            created_at: "2026-07-06T10:00:30.000Z",
+            created_by: "operator",
+            guidance_hash: "guidance_hash_pending",
+          },
+        ],
+      } as never,
+    })
+    const pendingGuidance = await pendingGuidanceService.preview({ session_id: launch.session_id })
+    expect(pendingGuidance).toMatchObject({ status: "ready", supervisor_status: "guidance_pending_delivery", recommended_action: "deliver_guidance" })
+    expect(pendingGuidance.recommended_commands).toContainEqual(expect.objectContaining({ command: "/commander-guidance-deliver guidance=guidance_pending mode=operator_handoff" }))
   })
 
   test("opencode asks Commander accepts watchdog and forced-report evidence but rejects mismatches and raw logs", async () => {

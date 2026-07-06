@@ -93,6 +93,7 @@ export class OpenCodeWakeSupervisorService {
     const latestGuidance = sessionId ? await this.options.guidanceService.latest({ session_id: sessionId, launch_id: launch?.launch_id }) : null
     const guidanceRecords = sessionId ? await this.options.guidanceService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const pendingGuidance = guidanceRecords.filter((guidance) => guidance.delivery_status === "not_delivered" || guidance.delivery_status === "pending_delivery")
+    const pendingGuidanceRecord = pendingGuidance[0]
     const deliveries = includeGuidanceDelivery && sessionId ? await this.options.guidanceDeliveryService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const latestDelivery = deliveries[0]
     const humanControls = includeHumanControls && sessionId ? await this.options.humanControlService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
@@ -121,7 +122,7 @@ export class OpenCodeWakeSupervisorService {
       currentForcedReport,
       pendingQuestionCount: pendingQuestions.length,
       pendingDeliveryCount: pendingGuidance.length,
-      latestGuidanceDeliveryStatus: latestGuidance?.delivery_status,
+      latestGuidanceDeliveryStatus: pendingGuidanceRecord?.delivery_status ?? latestGuidance?.delivery_status,
       latestDeliveryStatus: latestDelivery?.delivery_status_after,
       latestHumanState: latestHuman?.projected_state_after,
     })
@@ -130,7 +131,7 @@ export class OpenCodeWakeSupervisorService {
       progressId: latestProgress?.progress_id,
       watchdogId: latestWatchdog?.watchdog_id,
       questionId: pendingQuestions[0]?.question_id,
-      guidanceId: latestGuidance?.guidance_id,
+      guidanceId: pendingGuidanceRecord?.guidance_id ?? latestGuidance?.guidance_id,
     })
     const checks = buildChecks({
       sessionRef: evidenceRefs.find((ref) => ref.evidence_kind === "session_plan"),

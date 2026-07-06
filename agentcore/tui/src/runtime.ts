@@ -3556,9 +3556,10 @@ export class FakeRuntimeClient implements RuntimeClient {
     const pendingQuestions = this.opencodeCommanderQuestions.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && (item.question_status === "pending_commander" || item.question_status === "pending_human"))
     const latestGuidance = this.commanderGuidanceRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
     const pendingGuidance = this.commanderGuidanceRecords.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && (item.delivery_status === "not_delivered" || item.delivery_status === "pending_delivery"))
+    const pendingGuidanceRecord = pendingGuidance[0]
     const latestDelivery = this.commanderGuidanceDeliveryRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
     const latestHuman = this.opencodeHumanControlRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
-    const decision = fakeSupervisorDecision(latestProgress, latestWatchdog, currentForcedReport, pendingQuestions.length, pendingGuidance.length, latestGuidance?.delivery_status, latestDelivery?.delivery_status_after, latestHuman?.projected_state_after)
+    const decision = fakeSupervisorDecision(latestProgress, latestWatchdog, currentForcedReport, pendingQuestions.length, pendingGuidance.length, pendingGuidanceRecord?.delivery_status ?? latestGuidance?.delivery_status, latestDelivery?.delivery_status_after, latestHuman?.projected_state_after)
     const evidenceRefs = fakeSupervisorEvidenceRefs({ session, launch, latestProgress, latestWatchdog, latestForcedReport, pendingQuestion: pendingQuestions[0], latestGuidance, latestDelivery, latestHuman })
     const supervisorHash = fakeNavigationStageHash(JSON.stringify({
       sessionId,
@@ -3572,7 +3573,7 @@ export class FakeRuntimeClient implements RuntimeClient {
       latestHuman: latestHuman?.control_id,
       blockers,
     }))
-    const commands = fakeSupervisorCommands(sessionId || "<session_id>", decision.action, latestProgress?.progress_id, pendingQuestions[0]?.question_id, latestGuidance?.guidance_id)
+    const commands = fakeSupervisorCommands(sessionId || "<session_id>", decision.action, latestProgress?.progress_id, pendingQuestions[0]?.question_id, pendingGuidanceRecord?.guidance_id ?? latestGuidance?.guidance_id)
     return {
       preview_id: `fake-wake-supervisor-preview-${supervisorHash.slice(0, 12)}`,
       status: blockers.length ? "blocked" : latestProgress && latestWatchdog ? "ready" : "partial",
