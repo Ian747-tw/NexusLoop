@@ -87,6 +87,7 @@ export class OpenCodeWakeSupervisorService {
     const latestWatchdog = watchdogs[0]
     const forcedReports = sessionId ? await this.options.watchdogService.listForcedReports({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const latestForcedReport = forcedReports[0]
+    const currentForcedReport = forcedReports.find((request) => forcedReportMatchesCurrentEvidence(request, latestWatchdog, latestProgress)) ?? null
     const questions = sessionId ? await this.options.questionService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const pendingQuestions = questions.filter((question) => question.status === "pending_commander" || question.status === "pending_human")
     const latestGuidance = sessionId ? await this.options.guidanceService.latest({ session_id: sessionId, launch_id: launch?.launch_id }) : null
@@ -117,7 +118,7 @@ export class OpenCodeWakeSupervisorService {
     const statusDecision = decideStatus({
       latestProgress,
       latestWatchdog,
-      latestForcedReport,
+      currentForcedReport,
       pendingQuestionCount: pendingQuestions.length,
       pendingDeliveryCount: pendingGuidance.length,
       latestGuidanceDeliveryStatus: latestGuidance?.delivery_status,
@@ -277,7 +278,7 @@ export function readOpenCodeWakeSupervisorSummaryInput(value: unknown): OpenCode
 function decideStatus(input: {
   latestProgress: { kind: string; execution_state: string } | null
   latestWatchdog?: { watchdog_status: string; report_required: boolean } | null
-  latestForcedReport?: { request_id: string } | null
+  currentForcedReport?: { request_id: string } | null
   pendingQuestionCount: number
   pendingDeliveryCount: number
   latestGuidanceDeliveryStatus?: string
@@ -290,13 +291,13 @@ function decideStatus(input: {
     return { status: "human_attention", action: "review_human_control" }
   }
   if (input.latestWatchdog?.watchdog_status === "timed_out") {
-    return { status: "timed_out", action: input.latestForcedReport ? "read_latest_progress" : "request_forced_report" }
+    return { status: "timed_out", action: input.currentForcedReport ? "read_latest_progress" : "request_forced_report" }
   }
   if (input.latestWatchdog?.watchdog_status === "needs_report") {
-    return { status: "needs_report", action: input.latestForcedReport ? "read_latest_progress" : "request_forced_report" }
+    return { status: "needs_report", action: input.currentForcedReport ? "read_latest_progress" : "request_forced_report" }
   }
   if (input.latestWatchdog?.watchdog_status === "stale") {
-    return { status: "stale", action: input.latestForcedReport ? "read_latest_progress" : "request_forced_report" }
+    return { status: "stale", action: input.currentForcedReport ? "read_latest_progress" : "request_forced_report" }
   }
   if (input.pendingQuestionCount > 0) return { status: "needs_commander_answer", action: "answer_commander_question" }
   if (input.pendingDeliveryCount > 0) {
@@ -305,6 +306,7 @@ function decideStatus(input: {
   if (input.latestProgress?.kind === "blocker" || input.latestProgress?.execution_state === "blocked") return { status: "blocked", action: "create_commander_question" }
   if (input.latestProgress?.kind === "question" || input.latestProgress?.execution_state === "needs_commander") return { status: "needs_commander_answer", action: "create_commander_question" }
   if (input.latestProgress?.kind === "completion_report" || input.latestProgress?.execution_state === "reported_done") return { status: "watch", action: "prepare_result_review" }
+  if (input.latestProgress && !input.latestWatchdog) return { status: "watch", action: "record_watchdog" }
   if (input.latestProgress) return { status: "healthy", action: "none" }
   return { status: "unknown", action: "read_latest_progress" }
 }
@@ -405,6 +407,7 @@ function recommendedCommandsForStatus(
     { label: "Preview watchdog", command: `/opencode-watchdog-preview session=${ids.sessionId}`, command_type: "read" },
   ]
   if (action === "request_forced_report") commands.push({ label: "Request forced report", command: `/opencode-force-report session=${ids.sessionId} reason=<reason>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
+  if (action === "record_watchdog") commands.push({ label: "Record watchdog", command: `/opencode-watchdog-record session=${ids.sessionId}`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
   if (action === "create_commander_question") commands.push({ label: "Create Commander question", command: ids.progressId ? `/opencode-ask-commander progress=${ids.progressId}` : `/opencode-ask-commander session=${ids.sessionId} question=<question>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
   if (action === "answer_commander_question") commands.push({ label: "Answer Commander question", command: `/commander-guidance question=${ids.questionId ?? "<question_id>"} answer=<answer>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
   if (action === "deliver_guidance") commands.push({ label: "Deliver guidance", command: `/commander-guidance-deliver guidance=${ids.guidanceId ?? "<guidance_id>"} mode=operator_handoff`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
@@ -456,6 +459,16 @@ function evidence(kind: OpenCodeWakeSupervisorEvidenceRef["evidence_kind"], id: 
     recorded_at: bound(recordedAt),
     pointer_only: true as const,
   }
+}
+
+function forcedReportMatchesCurrentEvidence(
+  request: { watchdog_id?: string; latest_progress_id?: string },
+  latestWatchdog?: { watchdog_id: string; latest_progress_id?: string } | null,
+  latestProgress?: { progress_id: string } | null,
+): boolean {
+  if (latestWatchdog?.watchdog_id) return request.watchdog_id === latestWatchdog.watchdog_id
+  if (latestProgress?.progress_id) return request.latest_progress_id === latestProgress.progress_id
+  return false
 }
 
 function boundEvidence(values: Array<OpenCodeWakeSupervisorEvidenceRef | undefined>, maxItems: number): OpenCodeWakeSupervisorEvidenceRef[] {

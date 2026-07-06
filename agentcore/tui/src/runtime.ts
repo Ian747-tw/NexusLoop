@@ -3552,12 +3552,13 @@ export class FakeRuntimeClient implements RuntimeClient {
     const latestProgress = this.opencodeProgressRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
     const latestWatchdog = this.opencodeWatchdogRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
     const latestForcedReport = this.opencodeForcedReportRequests.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
+    const currentForcedReport = this.opencodeForcedReportRequests.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && fakeForcedReportMatchesCurrentEvidence(item, latestWatchdog, latestProgress)) ?? null
     const pendingQuestions = this.opencodeCommanderQuestions.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && (item.question_status === "pending_commander" || item.question_status === "pending_human"))
     const latestGuidance = this.commanderGuidanceRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
     const pendingGuidance = this.commanderGuidanceRecords.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && (item.delivery_status === "not_delivered" || item.delivery_status === "pending_delivery"))
     const latestDelivery = this.commanderGuidanceDeliveryRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
     const latestHuman = this.opencodeHumanControlRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
-    const decision = fakeSupervisorDecision(latestProgress, latestWatchdog, latestForcedReport, pendingQuestions.length, pendingGuidance.length, latestGuidance?.delivery_status, latestDelivery?.delivery_status_after, latestHuman?.projected_state_after)
+    const decision = fakeSupervisorDecision(latestProgress, latestWatchdog, currentForcedReport, pendingQuestions.length, pendingGuidance.length, latestGuidance?.delivery_status, latestDelivery?.delivery_status_after, latestHuman?.projected_state_after)
     const evidenceRefs = fakeSupervisorEvidenceRefs({ session, launch, latestProgress, latestWatchdog, latestForcedReport, pendingQuestion: pendingQuestions[0], latestGuidance, latestDelivery, latestHuman })
     const supervisorHash = fakeNavigationStageHash(JSON.stringify({
       sessionId,
@@ -10538,8 +10539,19 @@ function fakeSupervisorDecision(
   if (latestProgress?.kind === "blocker" || latestProgress?.execution_state === "blocked") return { status: "blocked", action: "create_commander_question" }
   if (latestProgress?.kind === "question" || latestProgress?.execution_state === "needs_commander") return { status: "needs_commander_answer", action: "create_commander_question" }
   if (latestProgress?.kind === "completion_report" || latestProgress?.execution_state === "reported_done") return { status: "watch", action: "prepare_result_review" }
+  if (latestProgress && !latestWatchdog) return { status: "watch", action: "record_watchdog" }
   if (latestProgress) return { status: "healthy", action: "none" }
   return { status: "unknown", action: "read_latest_progress" }
+}
+
+function fakeForcedReportMatchesCurrentEvidence(
+  request: OpenCodeForcedReportRequestSummary,
+  latestWatchdog: OpenCodeWatchdogResultSummary | null,
+  latestProgress: OpenCodeProgressResultSummary | null,
+): boolean {
+  if (latestWatchdog?.watchdog_id) return request.watchdog_id === latestWatchdog.watchdog_id
+  if (latestProgress?.progress_id) return request.latest_progress_id === latestProgress.progress_id
+  return false
 }
 
 function fakeSupervisorEvidenceRefs(input: {
@@ -10614,6 +10626,7 @@ function fakeSupervisorCommands(sessionId: string, action: string, progressId?: 
     { label: "Preview watchdog", command: `/opencode-watchdog-preview session=${sessionId}`, command_type: "read" },
   ]
   if (action === "request_forced_report") commands.push({ label: "Request forced report", command: `/opencode-force-report session=${sessionId} reason=<reason>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
+  if (action === "record_watchdog") commands.push({ label: "Record watchdog", command: `/opencode-watchdog-record session=${sessionId}`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
   if (action === "create_commander_question") commands.push({ label: "Create Commander question", command: progressId ? `/opencode-ask-commander progress=${progressId}` : `/opencode-ask-commander session=${sessionId} question=<question>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
   if (action === "answer_commander_question") commands.push({ label: "Answer Commander question", command: `/commander-guidance question=${questionId ?? "<question_id>"} answer=<answer>`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
   if (action === "deliver_guidance") commands.push({ label: "Deliver guidance", command: `/commander-guidance-deliver guidance=${guidanceId ?? "<guidance_id>"} mode=operator_handoff`, command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; supervisor preview does not execute it" })
