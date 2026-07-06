@@ -38,6 +38,7 @@ import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCode
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
 import { ProcessOpenCodeLaunchAdapter } from "./opencode-session/opencode-native-launch-adapter"
+import { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-supervisor-service"
 import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
@@ -18406,6 +18407,66 @@ describe("OpenCode launch readiness", () => {
     await expect(client.command("runtime.opencode_wake_supervisor_summary")).resolves.toMatchObject({ total_launched_sessions: 0 })
     expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
     await client.shutdown?.()
+  })
+
+  test("wake supervisor summary counts all matching launched sessions before applying card limit", async () => {
+    const launches = [1, 2, 3].map((index) => ({
+      launch_id: `launch_${index}`,
+      status: "launched",
+      adapter_kind: "fake",
+      launch_mode: "fresh",
+      session_id: `session_${index}`,
+      started_at: `2026-07-06T10:00:0${index}.000Z`,
+      summary_preview: `launch ${index}`,
+      launch_hash: `launch_hash_${index}`,
+    }))
+    const service = new OpenCodeWakeSupervisorService({
+      opencodeSessionService: {
+        get: async (sessionId: string) => ({ session_id: sessionId, status: "planned", objective: `objective ${sessionId}`, created_at: "2026-07-06T10:00:00.000Z" }),
+      } as never,
+      launchGateService: {
+        list: async (input: { session_id?: string } = {}) => input.session_id ? launches.filter((launch) => launch.session_id === input.session_id) : launches,
+        get: async (launchId: string) => launches.find((launch) => launch.launch_id === launchId) ?? null,
+      } as never,
+      progressService: {
+        latest: async (input: { session_id?: string }) => ({
+          progress_id: `progress_${input.session_id}`,
+          kind: "heartbeat",
+          execution_state: "running",
+          report_summary_preview: "alive",
+          recorded_at: "2026-07-06T10:00:10.000Z",
+        }),
+      } as never,
+      watchdogService: {
+        list: async () => [],
+        listForcedReports: async () => [],
+      } as never,
+      questionService: {
+        list: async () => [],
+      } as never,
+      guidanceService: {
+        latest: async () => null,
+        list: async () => [],
+      } as never,
+      guidanceDeliveryService: {
+        list: async () => [],
+      } as never,
+      humanControlService: {
+        list: async (input: { session_id?: string }) => [{
+          control_id: `control_${input.session_id}`,
+          projected_state_after: "pause_requested",
+          human_note_preview: "operator pause",
+          recorded_at: "2026-07-06T10:00:20.000Z",
+        }],
+      } as never,
+      now: () => new Date("2026-07-06T10:01:00.000Z"),
+    })
+
+    const summary = await service.summary({ limit: 1 })
+    expect(summary.total_launched_sessions).toBe(3)
+    expect(summary.human_attention_count).toBe(3)
+    expect(summary.session_cards).toHaveLength(1)
+    expect(summary.session_cards[0]?.supervisor_status).toBe("human_paused")
   })
 
 	  test("opencode asks Commander accepts watchdog and forced-report evidence but rejects mismatches and raw logs", async () => {

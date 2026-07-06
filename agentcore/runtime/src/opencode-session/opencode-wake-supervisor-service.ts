@@ -216,7 +216,7 @@ export class OpenCodeWakeSupervisorService {
   async summary(input: OpenCodeWakeSupervisorSummaryInput = {}): Promise<OpenCodeWakeSupervisorSummary> {
     const limit = positiveInteger(input.limit, 20, MAX_LIST)
     const launches = (await this.options.launchGateService.list({ limit: MAX_LIST })).filter((launch) => LAUNCHED_STATUSES.has(launch.status))
-    const cards: OpenCodeWakeSupervisorSessionCard[] = []
+    const matchingCards: OpenCodeWakeSupervisorSessionCard[] = []
     for (const launch of launches) {
       const preview = await this.preview({
         session_id: launch.session_id,
@@ -226,19 +226,19 @@ export class OpenCodeWakeSupervisorService {
         limit_evidence: DEFAULT_EVIDENCE_LIMIT,
       })
       const card = cardFromPreview(preview)
-      if (!input.status_filter || card.supervisor_status === input.status_filter) cards.push(card)
-      if (cards.length >= limit) break
+      if (!input.status_filter || card.supervisor_status === input.status_filter) matchingCards.push(card)
     }
+    const cards = matchingCards.slice(0, limit)
     return redactValue({
       total_launched_sessions: launches.length,
-      healthy_count: cards.filter((card) => card.supervisor_status === "healthy").length,
-      stale_count: cards.filter((card) => card.supervisor_status === "stale").length,
-      timed_out_count: cards.filter((card) => card.supervisor_status === "timed_out").length,
-      needs_report_count: cards.filter((card) => card.supervisor_status === "needs_report").length,
-      needs_commander_answer_count: cards.filter((card) => card.supervisor_status === "needs_commander_answer").length,
-      guidance_pending_delivery_count: cards.filter((card) => card.supervisor_status === "guidance_pending_delivery").length,
-      human_attention_count: cards.filter((card) => card.supervisor_status === "human_attention" || card.supervisor_status === "human_paused").length,
-      stop_requested_count: cards.filter((card) => card.supervisor_status === "stop_requested").length,
+      healthy_count: matchingCards.filter((card) => card.supervisor_status === "healthy").length,
+      stale_count: matchingCards.filter((card) => card.supervisor_status === "stale").length,
+      timed_out_count: matchingCards.filter((card) => card.supervisor_status === "timed_out").length,
+      needs_report_count: matchingCards.filter((card) => card.supervisor_status === "needs_report").length,
+      needs_commander_answer_count: matchingCards.filter((card) => card.supervisor_status === "needs_commander_answer").length,
+      guidance_pending_delivery_count: matchingCards.filter((card) => card.supervisor_status === "guidance_pending_delivery").length,
+      human_attention_count: matchingCards.filter((card) => card.supervisor_status === "human_attention" || card.supervisor_status === "human_paused").length,
+      stop_requested_count: matchingCards.filter((card) => card.supervisor_status === "stop_requested").length,
       session_cards: cards,
       generated_at: this.now().toISOString(),
     })
