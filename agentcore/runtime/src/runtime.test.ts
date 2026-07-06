@@ -18339,6 +18339,9 @@ describe("OpenCode launch readiness", () => {
     expect(pause.projected_state_after).toBe("pause_requested")
     const neutralNote = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "note", humanNote: "operator note after pause token=supervisor-secret" }) as { control_id: string; projected_state_after: string }
     expect(neutralNote.projected_state_after).toBe("noted")
+    for (let index = 0; index < 25; index += 1) {
+      await server.command("runtime.record_opencode_human_control", { sessionId, kind: "note", humanNote: `neutral note ${index} after pause` })
+    }
     const eventsBeforePreview = await server.eventStore.readAll()
 
     const preview = await server.command("runtime.preview_opencode_wake_supervisor", { sessionId }) as {
@@ -18380,6 +18383,28 @@ describe("OpenCode launch readiness", () => {
     expect(JSON.stringify(preview)).not.toContain("raw log content")
     expect(preview.warnings.join(" ")).toContain("read-only")
     expect(await server.eventStore.readAll()).toEqual(eventsBeforePreview)
+
+    const cappedPreview = await server.command("runtime.preview_opencode_wake_supervisor", { sessionId, limitEvidence: 1 }) as {
+      latest_progress_id?: string
+      latest_watchdog_id?: string
+      latest_human_control_id?: string
+      evidence_refs: Array<{ evidence_kind: string }>
+      checks: Array<{ check_id: string; status: string }>
+      supervisor_status: string
+      blocked_by_human: boolean
+    }
+    expect(cappedPreview).toMatchObject({
+      latest_progress_id: heartbeat.progress_id,
+      latest_watchdog_id: watchdog.watchdog_id,
+      latest_human_control_id: pause.control_id,
+      supervisor_status: "human_paused",
+      blocked_by_human: true,
+    })
+    expect(cappedPreview.evidence_refs).toHaveLength(1)
+    expect(cappedPreview.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ check_id: "latest_progress", status: "pass" }),
+      expect.objectContaining({ check_id: "watchdog_state", status: "pass" }),
+    ]))
 
     const summary = await server.command("runtime.opencode_wake_supervisor_summary") as { total_launched_sessions: number; human_attention_count: number; session_cards: Array<{ session_id: string; supervisor_status: string; recommended_action: string }> }
     expect(summary.total_launched_sessions).toBe(1)

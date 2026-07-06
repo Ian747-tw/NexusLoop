@@ -3538,6 +3538,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const sessionIdInput = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
     const launchIdInput = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
     const includeHumanControls = payload.includeHumanControls === false || payload.include_human_controls === false ? false : true
+    const limitEvidence = readLimit(payload.limitEvidence ?? payload.limit_evidence, 20)
     const blockers: string[] = []
     if (!sessionIdInput && !launchIdInput) blockers.push("session_id or launch_id is required")
     const launch = launchIdInput
@@ -3562,7 +3563,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     const humanControls = includeHumanControls ? this.opencodeHumanControlRecords.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) : []
     const latestHuman = projectedFakeHumanControl(humanControls) ?? null
     const decision = fakeSupervisorDecision(latestProgress, latestWatchdog, currentForcedReport, pendingQuestions.length, pendingGuidance.length, pendingGuidanceRecord?.delivery_status ?? latestGuidance?.delivery_status, latestDelivery?.delivery_status_after, latestHuman?.projected_state_after)
-    const evidenceRefs = fakeSupervisorEvidenceRefs({ session, launch, latestProgress, latestWatchdog, latestForcedReport, pendingQuestion: pendingQuestions[0], latestGuidance, latestDelivery, latestHuman })
+    const loadedEvidenceRefs = fakeSupervisorEvidenceRefs({ session, launch, latestProgress, latestWatchdog, latestForcedReport, pendingQuestion: pendingQuestions[0], latestGuidance, latestDelivery, latestHuman })
+    const evidenceRefs = loadedEvidenceRefs.slice(0, limitEvidence)
     const supervisorHash = fakeNavigationStageHash(JSON.stringify({
       sessionId,
       launchId: launch?.launch_id,
@@ -3606,8 +3608,8 @@ export class FakeRuntimeClient implements RuntimeClient {
       timed_out: latestWatchdog?.watchdog_status === "timed_out",
       stale: latestWatchdog?.watchdog_status === "stale",
       blocked_by_human: latestHuman?.projected_state_after === "pause_requested" || latestHuman?.projected_state_after === "stop_requested",
-      checks: fakeSupervisorChecks(evidenceRefs, decision, sessionId || "<session_id>"),
-      context_sections: fakeSupervisorContextSections(evidenceRefs),
+      checks: fakeSupervisorChecks(loadedEvidenceRefs, decision, sessionId || "<session_id>"),
+      context_sections: fakeSupervisorContextSections(loadedEvidenceRefs),
       evidence_refs: evidenceRefs,
       blockers: blockers.map(redactText),
       warnings: [
@@ -10590,7 +10592,7 @@ function fakeSupervisorEvidenceRefs(input: {
     input.latestGuidance ? fakeSupervisorEvidence("commander_guidance", input.latestGuidance.guidance_id, input.latestGuidance.delivery_status, input.latestGuidance.answer_preview, input.latestGuidance.created_at) : undefined,
     input.latestDelivery ? fakeSupervisorEvidence("guidance_delivery", input.latestDelivery.delivery_id, input.latestDelivery.delivery_status_after, input.latestDelivery.delivery_payload_preview, input.latestDelivery.created_at) : undefined,
     input.latestHuman ? fakeSupervisorEvidence("human_control", input.latestHuman.control_id, input.latestHuman.projected_state_after, input.latestHuman.human_note_preview ?? input.latestHuman.reason_preview, input.latestHuman.recorded_at) : undefined,
-  ].filter((item): item is OpenCodeWakeSupervisorEvidenceRefSummary => Boolean(item)).slice(0, 20)
+  ].filter((item): item is OpenCodeWakeSupervisorEvidenceRefSummary => Boolean(item))
 }
 
 function fakeSupervisorEvidence(kind: string, id: string, status?: string, summary?: string, recordedAt?: string): OpenCodeWakeSupervisorEvidenceRefSummary {

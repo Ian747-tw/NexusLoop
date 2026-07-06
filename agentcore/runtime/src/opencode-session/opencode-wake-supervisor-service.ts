@@ -104,7 +104,7 @@ export class OpenCodeWakeSupervisorService {
     const renderedGuidance = renderedPendingGuidance ?? latestGuidance
     const deliveries = includeGuidanceDelivery && canReadLaunchEvidence && sessionId ? await this.options.guidanceDeliveryService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const latestDelivery = deliveries[0]
-    const humanControls = includeHumanControls && canReadLaunchEvidence && sessionId ? await this.options.humanControlService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
+    const humanControls = includeHumanControls && canReadLaunchEvidence && sessionId ? await listAllHumanControls(this.options.humanControlService, { session_id: sessionId, launch_id: launch?.launch_id }) : []
     const latestHuman = projectedHumanControl(humanControls)
 
     if (!latestProgress && launch && blockers.length === 0) warnings.add("no OpenCode progress or heartbeat evidence has been recorded yet")
@@ -112,7 +112,7 @@ export class OpenCodeWakeSupervisorService {
     if (!includeResearchMemory) warnings.add("research-memory advisory is omitted by default; enable include_research_memory for bounded advisory refs")
     if (!includeContextPacket) warnings.add("context packet section omitted by request")
 
-    const evidenceRefs = boundEvidence([
+    const loadedEvidenceRefs = boundEvidence([
       session ? evidence("session_plan", session.session_id, session.status, session.objective, session.created_at) : undefined,
       launch ? evidence("launch", launch.launch_id, launch.status, launchSummary(launch), launch.started_at) : undefined,
       latestProgress ? evidence("progress", latestProgress.progress_id, latestProgress.execution_state, latestProgress.report_summary_preview, latestProgress.recorded_at) : undefined,
@@ -122,7 +122,8 @@ export class OpenCodeWakeSupervisorService {
       renderedGuidance ? evidence("commander_guidance", renderedGuidance.guidance_id, renderedGuidance.delivery_status, renderedGuidance.answer_preview, renderedGuidance.created_at) : undefined,
       latestDelivery ? evidence("guidance_delivery", latestDelivery.delivery_id, latestDelivery.delivery_status_after, latestDelivery.summary_preview, latestDelivery.created_at) : undefined,
       latestHuman ? evidence("human_control", latestHuman.control_id, latestHuman.projected_state_after, latestHuman.human_note_preview, latestHuman.recorded_at) : undefined,
-    ], limitEvidence)
+    ], MAX_LIST)
+    const evidenceRefs = loadedEvidenceRefs.slice(0, limitEvidence)
 
     const statusDecision = decideStatus({
       latestProgress,
@@ -142,19 +143,19 @@ export class OpenCodeWakeSupervisorService {
       guidanceId: pendingGuidanceRecord?.guidance_id ?? latestGuidance?.guidance_id,
     })
     const checks = buildChecks({
-      sessionRef: evidenceRefs.find((ref) => ref.evidence_kind === "session_plan"),
-      launchRef: evidenceRefs.find((ref) => ref.evidence_kind === "launch"),
-      progressRef: evidenceRefs.find((ref) => ref.evidence_kind === "progress"),
-      watchdogRef: evidenceRefs.find((ref) => ref.evidence_kind === "watchdog"),
-      questionRef: evidenceRefs.find((ref) => ref.evidence_kind === "commander_question"),
-      guidanceRef: evidenceRefs.find((ref) => ref.evidence_kind === "commander_guidance"),
-      deliveryRef: evidenceRefs.find((ref) => ref.evidence_kind === "guidance_delivery"),
-      humanRef: evidenceRefs.find((ref) => ref.evidence_kind === "human_control"),
+      sessionRef: loadedEvidenceRefs.find((ref) => ref.evidence_kind === "session_plan"),
+      launchRef: loadedEvidenceRefs.find((ref) => ref.evidence_kind === "launch"),
+      progressRef: loadedEvidenceRefs.find((ref) => ref.evidence_kind === "progress"),
+      watchdogRef: loadedEvidenceRefs.find((ref) => ref.evidence_kind === "watchdog"),
+      questionRef: loadedEvidenceRefs.find((ref) => ref.evidence_kind === "commander_question"),
+      guidanceRef: loadedEvidenceRefs.find((ref) => ref.evidence_kind === "commander_guidance"),
+      deliveryRef: loadedEvidenceRefs.find((ref) => ref.evidence_kind === "guidance_delivery"),
+      humanRef: loadedEvidenceRefs.find((ref) => ref.evidence_kind === "human_control"),
       statusDecision,
       sessionId: sessionId || "<session_id>",
     })
     const contextSections = buildContextSections({
-      evidenceRefs,
+      evidenceRefs: loadedEvidenceRefs,
       includeContextPacket,
       includeResearchMemory,
       latestProgress,
@@ -509,6 +510,16 @@ async function listAllGuidance(
 ): Promise<Array<{ guidance_id: string; delivery_status: string; answer_preview: string; created_at: string }>> {
   const maybeUncapped = service as CommanderGuidanceService & {
     listAll?: (input?: { session_id?: string; launch_id?: string; delivery_status?: string }) => Promise<Array<{ guidance_id: string; delivery_status: string; answer_preview: string; created_at: string }>>
+  }
+  return maybeUncapped.listAll ? maybeUncapped.listAll(input) : service.list({ ...input, limit: MAX_LIST })
+}
+
+async function listAllHumanControls(
+  service: OpenCodeHumanControlService,
+  input: { session_id?: string; launch_id?: string },
+): Promise<OpenCodeHumanControlRecord[]> {
+  const maybeUncapped = service as OpenCodeHumanControlService & {
+    listAll?: (input?: { session_id?: string; launch_id?: string }) => Promise<OpenCodeHumanControlRecord[]>
   }
   return maybeUncapped.listAll ? maybeUncapped.listAll(input) : service.list({ ...input, limit: MAX_LIST })
 }

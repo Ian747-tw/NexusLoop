@@ -5808,6 +5808,9 @@ describe("runtime UI effects", () => {
     expect(pauseId).toBeTruthy()
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-note", args: [`session=${sessionId}`, "note=operator", "note", "after", "pause", "token=abc123"] })
     expect(state.opencodeHumanControls?.latestResult).toMatchObject({ control_kind: "note", projected_state_after: "noted" })
+    for (let index = 0; index < 25; index += 1) {
+      state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-note", args: [`session=${sessionId}`, `note=neutral-note-${index}`] })
+    }
 
     const commandCountBeforePreview = runtime.sentCommands.length
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-supervisor-preview", args: [`session=${sessionId}`] })
@@ -5827,6 +5830,19 @@ describe("runtime UI effects", () => {
     expect(state.opencodeWakeSupervisor?.preview?.evidence_refs.map((ref) => ref.evidence_kind)).toEqual(expect.arrayContaining(["progress", "watchdog", "commander_guidance", "guidance_delivery", "human_control"]))
     expect(state.opencodeWakeSupervisor?.preview?.recommended_commands.some((command) => command.command_type === "write")).toBe(true)
     expect(runtime.sentCommands).toHaveLength(commandCountBeforePreview)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-supervisor-preview", args: [`session=${sessionId}`, "limit_evidence=1"] })
+    expect(state.opencodeWakeSupervisor?.preview).toMatchObject({
+      supervisor_status: "human_paused",
+      latest_human_control_id: pauseId,
+      human_pause_requested: true,
+      blocked_by_human: true,
+    })
+    expect(state.opencodeWakeSupervisor?.preview?.evidence_refs).toHaveLength(1)
+    expect(state.opencodeWakeSupervisor?.preview?.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ check_id: "latest_progress", status: "pass" }),
+      expect.objectContaining({ check_id: "watchdog_state", status: "pass" }),
+    ]))
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-supervisor-preview", args: [`session=${sessionId}`, "include_human_controls=false"] })
     expect(state.opencodeWakeSupervisor?.preview).toMatchObject({

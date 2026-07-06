@@ -134,6 +134,10 @@ export class OpenCodeHumanControlService {
 
   async list(input: { limit?: number; session_id?: string; launch_id?: string; control_kind?: string; projected_state_after?: string; urgency?: string } = {}): Promise<OpenCodeHumanControlRecord[]> {
     const limit = Math.max(1, Math.min(input.limit ?? 20, MAX_LIST))
+    return (await this.listAll(input)).slice(0, limit)
+  }
+
+  async listAll(input: { session_id?: string; launch_id?: string; control_kind?: string; projected_state_after?: string; urgency?: string } = {}): Promise<OpenCodeHumanControlRecord[]> {
     return (await this.sequencedRecords())
       .filter((item) => !input.session_id || item.record.session_id === input.session_id)
       .filter((item) => !input.launch_id || item.record.launch_id === input.launch_id)
@@ -142,7 +146,6 @@ export class OpenCodeHumanControlService {
       .filter((item) => !input.urgency || item.record.urgency === input.urgency)
       .sort(compareSequencedDesc)
       .map((item) => item.record)
-      .slice(0, limit)
   }
 
   async get(controlId: string): Promise<OpenCodeHumanControlResult | null> {
