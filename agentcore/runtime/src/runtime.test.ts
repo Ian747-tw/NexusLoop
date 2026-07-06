@@ -18657,6 +18657,33 @@ describe("OpenCode launch readiness", () => {
     expect(missingWatchdog).toMatchObject({ status: "partial", supervisor_status: "watch", recommended_action: "record_watchdog" })
     expect(missingWatchdog.recommended_commands).toContainEqual(expect.objectContaining({ command: `/opencode-watchdog-record session=${launch.session_id}` }))
 
+    const missingExplicitLaunchService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      launchGateService: {
+        list: async () => [launch],
+        get: async () => null,
+      } as never,
+      progressService: {
+        latest: async () => {
+          throw new Error("progress should not be loaded for unresolved explicit launch_id")
+        },
+      } as never,
+      watchdogService: {
+        list: async () => {
+          throw new Error("watchdog should not be loaded for unresolved explicit launch_id")
+        },
+        listForcedReports: async () => {
+          throw new Error("forced reports should not be loaded for unresolved explicit launch_id")
+        },
+      } as never,
+    })
+    const missingExplicitLaunch = await missingExplicitLaunchService.preview({ session_id: launch.session_id, launch_id: "launch_missing" })
+    expect(missingExplicitLaunch).toMatchObject({ status: "blocked", launch_id: "launch_missing", supervisor_status: "unknown", recommended_action: "unknown" })
+    expect(missingExplicitLaunch.blockers).toContain("launch_id does not resolve to an OpenCode launch record")
+    expect(missingExplicitLaunch.latest_progress_id).toBeUndefined()
+    expect(missingExplicitLaunch.evidence_refs.map((ref) => ref.evidence_kind)).not.toContain("launch")
+    expect(missingExplicitLaunch.evidence_refs.map((ref) => ref.evidence_kind)).not.toContain("progress")
+
     const staleReportService = new OpenCodeWakeSupervisorService({
       ...baseOptions,
       watchdogService: {

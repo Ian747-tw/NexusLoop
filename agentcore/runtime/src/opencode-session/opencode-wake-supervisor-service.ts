@@ -74,35 +74,36 @@ export class OpenCodeWakeSupervisorService {
     const session = sessionId ? await this.options.opencodeSessionService.get(sessionId) : null
     if (sessionId && !session) blockers.push("session_id does not resolve to a planned OpenCode session")
 
-    if (!launch && sessionId) {
+    if (!launch && sessionId && !launchIdInput) {
       launch = await this.resolveLatestActiveLaunch(sessionId)
       if (!launch) blockers.push("wake supervisor preview requires a launch_started or launched OpenCode launch record")
     }
     if (launch && sessionIdInput && launch.session_id !== sessionIdInput) blockers.push("launch_id does not belong to session_id")
     sessionId = sessionId || launch?.session_id || ""
     if (launch && !LAUNCHED_STATUSES.has(launch.status)) blockers.push(`wake supervisor preview requires launch_started or launched status; current status is ${launch.status}`)
+    const canReadLaunchEvidence = Boolean(launch && LAUNCHED_STATUSES.has(launch.status))
 
-    const latestProgress = sessionId ? await this.options.progressService.latest({ session_id: sessionId, launch_id: launch?.launch_id }) : null
-    const watchdogs = sessionId ? await this.options.watchdogService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
+    const latestProgress = canReadLaunchEvidence && sessionId ? await this.options.progressService.latest({ session_id: sessionId, launch_id: launch?.launch_id }) : null
+    const watchdogs = canReadLaunchEvidence && sessionId ? await this.options.watchdogService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const latestWatchdog = watchdogs[0]
-    const forcedReports = sessionId ? await this.options.watchdogService.listForcedReports({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
+    const forcedReports = canReadLaunchEvidence && sessionId ? await this.options.watchdogService.listForcedReports({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const latestForcedReport = forcedReports[0]
     const currentForcedReport = forcedReports.find((request) => forcedReportMatchesCurrentEvidence(request, latestWatchdog, latestProgress)) ?? null
-    const questions = sessionId ? await this.options.questionService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
-    const allQuestions = sessionId ? await listAllQuestions(this.options.questionService, { session_id: sessionId, launch_id: launch?.launch_id }) : []
+    const questions = canReadLaunchEvidence && sessionId ? await this.options.questionService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
+    const allQuestions = canReadLaunchEvidence && sessionId ? await listAllQuestions(this.options.questionService, { session_id: sessionId, launch_id: launch?.launch_id }) : []
     const pendingQuestions = allQuestions.filter((question) => question.status === "pending_commander" || question.status === "pending_human")
     const renderedPendingQuestions = questions.filter((question) => question.status === "pending_commander" || question.status === "pending_human")
     const renderedPendingQuestion = renderedPendingQuestions[0] ?? pendingQuestions[0]
-    const latestGuidance = sessionId ? await this.options.guidanceService.latest({ session_id: sessionId, launch_id: launch?.launch_id }) : null
-    const guidanceRecords = sessionId ? await this.options.guidanceService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
-    const allGuidance = sessionId ? await listAllGuidance(this.options.guidanceService, { session_id: sessionId, launch_id: launch?.launch_id }) : []
+    const latestGuidance = canReadLaunchEvidence && sessionId ? await this.options.guidanceService.latest({ session_id: sessionId, launch_id: launch?.launch_id }) : null
+    const guidanceRecords = canReadLaunchEvidence && sessionId ? await this.options.guidanceService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
+    const allGuidance = canReadLaunchEvidence && sessionId ? await listAllGuidance(this.options.guidanceService, { session_id: sessionId, launch_id: launch?.launch_id }) : []
     const pendingGuidance = allGuidance.filter((guidance) => guidance.delivery_status === "not_delivered" || guidance.delivery_status === "pending_delivery")
     const pendingGuidanceRecord = pendingGuidance[0]
     const renderedPendingGuidance = guidanceRecords.find((guidance) => guidance.delivery_status === "not_delivered" || guidance.delivery_status === "pending_delivery") ?? pendingGuidanceRecord
     const renderedGuidance = renderedPendingGuidance ?? latestGuidance
-    const deliveries = includeGuidanceDelivery && sessionId ? await this.options.guidanceDeliveryService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
+    const deliveries = includeGuidanceDelivery && canReadLaunchEvidence && sessionId ? await this.options.guidanceDeliveryService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const latestDelivery = deliveries[0]
-    const humanControls = includeHumanControls && sessionId ? await this.options.humanControlService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
+    const humanControls = includeHumanControls && canReadLaunchEvidence && sessionId ? await this.options.humanControlService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const latestHuman = humanControls[0]
 
     if (!latestProgress && launch && blockers.length === 0) warnings.add("no OpenCode progress or heartbeat evidence has been recorded yet")

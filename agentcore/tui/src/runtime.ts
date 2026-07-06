@@ -3537,6 +3537,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private previewOpenCodeWakeSupervisor(payload: Record<string, unknown>): OpenCodeWakeSupervisorPreviewSummary {
     const sessionIdInput = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
     const launchIdInput = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    const includeHumanControls = payload.includeHumanControls === false || payload.include_human_controls === false ? false : true
     const blockers: string[] = []
     if (!sessionIdInput && !launchIdInput) blockers.push("session_id or launch_id is required")
     const launch = launchIdInput
@@ -3558,7 +3559,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const pendingGuidance = this.commanderGuidanceRecords.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && (item.delivery_status === "not_delivered" || item.delivery_status === "pending_delivery"))
     const pendingGuidanceRecord = pendingGuidance[0]
     const latestDelivery = this.commanderGuidanceDeliveryRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
-    const latestHuman = this.opencodeHumanControlRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
+    const latestHuman = includeHumanControls ? this.opencodeHumanControlRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null : null
     const decision = fakeSupervisorDecision(latestProgress, latestWatchdog, currentForcedReport, pendingQuestions.length, pendingGuidance.length, pendingGuidanceRecord?.delivery_status ?? latestGuidance?.delivery_status, latestDelivery?.delivery_status_after, latestHuman?.projected_state_after)
     const evidenceRefs = fakeSupervisorEvidenceRefs({ session, launch, latestProgress, latestWatchdog, latestForcedReport, pendingQuestion: pendingQuestions[0], latestGuidance, latestDelivery, latestHuman })
     const supervisorHash = fakeNavigationStageHash(JSON.stringify({

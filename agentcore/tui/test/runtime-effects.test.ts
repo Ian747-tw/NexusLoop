@@ -5823,6 +5823,18 @@ describe("runtime UI effects", () => {
     expect(state.opencodeWakeSupervisor?.preview?.recommended_commands.some((command) => command.command_type === "write")).toBe(true)
     expect(runtime.sentCommands).toHaveLength(commandCountBeforePreview)
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-supervisor-preview", args: [`session=${sessionId}`, "include_human_controls=false"] })
+    expect(state.opencodeWakeSupervisor?.preview).toMatchObject({
+      supervisor_status: "guidance_pending_delivery",
+      recommended_action: "review_human_control",
+      human_pause_requested: false,
+      blocked_by_human: false,
+    })
+    expect(state.opencodeWakeSupervisor?.preview?.evidence_refs.map((ref) => ref.evidence_kind)).not.toContain("human_control")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-supervisor-preview", args: [`session=${sessionId}`] })
+    expect(state.opencodeWakeSupervisor?.preview).toMatchObject({ supervisor_status: "human_paused" })
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-supervisor-preview", args: [`launch=${launchId}`] })
     expect(state.opencodeWakeSupervisor?.preview).toMatchObject({ launch_id: launchId, supervisor_status: "human_paused" })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-supervisor-summary", args: [] })
