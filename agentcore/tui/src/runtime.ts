@@ -3559,7 +3559,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     const pendingGuidance = this.commanderGuidanceRecords.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id) && (item.delivery_status === "not_delivered" || item.delivery_status === "pending_delivery"))
     const pendingGuidanceRecord = pendingGuidance[0]
     const latestDelivery = this.commanderGuidanceDeliveryRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null
-    const latestHuman = includeHumanControls ? this.opencodeHumanControlRecords.find((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) ?? null : null
+    const humanControls = includeHumanControls ? this.opencodeHumanControlRecords.filter((item) => item.session_id === sessionId && (!launch?.launch_id || item.launch_id === launch.launch_id)) : []
+    const latestHuman = projectedFakeHumanControl(humanControls) ?? null
     const decision = fakeSupervisorDecision(latestProgress, latestWatchdog, currentForcedReport, pendingQuestions.length, pendingGuidance.length, pendingGuidanceRecord?.delivery_status ?? latestGuidance?.delivery_status, latestDelivery?.delivery_status_after, latestHuman?.projected_state_after)
     const evidenceRefs = fakeSupervisorEvidenceRefs({ session, launch, latestProgress, latestWatchdog, latestForcedReport, pendingQuestion: pendingQuestions[0], latestGuidance, latestDelivery, latestHuman })
     const supervisorHash = fakeNavigationStageHash(JSON.stringify({
@@ -10552,6 +10553,10 @@ function fakeSupervisorDecision(
   if (latestProgress && !latestWatchdog) return { status: "watch", action: "record_watchdog" }
   if (latestProgress) return { status: "healthy", action: "none" }
   return { status: "unknown", action: "read_latest_progress" }
+}
+
+function projectedFakeHumanControl(records: OpenCodeHumanControlResultSummary[]): OpenCodeHumanControlResultSummary | undefined {
+  return records.find((record) => record.projected_state_after !== "noted") ?? records[0]
 }
 
 function fakeForcedReportMatchesCurrentEvidence(

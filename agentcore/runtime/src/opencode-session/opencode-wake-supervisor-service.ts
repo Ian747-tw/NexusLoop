@@ -4,6 +4,7 @@ import type { CommanderGuidanceService } from "./opencode-commander-guidance-ser
 import type { OpenCodeCommanderQuestionService } from "./opencode-commander-question-service"
 import type { CommanderGuidanceDeliveryService } from "./opencode-guidance-delivery-service"
 import type { OpenCodeHumanControlService } from "./opencode-human-control-service"
+import type { OpenCodeHumanControlRecord } from "./opencode-human-control-types"
 import type { OpenCodeLaunchGateService } from "./opencode-launch-gate-service"
 import type { OpenCodeLaunchRecord, OpenCodeLaunchResult } from "./opencode-launch-gate-types"
 import type { OpenCodeProgressService } from "./opencode-progress-service"
@@ -104,7 +105,7 @@ export class OpenCodeWakeSupervisorService {
     const deliveries = includeGuidanceDelivery && canReadLaunchEvidence && sessionId ? await this.options.guidanceDeliveryService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
     const latestDelivery = deliveries[0]
     const humanControls = includeHumanControls && canReadLaunchEvidence && sessionId ? await this.options.humanControlService.list({ session_id: sessionId, launch_id: launch?.launch_id, limit: limitEvidence }) : []
-    const latestHuman = humanControls[0]
+    const latestHuman = projectedHumanControl(humanControls)
 
     if (!latestProgress && launch && blockers.length === 0) warnings.add("no OpenCode progress or heartbeat evidence has been recorded yet")
     if (!latestWatchdog && launch && blockers.length === 0) warnings.add("no watchdog assessment record has been recorded yet")
@@ -510,6 +511,10 @@ async function listAllGuidance(
     listAll?: (input?: { session_id?: string; launch_id?: string; delivery_status?: string }) => Promise<Array<{ guidance_id: string; delivery_status: string; answer_preview: string; created_at: string }>>
   }
   return maybeUncapped.listAll ? maybeUncapped.listAll(input) : service.list({ ...input, limit: MAX_LIST })
+}
+
+function projectedHumanControl(records: OpenCodeHumanControlRecord[]): OpenCodeHumanControlRecord | undefined {
+  return records.find((record) => record.projected_state_after !== "noted") ?? records[0]
 }
 
 function boundEvidence(values: Array<OpenCodeWakeSupervisorEvidenceRef | undefined>, maxItems: number): OpenCodeWakeSupervisorEvidenceRef[] {

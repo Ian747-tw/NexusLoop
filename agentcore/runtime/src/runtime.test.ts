@@ -18337,6 +18337,8 @@ describe("OpenCode launch readiness", () => {
     expect(delivery).toMatchObject({ status: "delivery_requested", delivery_status_after: "pending_delivery" })
     const pause = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "pause_request", reason: "operator wants review token=supervisor-secret" }) as { control_id: string; projected_state_after: string }
     expect(pause.projected_state_after).toBe("pause_requested")
+    const neutralNote = await server.command("runtime.record_opencode_human_control", { sessionId, kind: "note", humanNote: "operator note after pause token=supervisor-secret" }) as { control_id: string; projected_state_after: string }
+    expect(neutralNote.projected_state_after).toBe("noted")
     const eventsBeforePreview = await server.eventStore.readAll()
 
     const preview = await server.command("runtime.preview_opencode_wake_supervisor", { sessionId }) as {

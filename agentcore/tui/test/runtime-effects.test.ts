@@ -5804,6 +5804,10 @@ describe("runtime UI effects", () => {
     expect(guidanceId).toBeTruthy()
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-guidance-deliver", args: [`guidance=${guidanceId}`, "mode=operator_handoff"] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-pause", args: [`session=${sessionId}`, "reason=operator", "wants", "review", "token=abc123"] })
+    const pauseId = state.opencodeHumanControls?.latestResult?.control_id
+    expect(pauseId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-note", args: [`session=${sessionId}`, "note=operator", "note", "after", "pause", "token=abc123"] })
+    expect(state.opencodeHumanControls?.latestResult).toMatchObject({ control_kind: "note", projected_state_after: "noted" })
 
     const commandCountBeforePreview = runtime.sentCommands.length
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-supervisor-preview", args: [`session=${sessionId}`] })
@@ -5814,6 +5818,7 @@ describe("runtime UI effects", () => {
       supervisor_status: "human_paused",
       recommended_action: "review_human_control",
       pending_delivery_count: 1,
+      latest_human_control_id: pauseId,
       human_pause_requested: true,
       blocked_by_human: true,
     })
