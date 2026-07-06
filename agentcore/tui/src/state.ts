@@ -2395,7 +2395,9 @@ export type OpenCodeWakeSupervisorSessionCardSummary = {
 
 export type OpenCodeWakeSupervisorSummaryState = {
   total_launched_sessions: number
+  status_counts: Record<string, number>
   healthy_count: number
+  watch_count: number
   stale_count: number
   timed_out_count: number
   needs_report_count: number
@@ -2411,6 +2413,141 @@ export type OpenCodeWakeSupervisorState = {
   preview?: OpenCodeWakeSupervisorPreviewSummary | null
   summary?: OpenCodeWakeSupervisorSummaryState | null
   cards: OpenCodeWakeSupervisorSessionCardSummary[]
+  commandError?: string
+}
+
+export type OpenCodeWakeSupervisorExecutionCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeWakeSupervisorExecutionEvidenceRefSummary = {
+  evidence_kind: string
+  evidence_id: string
+  status?: string
+  summary_preview?: string
+  pointer_only: true
+}
+
+export type OpenCodeWakeSupervisorExecutionPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | "partial" | string
+  can_record: boolean
+  execution_mode: "single_session" | "batch_active_sessions" | string
+  session_id?: string
+  launch_id?: string
+  supervisor_preview_id?: string
+  supervisor_hash?: string
+  supervisor_status?: string
+  recommended_action?: string
+  action_execution_status: "not_executed" | string
+  recommended_commands_preview: OpenCodeWakeSupervisorExecutionCommandSummary[]
+  evidence_refs: OpenCodeWakeSupervisorExecutionEvidenceRefSummary[]
+  context_section_count: number
+  blockers: string[]
+  warnings: string[]
+  generated_at: string
+  redacted_summary_preview: string
+  execution_hash: string
+}
+
+export type OpenCodeWakeSupervisorExecutionResultSummary = {
+  execution_id: string
+  status: "recorded" | "blocked" | "dry_run" | "failed" | string
+  execution_mode: "single_session" | "batch_active_sessions" | string
+  session_id?: string
+  launch_id?: string
+  supervisor_preview_id?: string
+  supervisor_hash?: string
+  supervisor_status?: string
+  recommended_action?: string
+  action_execution_status: "not_executed" | string
+  recommended_commands_preview: OpenCodeWakeSupervisorExecutionCommandSummary[]
+  evidence_refs: OpenCodeWakeSupervisorExecutionEvidenceRefSummary[]
+  context_section_count: number
+  recorded_at: string
+  recorded_by: string
+  error?: string
+  execution_hash: string
+  recommended_commands: OpenCodeWakeSupervisorExecutionCommandSummary[]
+}
+
+export type OpenCodeWakeSupervisorExecutionRecordSummary = {
+  execution_id: string
+  execution_mode: "single_session" | "batch_active_sessions" | string
+  session_id?: string
+  launch_id?: string
+  supervisor_status?: string
+  recommended_action?: string
+  action_execution_status: "not_executed" | string
+  recorded_at: string
+  recorded_by: string
+  summary_preview: string
+  execution_hash: string
+}
+
+export type OpenCodeWakeSupervisorBatchPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | "partial" | string
+  can_record: boolean
+  execution_mode: "batch_active_sessions" | string
+  total_candidate_sessions: number
+  included_session_count: number
+  skipped_session_count: number
+  session_previews: OpenCodeWakeSupervisorExecutionPreviewSummary[]
+  blockers: string[]
+  warnings: string[]
+  generated_at: string
+  redacted_summary_preview: string
+  execution_hash: string
+}
+
+export type OpenCodeWakeSupervisorBatchResultSummary = {
+  batch_id: string
+  status: "recorded" | "blocked" | "dry_run" | "failed" | string
+  execution_mode: "batch_active_sessions" | string
+  total_candidate_sessions: number
+  recorded_execution_count: number
+  skipped_session_count: number
+  execution_records: OpenCodeWakeSupervisorExecutionRecordSummary[]
+  action_execution_status: "not_executed" | string
+  recorded_at: string
+  recorded_by: string
+  error?: string
+  batch_hash: string
+  recommended_commands: OpenCodeWakeSupervisorExecutionCommandSummary[]
+}
+
+export type OpenCodeWakeSupervisorExecutionSummaryState = {
+  total_executions: number
+  session_count: number
+  batch_count: number
+  healthy_count: number
+  watch_count: number
+  needs_report_count: number
+  needs_commander_answer_count: number
+  guidance_pending_delivery_count: number
+  human_attention_count: number
+  timed_out_count: number
+  stale_count: number
+  blocked_count: number
+  action_executed_count: 0 | number
+  latest_executions: OpenCodeWakeSupervisorExecutionRecordSummary[]
+  generated_at: string
+}
+
+export type OpenCodeWakeSupervisorExecutionsState = {
+  preview?: OpenCodeWakeSupervisorExecutionPreviewSummary | null
+  latestResult?: OpenCodeWakeSupervisorExecutionResultSummary | null
+  batchPreview?: OpenCodeWakeSupervisorBatchPreviewSummary | null
+  batchResult?: OpenCodeWakeSupervisorBatchResultSummary | null
+  records: OpenCodeWakeSupervisorExecutionRecordSummary[]
+  selected?: OpenCodeWakeSupervisorExecutionResultSummary | null
+  latest?: OpenCodeWakeSupervisorExecutionResultSummary | null
+  summary?: OpenCodeWakeSupervisorExecutionSummaryState | null
   commandError?: string
 }
 
@@ -4800,6 +4937,7 @@ export type UiState = {
   commanderGuidanceDelivery?: CommanderGuidanceDeliveryState
   opencodeHumanControls?: OpenCodeHumanControlState
   opencodeWakeSupervisor?: OpenCodeWakeSupervisorState
+  opencodeWakeSupervisorExecutions?: OpenCodeWakeSupervisorExecutionsState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

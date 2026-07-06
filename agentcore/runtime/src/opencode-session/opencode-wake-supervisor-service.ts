@@ -242,7 +242,9 @@ export class OpenCodeWakeSupervisorService {
     const cards = matchingCards.slice(0, limit)
     return redactValue({
       total_launched_sessions: launches.length,
+      status_counts: countSupervisorStatuses(matchingCards),
       healthy_count: matchingCards.filter((card) => card.supervisor_status === "healthy").length,
+      watch_count: matchingCards.filter((card) => card.supervisor_status === "watch").length,
       stale_count: matchingCards.filter((card) => card.supervisor_status === "stale").length,
       timed_out_count: matchingCards.filter((card) => card.supervisor_status === "timed_out").length,
       needs_report_count: matchingCards.filter((card) => card.supervisor_status === "needs_report").length,
@@ -260,6 +262,12 @@ export class OpenCodeWakeSupervisorService {
     const latest = launches.find((launch) => LAUNCHED_STATUSES.has(launch.status))
     return latest ? (await this.options.launchGateService.get(latest.launch_id)) ?? latest : null
   }
+}
+
+function countSupervisorStatuses(cards: OpenCodeWakeSupervisorSessionCard[]): Partial<Record<OpenCodeWakeSupervisorStatus, number>> {
+  const counts: Partial<Record<OpenCodeWakeSupervisorStatus, number>> = {}
+  for (const card of cards) counts[card.supervisor_status] = (counts[card.supervisor_status] ?? 0) + 1
+  return counts
 }
 
 export function readOpenCodeWakeSupervisorPreviewInput(value: unknown): OpenCodeWakeSupervisorPreviewInput {

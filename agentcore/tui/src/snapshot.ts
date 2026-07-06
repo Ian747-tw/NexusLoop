@@ -96,6 +96,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...commanderGuidanceDeliveryLines(state))
   out.push(...opencodeHumanControlLines(state))
   out.push(...opencodeWakeSupervisorLines(state))
+  out.push(...opencodeWakeSupervisorExecutionLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -1348,6 +1349,73 @@ function opencodeWakeSupervisorLines(state: UiState): string[] {
   }
   if (supervisor.commandError) out.push(`  command_error=${redactText(supervisor.commandError)}`)
   out.push("  note=wake supervisor preview is read-only; no wake tick executed, no provider called, no OpenCode prompt sent, no process control occurred, no research.db write occurred, and mission state was not mutated")
+  return out
+}
+
+function opencodeWakeSupervisorExecutionLines(state: UiState): string[] {
+  const executions = state.opencodeWakeSupervisorExecutions
+  const out = ["OpenCode wake supervisor executions"]
+  if (!executions) {
+    out.push("  preview=none")
+    out.push("  latest_result=none")
+    out.push("  batch_preview=none")
+    out.push("  batch_result=none")
+    out.push("  records=0")
+    out.push("  note=wake execution records supervisor assessment metadata only; no recommended command was executed, no provider called, no OpenCode prompt sent, no process control occurred, and mission state was not mutated")
+    return out
+  }
+  if (executions.preview) {
+    const item = executions.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} mode=${item.execution_mode} can_record=${item.can_record}`)
+    out.push(`  session=${item.session_id ?? "none"} launch=${item.launch_id ?? "none"} supervisor_status=${item.supervisor_status ?? "unknown"} recommended_action=${item.recommended_action ?? "unknown"} action_execution_status=${item.action_execution_status}`)
+    out.push(`  supervisor_preview=${item.supervisor_preview_id ?? "none"} supervisor_hash=${item.supervisor_hash ?? "none"} context_sections=${item.context_section_count}`)
+    if (item.recommended_commands_preview.length > 0) out.push(`  recommended_previews=${item.recommended_commands_preview.map((command) => `${redactText(command.command)}${command.command_type === "write" ? " (not executed)" : ""}`).join(" | ")}`)
+    if (item.evidence_refs.length > 0) out.push(`  evidence_refs=${item.evidence_refs.slice(0, 8).map((ref) => `${ref.evidence_kind}:${ref.evidence_id}`).join(",")}`)
+    if (item.blockers.length > 0) out.push(`  blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  warnings=${item.warnings.map(redactText).join("; ")}`)
+  } else {
+    out.push("  preview=none")
+  }
+  if (executions.latestResult) {
+    const result = executions.latestResult
+    out.push(`  latest_result=${result.execution_id} status=${result.status} mode=${result.execution_mode} action_execution_status=${result.action_execution_status}`)
+    out.push(`  latest_session=${result.session_id ?? "none"} launch=${result.launch_id ?? "none"} supervisor_status=${result.supervisor_status ?? "unknown"} recommended_action=${result.recommended_action ?? "unknown"} recorded_by=${result.recorded_by}`)
+    if (result.error) out.push(`  latest_error=${redactText(result.error)}`)
+  } else {
+    out.push("  latest_result=none")
+  }
+  if (executions.batchPreview) {
+    const batch = executions.batchPreview
+    out.push(`  batch_preview=${batch.preview_id} status=${batch.status} included=${batch.included_session_count} skipped=${batch.skipped_session_count} total_candidates=${batch.total_candidate_sessions}`)
+  } else {
+    out.push("  batch_preview=none")
+  }
+  if (executions.batchResult) {
+    const batch = executions.batchResult
+    out.push(`  batch_result=${batch.batch_id} status=${batch.status} recorded=${batch.recorded_execution_count} skipped=${batch.skipped_session_count} action_execution_status=${batch.action_execution_status}`)
+    if (batch.error) out.push(`  batch_error=${redactText(batch.error)}`)
+  } else {
+    out.push("  batch_result=none")
+  }
+  if (executions.selected) {
+    const selected = executions.selected
+    out.push(`  selected=${selected.execution_id} status=${selected.status} supervisor_status=${selected.supervisor_status ?? "unknown"} recommended_action=${selected.recommended_action ?? "unknown"} action_execution_status=${selected.action_execution_status}`)
+  }
+  if (executions.latest) {
+    const latest = executions.latest
+    out.push(`  latest=${latest.execution_id} status=${latest.status} supervisor_status=${latest.supervisor_status ?? "unknown"} action_execution_status=${latest.action_execution_status}`)
+  }
+  if (executions.summary) {
+    const summary = executions.summary
+    out.push(`  summary total=${summary.total_executions} sessions=${summary.session_count} batches=${summary.batch_count} healthy=${summary.healthy_count} watch=${summary.watch_count} needs_report=${summary.needs_report_count} needs_commander_answer=${summary.needs_commander_answer_count} guidance_pending_delivery=${summary.guidance_pending_delivery_count} human_attention=${summary.human_attention_count} timed_out=${summary.timed_out_count} stale=${summary.stale_count} blocked=${summary.blocked_count} action_executed=${summary.action_executed_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  out.push("  records")
+  if (executions.records.length === 0) out.push("    - empty")
+  else out.push(...executions.records.slice(0, 12).map((record) => `    - ${record.execution_id} mode=${record.execution_mode} session=${record.session_id ?? "none"} launch=${record.launch_id ?? "none"} supervisor_status=${record.supervisor_status ?? "unknown"} recommended_action=${record.recommended_action ?? "unknown"} action_execution_status=${record.action_execution_status}: ${preview(redactText(record.summary_preview))}`))
+  if (executions.commandError) out.push(`  command_error=${redactText(executions.commandError)}`)
+  out.push("  note=wake execution recorded supervisor assessment only; recommended commands are previews and were not executed; no provider called, no OpenCode prompt sent, no process control occurred, no research.db write occurred, and mission state was not mutated")
   return out
 }
 

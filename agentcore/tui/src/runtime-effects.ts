@@ -136,6 +136,15 @@ import type {
   OpenCodeWakeSupervisorCommandSummary,
   OpenCodeWakeSupervisorContextSectionSummary,
   OpenCodeWakeSupervisorEvidenceRefSummary,
+  OpenCodeWakeSupervisorBatchPreviewSummary,
+  OpenCodeWakeSupervisorBatchResultSummary,
+  OpenCodeWakeSupervisorExecutionCommandSummary,
+  OpenCodeWakeSupervisorExecutionEvidenceRefSummary,
+  OpenCodeWakeSupervisorExecutionPreviewSummary,
+  OpenCodeWakeSupervisorExecutionRecordSummary,
+  OpenCodeWakeSupervisorExecutionResultSummary,
+  OpenCodeWakeSupervisorExecutionsState,
+  OpenCodeWakeSupervisorExecutionSummaryState,
   OpenCodeWakeSupervisorPreviewSummary,
   OpenCodeWakeSupervisorSessionCardSummary,
   OpenCodeWakeSupervisorState,
@@ -498,6 +507,14 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-human-control-summary"; limit?: number }
   | { type: "preview-opencode-wake-supervisor"; sessionId?: string; launchId?: string; includeResearchMemory?: boolean; includeContextPacket?: boolean; includeHumanControls?: boolean; includeGuidanceDelivery?: boolean; limitEvidence?: number }
   | { type: "load-opencode-wake-supervisor-summary"; limit?: number; includeResearchMemory?: boolean; includeHumanControls?: boolean; statusFilter?: string }
+  | { type: "preview-opencode-wake-supervisor-execution"; sessionId?: string; launchId?: string; includeResearchMemory?: boolean; includeContextPacket?: boolean; includeHumanControls?: boolean; includeGuidanceDelivery?: boolean; limitEvidence?: number }
+  | { type: "record-opencode-wake-supervisor-execution"; sessionId?: string; launchId?: string; includeResearchMemory?: boolean; includeContextPacket?: boolean; includeHumanControls?: boolean; includeGuidanceDelivery?: boolean; limitEvidence?: number; dryRun?: boolean }
+  | { type: "preview-opencode-wake-supervisor-batch"; limit?: number; statusFilter?: string; includeResearchMemory?: boolean; includeHumanControls?: boolean; includeGuidanceDelivery?: boolean; limitEvidence?: number }
+  | { type: "record-opencode-wake-supervisor-batch"; limit?: number; statusFilter?: string; includeResearchMemory?: boolean; includeHumanControls?: boolean; includeGuidanceDelivery?: boolean; limitEvidence?: number; dryRun?: boolean }
+  | { type: "load-opencode-wake-supervisor-executions"; sessionId?: string; launchId?: string; supervisorStatus?: string; recommendedAction?: string; executionMode?: string; limit?: number }
+  | { type: "load-opencode-wake-supervisor-execution"; executionId: string }
+  | { type: "load-latest-opencode-wake-supervisor-execution"; sessionId?: string; launchId?: string }
+  | { type: "load-opencode-wake-supervisor-execution-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1460,6 +1477,29 @@ export async function applyRuntimeUiEffect(
           includeHumanControls: effect.includeHumanControls,
           statusFilter: effect.statusFilter,
         }))
+      case "preview-opencode-wake-supervisor-execution":
+        return applyOpenCodeWakeSupervisorExecutionPreview(state, await runtime.command("runtime.preview_opencode_wake_supervisor_execution", opencodeWakeSupervisorExecutionPayload(effect)))
+      case "record-opencode-wake-supervisor-execution": {
+        const next = applyOpenCodeWakeSupervisorExecutionResult(state, await runtime.command("runtime.record_opencode_wake_supervisor_execution", { ...opencodeWakeSupervisorExecutionPayload(effect), dryRun: effect.dryRun === true, recordedBy: "operator" }))
+        if (next.opencodeWakeSupervisorExecutions?.commandError || effect.dryRun === true) return next
+        const result = next.opencodeWakeSupervisorExecutions?.latestResult
+        return applyOpenCodeWakeSupervisorExecutionRecords(next, await runtime.command("runtime.list_opencode_wake_supervisor_executions", { limit: HANDOFF_LIMIT, sessionId: result?.session_id ?? effect.sessionId, launchId: result?.launch_id ?? effect.launchId }))
+      }
+      case "preview-opencode-wake-supervisor-batch":
+        return applyOpenCodeWakeSupervisorBatchPreview(state, await runtime.command("runtime.preview_opencode_wake_supervisor_batch", opencodeWakeSupervisorBatchPayload(effect)))
+      case "record-opencode-wake-supervisor-batch": {
+        const next = applyOpenCodeWakeSupervisorBatchResult(state, await runtime.command("runtime.record_opencode_wake_supervisor_batch", { ...opencodeWakeSupervisorBatchPayload(effect), dryRun: effect.dryRun === true, recordedBy: "operator" }))
+        if (next.opencodeWakeSupervisorExecutions?.commandError || effect.dryRun === true) return next
+        return applyOpenCodeWakeSupervisorExecutionRecords(next, await runtime.command("runtime.list_opencode_wake_supervisor_executions", { limit: HANDOFF_LIMIT }))
+      }
+      case "load-opencode-wake-supervisor-executions":
+        return applyOpenCodeWakeSupervisorExecutionRecords(state, await runtime.command("runtime.list_opencode_wake_supervisor_executions", { limit: effect.limit ?? HANDOFF_LIMIT, sessionId: effect.sessionId, launchId: effect.launchId, supervisorStatus: effect.supervisorStatus, recommendedAction: effect.recommendedAction, executionMode: effect.executionMode }))
+      case "load-opencode-wake-supervisor-execution":
+        return applyOpenCodeWakeSupervisorExecutionSelected(state, await runtime.command("runtime.get_opencode_wake_supervisor_execution", { executionId: effect.executionId }), effect.executionId)
+      case "load-latest-opencode-wake-supervisor-execution":
+        return applyOpenCodeWakeSupervisorExecutionLatest(state, await runtime.command("runtime.latest_opencode_wake_supervisor_execution", { sessionId: effect.sessionId, launchId: effect.launchId }), effect.sessionId ?? effect.launchId ?? "latest")
+      case "load-opencode-wake-supervisor-execution-summary":
+        return applyOpenCodeWakeSupervisorExecutionSummary(state, await runtime.command("runtime.opencode_wake_supervisor_execution_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -3951,6 +3991,119 @@ function applyOpenCodeWakeSupervisorSummary(state: UiState, value: unknown): UiS
   }
 }
 
+function applyOpenCodeWakeSupervisorExecutionPreview(state: UiState, value: unknown): UiState {
+  const preview = readOpenCodeWakeSupervisorExecutionPreview(value)
+  const commandError = preview.status === "blocked" ? preview.blockers[0] ?? "OpenCode wake supervisor execution preview is blocked" : undefined
+  return {
+    ...state,
+    opencodeWakeSupervisorExecutions: {
+      ...opencodeWakeSupervisorExecutionState(state),
+      preview,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake execution preview", detail: `session=${preview.session_id ?? "missing"} status=${preview.supervisor_status ?? "unknown"} action=${preview.recommended_action ?? "unknown"}`, status: preview.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeSupervisorExecutionResult(state: UiState, value: unknown): UiState {
+  const result = readOpenCodeWakeSupervisorExecutionResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "OpenCode wake supervisor execution is blocked" : undefined
+  return {
+    ...state,
+    opencodeWakeSupervisorExecutions: {
+      ...opencodeWakeSupervisorExecutionState(state),
+      latestResult: result,
+      latest: result.status === "recorded" ? result : opencodeWakeSupervisorExecutionState(state).latest,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake execution", detail: `execution=${result.execution_id} status=${result.status} action_execution_status=${result.action_execution_status}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeSupervisorBatchPreview(state: UiState, value: unknown): UiState {
+  const preview = readOpenCodeWakeSupervisorBatchPreview(value)
+  const commandError = preview.status === "blocked" ? preview.blockers[0] ?? "OpenCode wake supervisor batch preview is blocked" : undefined
+  return {
+    ...state,
+    opencodeWakeSupervisorExecutions: {
+      ...opencodeWakeSupervisorExecutionState(state),
+      batchPreview: preview,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake batch preview", detail: `included=${preview.included_session_count} skipped=${preview.skipped_session_count}`, status: preview.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeSupervisorBatchResult(state: UiState, value: unknown): UiState {
+  const result = readOpenCodeWakeSupervisorBatchResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "OpenCode wake supervisor batch execution is blocked" : undefined
+  return {
+    ...state,
+    opencodeWakeSupervisorExecutions: {
+      ...opencodeWakeSupervisorExecutionState(state),
+      batchResult: result,
+      records: result.status === "recorded" ? mergeExecutionRecords(opencodeWakeSupervisorExecutionState(state).records, result.execution_records) : opencodeWakeSupervisorExecutionState(state).records,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake batch execution", detail: `batch=${result.batch_id} recorded=${result.recorded_execution_count} action_execution_status=${result.action_execution_status}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeSupervisorExecutionRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeWakeSupervisorExecutionRecords(value)
+  return {
+    ...state,
+    opencodeWakeSupervisorExecutions: {
+      ...opencodeWakeSupervisorExecutionState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake executions", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeSupervisorExecutionSelected(state: UiState, value: unknown, executionId: string): UiState {
+  const selected = value ? readOpenCodeWakeSupervisorExecutionResult(value) : null
+  const commandError = selected ? undefined : `OpenCode wake supervisor execution not found: ${executionId}`
+  return {
+    ...state,
+    opencodeWakeSupervisorExecutions: {
+      ...opencodeWakeSupervisorExecutionState(state),
+      selected,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake execution show", detail: selected ? `execution=${selected.execution_id}` : `missing=${executionId}`, status: selected ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeSupervisorExecutionLatest(state: UiState, value: unknown, target: string): UiState {
+  const latest = value ? readOpenCodeWakeSupervisorExecutionResult(value) : null
+  const commandError = latest ? undefined : `OpenCode wake supervisor latest execution not found: ${target}`
+  return {
+    ...state,
+    opencodeWakeSupervisorExecutions: {
+      ...opencodeWakeSupervisorExecutionState(state),
+      latest,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake execution latest", detail: latest ? `execution=${latest.execution_id}` : `missing=${target}`, status: latest ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeSupervisorExecutionSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeWakeSupervisorExecutionSummary(value)
+  return {
+    ...state,
+    opencodeWakeSupervisorExecutions: {
+      ...opencodeWakeSupervisorExecutionState(state),
+      summary,
+      records: summary.latest_executions,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake execution summary", detail: `executions=${summary.total_executions} batches=${summary.batch_count} action_executed=${summary.action_executed_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -5213,6 +5366,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (commanderGuidanceDeliveryCommands.has(command)) return state.commanderGuidanceDelivery?.commandError
   if (opencodeHumanControlCommands.has(command)) return state.opencodeHumanControls?.commandError
   if (opencodeWakeSupervisorCommands.has(command)) return state.opencodeWakeSupervisor?.commandError
+  if (opencodeWakeSupervisorExecutionCommands.has(command)) return state.opencodeWakeSupervisorExecutions?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -5265,6 +5419,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (commanderGuidanceDeliveryCommands.has(command)) return { ...state, commanderGuidanceDelivery: { ...commanderGuidanceDeliveryState(state), commandError: undefined } }
   if (opencodeHumanControlCommands.has(command)) return { ...state, opencodeHumanControls: { ...opencodeHumanControlState(state), commandError: undefined } }
   if (opencodeWakeSupervisorCommands.has(command)) return { ...state, opencodeWakeSupervisor: { ...opencodeWakeSupervisorState(state), commandError: undefined } }
+  if (opencodeWakeSupervisorExecutionCommands.has(command)) return { ...state, opencodeWakeSupervisorExecutions: { ...opencodeWakeSupervisorExecutionState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -5654,6 +5809,42 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "wake-supervisor-summary":
     case "supervisor-summary":
       return applyRuntimeUiEffect(commandState, runtime, opencodeWakeSupervisorSummaryEffect(args))
+    case "opencode-wake-execution-preview":
+    case "wake-execution-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeSupervisorExecutionEffect("preview-opencode-wake-supervisor-execution", args, false))
+    case "opencode-wake-execution-dry-run":
+    case "wake-execution-dry-run": {
+      const effect = opencodeWakeSupervisorExecutionEffect("record-opencode-wake-supervisor-execution", args, true) as Extract<RuntimeUiEffect, { type: "record-opencode-wake-supervisor-execution" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-wake-execution-record":
+    case "wake-execution-record":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeSupervisorExecutionEffect("record-opencode-wake-supervisor-execution", args, true))
+    case "opencode-wake-batch-preview":
+    case "wake-batch-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeSupervisorBatchEffect("preview-opencode-wake-supervisor-batch", args, false))
+    case "opencode-wake-batch-dry-run": {
+      const effect = opencodeWakeSupervisorBatchEffect("record-opencode-wake-supervisor-batch", args, true) as Extract<RuntimeUiEffect, { type: "record-opencode-wake-supervisor-batch" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "wake-batch-dry-run": {
+      const effect = opencodeWakeSupervisorBatchEffect("record-opencode-wake-supervisor-batch", args, true) as Extract<RuntimeUiEffect, { type: "record-opencode-wake-supervisor-batch" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-wake-batch-record":
+    case "wake-batch-record":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeSupervisorBatchEffect("record-opencode-wake-supervisor-batch", args, true))
+    case "opencode-wake-executions":
+    case "wake-executions":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeSupervisorExecutionListEffect(args))
+    case "opencode-wake-execution-latest":
+    case "wake-execution-latest":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeSupervisorExecutionLatestEffect(args))
+    case "opencode-wake-execution-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-wake-supervisor-execution", executionId: requiredArg(args, 0, "executionId") })
+    case "opencode-wake-execution-summary":
+    case "wake-execution-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-wake-supervisor-execution-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -7018,6 +7209,28 @@ const opencodeWakeSupervisorCommands = new Set([
   "opencode-wake-supervisor-summary",
   "wake-supervisor-summary",
   "supervisor-summary",
+])
+
+const opencodeWakeSupervisorExecutionCommands = new Set([
+  "opencode-wake-execution-preview",
+  "wake-execution-preview",
+  "opencode-wake-execution-dry-run",
+  "wake-execution-dry-run",
+  "opencode-wake-execution-record",
+  "wake-execution-record",
+  "opencode-wake-batch-preview",
+  "wake-batch-preview",
+  "opencode-wake-batch-dry-run",
+  "wake-batch-dry-run",
+  "opencode-wake-batch-record",
+  "wake-batch-record",
+  "opencode-wake-executions",
+  "wake-executions",
+  "opencode-wake-execution-latest",
+  "wake-execution-latest",
+  "opencode-wake-execution-show",
+  "opencode-wake-execution-summary",
+  "wake-execution-summary",
 ])
 
 const researchMemoryCommands = new Set([
@@ -10666,7 +10879,9 @@ function readOpenCodeWakeSupervisorSummary(value: unknown): OpenCodeWakeSupervis
   if (!isRecord(value)) throw new Error("runtime.opencode_wake_supervisor_summary returned invalid summary")
   return {
     total_launched_sessions: readNumber(value.total_launched_sessions, 0),
+    status_counts: readNumberMap(value.status_counts, 20),
     healthy_count: readNumber(value.healthy_count, 0),
+    watch_count: readNumber(value.watch_count, 0),
     stale_count: readNumber(value.stale_count, 0),
     timed_out_count: readNumber(value.timed_out_count, 0),
     needs_report_count: readNumber(value.needs_report_count, 0),
@@ -10740,6 +10955,169 @@ function readOpenCodeWakeSupervisorCommands(value: unknown): OpenCodeWakeSupervi
     requires_active_runtime: command.requires_active_runtime === true,
     notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
   }))
+}
+
+function readOpenCodeWakeSupervisorExecutionPreview(value: unknown): OpenCodeWakeSupervisorExecutionPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_wake_supervisor_execution returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_record: value.can_record === true,
+    execution_mode: readString(value.execution_mode, "single_session"),
+    session_id: typeof value.session_id === "string" ? redactText(value.session_id) : undefined,
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    supervisor_preview_id: typeof value.supervisor_preview_id === "string" ? redactText(value.supervisor_preview_id) : undefined,
+    supervisor_hash: typeof value.supervisor_hash === "string" ? readString(value.supervisor_hash, "") : undefined,
+    supervisor_status: typeof value.supervisor_status === "string" ? readString(value.supervisor_status, "unknown") : undefined,
+    recommended_action: typeof value.recommended_action === "string" ? readString(value.recommended_action, "unknown") : undefined,
+    action_execution_status: readString(value.action_execution_status, "not_executed"),
+    recommended_commands_preview: readOpenCodeWakeSupervisorExecutionCommands(value.recommended_commands_preview),
+    evidence_refs: readOpenCodeWakeSupervisorExecutionEvidenceRefs(value.evidence_refs),
+    context_section_count: readNumber(value.context_section_count, 0),
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    execution_hash: readString(value.execution_hash, ""),
+  }
+}
+
+function readOpenCodeWakeSupervisorExecutionResult(value: unknown): OpenCodeWakeSupervisorExecutionResultSummary {
+  if (!isRecord(value) || typeof value.execution_id !== "string") throw new Error("runtime.record_opencode_wake_supervisor_execution returned invalid result")
+  return {
+    execution_id: redactText(value.execution_id),
+    status: readString(value.status, "blocked"),
+    execution_mode: readString(value.execution_mode, "single_session"),
+    session_id: typeof value.session_id === "string" ? redactText(value.session_id) : undefined,
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    supervisor_preview_id: typeof value.supervisor_preview_id === "string" ? redactText(value.supervisor_preview_id) : undefined,
+    supervisor_hash: typeof value.supervisor_hash === "string" ? readString(value.supervisor_hash, "") : undefined,
+    supervisor_status: typeof value.supervisor_status === "string" ? readString(value.supervisor_status, "unknown") : undefined,
+    recommended_action: typeof value.recommended_action === "string" ? readString(value.recommended_action, "unknown") : undefined,
+    action_execution_status: readString(value.action_execution_status, "not_executed"),
+    recommended_commands_preview: readOpenCodeWakeSupervisorExecutionCommands(value.recommended_commands_preview),
+    evidence_refs: readOpenCodeWakeSupervisorExecutionEvidenceRefs(value.evidence_refs),
+    context_section_count: readNumber(value.context_section_count, 0),
+    recorded_at: readString(value.recorded_at, ""),
+    recorded_by: preview(readString(value.recorded_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    execution_hash: readString(value.execution_hash, ""),
+    recommended_commands: readOpenCodeWakeSupervisorExecutionCommands(value.recommended_commands),
+  }
+}
+
+function readOpenCodeWakeSupervisorBatchPreview(value: unknown): OpenCodeWakeSupervisorBatchPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_wake_supervisor_batch returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_record: value.can_record === true,
+    execution_mode: readString(value.execution_mode, "batch_active_sessions"),
+    total_candidate_sessions: readNumber(value.total_candidate_sessions, 0),
+    included_session_count: readNumber(value.included_session_count, 0),
+    skipped_session_count: readNumber(value.skipped_session_count, 0),
+    session_previews: readOpenCodeWakeSupervisorExecutionPreviews(value.session_previews),
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    execution_hash: readString(value.execution_hash, ""),
+  }
+}
+
+function readOpenCodeWakeSupervisorBatchResult(value: unknown): OpenCodeWakeSupervisorBatchResultSummary {
+  if (!isRecord(value) || typeof value.batch_id !== "string") throw new Error("runtime.record_opencode_wake_supervisor_batch returned invalid result")
+  return {
+    batch_id: redactText(value.batch_id),
+    status: readString(value.status, "blocked"),
+    execution_mode: readString(value.execution_mode, "batch_active_sessions"),
+    total_candidate_sessions: readNumber(value.total_candidate_sessions, 0),
+    recorded_execution_count: readNumber(value.recorded_execution_count, 0),
+    skipped_session_count: readNumber(value.skipped_session_count, 0),
+    execution_records: readOpenCodeWakeSupervisorExecutionRecords(value.execution_records),
+    action_execution_status: readString(value.action_execution_status, "not_executed"),
+    recorded_at: readString(value.recorded_at, ""),
+    recorded_by: preview(readString(value.recorded_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    batch_hash: readString(value.batch_hash, ""),
+    recommended_commands: readOpenCodeWakeSupervisorExecutionCommands(value.recommended_commands),
+  }
+}
+
+function readOpenCodeWakeSupervisorExecutionPreviews(value: unknown): OpenCodeWakeSupervisorExecutionPreviewSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map(readOpenCodeWakeSupervisorExecutionPreview)
+}
+
+function readOpenCodeWakeSupervisorExecutionRecords(value: unknown): OpenCodeWakeSupervisorExecutionRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((record) => ({
+    execution_id: redactText(readString(record.execution_id, "")),
+    execution_mode: readString(record.execution_mode, "single_session"),
+    session_id: typeof record.session_id === "string" ? redactText(record.session_id) : undefined,
+    launch_id: typeof record.launch_id === "string" ? redactText(record.launch_id) : undefined,
+    supervisor_status: typeof record.supervisor_status === "string" ? readString(record.supervisor_status, "unknown") : undefined,
+    recommended_action: typeof record.recommended_action === "string" ? readString(record.recommended_action, "unknown") : undefined,
+    action_execution_status: readString(record.action_execution_status, "not_executed"),
+    recorded_at: readString(record.recorded_at, ""),
+    recorded_by: preview(readString(record.recorded_by, "")),
+    summary_preview: preview(readString(record.summary_preview, "")),
+    execution_hash: readString(record.execution_hash, ""),
+  }))
+}
+
+function readOpenCodeWakeSupervisorExecutionSummary(value: unknown): OpenCodeWakeSupervisorExecutionSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.opencode_wake_supervisor_execution_summary returned invalid summary")
+  return {
+    total_executions: readNumber(value.total_executions, 0),
+    session_count: readNumber(value.session_count, 0),
+    batch_count: readNumber(value.batch_count, 0),
+    healthy_count: readNumber(value.healthy_count, 0),
+    watch_count: readNumber(value.watch_count, 0),
+    needs_report_count: readNumber(value.needs_report_count, 0),
+    needs_commander_answer_count: readNumber(value.needs_commander_answer_count, 0),
+    guidance_pending_delivery_count: readNumber(value.guidance_pending_delivery_count, 0),
+    human_attention_count: readNumber(value.human_attention_count, 0),
+    timed_out_count: readNumber(value.timed_out_count, 0),
+    stale_count: readNumber(value.stale_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    action_executed_count: readNumber(value.action_executed_count, 0),
+    latest_executions: readOpenCodeWakeSupervisorExecutionRecords(value.latest_executions),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeWakeSupervisorExecutionEvidenceRefs(value: unknown): OpenCodeWakeSupervisorExecutionEvidenceRefSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((ref) => ({
+    evidence_kind: readString(ref.evidence_kind, "unknown"),
+    evidence_id: redactText(readString(ref.evidence_id, "")),
+    status: typeof ref.status === "string" ? readString(ref.status, "") : undefined,
+    summary_preview: typeof ref.summary_preview === "string" ? preview(readString(ref.summary_preview, "")) : undefined,
+    pointer_only: true,
+  }))
+}
+
+function readOpenCodeWakeSupervisorExecutionCommands(value: unknown): OpenCodeWakeSupervisorExecutionCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function mergeExecutionRecords(existing: OpenCodeWakeSupervisorExecutionRecordSummary[], incoming: OpenCodeWakeSupervisorExecutionRecordSummary[]): OpenCodeWakeSupervisorExecutionRecordSummary[] {
+  const seen = new Set<string>()
+  const merged: OpenCodeWakeSupervisorExecutionRecordSummary[] = []
+  for (const record of [...incoming, ...existing]) {
+    if (seen.has(record.execution_id)) continue
+    seen.add(record.execution_id)
+    merged.push(record)
+  }
+  return merged.slice(0, 20)
 }
 
 function readResearchMemorySummary(value: unknown): ResearchMemorySummaryState {
@@ -14347,6 +14725,10 @@ function opencodeWakeSupervisorState(state: UiState): OpenCodeWakeSupervisorStat
   return state.opencodeWakeSupervisor ?? { preview: null, summary: null, cards: [] }
 }
 
+function opencodeWakeSupervisorExecutionState(state: UiState): OpenCodeWakeSupervisorExecutionsState {
+  return state.opencodeWakeSupervisorExecutions ?? { preview: null, latestResult: null, batchPreview: null, batchResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
 function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
   return {
     sessionId: effect.sessionId,
@@ -14444,6 +14826,29 @@ function opencodeWakeSupervisorPayload(effect: Extract<RuntimeUiEffect, { type: 
     launchId: effect.launchId,
     includeResearchMemory: effect.includeResearchMemory,
     includeContextPacket: effect.includeContextPacket,
+    includeHumanControls: effect.includeHumanControls,
+    includeGuidanceDelivery: effect.includeGuidanceDelivery,
+    limitEvidence: effect.limitEvidence,
+  }
+}
+
+function opencodeWakeSupervisorExecutionPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-wake-supervisor-execution" | "record-opencode-wake-supervisor-execution" }>): Record<string, unknown> {
+  return {
+    sessionId: effect.sessionId,
+    launchId: effect.launchId,
+    includeResearchMemory: effect.includeResearchMemory,
+    includeContextPacket: effect.includeContextPacket,
+    includeHumanControls: effect.includeHumanControls,
+    includeGuidanceDelivery: effect.includeGuidanceDelivery,
+    limitEvidence: effect.limitEvidence,
+  }
+}
+
+function opencodeWakeSupervisorBatchPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-wake-supervisor-batch" | "record-opencode-wake-supervisor-batch" }>): Record<string, unknown> {
+  return {
+    limit: effect.limit,
+    statusFilter: effect.statusFilter,
+    includeResearchMemory: effect.includeResearchMemory,
     includeHumanControls: effect.includeHumanControls,
     includeGuidanceDelivery: effect.includeGuidanceDelivery,
     limitEvidence: effect.limitEvidence,
@@ -15851,6 +16256,81 @@ function opencodeWakeSupervisorSummaryEffect(args: string[]): Extract<RuntimeUiE
     else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
     else throw new Error("OpenCode wake supervisor summary arg is unsupported")
   }
+  return effect
+}
+
+function opencodeWakeSupervisorExecutionEffect(
+  type: "preview-opencode-wake-supervisor-execution" | "record-opencode-wake-supervisor-execution",
+  args: string[],
+  requireTarget: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-opencode-wake-supervisor-execution" | "record-opencode-wake-supervisor-execution" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-wake-supervisor-execution" | "record-opencode-wake-supervisor-execution" }> = { type }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode wake execution args must use session=<id>, launch=<id>, include_research_memory=<bool>, include_context_packet=<bool>, include_human_controls=<bool>, include_guidance_delivery=<bool>, or limit=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "include_research_memory") effect.includeResearchMemory = readBooleanArg(value)
+    else if (key === "include_context_packet") effect.includeContextPacket = readBooleanArg(value)
+    else if (key === "include_human_controls") effect.includeHumanControls = readBooleanArg(value)
+    else if (key === "include_guidance_delivery") effect.includeGuidanceDelivery = readBooleanArg(value)
+    else if (key === "limit" || key === "limit_evidence") effect.limitEvidence = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode wake execution arg is unsupported")
+  }
+  if (requireTarget && !effect.sessionId && !effect.launchId) throw new Error("OpenCode wake execution requires session=<id> or launch=<id>")
+  return effect
+}
+
+function opencodeWakeSupervisorBatchEffect(
+  type: "preview-opencode-wake-supervisor-batch" | "record-opencode-wake-supervisor-batch",
+  args: string[],
+  _canRunWithoutTarget: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-opencode-wake-supervisor-batch" | "record-opencode-wake-supervisor-batch" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-wake-supervisor-batch" | "record-opencode-wake-supervisor-batch" }> = { type, limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode wake batch args must use status=<status>, include_research_memory=<bool>, include_human_controls=<bool>, include_guidance_delivery=<bool>, limit_evidence=<n>, or limit=<n>")
+    if (key === "status") effect.statusFilter = value
+    else if (key === "include_research_memory") effect.includeResearchMemory = readBooleanArg(value)
+    else if (key === "include_human_controls") effect.includeHumanControls = readBooleanArg(value)
+    else if (key === "include_guidance_delivery") effect.includeGuidanceDelivery = readBooleanArg(value)
+    else if (key === "limit_evidence") effect.limitEvidence = readPositiveInteger(value, "limit_evidence", HANDOFF_LIMIT)
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode wake batch arg is unsupported")
+  }
+  return effect
+}
+
+function opencodeWakeSupervisorExecutionListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-opencode-wake-supervisor-executions" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-opencode-wake-supervisor-executions" }> = { type: "load-opencode-wake-supervisor-executions", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode wake executions args must use session=<id>, launch=<id>, status=<status>, action=<action>, mode=<mode>, or limit=<n>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "status") effect.supervisorStatus = value
+    else if (key === "action") effect.recommendedAction = value
+    else if (key === "mode") effect.executionMode = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode wake executions arg is unsupported")
+  }
+  return effect
+}
+
+function opencodeWakeSupervisorExecutionLatestEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-latest-opencode-wake-supervisor-execution" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-latest-opencode-wake-supervisor-execution" }> = { type: "load-latest-opencode-wake-supervisor-execution" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode wake execution latest args must use session=<id> or launch=<id>")
+    if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else throw new Error("OpenCode wake execution latest arg is unsupported")
+  }
+  if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode wake execution latest requires session=<id> or launch=<id>")
   return effect
 }
 
