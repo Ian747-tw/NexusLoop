@@ -300,6 +300,14 @@ function decideStatus(input: {
   if (input.latestWatchdog?.watchdog_status === "stale") {
     return { status: "stale", action: input.currentForcedReport ? "read_latest_progress" : "request_forced_report" }
   }
+  if (input.latestWatchdog?.watchdog_status === "blocked") {
+    return {
+      status: "blocked",
+      action: input.latestWatchdog.report_required
+        ? input.currentForcedReport ? "read_latest_progress" : "request_forced_report"
+        : "create_commander_question",
+    }
+  }
   if (input.pendingQuestionCount > 0) return { status: "needs_commander_answer", action: "answer_commander_question" }
   if (input.pendingDeliveryCount > 0) {
     return { status: "guidance_pending_delivery", action: input.latestDeliveryStatus === "pending_delivery" || input.latestGuidanceDeliveryStatus === "pending_delivery" ? "review_human_control" : "deliver_guidance" }

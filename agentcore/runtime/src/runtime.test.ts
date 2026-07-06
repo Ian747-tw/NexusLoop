@@ -18590,6 +18590,27 @@ describe("OpenCode launch readiness", () => {
     const currentReport = await currentReportService.preview({ session_id: launch.session_id })
     expect(currentReport).toMatchObject({ status: "ready", supervisor_status: "timed_out", recommended_action: "read_latest_progress" })
 
+    const blockedWatchdogService = new OpenCodeWakeSupervisorService({
+      ...baseOptions,
+      watchdogService: {
+        list: async () => [{
+          watchdog_id: "watchdog_blocked",
+          session_id: launch.session_id,
+          launch_id: launch.launch_id,
+          watchdog_status: "blocked",
+          recommended_action: "escalate_to_commander",
+          report_required: true,
+          latest_progress_id: progress.progress_id,
+          recorded_at: "2026-07-06T10:00:45.000Z",
+          recorded_by: "operator",
+          watchdog_hash: "watchdog_hash_blocked",
+        }],
+        listForcedReports: async () => [],
+      } as never,
+    })
+    const blockedWatchdog = await blockedWatchdogService.preview({ session_id: launch.session_id })
+    expect(blockedWatchdog).toMatchObject({ status: "ready", supervisor_status: "blocked", recommended_action: "request_forced_report", report_required: true })
+
     const pendingGuidanceService = new OpenCodeWakeSupervisorService({
       ...baseOptions,
       watchdogService: {

@@ -10535,6 +10535,14 @@ function fakeSupervisorDecision(
   if (latestWatchdog?.watchdog_status === "timed_out") return { status: "timed_out", action: latestForcedReport ? "read_latest_progress" : "request_forced_report" }
   if (latestWatchdog?.watchdog_status === "needs_report") return { status: "needs_report", action: latestForcedReport ? "read_latest_progress" : "request_forced_report" }
   if (latestWatchdog?.watchdog_status === "stale") return { status: "stale", action: latestForcedReport ? "read_latest_progress" : "request_forced_report" }
+  if (latestWatchdog?.watchdog_status === "blocked") {
+    return {
+      status: "blocked",
+      action: latestWatchdog.report_required
+        ? latestForcedReport ? "read_latest_progress" : "request_forced_report"
+        : "create_commander_question",
+    }
+  }
   if (pendingQuestionCount > 0) return { status: "needs_commander_answer", action: "answer_commander_question" }
   if (pendingDeliveryCount > 0) return { status: "guidance_pending_delivery", action: latestDeliveryStatus === "pending_delivery" || latestGuidanceDeliveryStatus === "pending_delivery" ? "review_human_control" : "deliver_guidance" }
   if (latestProgress?.kind === "blocker" || latestProgress?.execution_state === "blocked") return { status: "blocked", action: "create_commander_question" }
