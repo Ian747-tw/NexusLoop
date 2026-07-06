@@ -18577,7 +18577,6 @@ describe("OpenCode launch readiness", () => {
           request_id: "request_current",
           session_id: launch.session_id,
           launch_id: launch.launch_id,
-          watchdog_id: "watchdog_current",
           latest_progress_id: progress.progress_id,
           reason: "current timeout",
           requested_at: "2026-07-06T10:00:50.000Z",

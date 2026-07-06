@@ -467,9 +467,9 @@ function forcedReportMatchesCurrentEvidence(
   latestWatchdog?: { watchdog_id: string; latest_progress_id?: string } | null,
   latestProgress?: { progress_id: string } | null,
 ): boolean {
-  if (latestWatchdog?.watchdog_id) return request.watchdog_id === latestWatchdog.watchdog_id
-  if (latestProgress?.progress_id) return request.latest_progress_id === latestProgress.progress_id
-  return false
+  if (latestWatchdog?.watchdog_id && request.watchdog_id) return request.watchdog_id === latestWatchdog.watchdog_id
+  const currentProgressId = latestWatchdog?.latest_progress_id ?? latestProgress?.progress_id
+  return currentProgressId ? request.latest_progress_id === currentProgressId : false
 }
 
 function boundEvidence(values: Array<OpenCodeWakeSupervisorEvidenceRef | undefined>, maxItems: number): OpenCodeWakeSupervisorEvidenceRef[] {
