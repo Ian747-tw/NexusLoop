@@ -2304,6 +2304,116 @@ export type OpenCodeHumanControlState = {
   commandError?: string
 }
 
+export type OpenCodeWakeSupervisorCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeWakeSupervisorEvidenceRefSummary = {
+  evidence_kind: string
+  evidence_id: string
+  status?: string
+  summary_preview?: string
+  recorded_at?: string
+  pointer_only: true
+}
+
+export type OpenCodeWakeSupervisorCheckSummary = {
+  check_id: string
+  label: string
+  status: "pass" | "warn" | "fail" | "unknown" | string
+  summary_preview: string
+  evidence_refs: OpenCodeWakeSupervisorEvidenceRefSummary[]
+  recommended_commands: OpenCodeWakeSupervisorCommandSummary[]
+}
+
+export type OpenCodeWakeSupervisorContextSectionSummary = {
+  section: string
+  status: "included" | "pointer_only" | "missing" | "excluded" | string
+  summary_preview: string
+  evidence_refs: OpenCodeWakeSupervisorEvidenceRefSummary[]
+  warnings: string[]
+}
+
+export type OpenCodeWakeSupervisorPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | "partial" | string
+  session_id: string
+  launch_id?: string
+  supervisor_status: string
+  recommended_action: string
+  active_launch_status?: string
+  latest_progress_id?: string
+  latest_progress_kind?: string
+  latest_progress_state?: string
+  latest_watchdog_id?: string
+  latest_watchdog_status?: string
+  latest_forced_report_request_id?: string
+  pending_question_id?: string
+  pending_question_count: number
+  unanswered_question_count: number
+  latest_guidance_id?: string
+  latest_guidance_delivery_status?: string
+  pending_delivery_count: number
+  latest_human_control_id?: string
+  latest_human_projected_state?: string
+  human_pause_requested: boolean
+  human_stop_requested: boolean
+  human_correction_pending: boolean
+  human_override_pending: boolean
+  report_required: boolean
+  timed_out: boolean
+  stale: boolean
+  blocked_by_human: boolean
+  checks: OpenCodeWakeSupervisorCheckSummary[]
+  context_sections: OpenCodeWakeSupervisorContextSectionSummary[]
+  evidence_refs: OpenCodeWakeSupervisorEvidenceRefSummary[]
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeWakeSupervisorCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  supervisor_hash: string
+}
+
+export type OpenCodeWakeSupervisorSessionCardSummary = {
+  session_id: string
+  launch_id?: string
+  supervisor_status: string
+  recommended_action: string
+  latest_progress_at?: string
+  latest_watchdog_status?: string
+  pending_question_count: number
+  pending_delivery_count: number
+  latest_human_projected_state?: string
+  summary_preview: string
+  supervisor_hash: string
+}
+
+export type OpenCodeWakeSupervisorSummaryState = {
+  total_launched_sessions: number
+  healthy_count: number
+  stale_count: number
+  timed_out_count: number
+  needs_report_count: number
+  needs_commander_answer_count: number
+  guidance_pending_delivery_count: number
+  human_attention_count: number
+  stop_requested_count: number
+  session_cards: OpenCodeWakeSupervisorSessionCardSummary[]
+  generated_at: string
+}
+
+export type OpenCodeWakeSupervisorState = {
+  preview?: OpenCodeWakeSupervisorPreviewSummary | null
+  summary?: OpenCodeWakeSupervisorSummaryState | null
+  cards: OpenCodeWakeSupervisorSessionCardSummary[]
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -4689,6 +4799,7 @@ export type UiState = {
   commanderGuidance?: CommanderGuidanceState
   commanderGuidanceDelivery?: CommanderGuidanceDeliveryState
   opencodeHumanControls?: OpenCodeHumanControlState
+  opencodeWakeSupervisor?: OpenCodeWakeSupervisorState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

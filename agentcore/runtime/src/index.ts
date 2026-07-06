@@ -86,6 +86,8 @@ export type {
 } from "./opencode-session/opencode-guidance-delivery-types"
 export { OpenCodeHumanControlService } from "./opencode-session/opencode-human-control-service"
 export * from "./opencode-session/opencode-human-control-types"
+export { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-supervisor-service"
+export * from "./opencode-session/opencode-wake-supervisor-types"
 export { ContextBudgetService } from "./context/context-budget-service"
 export { ModelCapabilityRegistry } from "./context/model-capability-registry"
 export { ContextPacketCompilerService } from "./context/context-packet-compiler-service"

@@ -94,6 +94,8 @@ import { CommanderGuidanceDeliveryService, readCommanderGuidanceDeliveryInput, r
 import type { CommanderGuidanceDeliveryPreview, CommanderGuidanceDeliveryRecord, CommanderGuidanceDeliveryResult, CommanderGuidanceDeliverySummary } from "./opencode-session/opencode-guidance-delivery-types"
 import { OpenCodeHumanControlService, readOpenCodeHumanControlPreviewInput, readOpenCodeHumanControlRecordInput } from "./opencode-session/opencode-human-control-service"
 import type { OpenCodeHumanControlPreview, OpenCodeHumanControlRecord, OpenCodeHumanControlResult, OpenCodeHumanControlSummary } from "./opencode-session/opencode-human-control-types"
+import { OpenCodeWakeSupervisorService, readOpenCodeWakeSupervisorPreviewInput, readOpenCodeWakeSupervisorSummaryInput } from "./opencode-session/opencode-wake-supervisor-service"
+import type { OpenCodeWakeSupervisorPreview, OpenCodeWakeSupervisorSummary } from "./opencode-session/opencode-wake-supervisor-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -337,6 +339,7 @@ export class RuntimeServer {
   private commanderGuidanceServiceInstance: CommanderGuidanceService | null = null
   private commanderGuidanceDeliveryServiceInstance: CommanderGuidanceDeliveryService | null = null
   private opencodeHumanControlServiceInstance: OpenCodeHumanControlService | null = null
+  private opencodeWakeSupervisorServiceInstance: OpenCodeWakeSupervisorService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -1058,6 +1061,10 @@ export class RuntimeServer {
         })
       case "runtime.opencode_human_control_summary":
         return this.openCodeHumanControlSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
+      case "runtime.preview_opencode_wake_supervisor":
+        return this.previewOpenCodeWakeSupervisor(readOpenCodeWakeSupervisorPreviewInput(payload))
+      case "runtime.opencode_wake_supervisor_summary":
+        return this.openCodeWakeSupervisorSummary(readOpenCodeWakeSupervisorSummaryInput(payload))
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -2123,6 +2130,14 @@ export class RuntimeServer {
 
   async openCodeHumanControlSummary(input: Parameters<OpenCodeHumanControlService["summary"]>[0] = {}): Promise<OpenCodeHumanControlSummary> {
     return this.opencodeHumanControlService().summary(input)
+  }
+
+  async previewOpenCodeWakeSupervisor(input: Parameters<OpenCodeWakeSupervisorService["preview"]>[0] = {}): Promise<OpenCodeWakeSupervisorPreview> {
+    return this.opencodeWakeSupervisorService().preview(input)
+  }
+
+  async openCodeWakeSupervisorSummary(input: Parameters<OpenCodeWakeSupervisorService["summary"]>[0] = {}): Promise<OpenCodeWakeSupervisorSummary> {
+    return this.opencodeWakeSupervisorService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -3297,6 +3312,20 @@ export class RuntimeServer {
       guidanceDeliveryService: this.commanderGuidanceDeliveryService(),
     })
     return this.opencodeHumanControlServiceInstance
+  }
+
+  private opencodeWakeSupervisorService(): OpenCodeWakeSupervisorService {
+    this.opencodeWakeSupervisorServiceInstance ??= new OpenCodeWakeSupervisorService({
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+      progressService: this.opencodeProgressService(),
+      watchdogService: this.opencodeTimeoutWatchdogService(),
+      questionService: this.opencodeCommanderQuestionService(),
+      guidanceService: this.commanderGuidanceService(),
+      guidanceDeliveryService: this.commanderGuidanceDeliveryService(),
+      humanControlService: this.opencodeHumanControlService(),
+    })
+    return this.opencodeWakeSupervisorServiceInstance
   }
 
   private createOpenCodeLaunchAdapter(): OpenCodeLaunchAdapter {

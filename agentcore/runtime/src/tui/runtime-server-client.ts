@@ -75,6 +75,8 @@ const noStartCommands = new Set([
   "runtime.get_opencode_human_control",
   "runtime.latest_opencode_human_control",
   "runtime.opencode_human_control_summary",
+  "runtime.preview_opencode_wake_supervisor",
+  "runtime.opencode_wake_supervisor_summary",
   "runtime.research_memory_summary",
   "runtime.preview_research_memory_retrieval",
   "runtime.preview_research_novelty_check",
