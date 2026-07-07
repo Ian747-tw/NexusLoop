@@ -18823,6 +18823,36 @@ describe("OpenCode launch readiness", () => {
     await expect(server.command("runtime.record_opencode_wake_action_execution", { executionId: wakeExecution.execution_id, actionKind: "create_commander_question" })).resolves.toMatchObject({ status: "blocked", effect_kind: "manual_action_required" })
     expect(await server.eventStore.readAll()).toEqual(events)
 
+    const duplicateQuestionExecution = {
+      execution_id: `wake_execution_question_duplicate_${progress.progress_id}`,
+      supervisor_hash: `supervisor_hash_question_duplicate_${progress.progress_id}`,
+    }
+    await server.eventStore.append({
+      kind: "opencode_wake_supervisor_execution_recorded",
+      execution_id: duplicateQuestionExecution.execution_id,
+      execution_mode: "single_session",
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      supervisor_preview_id: `wake_preview_question_duplicate_${progress.progress_id}`,
+      supervisor_hash: duplicateQuestionExecution.supervisor_hash,
+      supervisor_status: "blocked",
+      recommended_action: "create_commander_question",
+      action_execution_status: "not_executed",
+      recommended_commands_preview: [],
+      evidence_refs: [{ evidence_kind: "progress", evidence_id: progress.progress_id, status: "blocked", summary_preview: "blocked", pointer_only: true }],
+      context_section_count: 1,
+      recorded_at: "2026-07-06T10:00:00.000Z",
+      recorded_by: "test",
+      execution_hash: `execution_hash_question_duplicate_${progress.progress_id}`,
+    })
+    events = await server.eventStore.readAll()
+    await expect(server.command("runtime.preview_opencode_wake_action_execution", { executionId: duplicateQuestionExecution.execution_id, actionKind: "create_commander_question" })).resolves.toMatchObject({ status: "ready", can_execute: true })
+    await expect(server.command("runtime.record_opencode_wake_action_execution", { executionId: duplicateQuestionExecution.execution_id, actionKind: "create_commander_question", dryRun: true })).resolves.toMatchObject({
+      status: "blocked",
+      effect_kind: "metadata_event_appended",
+    })
+    expect(await server.eventStore.readAll()).toEqual(events)
+
     const beforeWatchdog = events
     const watchdogExecution = {
       execution_id: `wake_execution_watchdog_${progress.progress_id}`,

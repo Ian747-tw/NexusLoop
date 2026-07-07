@@ -82,7 +82,11 @@ export class OpenCodeWakeActionExecutionService {
       return resultFromPreview(preview, actionExecutionId, "blocked", recordedAt, recordedBy, preview.blockers[0] ?? "wake action execution is blocked")
     }
     if (input.dry_run === true) {
-      return resultFromPreview(preview, actionExecutionId, "dry_run", recordedAt, recordedBy)
+      const metadata = await this.executeMetadataAction(preview, input, recordedBy, true)
+      if (metadata.status === "blocked" || metadata.status === "failed") {
+        return resultFromPreview(preview, actionExecutionId, metadata.status, recordedAt, recordedBy, metadata.error, metadata.metadata_record_id, metadata.metadata_result_preview)
+      }
+      return resultFromPreview(preview, actionExecutionId, "dry_run", recordedAt, recordedBy, undefined, metadata.metadata_record_id, metadata.metadata_result_preview)
     }
     return this.serializeAction(async () => {
       const rebuilt = await this.buildPreview(input)
@@ -227,6 +231,7 @@ export class OpenCodeWakeActionExecutionService {
     preview: OpenCodeWakeActionExecutionPreview,
     input: OpenCodeWakeActionExecutionRecordInput,
     recordedBy: string,
+    dryRun = false,
   ): Promise<{ status: OpenCodeWakeActionExecutionResult["status"]; metadata_record_id?: string; metadata_result_preview?: string; error?: string }> {
     if (preview.action_kind === "none") return { status: "skipped", metadata_result_preview: "no action needed" }
     if (preview.action_kind === "read_latest_progress") {
@@ -238,13 +243,19 @@ export class OpenCodeWakeActionExecutionService {
       return { status: "skipped", metadata_record_id: latest?.control_id, metadata_result_preview: latest ? `latest human control ${latest.control_id}: ${latest.control_kind}` : "manual human control review required" }
     }
     if (preview.action_kind === "record_watchdog") {
-      const result = await this.options.watchdogService.record({ session_id: preview.session_id, launch_id: preview.launch_id, recorded_by: recordedBy })
+      const result = await this.options.watchdogService.record({ session_id: preview.session_id, launch_id: preview.launch_id, recorded_by: recordedBy, dry_run: dryRun })
+      if (result.status === "dry_run") return { status: "dry_run", metadata_record_id: result.watchdog_id, metadata_result_preview: `watchdog dry-run ${result.watchdog_status}` }
+      if (result.status === "blocked") return { status: "blocked", error: result.error ?? "watchdog metadata record blocked" }
       if (result.status !== "recorded") return { status: "failed", error: result.error ?? "watchdog metadata record failed" }
       return { status: "executed", metadata_record_id: result.watchdog_id, metadata_result_preview: `watchdog ${result.watchdog_status}` }
     }
     if (preview.action_kind === "request_forced_report") {
-      const result = await this.options.watchdogService.requestForcedReport({ session_id: preview.session_id, launch_id: preview.launch_id, reason: input.reason ?? "wake supervisor recommended forced report", requested_by: recordedBy })
-      if (!("request_id" in result)) return { status: "failed", error: result.error ?? "forced report metadata request failed" }
+      const result = await this.options.watchdogService.requestForcedReport({ session_id: preview.session_id, launch_id: preview.launch_id, reason: input.reason ?? "wake supervisor recommended forced report", requested_by: recordedBy, dry_run: dryRun })
+      if (!("request_id" in result)) {
+        if (result.status === "dry_run") return { status: "dry_run", metadata_record_id: result.watchdog_id, metadata_result_preview: `forced report dry-run ${result.watchdog_status}` }
+        if (result.status === "blocked") return { status: "blocked", error: result.error ?? "forced report metadata request blocked" }
+        return { status: "failed", error: result.error ?? "forced report metadata request failed" }
+      }
       return { status: "executed", metadata_record_id: result.request_id, metadata_result_preview: `forced report requested; process_paused=${result.process_paused}` }
     }
     if (preview.action_kind === "create_commander_question") {
@@ -259,14 +270,19 @@ export class OpenCodeWakeActionExecutionService {
         context_summary: "Wake recommended-action execution gate created this bounded question from supervisor evidence.",
         source_kind: ids.forced_report_request_id ? "forced_report" : ids.watchdog_id ? "watchdog" : "progress_question",
         created_by: recordedBy,
+        dry_run: dryRun,
       })
+      if (result.status === "dry_run") return { status: "dry_run", metadata_record_id: result.question_id, metadata_result_preview: `Commander question dry-run ${result.question_type}` }
+      if (result.status === "blocked") return { status: "blocked", error: result.error ?? "Commander question metadata creation blocked" }
       if (result.status !== "created") return { status: "failed", error: result.error ?? "Commander question metadata creation failed" }
       return { status: "executed", metadata_record_id: result.question_id, metadata_result_preview: `Commander question ${result.question_type}` }
     }
     if (preview.action_kind === "deliver_guidance" && input.allow_operator_handoff === true) {
       const guidanceId = guidanceEvidenceId(preview.evidence_refs)
       if (!guidanceId) return { status: "failed", error: "guidance evidence was not available for operator_handoff delivery" }
-      const result = await this.options.guidanceDeliveryService.deliver({ guidance_id: guidanceId, delivery_mode: "operator_handoff", delivered_by: recordedBy })
+      const result = await this.options.guidanceDeliveryService.deliver({ guidance_id: guidanceId, delivery_mode: "operator_handoff", delivered_by: recordedBy, dry_run: dryRun })
+      if (result.status === "dry_run") return { status: "dry_run", metadata_record_id: result.delivery_id, metadata_result_preview: `guidance delivery dry-run ${result.delivery_status_after}; no OpenCode prompt sent` }
+      if (result.status === "blocked") return { status: "blocked", error: result.error ?? "guidance operator_handoff delivery blocked" }
       if (result.status !== "delivery_requested") return { status: "failed", error: result.error ?? "guidance operator_handoff delivery failed" }
       return { status: "executed", metadata_record_id: result.delivery_id, metadata_result_preview: `guidance delivery ${result.delivery_status_after}; no OpenCode prompt sent` }
     }
