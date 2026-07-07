@@ -283,7 +283,9 @@ export class OpenCodeResultReportService {
   }
 
   private async findDuplicate(reportHash: string, sessionId: string, launchId?: string): Promise<OpenCodeResultReportRecord | undefined> {
-    return (await this.list({ session_id: sessionId, launch_id: launchId, limit: MAX_LIST })).find((record) => record.report_hash === reportHash)
+    return (await this.sequencedRecords())
+      .find((item) => item.record.session_id === sessionId && item.record.launch_id === launchId && item.record.report_hash === reportHash)
+      ?.record
   }
 
   private async sequencedRecords(): Promise<SequencedReport[]> {
@@ -322,8 +324,8 @@ export function readOpenCodeResultReportPreviewInput(value: unknown): OpenCodeRe
     question_id: optional(input.questionId ?? input.question_id ?? input.question),
     guidance_id: optional(input.guidanceId ?? input.guidance_id ?? input.guidance),
     delivery_id: optional(input.deliveryId ?? input.delivery_id ?? input.delivery),
-    wake_execution_id: optional(input.wakeExecutionId ?? input.wake_execution_id ?? input.wake_execution),
-    wake_action_execution_id: optional(input.wakeActionExecutionId ?? input.wake_action_execution_id ?? input.wake_action),
+    wake_execution_id: optional(input.wakeExecutionId ?? input.wakeExecution ?? input.wake_execution_id ?? input.wake_execution),
+    wake_action_execution_id: optional(input.wakeActionExecutionId ?? input.wakeAction ?? input.wake_action_execution_id ?? input.wake_action),
     review_state: optional(input.reviewState ?? input.review_state),
   }
 }

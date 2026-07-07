@@ -19046,11 +19046,76 @@ describe("OpenCode launch readiness", () => {
     expect(newEvents.filter((event) => event.kind === "opencode_result_report_recorded")).toHaveLength(2)
 
     await expect(server.command("runtime.list_opencode_result_reports", { sessionId })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ report_id: report.report_id, result_kind: "completion_report" })]))
-    await expect(server.command("runtime.get_opencode_result_report", { reportId: report.report_id })).resolves.toMatchObject({ report_id: report.report_id, session_id: sessionId })
-    await expect(server.command("runtime.latest_opencode_result_report", { sessionId })).resolves.toMatchObject({ report_id: failure.report_id, result_kind: "failure_report" })
-    await expect(server.command("runtime.opencode_result_report_summary")).resolves.toMatchObject({ total_reports: 2, completion_count: 1, failure_count: 1, needs_commander_review_count: 2 })
+	    await expect(server.command("runtime.get_opencode_result_report", { reportId: report.report_id })).resolves.toMatchObject({ report_id: report.report_id, session_id: sessionId })
+	    await expect(server.command("runtime.latest_opencode_result_report", { sessionId })).resolves.toMatchObject({ report_id: failure.report_id, result_kind: "failure_report" })
+	    await expect(server.command("runtime.opencode_result_report_summary")).resolves.toMatchObject({ total_reports: 2, completion_count: 1, failure_count: 1, needs_commander_review_count: 2 })
 
-    await server.eventStore.append({
+	    const wakeExecution = await server.command("runtime.record_opencode_wake_supervisor_execution", { sessionId }) as { execution_id: string }
+	    await expect(server.command("runtime.preview_opencode_result_report", { wakeExecution: wakeExecution.execution_id, kind: "status_report", summary: "linked from wake execution" })).resolves.toMatchObject({
+	      status: "ready",
+	      session_id: sessionId,
+	      linked_wake_execution_id: wakeExecution.execution_id,
+	    })
+	    const wakeActionId = "wake_action_result_alias"
+	    await server.eventStore.append({
+	      kind: "opencode_wake_action_execution_recorded",
+	      action_execution_id: wakeActionId,
+	      execution_id: wakeExecution.execution_id,
+	      session_id: sessionId,
+	      launch_id: launched.launch_id,
+	      supervisor_status: "watch",
+	      recommended_action: "read_latest_progress",
+	      action_kind: "read_latest_progress",
+	      status: "skipped",
+	      effect_kind: "read_only_noop",
+	      action_execution_status_before: "not_executed",
+	      will_call_provider: false,
+	      will_send_opencode_prompt: false,
+	      will_control_process: false,
+	      will_mutate_mission: false,
+	      evidence_refs: [],
+	      recorded_at: "2026-07-06T10:03:00.000Z",
+	      recorded_by: "test",
+	      action_hash: "wake_action_hash_result_alias",
+	    })
+	    await expect(server.command("runtime.preview_opencode_result_report", { wakeAction: wakeActionId, kind: "status_report", summary: "linked from wake action" })).resolves.toMatchObject({
+	      status: "ready",
+	      session_id: sessionId,
+	      linked_wake_action_execution_id: wakeActionId,
+	    })
+
+	    for (let index = 0; index < 101; index += 1) {
+	      await server.eventStore.append({
+	        kind: "opencode_result_report_recorded",
+	        report_id: `report_padding_${index}`,
+	        session_id: sessionId,
+	        launch_id: launched.launch_id,
+	        result_kind: "status_report",
+	        result_disposition: "reported_status_only",
+	        review_state: "review_not_required",
+	        summary_preview: `padding report ${index}`,
+	        changed_files_preview: [],
+	        tests_run_preview: [],
+	        test_results_preview: [],
+	        artifacts_preview: [],
+	        metrics_preview: [],
+	        claims_preview: [],
+	        known_failures_preview: [],
+	        followups_preview: [],
+	        mission_mutated: false,
+	        research_db_written: false,
+	        checkpoint_created: false,
+	        commander_review_created: false,
+	        recorded_at: `2026-07-06T10:${String(10 + index).padStart(2, "0")}:00.000Z`,
+	        recorded_by: "test",
+	        report_hash: `padding_hash_${index}`,
+	      })
+	    }
+	    events = await server.eventStore.readAll()
+	    await expect(server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "implemented candidate fix token=result-secret", outcome: "tests passed", changedFiles: ["fileA.ts"], testsRun: ["bun test"], testResults: ["passed"], artifacts: ["artifact://result"], metrics: ["tests=1"], claims: ["fix works"], followups: ["commander review"], progressId: progress.progress_id, confidence: "high", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+	    expect(await server.eventStore.readAll()).toEqual(events)
+
+	    await server.eventStore.append({
 	      kind: "opencode_session_progress_recorded",
 	      progress_id: "progress_unrelated_result_report",
 	      session_id: "session_unrelated_result_report",
