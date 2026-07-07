@@ -4063,8 +4063,17 @@ export class FakeRuntimeClient implements RuntimeClient {
     const session = this.opencodeSessions.find((item) => item.session_id === sessionId)
     const launch = this.opencodeLaunches.find((item) => item.launch_id === launchId)
     const resultKind = fakeResultReportKind(optionalString(payload.resultKind ?? payload.result_kind ?? payload.kind) ?? progress?.kind)
-    const summary = preview(redactText(String(payload.summary ?? progress?.report_summary_preview ?? "")))
+    const rawSummary = String(payload.summary ?? progress?.report_summary_preview ?? "")
     const outcome = optionalString(payload.outcome)
+    const rawChangedFiles = readRawCsvPayload(payload.changedFiles ?? payload.changed_files)
+    const rawTestsRun = readRawCsvPayload(payload.testsRun ?? payload.tests_run)
+    const rawTestResults = readRawCsvPayload(payload.testResults ?? payload.test_results)
+    const rawArtifacts = readRawCsvPayload(payload.artifacts)
+    const rawMetrics = readRawCsvPayload(payload.metrics)
+    const rawClaims = readRawCsvPayload(payload.claims)
+    const rawKnownFailures = readRawCsvPayload(payload.knownFailures ?? payload.known_failures)
+    const rawFollowups = readRawCsvPayload(payload.followups)
+    const summary = preview(redactText(rawSummary))
     const changedFiles = readCsvPayload(payload.changedFiles ?? payload.changed_files)
     const testsRun = readCsvPayload(payload.testsRun ?? payload.tests_run)
     const testResults = readCsvPayload(payload.testResults ?? payload.test_results)
@@ -4073,7 +4082,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const claims = readCsvPayload(payload.claims)
     const knownFailures = readCsvPayload(payload.knownFailures ?? payload.known_failures)
     const followups = readCsvPayload(payload.followups)
-    const reviewState = fakeResultReviewState(optionalString(payload.reviewState ?? payload.review_state), resultKind)
+    let reviewState = fakeResultReviewState(optionalString(payload.reviewState ?? payload.review_state), resultKind)
     const blockers: string[] = []
     if (!sessionId) blockers.push("result report preview requires session=<session_id>, launch=<launch_id>, or linked evidence")
     if (sessionId && !session) blockers.push("linked planned OpenCode session does not resolve")
@@ -4089,7 +4098,11 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (resultKind === "inconclusive_report" && !outcome && followups.length === 0 && knownFailures.length === 0) blockers.push("inconclusive_report requires outcome, followups, or known_failures")
     if (resultKind === "blocked_report" && followups.length === 0 && knownFailures.length === 0) blockers.push("blocked_report requires followups or known_failures")
     if (String(payload.reviewState ?? payload.review_state ?? "").match(/accepted|rejected/i)) blockers.push("accepted/rejected review states belong to a future Commander result review gate")
-    const rawValues = [summary, outcome, ...changedFiles, ...testsRun, ...testResults, ...artifacts, ...metrics, ...claims, ...knownFailures, ...followups].filter(Boolean).join("\n")
+    if (resultKind !== "status_report" && reviewState !== "needs_commander_review" && reviewState !== "needs_human_review") {
+      blockers.push("terminal OpenCode result reports require Commander or human review")
+      reviewState = "needs_commander_review"
+    }
+    const rawValues = [rawSummary, outcome, ...rawChangedFiles, ...rawTestsRun, ...rawTestResults, ...rawArtifacts, ...rawMetrics, ...rawClaims, ...rawKnownFailures, ...rawFollowups].filter(Boolean).join("\n")
     if (looksLikeRawResultPayload(rawValues)) blockers.push("raw logs, full diffs, file contents, provider output, full event logs, and research.db dumps are out of scope")
     const reportHash = fakeNavigationStageHash(JSON.stringify({
       sessionId,

@@ -6107,6 +6107,12 @@ describe("runtime UI effects", () => {
 	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "dry_run", result_kind: "completion_report", review_state: "needs_commander_review" })
 	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`progress=${progressId}`, "kind=completion_report", "outcome=tests passed"] })
 	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "dry_run", result_kind: "completion_report", review_state: "needs_commander_review" })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", "review_state=review_not_required", "summary=implemented candidate fix", "outcome=tests passed"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "blocked", result_kind: "completion_report", review_state: "needs_commander_review" })
+	    expect(state.opencodeResultReports?.commandError).toContain("terminal OpenCode result reports require Commander or human review")
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", `summary=${"x".repeat(180)} diff --git a/file b/file`, "outcome=tests passed"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "blocked", result_kind: "completion_report" })
+	    expect(state.opencodeResultReports?.commandError).toContain("raw logs")
 	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reports", args: [`session=${sessionId}`] })
     expect(state.opencodeResultReports?.records).toHaveLength(0)
 
