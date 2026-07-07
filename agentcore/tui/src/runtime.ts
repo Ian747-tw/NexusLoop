@@ -4082,7 +4082,8 @@ export class FakeRuntimeClient implements RuntimeClient {
     const claims = readCsvPayload(payload.claims)
     const knownFailures = readCsvPayload(payload.knownFailures ?? payload.known_failures)
     const followups = readCsvPayload(payload.followups)
-    let reviewState = fakeResultReviewState(optionalString(payload.reviewState ?? payload.review_state), resultKind)
+    const reviewStateInput = optionalString(payload.reviewState ?? payload.review_state)
+    let reviewState = fakeResultReviewState(reviewStateInput, resultKind)
     const blockers: string[] = []
     if (!sessionId) blockers.push("result report preview requires session=<session_id>, launch=<launch_id>, or linked evidence")
     if (sessionId && !session) blockers.push("linked planned OpenCode session does not resolve")
@@ -4098,7 +4099,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (resultKind === "inconclusive_report" && !outcome && followups.length === 0 && knownFailures.length === 0) blockers.push("inconclusive_report requires outcome, followups, or known_failures")
     if (resultKind === "blocked_report" && followups.length === 0 && knownFailures.length === 0) blockers.push("blocked_report requires followups or known_failures")
     if (String(payload.reviewState ?? payload.review_state ?? "").match(/accepted|rejected/i)) blockers.push("accepted/rejected review states belong to a future Commander result review gate")
-    if (resultKind !== "status_report" && reviewState !== "needs_commander_review" && reviewState !== "needs_human_review") {
+    if (resultKind !== "status_report" && reviewStateInput && reviewStateInput !== "needs_commander_review" && reviewStateInput !== "needs_human_review") {
       blockers.push("terminal OpenCode result reports require Commander or human review")
       reviewState = "needs_commander_review"
     }
@@ -11486,7 +11487,8 @@ function fakeResultDisposition(kind: string): string {
 }
 
 function fakeResultReviewState(input: string | undefined, kind: string): string {
-  if (input === "needs_commander_review" || input === "needs_human_review" || input === "not_ready_for_review" || input === "review_not_required" || input === "unknown") return input
+  if (input === "needs_commander_review" || input === "needs_human_review") return input
+  if (kind === "status_report" && (input === "not_ready_for_review" || input === "review_not_required" || input === "unknown")) return input
   return kind === "status_report" ? "review_not_required" : "needs_commander_review"
 }
 

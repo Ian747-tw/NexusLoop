@@ -157,6 +157,7 @@ export class OpenCodeResultReportService {
       launch = candidate ? (await this.options.launchGateService.get(candidate.launch_id)) ?? candidate : null
       if (!launch) blockers.push("OpenCode result report requires a launch record for the session")
     }
+    if (launch && !sessionId) sessionId = launch.session_id
     if (sessionId) {
       const session = await this.options.opencodeSessionService.get(sessionId)
       if (!session) blockers.push("session_id does not resolve to a planned OpenCode session")

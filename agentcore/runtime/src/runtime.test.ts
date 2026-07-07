@@ -18963,7 +18963,7 @@ describe("OpenCode launch readiness", () => {
     const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
     expect(launched.status).toBe("launched")
     const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "completion_report", summary: "done with candidate fix token=result-secret" }) as { progress_id: string }
-    const beforeReport = await server.eventStore.readAll()
+	    let beforeReport = await server.eventStore.readAll()
 
     await expect(server.command("runtime.preview_opencode_result_report", {})).resolves.toMatchObject({ status: "blocked", can_record: false })
     await expect(server.command("runtime.preview_opencode_result_report", { sessionId: "missing", summary: "missing" })).resolves.toMatchObject({ status: "blocked", can_record: false })
@@ -18976,6 +18976,23 @@ describe("OpenCode launch readiness", () => {
 	    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "done", outcome: "tests passed", reviewState: "unknown" })).resolves.toMatchObject({ status: "blocked", can_record: false, review_state: "needs_commander_review" })
 	    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "failure_report", summary: "failed", knownFailures: ["test failed"], reviewState: "not_ready_for_review" })).resolves.toMatchObject({ status: "blocked", can_record: false, review_state: "needs_commander_review" })
 	    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "diff --git a/file b/file\n@@ -1 +1", outcome: "raw diff" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+	    await server.eventStore.append({
+	      kind: "opencode_session_launch_started",
+	      launch_id: "launch_orphan_result_report",
+	      status: "launch_started",
+	      session_id: "missing_result_report_session",
+	      adapter_kind: "fake",
+	      launch_mode: "fresh",
+	      started_at: "2026-07-06T10:00:30.000Z",
+	      launch_hash: "launch_orphan_result_report_hash",
+	    })
+	    await expect(server.command("runtime.preview_opencode_result_report", { launchId: "launch_orphan_result_report", kind: "status_report", summary: "orphan launch" })).resolves.toMatchObject({
+	      status: "blocked",
+	      can_record: false,
+	      session_id: "missing_result_report_session",
+	      blockers: expect.arrayContaining(["session_id does not resolve to a planned OpenCode session"]),
+	    })
+	    beforeReport = await server.eventStore.readAll()
 
     const preview = await server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "implemented candidate fix token=result-secret", outcome: "tests passed", changedFiles: ["fileA.ts"], testsRun: ["bun test"], claims: ["fix works"], followups: ["commander review"], progressId: progress.progress_id }) as {
       status: string
