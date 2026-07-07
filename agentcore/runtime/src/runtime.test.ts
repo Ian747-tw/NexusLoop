@@ -18976,6 +18976,7 @@ describe("OpenCode launch readiness", () => {
 	    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "done", outcome: "tests passed", reviewState: "unknown" })).resolves.toMatchObject({ status: "blocked", can_record: false, review_state: "needs_commander_review" })
 	    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "failure_report", summary: "failed", knownFailures: ["test failed"], reviewState: "not_ready_for_review" })).resolves.toMatchObject({ status: "blocked", can_record: false, review_state: "needs_commander_review" })
 	    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "diff --git a/file b/file\n@@ -1 +1", outcome: "raw diff" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+	    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "provider output says done", outcome: "file contents omitted" })).resolves.toMatchObject({ status: "blocked", can_record: false })
 	    await server.eventStore.append({
 	      kind: "opencode_session_launch_started",
 	      launch_id: "launch_orphan_result_report",

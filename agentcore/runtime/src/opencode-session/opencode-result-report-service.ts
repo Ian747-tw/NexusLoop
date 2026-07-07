@@ -34,6 +34,7 @@ const RAW_PATTERNS = [
   /\n.{100,}\n.{100,}/s,
   /(stdout|stderr|traceback|stack trace|bun test v|npm error|diff --git|@@ |\+\+\+ |--- ).{0,120}\n/i,
   /(\[[0-9]{2}:[0-9]{2}:[0-9]{2}\].*\n){3,}/i,
+  /(full research\.db|research\.db|full event log|events\.jsonl|raw opencode output|provider output|file contents)/i,
 ]
 
 export type OpenCodeResultReportServiceOptions = {

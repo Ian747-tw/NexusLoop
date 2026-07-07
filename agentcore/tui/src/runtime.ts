@@ -11505,7 +11505,7 @@ function readConfidence(value: unknown): number | string | undefined {
 
 function looksLikeRawResultPayload(value: string): boolean {
   if (value.length > 4_000) return true
-  return /\b(stdout|stderr|traceback|stack trace|provider output|research\.db|events\.jsonl)\b/i.test(value) || /diff --git|@@\s+-\d+|\+\+\+ b\/|--- a\//.test(value)
+  return /\b(stdout|stderr|traceback|stack trace|provider output|file contents|raw opencode output|full event log|full research\.db|research\.db|events\.jsonl)\b/i.test(value) || /diff --git|@@\s+-\d+|\+\+\+ b\/|--- a\//.test(value)
 }
 
 function fakeResultReportCommands(sessionId: string): OpenCodeResultReportCommandSummary[] {

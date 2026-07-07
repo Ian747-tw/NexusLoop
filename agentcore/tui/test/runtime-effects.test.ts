@@ -6113,6 +6113,9 @@ describe("runtime UI effects", () => {
 	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", `summary=${"x".repeat(180)} diff --git a/file b/file`, "outcome=tests passed"] })
 	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "blocked", result_kind: "completion_report" })
 	    expect(state.opencodeResultReports?.commandError).toContain("raw logs")
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", "summary=provider output says done", "outcome=file contents omitted"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "blocked", result_kind: "completion_report" })
+	    expect(state.opencodeResultReports?.commandError).toContain("raw logs")
 	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reports", args: [`session=${sessionId}`] })
     expect(state.opencodeResultReports?.records).toHaveLength(0)
 
