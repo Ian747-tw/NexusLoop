@@ -200,11 +200,14 @@ export class OpenCodeWakeActionExecutionService {
     const execution = executionId ? await this.options.wakeExecutionService.get(executionId) : null
     if (executionId && !execution) blockers.push("execution_id does not resolve to a wake supervisor execution record")
     if (execution && execution.action_execution_status !== "not_executed") blockers.push("wake supervisor execution action status must be not_executed")
-    const actionKind = readActionKind(input.action_kind, actionKindFromRecommendedAction(execution?.recommended_action))
+    const sourceActionKind = actionKindFromRecommendedAction(execution?.recommended_action)
+    const requestedActionKind = optional(input.action_kind)
+    const actionKind = requestedActionKind ? readActionKind(requestedActionKind, "unsupported") : sourceActionKind
     let expectedEventKinds = expectedEventsForAction(actionKind, input.allow_operator_handoff === true)
     let effectKind = effectForAction(actionKind, input.allow_operator_handoff === true)
     let manualActionPreview = manualPreviewForAction(actionKind, execution, input.allow_operator_handoff === true)
     if (executionId && execution && await this.hasRecordedActionForExecution(executionId)) blockers.push("wake supervisor execution was already consumed by a wake action execution record")
+    if (execution && requestedActionKind && actionKind !== sourceActionKind) blockers.push("action override must match the wake execution recommended_action")
     if (actionKind === "unsupported") blockers.push("wake recommended action is unsupported by the 9M metadata action gate")
     if (actionKind === "answer_commander_question") blockers.push("answer_commander_question requires explicit /commander-guidance and is blocked in 9M")
     if (actionKind === "deliver_guidance" && input.allow_operator_handoff !== true) blockers.push("deliver_guidance requires explicit allow_operator_handoff=true in 9M")

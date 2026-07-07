@@ -76,8 +76,6 @@ def test_user_records_opencode_wake_action_execution_metadata_only(sandbox) -> N
         {"type": "submit"},
         {"type": "insert", "text": f"/opencode-heartbeat session={session_id} summary=alive token=abc123"},
         {"type": "submit"},
-        {"type": "insert", "text": f"/opencode-watchdog-record session={session_id}"},
-        {"type": "submit"},
         {"type": "insert", "text": f"/opencode-wake-supervisor-preview session={session_id}"},
         {"type": "submit"},
         {"type": "insert", "text": f"/opencode-wake-execution-record session={session_id}"},

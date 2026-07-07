@@ -5985,12 +5985,19 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-heartbeat", args: [`session=${sessionId}`, "summary=alive", "token=abc123"] })
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdog-record", args: [`session=${sessionId}`] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-execution-record", args: [`session=${sessionId}`] })
     const executionId = state.opencodeWakeSupervisorExecutions?.latestResult?.execution_id
     expect(executionId).toBeTruthy()
 
     const commandCountBeforePreview = runtime.sentCommands.length
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-preview", args: [`execution=${executionId}`, "action=request_forced_report"] })
+    expect(state.opencodeWakeActions?.preview).toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      effect_kind: "manual_action_required",
+      will_execute_metadata_write: false,
+    })
+    expect(state.opencodeWakeActions?.preview?.blockers.join(" ")).toContain("override must match")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-preview", args: [`execution=${executionId}`, "action=record_watchdog"] })
     expect(state.opencodeWakeActions?.preview).toMatchObject({
       status: "ready",

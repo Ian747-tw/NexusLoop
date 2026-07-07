@@ -3848,7 +3848,9 @@ export class FakeRuntimeClient implements RuntimeClient {
   private previewOpenCodeWakeActionExecution(payload: Record<string, unknown>): OpenCodeWakeActionExecutionPreviewSummary {
     const executionId = optionalString(payload.executionId ?? payload.execution_id ?? payload.execution)
     const execution = executionId ? this.opencodeWakeSupervisorExecutionRecords.find((item) => item.execution_id === executionId) : undefined
-    const actionKind = fakeWakeActionKind(optionalString(payload.actionKind ?? payload.action_kind ?? payload.action) ?? execution?.recommended_action)
+    const requestedActionKind = optionalString(payload.actionKind ?? payload.action_kind ?? payload.action)
+    const sourceActionKind = fakeWakeActionKind(execution?.recommended_action)
+    const actionKind = requestedActionKind ? fakeWakeActionKind(requestedActionKind) : sourceActionKind
     const allowOperatorHandoff = payload.allowOperatorHandoff === true || payload.allow_operator_handoff === true || String(payload.allow_operator_handoff ?? "").toLowerCase() === "true"
     const evidenceRefs = execution?.evidence_refs.map(fakeWakeActionEvidenceRef) ?? []
     const blockers: string[] = []
@@ -3856,6 +3858,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (executionId && !execution) blockers.push("wake supervisor execution record does not resolve")
     if (execution && execution.action_execution_status !== "not_executed") blockers.push("wake supervisor execution action_execution_status is not not_executed")
     if (executionId && this.opencodeWakeActionExecutionRecords.some((item) => item.execution_id === executionId)) blockers.push("wake supervisor execution was already consumed by a wake action execution record")
+    if (execution && requestedActionKind && actionKind !== sourceActionKind) blockers.push("action override must match the wake execution recommended_action")
     if (actionKind === "unsupported") blockers.push("wake recommended action is unsupported by 9M")
     if (actionKind === "answer_commander_question") blockers.push("answer_commander_question requires explicit /commander-guidance and is blocked by 9M")
     if (actionKind === "prepare_result_review") blockers.push("Branch 9N result report model is required before result review")
