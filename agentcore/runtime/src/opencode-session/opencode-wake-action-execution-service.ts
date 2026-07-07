@@ -344,6 +344,12 @@ function resultFromPreview(
   metadataRecordId?: string,
   metadataResultPreview?: string,
 ): OpenCodeWakeActionExecutionResult {
+  const metadataEventAppended = status === "executed" && preview.effect_kind === "metadata_event_appended" && Boolean(metadataRecordId)
+  const effectKind: OpenCodeWakeActionEffectKind = status === "failed"
+    ? "failed"
+    : status === "blocked" && preview.effect_kind === "metadata_event_appended"
+      ? "manual_action_required"
+      : preview.effect_kind
   return redactValue({
     action_execution_id: actionExecutionId,
     status,
@@ -353,9 +359,9 @@ function resultFromPreview(
     supervisor_status: preview.supervisor_status,
     recommended_action: preview.recommended_action,
     action_kind: preview.action_kind,
-    effect_kind: status === "failed" ? "failed" : preview.effect_kind,
+    effect_kind: effectKind,
     action_execution_status_before: "not_executed" as const,
-    metadata_event_kind: metadataEventKind(preview.action_kind, preview.effect_kind),
+    metadata_event_kind: metadataEventAppended ? metadataEventKind(preview.action_kind, preview.effect_kind) : undefined,
     metadata_record_id: metadataRecordId,
     metadata_result_preview: bound(metadataResultPreview),
     manual_action_preview: preview.manual_action_preview,
