@@ -5971,6 +5971,94 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toHaveLength(commandCountBeforePreview)
   })
 
+  test("OpenCode wake action execution slash commands run only typed metadata actions", async () => {
+    let blockedState = initialState("/tmp/demo")
+    const blockedRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    blockedState = await applyRuntimeUiEffect(blockedState, blockedRuntime, { type: "send-command", command: "opencode-wake-action-preview", args: ["action=record_watchdog"] })
+    expect(JSON.stringify(blockedState.systemActions)).toContain("execution=")
+
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=wake", "action", "execution", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-heartbeat", args: [`session=${sessionId}`, "summary=alive", "token=abc123"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-watchdog-record", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-execution-record", args: [`session=${sessionId}`] })
+    const executionId = state.opencodeWakeSupervisorExecutions?.latestResult?.execution_id
+    expect(executionId).toBeTruthy()
+
+    const commandCountBeforePreview = runtime.sentCommands.length
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-preview", args: [`execution=${executionId}`, "action=record_watchdog"] })
+    expect(state.opencodeWakeActions?.preview).toMatchObject({
+      status: "ready",
+      can_execute: true,
+      execution_id: executionId,
+      action_kind: "record_watchdog",
+      effect_kind: "metadata_event_appended",
+      will_call_provider: false,
+      will_send_opencode_prompt: false,
+      will_control_process: false,
+      will_mutate_mission: false,
+    })
+    expect(runtime.sentCommands).toHaveLength(commandCountBeforePreview)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-dry-run", args: [`execution=${executionId}`, "action=record_watchdog"] })
+    expect(state.opencodeWakeActions?.latestResult).toMatchObject({ status: "dry_run", action_kind: "record_watchdog" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-actions", args: [`execution=${executionId}`] })
+    expect(state.opencodeWakeActions?.records).toHaveLength(0)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-record", args: [`execution=${executionId}`, "action=record_watchdog", "reason=review", "token=abc123"] })
+    expect(state.opencodeWakeActions?.latestResult).toMatchObject({
+      status: "executed",
+      action_kind: "record_watchdog",
+      effect_kind: "metadata_event_appended",
+      metadata_event_kind: "opencode_session_watchdog_recorded",
+      will_call_provider: false,
+      will_send_opencode_prompt: false,
+      will_control_process: false,
+      will_mutate_mission: false,
+    })
+    const actionExecutionId = state.opencodeWakeActions?.latestResult?.action_execution_id
+    expect(actionExecutionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-record", args: [`execution=${executionId}`, "action=answer_commander_question"] })
+    expect(state.opencodeWakeActions?.latestResult).toMatchObject({ status: "blocked", effect_kind: "manual_action_required" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-actions", args: [`execution=${executionId}`] })
+    expect(state.opencodeWakeActions?.records).toEqual([expect.objectContaining({ action_execution_id: actionExecutionId, action_kind: "record_watchdog" })])
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-latest", args: [`execution=${executionId}`] })
+    expect(state.opencodeWakeActions?.latest).toMatchObject({ action_execution_id: actionExecutionId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-show", args: [actionExecutionId!] })
+    expect(state.opencodeWakeActions?.selected).toMatchObject({ action_execution_id: actionExecutionId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-summary", args: [] })
+    expect(state.opencodeWakeActions?.summary).toMatchObject({ total_actions: 1, executed_count: 1, metadata_event_count: 1 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/opencode-wake-action-record", `execution=${executionId}`, "action=record_watchdog"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-wake-action-record"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/opencode-wake-action-record",
+      risk: "medium_risk_write",
+      calls_provider: false,
+      creates_external_process: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("typed allowlisted metadata actions")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode wake action executions")
+    expect(snapshot).toContain("action=record_watchdog")
+    expect(snapshot).toContain("metadata=opencode_session_watchdog_recorded")
+    expect(snapshot).toContain("will_call_provider=false")
+    expect(snapshot).toContain("will_send_opencode_prompt=false")
+    expect(snapshot).toContain("will_control_process=false")
+    expect(snapshot).toContain("will_mutate_mission=false")
+    expect(snapshot).toContain("no arbitrary commands are executed")
+    expect(snapshot).toContain("selected=/opencode-wake-action-record risk=medium_risk_write")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

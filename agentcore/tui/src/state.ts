@@ -2551,6 +2551,118 @@ export type OpenCodeWakeSupervisorExecutionsState = {
   commandError?: string
 }
 
+export type OpenCodeWakeActionExecutionCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeWakeActionExecutionEvidenceRefSummary = {
+  evidence_kind: string
+  evidence_id: string
+  status?: string
+  summary_preview?: string
+  pointer_only: true
+}
+
+export type OpenCodeWakeActionExecutionPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_execute: boolean
+  execution_id: string
+  session_id?: string
+  launch_id?: string
+  supervisor_status?: string
+  recommended_action?: string
+  action_kind: string
+  effect_kind: string
+  action_execution_status_before: "not_executed" | string
+  will_execute_metadata_write: boolean
+  will_call_provider: false | boolean
+  will_send_opencode_prompt: false | boolean
+  will_control_process: false | boolean
+  will_mutate_mission: false | boolean
+  expected_event_kinds: string[]
+  blocked_reason_preview?: string
+  manual_action_preview?: string
+  source_supervisor_hash?: string
+  evidence_refs: OpenCodeWakeActionExecutionEvidenceRefSummary[]
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeWakeActionExecutionCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  action_hash: string
+}
+
+export type OpenCodeWakeActionExecutionResultSummary = {
+  action_execution_id: string
+  status: "executed" | "skipped" | "blocked" | "dry_run" | "failed" | string
+  execution_id: string
+  session_id?: string
+  launch_id?: string
+  supervisor_status?: string
+  recommended_action?: string
+  action_kind: string
+  effect_kind: string
+  action_execution_status_before: "not_executed" | string
+  metadata_event_kind?: string
+  metadata_record_id?: string
+  metadata_result_preview?: string
+  manual_action_preview?: string
+  will_call_provider: false | boolean
+  will_send_opencode_prompt: false | boolean
+  will_control_process: false | boolean
+  will_mutate_mission: false | boolean
+  recorded_at: string
+  recorded_by: string
+  error?: string
+  action_hash: string
+  recommended_commands: OpenCodeWakeActionExecutionCommandSummary[]
+}
+
+export type OpenCodeWakeActionExecutionRecordSummary = {
+  action_execution_id: string
+  execution_id: string
+  session_id?: string
+  launch_id?: string
+  recommended_action?: string
+  action_kind: string
+  status: string
+  effect_kind: string
+  metadata_event_kind?: string
+  metadata_record_id?: string
+  recorded_at: string
+  recorded_by: string
+  summary_preview: string
+  action_hash: string
+}
+
+export type OpenCodeWakeActionExecutionSummaryState = {
+  total_actions: number
+  executed_count: number
+  skipped_count: number
+  blocked_count: number
+  failed_count: number
+  metadata_event_count: number
+  manual_action_required_count: number
+  by_action_kind_counts: Record<string, number>
+  latest_actions: OpenCodeWakeActionExecutionRecordSummary[]
+  generated_at: string
+}
+
+export type OpenCodeWakeActionExecutionState = {
+  preview?: OpenCodeWakeActionExecutionPreviewSummary | null
+  latestResult?: OpenCodeWakeActionExecutionResultSummary | null
+  records: OpenCodeWakeActionExecutionRecordSummary[]
+  selected?: OpenCodeWakeActionExecutionResultSummary | null
+  latest?: OpenCodeWakeActionExecutionResultSummary | null
+  summary?: OpenCodeWakeActionExecutionSummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -4938,6 +5050,7 @@ export type UiState = {
   opencodeHumanControls?: OpenCodeHumanControlState
   opencodeWakeSupervisor?: OpenCodeWakeSupervisorState
   opencodeWakeSupervisorExecutions?: OpenCodeWakeSupervisorExecutionsState
+  opencodeWakeActions?: OpenCodeWakeActionExecutionState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

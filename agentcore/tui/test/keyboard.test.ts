@@ -510,6 +510,42 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("OpenCode wake action execution slash commands are exact whitelist entries", () => {
+    let result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-wake-action-preview execution=execution-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-wake-action-preview", args: ["execution=execution-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/wake-action-record execution=execution-1 action=record_watchdog",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "wake-action-record", args: ["execution=execution-1", "action=record_watchdog"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-wake-action-summary",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-wake-action-summary" }])
+
+    for (const message of ["/tmp/wake-action", "/path/opencode-wake-action-record", ".opencode-wake-action-record execution=execution-1", ":opencode-wake-action-record execution=execution-1"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("review slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
