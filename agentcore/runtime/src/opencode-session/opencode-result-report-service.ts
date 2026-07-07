@@ -167,8 +167,11 @@ export class OpenCodeResultReportService {
 
     const resultKind = readResultKind(input.result_kind, evidence.progress?.kind)
     const disposition = dispositionForKind(resultKind)
-    const reviewState = readReviewState(input.review_state, defaultReviewState(resultKind), blockers)
-    if (resultKind !== "status_report" && reviewState !== "needs_commander_review" && reviewState !== "needs_human_review") blockers.push("terminal OpenCode result reports require Commander or human review")
+    let reviewState = readReviewState(input.review_state, defaultReviewState(resultKind), blockers)
+    if (resultKind !== "status_report" && reviewState !== "needs_commander_review" && reviewState !== "needs_human_review") {
+      blockers.push("terminal OpenCode result reports require Commander or human review")
+      reviewState = defaultReviewState(resultKind)
+    }
     const rawBlocked = inputLooksRaw(input)
     if (rawBlocked) blockers.push("raw logs, full diffs, file contents, provider output, raw OpenCode output, full event logs, and research.db dumps are out of scope for result reports")
 
