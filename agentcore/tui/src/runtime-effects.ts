@@ -145,6 +145,13 @@ import type {
   OpenCodeWakeSupervisorExecutionResultSummary,
   OpenCodeWakeSupervisorExecutionsState,
   OpenCodeWakeSupervisorExecutionSummaryState,
+  OpenCodeWakeActionExecutionCommandSummary,
+  OpenCodeWakeActionExecutionEvidenceRefSummary,
+  OpenCodeWakeActionExecutionPreviewSummary,
+  OpenCodeWakeActionExecutionRecordSummary,
+  OpenCodeWakeActionExecutionResultSummary,
+  OpenCodeWakeActionExecutionState,
+  OpenCodeWakeActionExecutionSummaryState,
   OpenCodeWakeSupervisorPreviewSummary,
   OpenCodeWakeSupervisorSessionCardSummary,
   OpenCodeWakeSupervisorState,
@@ -515,6 +522,12 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-wake-supervisor-execution"; executionId: string }
   | { type: "load-latest-opencode-wake-supervisor-execution"; sessionId?: string; launchId?: string }
   | { type: "load-opencode-wake-supervisor-execution-summary"; limit?: number }
+  | { type: "preview-opencode-wake-action-execution"; executionId?: string; actionKind?: string; allowOperatorHandoff?: boolean; reason?: string }
+  | { type: "record-opencode-wake-action-execution"; executionId?: string; actionKind?: string; allowOperatorHandoff?: boolean; reason?: string; dryRun?: boolean }
+  | { type: "load-opencode-wake-action-executions"; executionId?: string; sessionId?: string; launchId?: string; actionKind?: string; status?: string; effectKind?: string; limit?: number }
+  | { type: "load-opencode-wake-action-execution"; actionExecutionId: string }
+  | { type: "load-latest-opencode-wake-action-execution"; executionId?: string; sessionId?: string; launchId?: string }
+  | { type: "load-opencode-wake-action-execution-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1500,6 +1513,22 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeWakeSupervisorExecutionLatest(state, await runtime.command("runtime.latest_opencode_wake_supervisor_execution", { sessionId: effect.sessionId, launchId: effect.launchId }), effect.sessionId ?? effect.launchId ?? "latest")
       case "load-opencode-wake-supervisor-execution-summary":
         return applyOpenCodeWakeSupervisorExecutionSummary(state, await runtime.command("runtime.opencode_wake_supervisor_execution_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "preview-opencode-wake-action-execution":
+        return applyOpenCodeWakeActionExecutionPreview(state, await runtime.command("runtime.preview_opencode_wake_action_execution", opencodeWakeActionExecutionPayload(effect)))
+      case "record-opencode-wake-action-execution": {
+        const next = applyOpenCodeWakeActionExecutionResult(state, await runtime.command("runtime.record_opencode_wake_action_execution", { ...opencodeWakeActionExecutionPayload(effect), dryRun: effect.dryRun === true, recordedBy: "operator" }))
+        if (next.opencodeWakeActions?.commandError || effect.dryRun === true) return next
+        const result = next.opencodeWakeActions?.latestResult
+        return applyOpenCodeWakeActionExecutionRecords(next, await runtime.command("runtime.list_opencode_wake_action_executions", { limit: HANDOFF_LIMIT, executionId: result?.execution_id ?? effect.executionId, sessionId: result?.session_id, launchId: result?.launch_id }))
+      }
+      case "load-opencode-wake-action-executions":
+        return applyOpenCodeWakeActionExecutionRecords(state, await runtime.command("runtime.list_opencode_wake_action_executions", { limit: effect.limit ?? HANDOFF_LIMIT, executionId: effect.executionId, sessionId: effect.sessionId, launchId: effect.launchId, actionKind: effect.actionKind, status: effect.status, effectKind: effect.effectKind }))
+      case "load-opencode-wake-action-execution":
+        return applyOpenCodeWakeActionExecutionSelected(state, await runtime.command("runtime.get_opencode_wake_action_execution", { actionExecutionId: effect.actionExecutionId }), effect.actionExecutionId)
+      case "load-latest-opencode-wake-action-execution":
+        return applyOpenCodeWakeActionExecutionLatest(state, await runtime.command("runtime.latest_opencode_wake_action_execution", { executionId: effect.executionId, sessionId: effect.sessionId, launchId: effect.launchId }), effect.executionId ?? effect.sessionId ?? effect.launchId ?? "latest")
+      case "load-opencode-wake-action-execution-summary":
+        return applyOpenCodeWakeActionExecutionSummary(state, await runtime.command("runtime.opencode_wake_action_execution_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -4104,6 +4133,89 @@ function applyOpenCodeWakeSupervisorExecutionSummary(state: UiState, value: unkn
   }
 }
 
+function applyOpenCodeWakeActionExecutionPreview(state: UiState, value: unknown): UiState {
+  const preview = readOpenCodeWakeActionExecutionPreview(value)
+  const commandError = preview.status === "blocked" ? preview.blockers[0] ?? "OpenCode wake action execution preview is blocked" : undefined
+  return {
+    ...state,
+    opencodeWakeActions: {
+      ...opencodeWakeActionExecutionState(state),
+      preview,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake action preview", detail: `execution=${preview.execution_id || "missing"} action=${preview.action_kind} effect=${preview.effect_kind}`, status: preview.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeActionExecutionResult(state: UiState, value: unknown): UiState {
+  const result = readOpenCodeWakeActionExecutionResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "OpenCode wake action execution is blocked" : undefined
+  return {
+    ...state,
+    opencodeWakeActions: {
+      ...opencodeWakeActionExecutionState(state),
+      latestResult: result,
+      latest: result.status === "executed" || result.status === "skipped" ? result : opencodeWakeActionExecutionState(state).latest,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake action", detail: `action_execution=${result.action_execution_id} status=${result.status} kind=${result.action_kind}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeActionExecutionRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeWakeActionExecutionRecords(value)
+  return {
+    ...state,
+    opencodeWakeActions: {
+      ...opencodeWakeActionExecutionState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake actions", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeActionExecutionSelected(state: UiState, value: unknown, actionExecutionId: string): UiState {
+  const selected = value ? readOpenCodeWakeActionExecutionResult(value) : null
+  const commandError = selected ? undefined : `OpenCode wake action execution not found: ${actionExecutionId}`
+  return {
+    ...state,
+    opencodeWakeActions: {
+      ...opencodeWakeActionExecutionState(state),
+      selected,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake action show", detail: selected ? `action_execution=${selected.action_execution_id}` : `missing=${actionExecutionId}`, status: selected ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeActionExecutionLatest(state: UiState, value: unknown, target: string): UiState {
+  const latest = value ? readOpenCodeWakeActionExecutionResult(value) : null
+  const commandError = latest ? undefined : `OpenCode wake action latest not found: ${target}`
+  return {
+    ...state,
+    opencodeWakeActions: {
+      ...opencodeWakeActionExecutionState(state),
+      latest,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake action latest", detail: latest ? `action_execution=${latest.action_execution_id}` : `missing=${target}`, status: latest ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeWakeActionExecutionSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeWakeActionExecutionSummary(value)
+  return {
+    ...state,
+    opencodeWakeActions: {
+      ...opencodeWakeActionExecutionState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode wake action summary", detail: `actions=${summary.total_actions} metadata=${summary.metadata_event_count} blocked=${summary.blocked_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -5367,6 +5479,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeHumanControlCommands.has(command)) return state.opencodeHumanControls?.commandError
   if (opencodeWakeSupervisorCommands.has(command)) return state.opencodeWakeSupervisor?.commandError
   if (opencodeWakeSupervisorExecutionCommands.has(command)) return state.opencodeWakeSupervisorExecutions?.commandError
+  if (opencodeWakeActionExecutionCommands.has(command)) return state.opencodeWakeActions?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -5420,6 +5533,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeHumanControlCommands.has(command)) return { ...state, opencodeHumanControls: { ...opencodeHumanControlState(state), commandError: undefined } }
   if (opencodeWakeSupervisorCommands.has(command)) return { ...state, opencodeWakeSupervisor: { ...opencodeWakeSupervisorState(state), commandError: undefined } }
   if (opencodeWakeSupervisorExecutionCommands.has(command)) return { ...state, opencodeWakeSupervisorExecutions: { ...opencodeWakeSupervisorExecutionState(state), commandError: undefined } }
+  if (opencodeWakeActionExecutionCommands.has(command)) return { ...state, opencodeWakeActions: { ...opencodeWakeActionExecutionState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -5845,6 +5959,28 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "opencode-wake-execution-summary":
     case "wake-execution-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-wake-supervisor-execution-summary", limit: HANDOFF_LIMIT })
+    case "opencode-wake-action-preview":
+    case "wake-action-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeActionExecutionEffect("preview-opencode-wake-action-execution", args, true))
+    case "opencode-wake-action-dry-run":
+    case "wake-action-dry-run": {
+      const effect = opencodeWakeActionExecutionEffect("record-opencode-wake-action-execution", args, true) as Extract<RuntimeUiEffect, { type: "record-opencode-wake-action-execution" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-wake-action-record":
+    case "wake-action-record":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeActionExecutionEffect("record-opencode-wake-action-execution", args, true))
+    case "opencode-wake-actions":
+    case "wake-actions":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeActionExecutionListEffect(args))
+    case "opencode-wake-action-latest":
+    case "wake-action-latest":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeWakeActionExecutionLatestEffect(args))
+    case "opencode-wake-action-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-wake-action-execution", actionExecutionId: requiredArg(args, 0, "actionExecutionId") })
+    case "opencode-wake-action-summary":
+    case "wake-action-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-wake-action-execution-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -7231,6 +7367,22 @@ const opencodeWakeSupervisorExecutionCommands = new Set([
   "opencode-wake-execution-show",
   "opencode-wake-execution-summary",
   "wake-execution-summary",
+])
+
+const opencodeWakeActionExecutionCommands = new Set([
+  "opencode-wake-action-preview",
+  "wake-action-preview",
+  "opencode-wake-action-dry-run",
+  "wake-action-dry-run",
+  "opencode-wake-action-record",
+  "wake-action-record",
+  "opencode-wake-actions",
+  "wake-actions",
+  "opencode-wake-action-latest",
+  "wake-action-latest",
+  "opencode-wake-action-show",
+  "opencode-wake-action-summary",
+  "wake-action-summary",
 ])
 
 const researchMemoryCommands = new Set([
@@ -11109,6 +11261,126 @@ function readOpenCodeWakeSupervisorExecutionCommands(value: unknown): OpenCodeWa
   }))
 }
 
+function readOpenCodeWakeActionExecutionPreview(value: unknown): OpenCodeWakeActionExecutionPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_wake_action_execution returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_execute: value.can_execute === true,
+    execution_id: redactText(readString(value.execution_id, "")),
+    session_id: typeof value.session_id === "string" ? redactText(value.session_id) : undefined,
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    supervisor_status: typeof value.supervisor_status === "string" ? readString(value.supervisor_status, "unknown") : undefined,
+    recommended_action: typeof value.recommended_action === "string" ? readString(value.recommended_action, "unknown") : undefined,
+    action_kind: readString(value.action_kind, "unsupported"),
+    effect_kind: readString(value.effect_kind, "failed"),
+    action_execution_status_before: readString(value.action_execution_status_before, "not_executed"),
+    will_execute_metadata_write: value.will_execute_metadata_write === true,
+    will_call_provider: value.will_call_provider === true,
+    will_send_opencode_prompt: value.will_send_opencode_prompt === true,
+    will_control_process: value.will_control_process === true,
+    will_mutate_mission: value.will_mutate_mission === true,
+    expected_event_kinds: readStringList(value.expected_event_kinds, 8),
+    blocked_reason_preview: typeof value.blocked_reason_preview === "string" ? preview(readString(value.blocked_reason_preview, "")) : undefined,
+    manual_action_preview: typeof value.manual_action_preview === "string" ? preview(readString(value.manual_action_preview, "")) : undefined,
+    source_supervisor_hash: typeof value.source_supervisor_hash === "string" ? readString(value.source_supervisor_hash, "") : undefined,
+    evidence_refs: readOpenCodeWakeActionExecutionEvidenceRefs(value.evidence_refs),
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    recommended_commands: readOpenCodeWakeActionExecutionCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    action_hash: readString(value.action_hash, ""),
+  }
+}
+
+function readOpenCodeWakeActionExecutionResult(value: unknown): OpenCodeWakeActionExecutionResultSummary {
+  if (!isRecord(value) || typeof value.action_execution_id !== "string") throw new Error("runtime.record_opencode_wake_action_execution returned invalid result")
+  return {
+    action_execution_id: redactText(value.action_execution_id),
+    status: readString(value.status, "blocked"),
+    execution_id: redactText(readString(value.execution_id, "")),
+    session_id: typeof value.session_id === "string" ? redactText(value.session_id) : undefined,
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    supervisor_status: typeof value.supervisor_status === "string" ? readString(value.supervisor_status, "unknown") : undefined,
+    recommended_action: typeof value.recommended_action === "string" ? readString(value.recommended_action, "unknown") : undefined,
+    action_kind: readString(value.action_kind, "unsupported"),
+    effect_kind: readString(value.effect_kind, "failed"),
+    action_execution_status_before: readString(value.action_execution_status_before, "not_executed"),
+    metadata_event_kind: typeof value.metadata_event_kind === "string" ? readString(value.metadata_event_kind, "") : undefined,
+    metadata_record_id: typeof value.metadata_record_id === "string" ? redactText(value.metadata_record_id) : undefined,
+    metadata_result_preview: typeof value.metadata_result_preview === "string" ? preview(readString(value.metadata_result_preview, "")) : undefined,
+    manual_action_preview: typeof value.manual_action_preview === "string" ? preview(readString(value.manual_action_preview, "")) : undefined,
+    will_call_provider: value.will_call_provider === true,
+    will_send_opencode_prompt: value.will_send_opencode_prompt === true,
+    will_control_process: value.will_control_process === true,
+    will_mutate_mission: value.will_mutate_mission === true,
+    recorded_at: readString(value.recorded_at, ""),
+    recorded_by: preview(readString(value.recorded_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    action_hash: readString(value.action_hash, ""),
+    recommended_commands: readOpenCodeWakeActionExecutionCommands(value.recommended_commands),
+  }
+}
+
+function readOpenCodeWakeActionExecutionRecords(value: unknown): OpenCodeWakeActionExecutionRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((record) => ({
+    action_execution_id: redactText(readString(record.action_execution_id, "")),
+    execution_id: redactText(readString(record.execution_id, "")),
+    session_id: typeof record.session_id === "string" ? redactText(record.session_id) : undefined,
+    launch_id: typeof record.launch_id === "string" ? redactText(record.launch_id) : undefined,
+    recommended_action: typeof record.recommended_action === "string" ? readString(record.recommended_action, "unknown") : undefined,
+    action_kind: readString(record.action_kind, "unsupported"),
+    status: readString(record.status, "blocked"),
+    effect_kind: readString(record.effect_kind, "failed"),
+    metadata_event_kind: typeof record.metadata_event_kind === "string" ? readString(record.metadata_event_kind, "") : undefined,
+    metadata_record_id: typeof record.metadata_record_id === "string" ? redactText(record.metadata_record_id) : undefined,
+    recorded_at: readString(record.recorded_at, ""),
+    recorded_by: preview(readString(record.recorded_by, "")),
+    summary_preview: preview(readString(record.summary_preview, "")),
+    action_hash: readString(record.action_hash, ""),
+  }))
+}
+
+function readOpenCodeWakeActionExecutionSummary(value: unknown): OpenCodeWakeActionExecutionSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.opencode_wake_action_execution_summary returned invalid summary")
+  return {
+    total_actions: readNumber(value.total_actions, 0),
+    executed_count: readNumber(value.executed_count, 0),
+    skipped_count: readNumber(value.skipped_count, 0),
+    blocked_count: readNumber(value.blocked_count, 0),
+    failed_count: readNumber(value.failed_count, 0),
+    metadata_event_count: readNumber(value.metadata_event_count, 0),
+    manual_action_required_count: readNumber(value.manual_action_required_count, 0),
+    by_action_kind_counts: readNumberMap(value.by_action_kind_counts, 20),
+    latest_actions: readOpenCodeWakeActionExecutionRecords(value.latest_actions),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeWakeActionExecutionEvidenceRefs(value: unknown): OpenCodeWakeActionExecutionEvidenceRefSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((ref) => ({
+    evidence_kind: readString(ref.evidence_kind, "unknown"),
+    evidence_id: redactText(readString(ref.evidence_id, "")),
+    status: typeof ref.status === "string" ? readString(ref.status, "") : undefined,
+    summary_preview: typeof ref.summary_preview === "string" ? preview(readString(ref.summary_preview, "")) : undefined,
+    pointer_only: true,
+  }))
+}
+
+function readOpenCodeWakeActionExecutionCommands(value: unknown): OpenCodeWakeActionExecutionCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
 function mergeExecutionRecords(existing: OpenCodeWakeSupervisorExecutionRecordSummary[], incoming: OpenCodeWakeSupervisorExecutionRecordSummary[]): OpenCodeWakeSupervisorExecutionRecordSummary[] {
   const seen = new Set<string>()
   const merged: OpenCodeWakeSupervisorExecutionRecordSummary[] = []
@@ -14729,6 +15001,10 @@ function opencodeWakeSupervisorExecutionState(state: UiState): OpenCodeWakeSuper
   return state.opencodeWakeSupervisorExecutions ?? { preview: null, latestResult: null, batchPreview: null, batchResult: null, records: [], selected: null, latest: null, summary: null }
 }
 
+function opencodeWakeActionExecutionState(state: UiState): OpenCodeWakeActionExecutionState {
+  return state.opencodeWakeActions ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
 function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
   return {
     sessionId: effect.sessionId,
@@ -14852,6 +15128,15 @@ function opencodeWakeSupervisorBatchPayload(effect: Extract<RuntimeUiEffect, { t
     includeHumanControls: effect.includeHumanControls,
     includeGuidanceDelivery: effect.includeGuidanceDelivery,
     limitEvidence: effect.limitEvidence,
+  }
+}
+
+function opencodeWakeActionExecutionPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-wake-action-execution" | "record-opencode-wake-action-execution" }>): Record<string, unknown> {
+  return {
+    executionId: effect.executionId,
+    actionKind: effect.actionKind,
+    allowOperatorHandoff: effect.allowOperatorHandoff,
+    reason: effect.reason,
   }
 }
 
@@ -16331,6 +16616,62 @@ function opencodeWakeSupervisorExecutionLatestEffect(args: string[]): Extract<Ru
     else throw new Error("OpenCode wake execution latest arg is unsupported")
   }
   if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode wake execution latest requires session=<id> or launch=<id>")
+  return effect
+}
+
+function opencodeWakeActionExecutionEffect(
+  type: "preview-opencode-wake-action-execution" | "record-opencode-wake-action-execution",
+  args: string[],
+  requireExecution: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-opencode-wake-action-execution" | "record-opencode-wake-action-execution" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-wake-action-execution" | "record-opencode-wake-action-execution" }> = { type }
+  const knownKeys = new Set(["execution", "action", "reason", "allow_operator_handoff", "recorded_by"])
+  const freeTextKeys = new Set(["reason"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "OpenCode wake action args must use execution=<id>, action=<kind>, reason=<text>, allow_operator_handoff=<bool>, or recorded_by=<name>")
+    index = nextIndex
+    if (key === "execution") effect.executionId = value
+    else if (key === "action") effect.actionKind = value
+    else if (key === "reason") effect.reason = value
+    else if (key === "allow_operator_handoff") effect.allowOperatorHandoff = readBooleanArg(value)
+    else if (key === "recorded_by") {
+      // Accepted for forward compatibility; runtime records operator for this branch.
+    } else throw new Error("OpenCode wake action arg is unsupported")
+  }
+  if (requireExecution && !effect.executionId) throw new Error("OpenCode wake action requires execution=<id>")
+  return effect
+}
+
+function opencodeWakeActionExecutionListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-opencode-wake-action-executions" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-opencode-wake-action-executions" }> = { type: "load-opencode-wake-action-executions", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode wake actions args must use execution=<id>, session=<id>, launch=<id>, action=<kind>, status=<status>, effect=<effect>, or limit=<n>")
+    if (key === "execution") effect.executionId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "action") effect.actionKind = value
+    else if (key === "status") effect.status = value
+    else if (key === "effect") effect.effectKind = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode wake actions arg is unsupported")
+  }
+  return effect
+}
+
+function opencodeWakeActionExecutionLatestEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-latest-opencode-wake-action-execution" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-latest-opencode-wake-action-execution" }> = { type: "load-latest-opencode-wake-action-execution" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode wake action latest args must use execution=<id>, session=<id>, or launch=<id>")
+    if (key === "execution") effect.executionId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else throw new Error("OpenCode wake action latest arg is unsupported")
+  }
+  if (!effect.executionId && !effect.sessionId && !effect.launchId) throw new Error("OpenCode wake action latest requires execution=<id>, session=<id>, or launch=<id>")
   return effect
 }
 

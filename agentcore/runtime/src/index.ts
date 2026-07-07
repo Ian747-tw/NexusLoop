@@ -90,6 +90,8 @@ export { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-
 export * from "./opencode-session/opencode-wake-supervisor-types"
 export { OpenCodeWakeSupervisorExecutionService } from "./opencode-session/opencode-wake-supervisor-execution-service"
 export * from "./opencode-session/opencode-wake-supervisor-execution-types"
+export { OpenCodeWakeActionExecutionService } from "./opencode-session/opencode-wake-action-execution-service"
+export * from "./opencode-session/opencode-wake-action-execution-types"
 export { ContextBudgetService } from "./context/context-budget-service"
 export { ModelCapabilityRegistry } from "./context/model-capability-registry"
 export { ContextPacketCompilerService } from "./context/context-packet-compiler-service"

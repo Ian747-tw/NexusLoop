@@ -18703,6 +18703,235 @@ describe("OpenCode launch readiness", () => {
     })
   })
 
+  test("wake action execution gate runs only typed metadata actions from wake executions", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "blocker", summary: "blocked token=wake-action-secret", blockers: ["needs commander review token=wake-action-secret"] }) as { progress_id: string }
+    const wakeExecution = await server.command("runtime.record_opencode_wake_supervisor_execution", { sessionId }) as { status: string; execution_id: string; action_execution_status: string; supervisor_hash: string; recommended_action?: string }
+    expect(wakeExecution).toMatchObject({ status: "recorded", action_execution_status: "not_executed", recommended_action: "create_commander_question" })
+    const beforeAction = await server.eventStore.readAll()
+
+    const missingExecutionPreview = await server.command("runtime.preview_opencode_wake_action_execution", { actionKind: "record_watchdog" }) as {
+      status: string
+      can_execute: boolean
+      effect_kind: string
+      will_execute_metadata_write: boolean
+      expected_event_kinds: string[]
+    }
+    expect(missingExecutionPreview).toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      effect_kind: "manual_action_required",
+      will_execute_metadata_write: false,
+      expected_event_kinds: [],
+    })
+
+    const deliverWithoutGuidance = await server.command("runtime.preview_opencode_wake_action_execution", { executionId: wakeExecution.execution_id, actionKind: "deliver_guidance", allowOperatorHandoff: true }) as {
+      status: string
+      can_execute: boolean
+      effect_kind: string
+      will_execute_metadata_write: boolean
+      blockers: string[]
+    }
+    expect(deliverWithoutGuidance).toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      effect_kind: "manual_action_required",
+      will_execute_metadata_write: false,
+    })
+    expect(deliverWithoutGuidance.blockers.join(" ")).toContain("requires Commander guidance evidence")
+
+    const mismatchedOverride = await server.command("runtime.preview_opencode_wake_action_execution", { executionId: wakeExecution.execution_id, actionKind: "request_forced_report" }) as {
+      status: string
+      can_execute: boolean
+      effect_kind: string
+      will_execute_metadata_write: boolean
+      blockers: string[]
+    }
+    expect(mismatchedOverride).toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      effect_kind: "manual_action_required",
+      will_execute_metadata_write: false,
+    })
+    expect(mismatchedOverride.blockers.join(" ")).toContain("override must match")
+
+    const preview = await server.command("runtime.preview_opencode_wake_action_execution", { executionId: wakeExecution.execution_id, actionKind: "create_commander_question" }) as {
+      status: string
+      can_execute: boolean
+      action_kind: string
+      effect_kind: string
+      will_execute_metadata_write: boolean
+      will_call_provider: boolean
+      will_send_opencode_prompt: boolean
+      will_control_process: boolean
+      will_mutate_mission: boolean
+      expected_event_kinds: string[]
+      source_supervisor_hash?: string
+    }
+    expect(preview).toMatchObject({
+      status: "ready",
+      can_execute: true,
+      action_kind: "create_commander_question",
+      effect_kind: "metadata_event_appended",
+      will_execute_metadata_write: true,
+      will_call_provider: false,
+      will_send_opencode_prompt: false,
+      will_control_process: false,
+      will_mutate_mission: false,
+      source_supervisor_hash: wakeExecution.supervisor_hash,
+    })
+    expect(preview.expected_event_kinds).toContain("opencode_commander_question_created")
+    expect(JSON.stringify(preview)).not.toContain("wake-action-secret")
+
+    await expect(server.command("runtime.record_opencode_wake_action_execution", { executionId: wakeExecution.execution_id, actionKind: "create_commander_question", dryRun: true })).resolves.toMatchObject({ status: "dry_run", action_kind: "create_commander_question" })
+    expect(await server.eventStore.readAll()).toEqual(beforeAction)
+
+    const questionAction = await server.command("runtime.record_opencode_wake_action_execution", { executionId: wakeExecution.execution_id, actionKind: "create_commander_question", reason: "wake action needs Commander decision token=wake-action-secret" }) as { status: string; action_execution_id: string; metadata_event_kind?: string; metadata_record_id?: string; will_call_provider: boolean; will_send_opencode_prompt: boolean; will_control_process: boolean; will_mutate_mission: boolean }
+    expect(questionAction).toMatchObject({
+      status: "executed",
+      metadata_event_kind: "opencode_commander_question_created",
+      will_call_provider: false,
+      will_send_opencode_prompt: false,
+      will_control_process: false,
+      will_mutate_mission: false,
+    })
+    expect(questionAction.metadata_record_id).toBeTruthy()
+    let events = await server.eventStore.readAll()
+    let newEvents = events.slice(beforeAction.length)
+    expect(newEvents.map((event) => event.kind)).toEqual(["opencode_commander_question_created", "opencode_wake_action_execution_recorded"])
+    expect(JSON.stringify(newEvents)).not.toContain("wake-action-secret")
+
+    const duplicatePreview = await server.command("runtime.preview_opencode_wake_action_execution", { executionId: wakeExecution.execution_id, actionKind: "create_commander_question" }) as {
+      status: string
+      can_execute: boolean
+      effect_kind: string
+      will_execute_metadata_write: boolean
+      expected_event_kinds: string[]
+      blockers: string[]
+    }
+    expect(duplicatePreview).toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      effect_kind: "manual_action_required",
+      will_execute_metadata_write: false,
+      expected_event_kinds: [],
+    })
+    expect(duplicatePreview.blockers.join(" ")).toContain("already consumed")
+    await expect(server.command("runtime.record_opencode_wake_action_execution", { executionId: wakeExecution.execution_id, actionKind: "create_commander_question" })).resolves.toMatchObject({ status: "blocked", effect_kind: "manual_action_required" })
+    expect(await server.eventStore.readAll()).toEqual(events)
+
+    const duplicateQuestionExecution = {
+      execution_id: `wake_execution_question_duplicate_${progress.progress_id}`,
+      supervisor_hash: `supervisor_hash_question_duplicate_${progress.progress_id}`,
+    }
+    await server.eventStore.append({
+      kind: "opencode_wake_supervisor_execution_recorded",
+      execution_id: duplicateQuestionExecution.execution_id,
+      execution_mode: "single_session",
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      supervisor_preview_id: `wake_preview_question_duplicate_${progress.progress_id}`,
+      supervisor_hash: duplicateQuestionExecution.supervisor_hash,
+      supervisor_status: "blocked",
+      recommended_action: "create_commander_question",
+      action_execution_status: "not_executed",
+      recommended_commands_preview: [],
+      evidence_refs: [{ evidence_kind: "progress", evidence_id: progress.progress_id, status: "blocked", summary_preview: "blocked", pointer_only: true }],
+      context_section_count: 1,
+      recorded_at: "2026-07-06T10:00:00.000Z",
+      recorded_by: "test",
+      execution_hash: `execution_hash_question_duplicate_${progress.progress_id}`,
+    })
+    events = await server.eventStore.readAll()
+    await expect(server.command("runtime.preview_opencode_wake_action_execution", { executionId: duplicateQuestionExecution.execution_id, actionKind: "create_commander_question" })).resolves.toMatchObject({ status: "ready", can_execute: true })
+    await expect(server.command("runtime.record_opencode_wake_action_execution", { executionId: duplicateQuestionExecution.execution_id, actionKind: "create_commander_question", dryRun: true })).resolves.toMatchObject({
+      status: "blocked",
+      effect_kind: "manual_action_required",
+    })
+    expect(await server.eventStore.readAll()).toEqual(events)
+    const staleQuestionAction = await server.command("runtime.record_opencode_wake_action_execution", { executionId: duplicateQuestionExecution.execution_id, actionKind: "create_commander_question" }) as { status: string; effect_kind: string; metadata_event_kind?: string; metadata_record_id?: string }
+    expect(staleQuestionAction).toMatchObject({
+      status: "blocked",
+      effect_kind: "manual_action_required",
+    })
+    expect(staleQuestionAction.metadata_event_kind).toBeUndefined()
+    expect(staleQuestionAction.metadata_record_id).toBeUndefined()
+    events = await server.eventStore.readAll()
+    expect(events.at(-1)).toMatchObject({
+      kind: "opencode_wake_action_execution_recorded",
+      status: "blocked",
+      effect_kind: "manual_action_required",
+    })
+    expect((events.at(-1) as { metadata_event_kind?: string }).metadata_event_kind).toBeUndefined()
+
+    const beforeWatchdog = events
+    const watchdogExecution = {
+      execution_id: `wake_execution_watchdog_${progress.progress_id}`,
+      supervisor_hash: `supervisor_hash_watchdog_${progress.progress_id}`,
+    }
+    await server.eventStore.append({
+      kind: "opencode_wake_supervisor_execution_recorded",
+      execution_id: watchdogExecution.execution_id,
+      execution_mode: "single_session",
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      supervisor_preview_id: `wake_preview_watchdog_${progress.progress_id}`,
+      supervisor_hash: watchdogExecution.supervisor_hash,
+      supervisor_status: "watch",
+      recommended_action: "record_watchdog",
+      action_execution_status: "not_executed",
+      recommended_commands_preview: [],
+      evidence_refs: [{ evidence_kind: "progress", evidence_id: progress.progress_id, status: "blocked", summary_preview: "blocked", pointer_only: true }],
+      context_section_count: 1,
+      recorded_at: "2026-07-06T10:00:00.000Z",
+      recorded_by: "test",
+      execution_hash: `execution_hash_watchdog_${progress.progress_id}`,
+    })
+    events = await server.eventStore.readAll()
+    const watchdogAction = await server.command("runtime.record_opencode_wake_action_execution", { executionId: watchdogExecution.execution_id, actionKind: "record_watchdog" }) as { status: string; action_execution_id: string; metadata_event_kind?: string; metadata_record_id?: string }
+    expect(watchdogAction).toMatchObject({ status: "executed", metadata_event_kind: "opencode_session_watchdog_recorded" })
+    events = await server.eventStore.readAll()
+    newEvents = events.slice(beforeWatchdog.length).filter((event) => event.kind !== "opencode_wake_supervisor_execution_recorded")
+    expect(newEvents.map((event) => event.kind)).toEqual(["opencode_session_watchdog_recorded", "opencode_wake_action_execution_recorded"])
+    expect(JSON.stringify(newEvents)).not.toContain("wake-action-secret")
+
+    const beforeForcedReport = events
+    const forcedReportExecution = await server.command("runtime.record_opencode_wake_supervisor_execution", { sessionId }) as { execution_id: string }
+    events = await server.eventStore.readAll()
+    const forcedReportAction = await server.command("runtime.record_opencode_wake_action_execution", { executionId: forcedReportExecution.execution_id, actionKind: "request_forced_report", reason: "wake action requested report token=wake-action-secret" }) as { status: string; metadata_event_kind?: string; metadata_record_id?: string }
+    expect(forcedReportAction).toMatchObject({ status: "executed", metadata_event_kind: "opencode_session_forced_report_requested" })
+    events = await server.eventStore.readAll()
+    newEvents = events.slice(beforeForcedReport.length).filter((event) => event.kind !== "opencode_wake_supervisor_execution_recorded")
+    expect(newEvents.map((event) => event.kind)).toEqual(["opencode_session_forced_report_requested", "opencode_wake_action_execution_recorded"])
+    expect(newEvents[0]).toMatchObject({ process_paused: false })
+    expect(JSON.stringify(newEvents)).not.toContain("wake-action-secret")
+
+    const beforeBlocked = events
+    const blockedExecution = await server.command("runtime.record_opencode_wake_supervisor_execution", { sessionId }) as { execution_id: string }
+    events = await server.eventStore.readAll()
+    await expect(server.command("runtime.record_opencode_wake_action_execution", { executionId: blockedExecution.execution_id, actionKind: "answer_commander_question" })).resolves.toMatchObject({ status: "blocked", effect_kind: "manual_action_required" })
+    await expect(server.command("runtime.record_opencode_wake_action_execution", { executionId: blockedExecution.execution_id, actionKind: "prepare_result_review" })).resolves.toMatchObject({ status: "blocked", effect_kind: "manual_action_required" })
+    expect(await server.eventStore.readAll()).toEqual(events)
+
+    const records = await server.command("runtime.list_opencode_wake_action_executions", {}) as Array<{ action_execution_id: string; execution_id: string; status: string }>
+    expect(records).toHaveLength(4)
+    await expect(server.command("runtime.get_opencode_wake_action_execution", { actionExecutionId: questionAction.action_execution_id })).resolves.toMatchObject({ action_execution_id: questionAction.action_execution_id, status: "executed" })
+    await expect(server.command("runtime.latest_opencode_wake_action_execution", { executionId: wakeExecution.execution_id })).resolves.toMatchObject({ execution_id: wakeExecution.execution_id })
+    await expect(server.command("runtime.opencode_wake_action_execution_summary")).resolves.toMatchObject({ total_actions: 4, executed_count: 3, blocked_count: 1, metadata_event_count: 3 })
+    const actionKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+    expect(actionKinds).not.toContain("opencode_prompt_sent")
+    expect(actionKinds).not.toContain("opencode_session_process_paused")
+    expect(actionKinds).not.toContain("mission_progress_recorded")
+    expect(actionKinds).not.toContain("runtime_checkpoint_created")
+    const authority = await server.command("runtime.command_authority_get", { command: "/opencode-wake-action-record" }) as { risk: string; mutates_events: boolean; notes: string[] }
+    expect(authority).toMatchObject({ risk: "medium_risk_write", mutates_events: true })
+    expect(authority.notes.join(" ")).toContain("typed allowlisted metadata actions")
+    await server.shutdown()
+  })
+
   test("wake supervisor summary counts all matching launched sessions before applying card limit", async () => {
     const launches = Array.from({ length: 101 }, (_, offset) => {
       const index = offset + 1

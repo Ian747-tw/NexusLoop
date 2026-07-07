@@ -97,6 +97,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeHumanControlLines(state))
   out.push(...opencodeWakeSupervisorLines(state))
   out.push(...opencodeWakeSupervisorExecutionLines(state))
+  out.push(...opencodeWakeActionExecutionLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -1416,6 +1417,56 @@ function opencodeWakeSupervisorExecutionLines(state: UiState): string[] {
   else out.push(...executions.records.slice(0, 12).map((record) => `    - ${record.execution_id} mode=${record.execution_mode} session=${record.session_id ?? "none"} launch=${record.launch_id ?? "none"} supervisor_status=${record.supervisor_status ?? "unknown"} recommended_action=${record.recommended_action ?? "unknown"} action_execution_status=${record.action_execution_status}: ${preview(redactText(record.summary_preview))}`))
   if (executions.commandError) out.push(`  command_error=${redactText(executions.commandError)}`)
   out.push("  note=wake execution recorded supervisor assessment only; recommended commands are previews and were not executed; no provider called, no OpenCode prompt sent, no process control occurred, no research.db write occurred, and mission state was not mutated")
+  return out
+}
+
+function opencodeWakeActionExecutionLines(state: UiState): string[] {
+  const actions = state.opencodeWakeActions
+  const out = ["OpenCode wake action executions"]
+  if (!actions) {
+    out.push("  preview=none")
+    out.push("  latest_result=none")
+    out.push("  records=0")
+    out.push("  note=wake action execution runs only typed allowlisted metadata actions; no arbitrary commands, provider calls, OpenCode prompts, process control, research.db writes, or mission mutations occur")
+    return out
+  }
+  if (actions.preview) {
+    const item = actions.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_execute=${item.can_execute} action=${item.action_kind} effect=${item.effect_kind}`)
+    out.push(`  execution=${item.execution_id} session=${item.session_id ?? "none"} launch=${item.launch_id ?? "none"} supervisor_status=${item.supervisor_status ?? "unknown"} recommended_action=${item.recommended_action}`)
+    out.push(`  flags will_execute_metadata_write=${item.will_execute_metadata_write} will_call_provider=${item.will_call_provider} will_send_opencode_prompt=${item.will_send_opencode_prompt} will_control_process=${item.will_control_process} will_mutate_mission=${item.will_mutate_mission}`)
+    if (item.expected_event_kinds.length > 0) out.push(`  expected_events=${item.expected_event_kinds.map(redactText).join(",")}`)
+    if (item.manual_action_preview) out.push(`  manual_action=${preview(redactText(item.manual_action_preview))}`)
+    if (item.evidence_refs.length > 0) out.push(`  evidence_refs=${item.evidence_refs.slice(0, 8).map((ref) => `${ref.evidence_kind}:${ref.evidence_id}`).join(",")}`)
+    if (item.blockers.length > 0) out.push(`  blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  warnings=${item.warnings.map(redactText).join("; ")}`)
+  } else {
+    out.push("  preview=none")
+  }
+  if (actions.latestResult) {
+    const result = actions.latestResult
+    out.push(`  latest_result=${result.action_execution_id} status=${result.status} action=${result.action_kind} effect=${result.effect_kind}`)
+    out.push(`  latest_execution=${result.execution_id} session=${result.session_id ?? "none"} launch=${result.launch_id ?? "none"} metadata_event=${result.metadata_event_kind ?? "none"} metadata_record=${result.metadata_record_id ?? "none"}`)
+    out.push(`  latest_flags will_call_provider=${result.will_call_provider} will_send_opencode_prompt=${result.will_send_opencode_prompt} will_control_process=${result.will_control_process} will_mutate_mission=${result.will_mutate_mission}`)
+    if (result.manual_action_preview) out.push(`  latest_manual_action=${preview(redactText(result.manual_action_preview))}`)
+    if (result.metadata_result_preview) out.push(`  metadata_result=${preview(redactText(result.metadata_result_preview))}`)
+    if (result.error) out.push(`  latest_error=${redactText(result.error)}`)
+  } else {
+    out.push("  latest_result=none")
+  }
+  if (actions.selected) out.push(`  selected=${actions.selected.action_execution_id} status=${actions.selected.status} action=${actions.selected.action_kind} effect=${actions.selected.effect_kind}`)
+  if (actions.latest) out.push(`  latest=${actions.latest.action_execution_id} status=${actions.latest.status} action=${actions.latest.action_kind} effect=${actions.latest.effect_kind}`)
+  if (actions.summary) {
+    const summary = actions.summary
+    out.push(`  summary total=${summary.total_actions} executed=${summary.executed_count} skipped=${summary.skipped_count} blocked=${summary.blocked_count} failed=${summary.failed_count} metadata_events=${summary.metadata_event_count} manual_required=${summary.manual_action_required_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  out.push("  records")
+  if (actions.records.length === 0) out.push("    - empty")
+  else out.push(...actions.records.slice(0, 12).map((record) => `    - ${record.action_execution_id} execution=${record.execution_id} session=${record.session_id ?? "none"} action=${record.action_kind} status=${record.status} effect=${record.effect_kind} metadata=${record.metadata_event_kind ?? "none"}:${record.metadata_record_id ?? "none"}: ${preview(redactText(record.summary_preview))}`))
+  if (actions.commandError) out.push(`  command_error=${redactText(actions.commandError)}`)
+  out.push("  note=no arbitrary commands are executed; only allowlisted metadata actions can run; no provider called, no OpenCode prompt sent, no process control occurred, no research.db write occurred, and mission state was not mutated")
   return out
 }
 

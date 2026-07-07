@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -63,6 +63,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly opencodeHumanControlRecords: OpenCodeHumanControlResultSummary[] = []
   private readonly opencodeWakeSupervisorExecutionRecords: OpenCodeWakeSupervisorExecutionResultSummary[] = []
   private readonly opencodeWakeSupervisorBatchRecords: OpenCodeWakeSupervisorBatchResultSummary[] = []
+  private readonly opencodeWakeActionExecutionRecords: OpenCodeWakeActionExecutionResultSummary[] = []
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly executorReviewProposalCreates: ExecutorReviewProposalCreateResultSummary[] = []
   private readonly executorReviewProposalReviewRequests: ExecutorReviewProposalReviewRequestResultSummary[] = []
@@ -565,6 +566,18 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.latestOpenCodeWakeSupervisorExecution(payload)
       case "runtime.opencode_wake_supervisor_execution_summary":
         return this.opencodeWakeSupervisorExecutionSummary(payload)
+      case "runtime.preview_opencode_wake_action_execution":
+        return this.previewOpenCodeWakeActionExecution(payload)
+      case "runtime.record_opencode_wake_action_execution":
+        return this.recordOpenCodeWakeActionExecution(payload)
+      case "runtime.list_opencode_wake_action_executions":
+        return this.listOpenCodeWakeActionExecutions(payload)
+      case "runtime.get_opencode_wake_action_execution":
+        return this.getOpenCodeWakeActionExecution(String(payload.actionExecutionId ?? payload.action_execution_id ?? ""))
+      case "runtime.latest_opencode_wake_action_execution":
+        return this.latestOpenCodeWakeActionExecution(payload)
+      case "runtime.opencode_wake_action_execution_summary":
+        return this.opencodeWakeActionExecutionSummary(payload)
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -3828,6 +3841,201 @@ export class FakeRuntimeClient implements RuntimeClient {
       blocked_count: records.filter((item) => item.supervisor_status === "blocked").length,
       action_executed_count: 0,
       latest_executions: records.slice(0, readLimit(payload.limit, 10)),
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private previewOpenCodeWakeActionExecution(payload: Record<string, unknown>): OpenCodeWakeActionExecutionPreviewSummary {
+    const executionId = optionalString(payload.executionId ?? payload.execution_id ?? payload.execution)
+    const execution = executionId ? this.opencodeWakeSupervisorExecutionRecords.find((item) => item.execution_id === executionId) : undefined
+    const requestedActionKind = optionalString(payload.actionKind ?? payload.action_kind ?? payload.action)
+    const sourceActionKind = fakeWakeActionKind(execution?.recommended_action)
+    const actionKind = requestedActionKind ? fakeWakeActionKind(requestedActionKind) : sourceActionKind
+    const allowOperatorHandoff = payload.allowOperatorHandoff === true || payload.allow_operator_handoff === true || String(payload.allow_operator_handoff ?? "").toLowerCase() === "true"
+    const evidenceRefs = execution?.evidence_refs.map(fakeWakeActionEvidenceRef) ?? []
+    const blockers: string[] = []
+    if (!executionId) blockers.push("wake action execution preview requires execution=<execution_id>")
+    if (executionId && !execution) blockers.push("wake supervisor execution record does not resolve")
+    if (execution && execution.action_execution_status !== "not_executed") blockers.push("wake supervisor execution action_execution_status is not not_executed")
+    if (executionId && this.opencodeWakeActionExecutionRecords.some((item) => item.execution_id === executionId)) blockers.push("wake supervisor execution was already consumed by a wake action execution record")
+    if (execution && requestedActionKind && actionKind !== sourceActionKind) blockers.push("action override must match the wake execution recommended_action")
+    if (actionKind === "unsupported") blockers.push("wake recommended action is unsupported by 9M")
+    if (actionKind === "answer_commander_question") blockers.push("answer_commander_question requires explicit /commander-guidance and is blocked by 9M")
+    if (actionKind === "prepare_result_review") blockers.push("Branch 9N result report model is required before result review")
+    if (actionKind === "deliver_guidance" && !allowOperatorHandoff) blockers.push("deliver_guidance requires allow_operator_handoff=true and remains operator_handoff metadata only")
+    if (actionKind === "create_commander_question" && !fakeWakeActionEvidenceId(evidenceRefs, ["progress", "watchdog", "forced_report"])) blockers.push("create_commander_question requires progress, watchdog, or forced_report evidence")
+    if (actionKind === "deliver_guidance" && allowOperatorHandoff && !fakeWakeActionEvidenceId(evidenceRefs, ["commander_guidance"])) blockers.push("deliver_guidance requires guidance evidence")
+    const effectKind = fakeWakeActionEffectKind(actionKind, allowOperatorHandoff, blockers)
+    const willWrite = effectKind === "metadata_event_appended"
+    const actionHash = fakeNavigationStageHash(JSON.stringify({
+      executionId,
+      actionKind,
+      supervisorHash: execution?.supervisor_hash,
+      evidence: evidenceRefs.map((item) => `${item.evidence_kind}:${item.evidence_id}`),
+      allowOperatorHandoff,
+      reason: preview(redactText(String(payload.reason ?? ""))),
+    }))
+    return {
+      preview_id: `fake-wake-action-preview-${actionHash.slice(0, 12)}`,
+      status: blockers.length ? "blocked" : "ready",
+      can_execute: blockers.length === 0,
+      execution_id: executionId ?? "",
+      session_id: execution?.session_id,
+      launch_id: execution?.launch_id,
+      supervisor_status: execution?.supervisor_status,
+      recommended_action: execution?.recommended_action ?? actionKind,
+      action_kind: actionKind,
+      effect_kind: effectKind,
+      action_execution_status_before: "not_executed",
+      will_execute_metadata_write: willWrite,
+      will_call_provider: false,
+      will_send_opencode_prompt: false,
+      will_control_process: false,
+      will_mutate_mission: false,
+      expected_event_kinds: fakeWakeActionExpectedEvents(actionKind, allowOperatorHandoff, blockers),
+      blocked_reason_preview: blockers[0],
+      manual_action_preview: fakeWakeActionManualPreview(actionKind, execution, evidenceRefs),
+      source_supervisor_hash: execution?.supervisor_hash,
+      evidence_refs: evidenceRefs,
+      blockers: blockers.map(redactText),
+      warnings: ["fake wake action execution uses typed allowlisted metadata services only; no arbitrary slash command, provider, OpenCode prompt, process control, research.db write, or mission mutation occurs"],
+      recommended_commands: fakeWakeActionCommands(executionId, execution?.session_id),
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `fake wake action ${actionKind} effect=${effectKind}`,
+      action_hash: actionHash,
+    }
+  }
+
+  private recordOpenCodeWakeActionExecution(payload: Record<string, unknown>): OpenCodeWakeActionExecutionResultSummary {
+    const previewResult = this.previewOpenCodeWakeActionExecution(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    let status: OpenCodeWakeActionExecutionResultSummary["status"] = previewResult.can_execute ? dryRun ? "dry_run" : "skipped" : "blocked"
+    let metadataEventKind: string | undefined
+    let metadataRecordId: string | undefined
+    let metadataResultPreview: string | undefined
+    let error: string | undefined = previewResult.blockers[0]
+    if (previewResult.can_execute && !dryRun) {
+      if (previewResult.action_kind === "record_watchdog") {
+        const metadata = this.recordOpenCodeWatchdog({ sessionId: previewResult.session_id, launchId: previewResult.launch_id, recordedBy: "wake-action" })
+        status = metadata.status === "recorded" ? "executed" : "failed"
+        metadataEventKind = metadata.status === "recorded" ? "opencode_session_watchdog_recorded" : undefined
+        metadataRecordId = metadata.watchdog_id
+        metadataResultPreview = `watchdog ${metadata.watchdog_status}; process control not performed`
+        error = metadata.error
+      } else if (previewResult.action_kind === "request_forced_report") {
+        const metadata = this.requestOpenCodeForcedReport({ sessionId: previewResult.session_id, launchId: previewResult.launch_id, reason: payload.reason ?? "wake supervisor recommended forced report" })
+        if ("request_id" in metadata) {
+          status = "executed"
+          metadataEventKind = "opencode_session_forced_report_requested"
+          metadataRecordId = metadata.request_id
+          metadataResultPreview = `forced report requested; process_paused=${metadata.process_paused}`
+        } else {
+          status = "failed"
+          metadataRecordId = metadata.watchdog_id
+          metadataResultPreview = metadata.error
+          error = metadata.error
+        }
+      } else if (previewResult.action_kind === "create_commander_question") {
+        const progressId = fakeWakeActionEvidenceId(previewResult.evidence_refs, ["progress"])
+        const watchdogId = fakeWakeActionEvidenceId(previewResult.evidence_refs, ["watchdog"])
+        const forcedReportId = fakeWakeActionEvidenceId(previewResult.evidence_refs, ["forced_report"])
+        const metadata = this.createOpenCodeCommanderQuestion({
+          sessionId: previewResult.session_id,
+          launchId: previewResult.launch_id,
+          progressId,
+          watchdogId,
+          forcedReportId,
+          question: payload.reason ?? "Wake supervisor detected blocker/report need; Commander decision required.",
+          context: "created through fake 9M wake action gate",
+          source: "watchdog",
+        })
+        status = metadata.status === "created" ? "executed" : "failed"
+        metadataEventKind = metadata.status === "created" ? "opencode_commander_question_created" : undefined
+        metadataRecordId = metadata.question_id
+        metadataResultPreview = metadata.question_preview
+        error = metadata.error
+      } else if (previewResult.action_kind === "deliver_guidance") {
+        const guidanceId = fakeWakeActionEvidenceId(previewResult.evidence_refs, ["commander_guidance"])
+        const metadata = this.deliverCommanderGuidance({ guidanceId, deliveryMode: "operator_handoff", allowRealDelivery: false })
+        status = metadata.status === "delivery_requested" ? "executed" : "failed"
+        metadataEventKind = metadata.status === "delivery_requested" ? "opencode_commander_guidance_delivery_requested" : undefined
+        metadataRecordId = metadata.delivery_id
+        metadataResultPreview = metadata.operator_handoff_preview ?? metadata.error
+        error = metadata.error
+      }
+    }
+    const result: OpenCodeWakeActionExecutionResultSummary = {
+      action_execution_id: `fake_wake_action_${previewResult.action_hash.slice(0, 12)}_${this.opencodeWakeActionExecutionRecords.length + 1}`,
+      status,
+      execution_id: previewResult.execution_id,
+      session_id: previewResult.session_id,
+      launch_id: previewResult.launch_id,
+      supervisor_status: previewResult.supervisor_status,
+      recommended_action: previewResult.recommended_action,
+      action_kind: previewResult.action_kind,
+      effect_kind: previewResult.effect_kind,
+      action_execution_status_before: "not_executed",
+      metadata_event_kind: metadataEventKind,
+      metadata_record_id: metadataRecordId,
+      metadata_result_preview: metadataResultPreview,
+      manual_action_preview: previewResult.manual_action_preview,
+      will_call_provider: false,
+      will_send_opencode_prompt: false,
+      will_control_process: false,
+      will_mutate_mission: false,
+      recorded_at: new Date(this.opencodeWakeActionExecutionRecords.length * 1000).toISOString(),
+      recorded_by: "operator",
+      error: status === "blocked" || status === "failed" ? error ?? "wake action execution is blocked" : undefined,
+      action_hash: previewResult.action_hash,
+      recommended_commands: previewResult.recommended_commands,
+    }
+    if (!dryRun && result.status !== "blocked") this.opencodeWakeActionExecutionRecords.unshift(result)
+    return result
+  }
+
+  private listOpenCodeWakeActionExecutions(payload: Record<string, unknown>): OpenCodeWakeActionExecutionRecordSummary[] {
+    const executionId = optionalString(payload.executionId ?? payload.execution_id ?? payload.execution)
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchId = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    const actionKind = optionalString(payload.actionKind ?? payload.action_kind ?? payload.action)
+    const status = optionalString(payload.status)
+    const effectKind = optionalString(payload.effectKind ?? payload.effect_kind ?? payload.effect)
+    return this.opencodeWakeActionExecutionRecords
+      .filter((item) => !executionId || item.execution_id === executionId)
+      .filter((item) => !sessionId || item.session_id === sessionId)
+      .filter((item) => !launchId || item.launch_id === launchId)
+      .filter((item) => !actionKind || item.action_kind === actionKind)
+      .filter((item) => !status || item.status === status)
+      .filter((item) => !effectKind || item.effect_kind === effectKind)
+      .slice(0, readLimit(payload.limit, 20))
+      .map(recordFromFakeWakeActionExecution)
+  }
+
+  private getOpenCodeWakeActionExecution(id: string): OpenCodeWakeActionExecutionResultSummary | null {
+    return this.opencodeWakeActionExecutionRecords.find((item) => item.action_execution_id === id) ?? null
+  }
+
+  private latestOpenCodeWakeActionExecution(payload: Record<string, unknown>): OpenCodeWakeActionExecutionResultSummary | null {
+    const executionId = optionalString(payload.executionId ?? payload.execution_id ?? payload.execution)
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchId = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    return this.opencodeWakeActionExecutionRecords.find((item) => (!executionId || item.execution_id === executionId) && (!sessionId || item.session_id === sessionId) && (!launchId || item.launch_id === launchId)) ?? null
+  }
+
+  private opencodeWakeActionExecutionSummary(payload: Record<string, unknown>): OpenCodeWakeActionExecutionSummaryState {
+    const records = this.opencodeWakeActionExecutionRecords.map(recordFromFakeWakeActionExecution)
+    const counts: Record<string, number> = {}
+    for (const record of records) counts[record.action_kind] = (counts[record.action_kind] ?? 0) + 1
+    return {
+      total_actions: records.length,
+      executed_count: records.filter((item) => item.status === "executed").length,
+      skipped_count: records.filter((item) => item.status === "skipped").length,
+      blocked_count: records.filter((item) => item.status === "blocked").length,
+      failed_count: records.filter((item) => item.status === "failed").length,
+      metadata_event_count: records.filter((item) => item.effect_kind === "metadata_event_appended").length,
+      manual_action_required_count: records.filter((item) => item.effect_kind === "manual_action_required").length,
+      by_action_kind_counts: counts,
+      latest_actions: records.slice(0, readLimit(payload.limit, 10)),
       generated_at: new Date(0).toISOString(),
     }
   }
@@ -10266,6 +10474,49 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
       aliases: ["/wake-execution-summary"],
     }),
+    fakeCommandAuthorityRecord("/opencode-wake-action-preview", "runtime.preview_opencode_wake_action_execution", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-execution-show", "/opencode-wake-actions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py"],
+      aliases: ["/wake-action-preview"],
+      notes: ["Read-only wake recommended-action execution preview. It consumes one 9L wake execution record and maps the recommendation to a typed allowlisted metadata action without executing arbitrary commands."],
+      out: ["arbitrary command execution", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "mission/proposal/review/apply mutation", "research.db writes", "result ingestion", "checkpoint creation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-action-dry-run", "runtime.record_opencode_wake_action_execution", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-action-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py"],
+      aliases: ["/wake-action-dry-run"],
+      notes: ["Dry-run wake action execution validates the typed metadata action path without appending events or executing arbitrary recommended commands."],
+      out: ["event append", "arbitrary command execution", "provider calls", "OpenCode prompt send", "process control", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-action-record", "runtime.record_opencode_wake_action_execution", "medium_risk_write", "opencode_runtime", "opencode_handoff", {
+      mutates: true,
+      lock: true,
+      events: ["opencode_wake_action_execution_recorded", "opencode_session_watchdog_recorded", "opencode_session_forced_report_requested", "opencode_commander_question_created", "opencode_commander_guidance_delivery_requested"],
+      reads: ["/opencode-wake-action-preview", "/opencode-wake-actions", "/opencode-wake-action-latest"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py"],
+      aliases: ["/wake-action-record"],
+      notes: ["Consumes one 9L wake execution record and executes only typed allowlisted metadata actions. No arbitrary command text is executed; answer/deliver/result-review actions are blocked by default."],
+      out: ["arbitrary command execution", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "adapter_send guidance", "process pause/kill/stop/resume", "mission/proposal/review/apply mutation", "research.db writes", "result ingestion", "checkpoint creation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-actions", "runtime.list_opencode_wake_action_executions", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-action-show", "/opencode-wake-action-latest"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py"],
+      aliases: ["/wake-actions"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-action-latest", "runtime.latest_opencode_wake_action_execution", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-actions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py"],
+      aliases: ["/wake-action-latest"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-action-show", "runtime.get_opencode_wake_action_execution", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-actions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-action-summary", "runtime.opencode_wake_action_execution_summary", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-actions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py"],
+      aliases: ["/wake-action-summary"],
+    }),
     fakeCommandAuthorityRecord("/research-memory-summary", "runtime.research_memory_summary", "safe_read", "none", "research", {
       targeted: ["tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"],
       notes: ["Read-only research memory summary; no provider calls, no MCP/online research, no research.db writes, no mission/proposal creation, no OpenCode launch."],
@@ -10855,6 +11106,101 @@ function recordFromFakeWakeExecution(item: OpenCodeWakeSupervisorExecutionResult
     recorded_by: item.recorded_by,
     summary_preview: `wake supervisor recorded ${item.supervisor_status ?? "unknown"}; recommended ${item.recommended_action ?? "unknown"}; action_execution_status=not_executed`,
     execution_hash: item.execution_hash,
+  }
+}
+
+function fakeWakeActionKind(value: string | undefined): OpenCodeWakeActionExecutionResultSummary["action_kind"] {
+  switch (value) {
+    case "none":
+    case "read_latest_progress":
+    case "record_watchdog":
+    case "request_forced_report":
+    case "create_commander_question":
+    case "answer_commander_question":
+    case "deliver_guidance":
+    case "review_human_control":
+    case "prepare_result_review":
+      return value
+    default:
+      return "unsupported"
+  }
+}
+
+function fakeWakeActionEffectKind(actionKind: OpenCodeWakeActionExecutionResultSummary["action_kind"], allowOperatorHandoff: boolean, blockers: string[]): OpenCodeWakeActionExecutionResultSummary["effect_kind"] {
+  if (blockers.length > 0) {
+    if (actionKind === "unsupported") return "blocked_unsupported"
+    return "manual_action_required"
+  }
+  if (actionKind === "none") return "no_effect"
+  if (actionKind === "read_latest_progress") return "read_only_noop"
+  if (actionKind === "review_human_control") return "manual_action_required"
+  if (actionKind === "deliver_guidance" && !allowOperatorHandoff) return "manual_action_required"
+  if (actionKind === "record_watchdog" || actionKind === "request_forced_report" || actionKind === "create_commander_question" || (actionKind === "deliver_guidance" && allowOperatorHandoff)) return "metadata_event_appended"
+  return "manual_action_required"
+}
+
+function fakeWakeActionExpectedEvents(actionKind: OpenCodeWakeActionExecutionResultSummary["action_kind"], allowOperatorHandoff: boolean, blockers: string[]): string[] {
+  if (blockers.length > 0) return []
+  if (actionKind === "record_watchdog") return ["opencode_session_watchdog_recorded"]
+  if (actionKind === "request_forced_report") return ["opencode_session_forced_report_requested"]
+  if (actionKind === "create_commander_question") return ["opencode_commander_question_created"]
+  if (actionKind === "deliver_guidance" && allowOperatorHandoff) return ["opencode_commander_guidance_delivery_requested"]
+  return []
+}
+
+function fakeWakeActionEvidenceRef(ref: OpenCodeWakeSupervisorExecutionEvidenceRefSummary): OpenCodeWakeActionExecutionEvidenceRefSummary {
+  return {
+    evidence_kind: ref.evidence_kind,
+    evidence_id: ref.evidence_id,
+    status: ref.status,
+    summary_preview: ref.summary_preview,
+    pointer_only: true,
+  }
+}
+
+function fakeWakeActionEvidenceId(refs: OpenCodeWakeActionExecutionEvidenceRefSummary[], kinds: string[]): string | undefined {
+  return refs.find((ref) => kinds.includes(ref.evidence_kind))?.evidence_id
+}
+
+function fakeWakeActionManualPreview(actionKind: OpenCodeWakeActionExecutionResultSummary["action_kind"], execution: OpenCodeWakeSupervisorExecutionResultSummary | undefined, refs: OpenCodeWakeActionExecutionEvidenceRefSummary[]): string | undefined {
+  if (actionKind === "answer_commander_question") {
+    const questionId = fakeWakeActionEvidenceId(refs, ["commander_question"])
+    return questionId ? `/commander-guidance question=${questionId} answer=<answer>` : "/commander-guidance question=<question_id> answer=<answer>"
+  }
+  if (actionKind === "deliver_guidance") {
+    const guidanceId = fakeWakeActionEvidenceId(refs, ["commander_guidance"])
+    return guidanceId ? `/commander-guidance-deliver guidance=${guidanceId} mode=operator_handoff` : "/commander-guidance-deliver guidance=<guidance_id> mode=operator_handoff"
+  }
+  if (actionKind === "review_human_control") return execution?.session_id ? `/opencode-human-controls session=${execution.session_id}` : "/opencode-human-controls session=<session_id>"
+  if (actionKind === "prepare_result_review") return "Branch 9N result report model required before result review."
+  return undefined
+}
+
+function fakeWakeActionCommands(executionId: string | undefined, sessionId?: string): OpenCodeWakeActionExecutionCommandSummary[] {
+  return [
+    { label: "List wake actions", command: executionId ? `/opencode-wake-actions execution=${executionId}` : "/opencode-wake-actions", command_type: "read", notes: "read fake wake action execution metadata" },
+    { label: "Latest wake action", command: executionId ? `/opencode-wake-action-latest execution=${executionId}` : "/opencode-wake-action-latest", command_type: "read", notes: "read latest fake wake action execution" },
+    { label: "Record typed action", command: executionId ? `/opencode-wake-action-record execution=${executionId}` : "/opencode-wake-action-record execution=<execution_id>", command_type: "write", requires_active_runtime: true, notes: "manual explicit command required; only typed allowlisted metadata actions can run" },
+    { label: "Inspect session controls", command: sessionId ? `/opencode-human-controls session=${sessionId}` : "/opencode-human-controls", command_type: "read", notes: "read related human-control metadata" },
+  ]
+}
+
+function recordFromFakeWakeActionExecution(item: OpenCodeWakeActionExecutionResultSummary): OpenCodeWakeActionExecutionRecordSummary {
+  return {
+    action_execution_id: item.action_execution_id,
+    execution_id: item.execution_id,
+    session_id: item.session_id,
+    launch_id: item.launch_id,
+    recommended_action: item.recommended_action,
+    action_kind: item.action_kind,
+    status: item.status,
+    effect_kind: item.effect_kind,
+    metadata_event_kind: item.metadata_event_kind,
+    metadata_record_id: item.metadata_record_id,
+    recorded_at: item.recorded_at,
+    recorded_by: item.recorded_by,
+    summary_preview: `wake action ${item.action_kind} ${item.status}; provider=false prompt=false process=false mission=false`,
+    action_hash: item.action_hash,
   }
 }
 
