@@ -129,6 +129,8 @@ const WRITE_COMMANDS = new Set([
   "wake-batch-record",
   "opencode-wake-action-record",
   "wake-action-record",
+  "opencode-result-report",
+  "result-report",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

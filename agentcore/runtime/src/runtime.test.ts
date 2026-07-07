@@ -996,6 +996,10 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/opencode-smoke")).toMatchObject({ risk: "low_risk_write", gate: "opencode_runtime", creates_external_process: true, mutates_events: true, blocked_by_default: true })
     expect(service.get("/result-review-packet")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_result_review_packet", owner: "opencode_handoff", mutates_events: false })
     expect(service.get("/result-review-summary")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_result_review_summary", owner: "opencode_handoff", mutates_events: false })
+    expect(service.get("/opencode-result-report-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_result_report", mutates_events: false })
+    expect(service.get("/opencode-result-report-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.record_opencode_result_report", mutates_events: false })
+    expect(service.get("/opencode-result-report")).toMatchObject({ risk: "medium_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, expected_event_kinds: ["opencode_result_report_recorded"] })
+    expect(service.get("/opencode-result-reports")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_opencode_result_reports", mutates_events: false })
     expect(service.get("/opencode-session-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_session_plan", mutates_events: false, creates_external_process: false })
     expect(service.get("/opencode-session-plan-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.create_opencode_session_plan", mutates_events: false, creates_external_process: false })
     expect(service.get("/opencode-session-plan")).toMatchObject({ risk: "high_impact_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, creates_external_process: false, blocked_by_default: true })
@@ -1048,6 +1052,10 @@ describe("CommandAuthorityService", () => {
     const packet = service.validationProfile("/result-review-packet")
     expect(packet.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_result_review_packet_tui.py"])
     expect(packet.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_handoff_readiness_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_tui.py", "tests/e2e_user/scenarios/test_opencode_handoff_followup_tui.py"])
+
+    const resultReport = service.validationProfile("/opencode-result-report")
+    expect(resultReport.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_result_report_tui.py"])
+    expect(resultReport.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py", "tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py", "tests/e2e_user/scenarios/test_opencode_progress_heartbeat_tui.py", "tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"])
 
     const minimax = service.validationProfile("/minimax-live-validate")
     expect(minimax.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"])
@@ -14873,6 +14881,23 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("OpenCode result report commands and dry-runs do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_result_report", { sessionId: "missing", summary: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.record_opencode_result_report", { sessionId: "missing", summary: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_opencode_result_reports")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_result_report", { reportId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.latest_opencode_result_report", { sessionId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.opencode_result_report_summary")).resolves.toMatchObject({ total_reports: 0 })
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
   test("commander executor review commands do not auto-start the runtime", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -18929,6 +18954,134 @@ describe("OpenCode launch readiness", () => {
     const authority = await server.command("runtime.command_authority_get", { command: "/opencode-wake-action-record" }) as { risk: string; mutates_events: boolean; notes: string[] }
     expect(authority).toMatchObject({ risk: "medium_risk_write", mutates_events: true })
     expect(authority.notes.join(" ")).toContain("typed allowlisted metadata actions")
+    await server.shutdown()
+  })
+
+  test("result report records bounded executor evidence without mission or research side effects", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "completion_report", summary: "done with candidate fix token=result-secret" }) as { progress_id: string }
+    const beforeReport = await server.eventStore.readAll()
+
+    await expect(server.command("runtime.preview_opencode_result_report", {})).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_report", { sessionId: "missing", summary: "missing" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "done" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "partial_report", summary: "partial" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "failure_report", summary: "failed" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "status_report", summary: "status only" })).resolves.toMatchObject({ status: "ready", can_record: true, result_disposition: "reported_status_only", review_state: "review_not_required" })
+    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "done", outcome: "tests passed", reviewState: "accepted" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "diff --git a/file b/file\n@@ -1 +1", outcome: "raw diff" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+
+    const preview = await server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "implemented candidate fix token=result-secret", outcome: "tests passed", changedFiles: ["fileA.ts"], testsRun: ["bun test"], claims: ["fix works"], followups: ["commander review"], progressId: progress.progress_id }) as {
+      status: string
+      can_record: boolean
+      result_kind: string
+      result_disposition: string
+      review_state: string
+      mission_mutated: boolean
+      research_db_written: boolean
+      checkpoint_created: boolean
+      commander_review_created: boolean
+      report_hash: string
+    }
+    expect(preview).toMatchObject({
+      status: "ready",
+      can_record: true,
+      result_kind: "completion_report",
+      result_disposition: "reported_done",
+      review_state: "needs_commander_review",
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      commander_review_created: false,
+    })
+    expect(JSON.stringify(preview)).not.toContain("result-secret")
+
+    await expect(server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "implemented candidate fix token=result-secret", outcome: "tests passed", changedFiles: ["fileA.ts"], testsRun: ["bun test"], claims: ["fix works"], followups: ["commander review"], progressId: progress.progress_id, dryRun: true })).resolves.toMatchObject({ status: "dry_run", result_kind: "completion_report" })
+    expect(await server.eventStore.readAll()).toEqual(beforeReport)
+
+    const report = await server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "implemented candidate fix token=result-secret", outcome: "tests passed", changedFiles: ["fileA.ts"], testsRun: ["bun test"], testResults: ["passed"], artifacts: ["artifact://result"], metrics: ["tests=1"], claims: ["fix works"], followups: ["commander review"], progressId: progress.progress_id, confidence: "high" }) as {
+      status: string
+      report_id: string
+      report_hash: string
+      mission_mutated: boolean
+      research_db_written: boolean
+      checkpoint_created: boolean
+      commander_review_created: boolean
+    }
+    expect(report).toMatchObject({
+      status: "recorded",
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      commander_review_created: false,
+    })
+    let events = await server.eventStore.readAll()
+    let newEvents = events.slice(beforeReport.length)
+    expect(newEvents.map((event) => event.kind)).toEqual(["opencode_result_report_recorded"])
+    expect(newEvents[0]).toMatchObject({
+      report_id: report.report_id,
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      result_kind: "completion_report",
+      result_disposition: "reported_done",
+      review_state: "needs_commander_review",
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      commander_review_created: false,
+    })
+    expect(JSON.stringify(newEvents)).not.toContain("result-secret")
+
+    await expect(server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "implemented candidate fix token=result-secret", outcome: "tests passed", changedFiles: ["fileA.ts"], testsRun: ["bun test"], testResults: ["passed"], artifacts: ["artifact://result"], metrics: ["tests=1"], claims: ["fix works"], followups: ["commander review"], progressId: progress.progress_id, confidence: "high", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "implemented candidate fix token=result-secret", outcome: "tests passed", changedFiles: ["fileA.ts"], testsRun: ["bun test"], testResults: ["passed"], artifacts: ["artifact://result"], metrics: ["tests=1"], claims: ["fix works"], followups: ["commander review"], progressId: progress.progress_id, confidence: "high" })).resolves.toMatchObject({ status: "blocked" })
+    expect(await server.eventStore.readAll()).toEqual(events)
+
+    const failure = await server.command("runtime.record_opencode_result_report", { sessionId, kind: "failure_report", summary: "failed alternative", knownFailures: ["test still fails"] }) as { status: string; report_id: string; result_kind: string }
+    expect(failure).toMatchObject({ status: "recorded", result_kind: "failure_report" })
+    events = await server.eventStore.readAll()
+    newEvents = events.slice(beforeReport.length)
+    expect(newEvents.filter((event) => event.kind === "opencode_result_report_recorded")).toHaveLength(2)
+
+    await expect(server.command("runtime.list_opencode_result_reports", { sessionId })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ report_id: report.report_id, result_kind: "completion_report" })]))
+    await expect(server.command("runtime.get_opencode_result_report", { reportId: report.report_id })).resolves.toMatchObject({ report_id: report.report_id, session_id: sessionId })
+    await expect(server.command("runtime.latest_opencode_result_report", { sessionId })).resolves.toMatchObject({ report_id: failure.report_id, result_kind: "failure_report" })
+    await expect(server.command("runtime.opencode_result_report_summary")).resolves.toMatchObject({ total_reports: 2, completion_count: 1, failure_count: 1, needs_commander_review_count: 2 })
+
+    await server.eventStore.append({
+	      kind: "opencode_session_progress_recorded",
+	      progress_id: "progress_unrelated_result_report",
+	      session_id: "session_unrelated_result_report",
+	      launch_id: "launch_unrelated_result_report",
+	      progress_kind: "completion_report",
+      execution_state: "reported_done",
+      report_summary_preview: "unrelated done",
+      files_touched_preview: [],
+      commands_run_preview: [],
+      tests_run_preview: [],
+      artifacts_preview: [],
+      blockers_preview: [],
+      recorded_at: "2026-07-06T10:00:00.000Z",
+      recorded_by: "test",
+      source_kind: "manual",
+      has_blockers: false,
+      has_question: false,
+      progress_hash: "progress_hash_unrelated_result_report",
+    })
+    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "mismatch", outcome: "done", progressId: "progress_unrelated_result_report" })).resolves.toMatchObject({ status: "blocked" })
+
+    const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+    expect(eventKinds).not.toContain("commander_result_review_created")
+    expect(eventKinds).not.toContain("research_result_ingested")
+    expect(eventKinds).not.toContain("runtime_checkpoint_created")
+    expect(eventKinds).not.toContain("opencode_prompt_sent")
+    expect(eventKinds).not.toContain("opencode_session_process_paused")
+    const authority = await server.command("runtime.command_authority_get", { command: "/opencode-result-report" }) as { risk: string; mutates_events: boolean; notes: string[] }
+    expect(authority).toMatchObject({ risk: "medium_risk_write", mutates_events: true })
+    expect(authority.notes.join(" ")).toContain("result-report metadata")
     await server.shutdown()
   })
 

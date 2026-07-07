@@ -2663,6 +2663,131 @@ export type OpenCodeWakeActionExecutionState = {
   commandError?: string
 }
 
+export type OpenCodeResultReportCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeResultReportPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_record: boolean
+  session_id: string
+  launch_id?: string
+  result_kind: string
+  result_disposition: string
+  review_state: string
+  summary_preview: string
+  outcome_preview?: string
+  changed_files_preview: string[]
+  tests_run_preview: string[]
+  test_results_preview: string[]
+  artifacts_preview: string[]
+  metrics_preview: string[]
+  claims_preview: string[]
+  known_failures_preview: string[]
+  followups_preview: string[]
+  confidence?: number | string
+  linked_progress_id?: string
+  linked_watchdog_id?: string
+  linked_question_id?: string
+  linked_guidance_id?: string
+  linked_delivery_id?: string
+  linked_wake_execution_id?: string
+  linked_wake_action_execution_id?: string
+  mission_mutated: false | boolean
+  research_db_written: false | boolean
+  checkpoint_created: false | boolean
+  commander_review_created: false | boolean
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeResultReportCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  report_hash: string
+}
+
+export type OpenCodeResultReportResultSummary = {
+  report_id: string
+  status: "recorded" | "blocked" | "dry_run" | "failed" | string
+  session_id: string
+  launch_id?: string
+  result_kind: string
+  result_disposition: string
+  review_state: string
+  summary_preview: string
+  outcome_preview?: string
+  changed_files_preview: string[]
+  tests_run_preview: string[]
+  test_results_preview: string[]
+  artifacts_preview: string[]
+  metrics_preview: string[]
+  claims_preview: string[]
+  known_failures_preview: string[]
+  followups_preview: string[]
+  confidence?: number | string
+  linked_progress_id?: string
+  linked_watchdog_id?: string
+  linked_question_id?: string
+  linked_guidance_id?: string
+  linked_delivery_id?: string
+  linked_wake_execution_id?: string
+  linked_wake_action_execution_id?: string
+  mission_mutated: false | boolean
+  research_db_written: false | boolean
+  checkpoint_created: false | boolean
+  commander_review_created: false | boolean
+  recorded_at: string
+  recorded_by: string
+  error?: string
+  report_hash: string
+  recommended_commands: OpenCodeResultReportCommandSummary[]
+}
+
+export type OpenCodeResultReportRecordSummary = {
+  report_id: string
+  session_id: string
+  launch_id?: string
+  result_kind: string
+  result_disposition: string
+  review_state: string
+  summary_preview: string
+  recorded_at: string
+  recorded_by: string
+  confidence?: number | string
+  has_failures: boolean
+  has_artifacts: boolean
+  has_metrics: boolean
+  report_hash: string
+}
+
+export type OpenCodeResultReportSummaryState = {
+  total_reports: number
+  session_count: number
+  completion_count: number
+  partial_count: number
+  failure_count: number
+  inconclusive_count: number
+  blocked_count: number
+  needs_commander_review_count: number
+  needs_human_review_count: number
+  latest_reports: OpenCodeResultReportRecordSummary[]
+  generated_at: string
+}
+
+export type OpenCodeResultReportState = {
+  preview?: OpenCodeResultReportPreviewSummary | null
+  latestResult?: OpenCodeResultReportResultSummary | null
+  records: OpenCodeResultReportRecordSummary[]
+  selected?: OpenCodeResultReportResultSummary | null
+  latest?: OpenCodeResultReportResultSummary | null
+  summary?: OpenCodeResultReportSummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -5051,6 +5176,7 @@ export type UiState = {
   opencodeWakeSupervisor?: OpenCodeWakeSupervisorState
   opencodeWakeSupervisorExecutions?: OpenCodeWakeSupervisorExecutionsState
   opencodeWakeActions?: OpenCodeWakeActionExecutionState
+  opencodeResultReports?: OpenCodeResultReportState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

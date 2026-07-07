@@ -98,6 +98,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeWakeSupervisorLines(state))
   out.push(...opencodeWakeSupervisorExecutionLines(state))
   out.push(...opencodeWakeActionExecutionLines(state))
+  out.push(...opencodeResultReportLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -1467,6 +1468,56 @@ function opencodeWakeActionExecutionLines(state: UiState): string[] {
   else out.push(...actions.records.slice(0, 12).map((record) => `    - ${record.action_execution_id} execution=${record.execution_id} session=${record.session_id ?? "none"} action=${record.action_kind} status=${record.status} effect=${record.effect_kind} metadata=${record.metadata_event_kind ?? "none"}:${record.metadata_record_id ?? "none"}: ${preview(redactText(record.summary_preview))}`))
   if (actions.commandError) out.push(`  command_error=${redactText(actions.commandError)}`)
   out.push("  note=no arbitrary commands are executed; only allowlisted metadata actions can run; no provider called, no OpenCode prompt sent, no process control occurred, no research.db write occurred, and mission state was not mutated")
+  return out
+}
+
+function opencodeResultReportLines(state: UiState): string[] {
+  const reports = state.opencodeResultReports
+  const out = ["OpenCode result reports"]
+  if (!reports) {
+    out.push("  preview=none")
+    out.push("  latest_result=none")
+    out.push("  records=0")
+    out.push("  note=result reports are executor evidence only; mission not completed; research.db not written; Commander review is future work")
+    return out
+  }
+  if (reports.preview) {
+    const item = reports.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_record=${item.can_record} kind=${item.result_kind} disposition=${item.result_disposition} review_state=${item.review_state}`)
+    out.push(`  session=${item.session_id} launch=${item.launch_id ?? "none"} summary=${preview(redactText(item.summary_preview))}`)
+    if (item.outcome_preview) out.push(`  outcome=${preview(redactText(item.outcome_preview))}`)
+    out.push(`  previews changed_files=${item.changed_files_preview.join(",") || "none"} tests=${item.tests_run_preview.join(",") || "none"} artifacts=${item.artifacts_preview.join(",") || "none"} metrics=${item.metrics_preview.join(",") || "none"} claims=${item.claims_preview.join(",") || "none"} failures=${item.known_failures_preview.join(",") || "none"} followups=${item.followups_preview.join(",") || "none"}`)
+    out.push(`  flags mission_mutated=${item.mission_mutated} research_db_written=${item.research_db_written} checkpoint_created=${item.checkpoint_created} commander_review_created=${item.commander_review_created}`)
+    if (item.linked_progress_id || item.linked_watchdog_id || item.linked_question_id || item.linked_guidance_id || item.linked_delivery_id || item.linked_wake_execution_id || item.linked_wake_action_execution_id) out.push(`  linked progress=${item.linked_progress_id ?? "none"} watchdog=${item.linked_watchdog_id ?? "none"} question=${item.linked_question_id ?? "none"} guidance=${item.linked_guidance_id ?? "none"} delivery=${item.linked_delivery_id ?? "none"} wake_execution=${item.linked_wake_execution_id ?? "none"} wake_action=${item.linked_wake_action_execution_id ?? "none"}`)
+    if (item.blockers.length > 0) out.push(`  blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  warnings=${item.warnings.map(redactText).join("; ")}`)
+  } else {
+    out.push("  preview=none")
+  }
+  if (reports.latestResult) {
+    const result = reports.latestResult
+    out.push(`  latest_result=${result.report_id} status=${result.status} kind=${result.result_kind} disposition=${result.result_disposition} review_state=${result.review_state}`)
+    out.push(`  latest_session=${result.session_id} launch=${result.launch_id ?? "none"} summary=${preview(redactText(result.summary_preview))}`)
+    if (result.outcome_preview) out.push(`  latest_outcome=${preview(redactText(result.outcome_preview))}`)
+    out.push(`  latest_previews changed_files=${result.changed_files_preview.join(",") || "none"} tests=${result.tests_run_preview.join(",") || "none"} test_results=${result.test_results_preview.join(",") || "none"} artifacts=${result.artifacts_preview.join(",") || "none"} metrics=${result.metrics_preview.join(",") || "none"} claims=${result.claims_preview.join(",") || "none"} failures=${result.known_failures_preview.join(",") || "none"} followups=${result.followups_preview.join(",") || "none"}`)
+    out.push(`  latest_flags mission_mutated=${result.mission_mutated} research_db_written=${result.research_db_written} checkpoint_created=${result.checkpoint_created} commander_review_created=${result.commander_review_created}`)
+    if (result.error) out.push(`  latest_error=${redactText(result.error)}`)
+  } else {
+    out.push("  latest_result=none")
+  }
+  if (reports.selected) out.push(`  selected=${reports.selected.report_id} status=${reports.selected.status} kind=${reports.selected.result_kind} review_state=${reports.selected.review_state}`)
+  if (reports.latest) out.push(`  latest=${reports.latest.report_id} status=${reports.latest.status} kind=${reports.latest.result_kind} review_state=${reports.latest.review_state}`)
+  if (reports.summary) {
+    const summary = reports.summary
+    out.push(`  summary total=${summary.total_reports} sessions=${summary.session_count} completion=${summary.completion_count} partial=${summary.partial_count} failure=${summary.failure_count} inconclusive=${summary.inconclusive_count} blocked=${summary.blocked_count} needs_commander_review=${summary.needs_commander_review_count} needs_human_review=${summary.needs_human_review_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  out.push("  records")
+  if (reports.records.length === 0) out.push("    - empty")
+  else out.push(...reports.records.slice(0, 12).map((record) => `    - ${record.report_id} session=${record.session_id} launch=${record.launch_id ?? "none"} kind=${record.result_kind} disposition=${record.result_disposition} review_state=${record.review_state} failures=${record.has_failures} artifacts=${record.has_artifacts} metrics=${record.has_metrics}: ${preview(redactText(record.summary_preview))}`))
+  if (reports.commandError) out.push(`  command_error=${redactText(reports.commandError)}`)
+  out.push("  note=result report is executor evidence only; mission not completed; research.db not written; checkpoint not created; Commander review is future work")
   return out
 }
 
