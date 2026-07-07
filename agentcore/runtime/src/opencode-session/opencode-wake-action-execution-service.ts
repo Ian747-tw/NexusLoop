@@ -201,18 +201,21 @@ export class OpenCodeWakeActionExecutionService {
     if (executionId && !execution) blockers.push("execution_id does not resolve to a wake supervisor execution record")
     if (execution && execution.action_execution_status !== "not_executed") blockers.push("wake supervisor execution action status must be not_executed")
     const actionKind = readActionKind(input.action_kind, actionKindFromRecommendedAction(execution?.recommended_action))
-    const expectedEventKinds = expectedEventsForAction(actionKind, input.allow_operator_handoff === true)
+    let expectedEventKinds = expectedEventsForAction(actionKind, input.allow_operator_handoff === true)
     let effectKind = effectForAction(actionKind, input.allow_operator_handoff === true)
     let manualActionPreview = manualPreviewForAction(actionKind, execution, input.allow_operator_handoff === true)
+    if (executionId && execution && await this.hasRecordedActionForExecution(executionId)) blockers.push("wake supervisor execution was already consumed by a wake action execution record")
     if (actionKind === "unsupported") blockers.push("wake recommended action is unsupported by the 9M metadata action gate")
     if (actionKind === "answer_commander_question") blockers.push("answer_commander_question requires explicit /commander-guidance and is blocked in 9M")
     if (actionKind === "deliver_guidance" && input.allow_operator_handoff !== true) blockers.push("deliver_guidance requires explicit allow_operator_handoff=true in 9M")
+    if (actionKind === "deliver_guidance" && input.allow_operator_handoff === true && !guidanceEvidenceId(readEvidenceRefs(execution?.evidence_refs ?? []))) blockers.push("deliver_guidance requires Commander guidance evidence from the wake execution")
     if (actionKind === "prepare_result_review") blockers.push("Branch 9N result report model is required before result review")
     if (actionKind === "create_commander_question" && !usableQuestionEvidence(execution?.evidence_refs ?? [])) blockers.push("create_commander_question requires progress, watchdog, or forced-report evidence from the wake execution")
     if (METADATA_ACTIONS.has(actionKind)) warnings.push(`${actionKind} will call only the existing typed metadata service API when recorded`)
     if (actionKind === "deliver_guidance" && input.allow_operator_handoff === true) warnings.push("deliver_guidance uses operator_handoff only and sends no OpenCode prompt")
-    if (blockers.length > 0 && effectKind !== "blocked_unsupported") {
-      effectKind = actionKind === "unsupported" ? "blocked_unsupported" : effectKind
+    if (blockers.length > 0) {
+      effectKind = actionKind === "unsupported" ? "blocked_unsupported" : "manual_action_required"
+      expectedEventKinds = []
     }
     return { execution, actionKind, effectKind, manualActionPreview, expectedEventKinds, blockers, warnings }
   }
@@ -273,6 +276,10 @@ export class OpenCodeWakeActionExecutionService {
       .filter(({ event }) => isActionEvent(event))
       .map(({ event, index }) => ({ record: recordFromEvent(event)!, event_index: index }))
       .filter((item) => Boolean(item.record))
+  }
+
+  private async hasRecordedActionForExecution(executionId: string): Promise<boolean> {
+    return (await this.sequencedRecords()).some((item) => item.record.execution_id === executionId)
   }
 
   private async serializeAction<T>(operation: () => Promise<T>): Promise<T> {

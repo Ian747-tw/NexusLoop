@@ -3855,6 +3855,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     if (!executionId) blockers.push("wake action execution preview requires execution=<execution_id>")
     if (executionId && !execution) blockers.push("wake supervisor execution record does not resolve")
     if (execution && execution.action_execution_status !== "not_executed") blockers.push("wake supervisor execution action_execution_status is not not_executed")
+    if (executionId && this.opencodeWakeActionExecutionRecords.some((item) => item.execution_id === executionId)) blockers.push("wake supervisor execution was already consumed by a wake action execution record")
     if (actionKind === "unsupported") blockers.push("wake recommended action is unsupported by 9M")
     if (actionKind === "answer_commander_question") blockers.push("answer_commander_question requires explicit /commander-guidance and is blocked by 9M")
     if (actionKind === "prepare_result_review") blockers.push("Branch 9N result report model is required before result review")
@@ -11125,7 +11126,7 @@ function fakeWakeActionKind(value: string | undefined): OpenCodeWakeActionExecut
 function fakeWakeActionEffectKind(actionKind: OpenCodeWakeActionExecutionResultSummary["action_kind"], allowOperatorHandoff: boolean, blockers: string[]): OpenCodeWakeActionExecutionResultSummary["effect_kind"] {
   if (blockers.length > 0) {
     if (actionKind === "unsupported") return "blocked_unsupported"
-    return actionKind === "answer_commander_question" || actionKind === "deliver_guidance" || actionKind === "prepare_result_review" ? "manual_action_required" : "blocked_unsupported"
+    return "manual_action_required"
   }
   if (actionKind === "none") return "no_effect"
   if (actionKind === "read_latest_progress") return "read_only_noop"

@@ -6023,6 +6023,15 @@ describe("runtime UI effects", () => {
     })
     const actionExecutionId = state.opencodeWakeActions?.latestResult?.action_execution_id
     expect(actionExecutionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-preview", args: [`execution=${executionId}`, "action=record_watchdog"] })
+    expect(state.opencodeWakeActions?.preview).toMatchObject({
+      status: "blocked",
+      can_execute: false,
+      effect_kind: "manual_action_required",
+      will_execute_metadata_write: false,
+      expected_event_kinds: [],
+    })
+    expect(state.opencodeWakeActions?.preview?.blockers.join(" ")).toContain("already consumed")
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-action-record", args: [`execution=${executionId}`, "action=answer_commander_question"] })
     expect(state.opencodeWakeActions?.latestResult).toMatchObject({ status: "blocked", effect_kind: "manual_action_required" })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-wake-actions", args: [`execution=${executionId}`] })
