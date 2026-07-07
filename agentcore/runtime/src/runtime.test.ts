@@ -19124,23 +19124,39 @@ describe("OpenCode launch readiness", () => {
 	      session_id: "session_unrelated_result_report",
 	      launch_id: "launch_unrelated_result_report",
 	      progress_kind: "completion_report",
-      execution_state: "reported_done",
-      report_summary_preview: "unrelated done",
-      files_touched_preview: [],
-      commands_run_preview: [],
-      tests_run_preview: [],
-      artifacts_preview: [],
-      blockers_preview: [],
-      recorded_at: "2026-07-06T10:00:00.000Z",
-      recorded_by: "test",
-      source_kind: "manual",
-      has_blockers: false,
-      has_question: false,
-      progress_hash: "progress_hash_unrelated_result_report",
-    })
-    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "mismatch", outcome: "done", progressId: "progress_unrelated_result_report" })).resolves.toMatchObject({ status: "blocked" })
+	      execution_state: "reported_done",
+	      report_summary_preview: "unrelated done",
+	      files_touched_preview: [],
+	      commands_run_preview: [],
+	      tests_run_preview: [],
+	      artifacts_preview: [],
+	      blockers_preview: [],
+	      recorded_at: "2026-07-06T10:00:00.000Z",
+	      recorded_by: "test",
+	      source_kind: "manual",
+	      has_blockers: false,
+	      has_question: false,
+	      progress_hash: "progress_hash_unrelated_result_report",
+	    })
+	    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "completion_report", summary: "mismatch", outcome: "done", progressId: "progress_unrelated_result_report" })).resolves.toMatchObject({ status: "blocked" })
 
-    const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
+	    await server.eventStore.append({
+	      kind: "opencode_session_launch_failed",
+	      launch_id: launched.launch_id,
+	      status: "launch_failed",
+	      session_id: sessionId,
+	      adapter_kind: "fake",
+	      launch_mode: "fresh",
+	      completed_at: "2026-07-06T11:00:00.000Z",
+	      launch_hash: "failed_result_report_launch_hash",
+	    })
+	    await expect(server.command("runtime.preview_opencode_result_report", { sessionId, kind: "status_report", summary: "after failed launch" })).resolves.toMatchObject({
+	      status: "blocked",
+	      can_record: false,
+	      blockers: ["OpenCode result report requires launch_started or launched status; current status is launch_failed"],
+	    })
+
+	    const eventKinds = (await server.eventStore.readAll()).map((event) => event.kind)
     expect(eventKinds).not.toContain("mission_progress_recorded")
     expect(eventKinds).not.toContain("commander_result_review_created")
     expect(eventKinds).not.toContain("research_result_ingested")

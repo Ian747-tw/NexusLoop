@@ -153,7 +153,8 @@ export class OpenCodeResultReportService {
     }
     if (!launch && sessionId) {
       const launches = await this.options.launchGateService.list({ session_id: sessionId, limit: MAX_LIST })
-      launch = launches.find((item) => LAUNCHED_STATUSES.has(item.status)) ?? launches[0] ?? null
+      const candidate = launches.find((item) => LAUNCHED_STATUSES.has(item.status)) ?? launches[0] ?? null
+      launch = candidate ? (await this.options.launchGateService.get(candidate.launch_id)) ?? candidate : null
       if (!launch) blockers.push("OpenCode result report requires a launch record for the session")
     }
     if (sessionId) {
