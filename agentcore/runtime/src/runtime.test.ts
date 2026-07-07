@@ -39,6 +39,7 @@ import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
 import { ProcessOpenCodeLaunchAdapter } from "./opencode-session/opencode-native-launch-adapter"
 import { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-supervisor-service"
+import { OpenCodeWakeSupervisorExecutionService } from "./opencode-session/opencode-wake-supervisor-execution-service"
 import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
@@ -18434,6 +18435,272 @@ describe("OpenCode launch readiness", () => {
     await expect(client.command("runtime.opencode_wake_supervisor_summary")).resolves.toMatchObject({ total_launched_sessions: 0 })
     expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
     await client.shutdown?.()
+  })
+
+  test("wake supervisor execution records supervisor assessment metadata without executing recommended actions", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "alive token=wake-execution-secret" })
+    await server.command("runtime.record_opencode_watchdog", { sessionId })
+    await server.command("runtime.record_opencode_human_control", { sessionId, kind: "pause_request", reason: "operator wants review token=wake-execution-secret" })
+    const eventsBeforePreview = await server.eventStore.readAll()
+
+    const preview = await server.command("runtime.preview_opencode_wake_supervisor_execution", { sessionId }) as {
+      status: string
+      can_record: boolean
+      supervisor_hash?: string
+      supervisor_status?: string
+      recommended_action?: string
+      action_execution_status: string
+      recommended_commands_preview: Array<{ command: string; command_type: string; notes?: string }>
+      evidence_refs: Array<{ pointer_only: boolean; evidence_kind: string }>
+      context_section_count: number
+    }
+    expect(preview).toMatchObject({
+      status: "ready",
+      can_record: true,
+      supervisor_status: "human_paused",
+      recommended_action: "review_human_control",
+      action_execution_status: "not_executed",
+    })
+    expect(preview.supervisor_hash).toBeTruthy()
+    expect(preview.recommended_commands_preview.some((command) => command.command_type === "write")).toBe(true)
+    expect(preview.recommended_commands_preview.map((command) => command.notes ?? "").join(" ")).toContain("not executed")
+    expect(preview.evidence_refs).toEqual(expect.arrayContaining([expect.objectContaining({ pointer_only: true, evidence_kind: "human_control" })]))
+    expect(preview.context_section_count).toBeGreaterThan(0)
+    expect(JSON.stringify(preview)).not.toContain("wake-execution-secret")
+    expect(await server.eventStore.readAll()).toEqual(eventsBeforePreview)
+
+    const dryRun = await server.command("runtime.record_opencode_wake_supervisor_execution", { sessionId, dryRun: true }) as { status: string; action_execution_status: string; execution_id: string }
+    expect(dryRun).toMatchObject({ status: "dry_run", action_execution_status: "not_executed" })
+    expect(await server.eventStore.readAll()).toEqual(eventsBeforePreview)
+
+    const result = await server.command("runtime.record_opencode_wake_supervisor_execution", { sessionId }) as { status: string; execution_id: string; action_execution_status: string; recommended_action?: string; supervisor_hash?: string }
+    expect(result).toMatchObject({ status: "recorded", action_execution_status: "not_executed", recommended_action: "review_human_control", supervisor_hash: preview.supervisor_hash })
+    const afterSingle = await server.eventStore.readAll()
+    const singleNewEvents = afterSingle.slice(eventsBeforePreview.length)
+    expect(singleNewEvents.map((event) => event.kind)).toEqual(["opencode_wake_supervisor_execution_recorded"])
+    expect(singleNewEvents[0]).toMatchObject({
+      execution_id: result.execution_id,
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      supervisor_hash: preview.supervisor_hash,
+      action_execution_status: "not_executed",
+    })
+    expect(JSON.stringify(singleNewEvents)).not.toContain("wake-execution-secret")
+    expect(singleNewEvents.map((event) => event.kind)).not.toContain("opencode_session_forced_report_requested")
+    expect(singleNewEvents.map((event) => event.kind)).not.toContain("opencode_commander_question_created")
+    expect(singleNewEvents.map((event) => event.kind)).not.toContain("opencode_commander_guidance_delivery_requested")
+    expect(singleNewEvents.map((event) => event.kind)).not.toContain("opencode_prompt_sent")
+    expect(singleNewEvents.map((event) => event.kind)).not.toContain("opencode_session_process_paused")
+    expect(singleNewEvents.map((event) => event.kind)).not.toContain("runtime_checkpoint_created")
+    expect(singleNewEvents.map((event) => event.kind)).not.toContain("mission_progress_recorded")
+
+    const records = await server.command("runtime.list_opencode_wake_supervisor_executions", { sessionId }) as Array<{ execution_id: string; action_execution_status: string }>
+    expect(records).toEqual([expect.objectContaining({ execution_id: result.execution_id, action_execution_status: "not_executed" })])
+    await expect(server.command("runtime.get_opencode_wake_supervisor_execution", { executionId: result.execution_id })).resolves.toMatchObject({ execution_id: result.execution_id, action_execution_status: "not_executed" })
+    await expect(server.command("runtime.latest_opencode_wake_supervisor_execution", { sessionId })).resolves.toMatchObject({ execution_id: result.execution_id })
+
+    const batchPreview = await server.command("runtime.preview_opencode_wake_supervisor_batch") as { status: string; can_record: boolean; included_session_count: number; action_execution_status?: string; session_previews: Array<{ action_execution_status: string }> }
+    expect(batchPreview).toMatchObject({ status: "ready", can_record: true, included_session_count: 1 })
+    expect(batchPreview.session_previews[0]).toMatchObject({ action_execution_status: "not_executed" })
+    expect(await server.eventStore.readAll()).toEqual(afterSingle)
+    await expect(server.command("runtime.record_opencode_wake_supervisor_batch", { dryRun: true })).resolves.toMatchObject({ status: "dry_run", action_execution_status: "not_executed" })
+    expect(await server.eventStore.readAll()).toEqual(afterSingle)
+
+    const batch = await server.command("runtime.record_opencode_wake_supervisor_batch") as { status: string; batch_id: string; recorded_execution_count: number; action_execution_status: string; execution_records: Array<{ action_execution_status: string }> }
+    expect(batch).toMatchObject({ status: "recorded", recorded_execution_count: 1, action_execution_status: "not_executed" })
+    expect(batch.execution_records[0]).toMatchObject({ action_execution_status: "not_executed" })
+    const afterBatch = await server.eventStore.readAll()
+    const batchNewEvents = afterBatch.slice(afterSingle.length)
+    expect(batchNewEvents.map((event) => event.kind)).toEqual(["opencode_wake_supervisor_batch_recorded", "opencode_wake_supervisor_execution_recorded"])
+    expect(batchNewEvents.every((event) => event.action_execution_status === "not_executed")).toBe(true)
+    const summary = await server.command("runtime.opencode_wake_supervisor_execution_summary") as { total_executions: number; batch_count: number; action_executed_count: number; human_attention_count: number }
+    expect(summary).toMatchObject({ total_executions: 2, batch_count: 1, action_executed_count: 0, human_attention_count: 2 })
+
+    const authority = await server.command("runtime.command_authority_get", { command: "/opencode-wake-execution-record" }) as { risk: string; mutates_events: boolean; notes: string[]; expected_event_kinds: string[] }
+    expect(authority).toMatchObject({ risk: "medium_risk_write", mutates_events: true })
+    expect(authority.expected_event_kinds).toContain("opencode_wake_supervisor_execution_recorded")
+    expect(authority.notes.join(" ")).toContain("action_execution_status=not_executed")
+    await server.shutdown()
+
+    const noStartExistingServer = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const noStartExistingClient = new RuntimeServerClient({ server: noStartExistingServer, autoStart: true, ownsServer: true })
+    const beforeNoStartRecord = await noStartExistingServer.eventStore.readAll()
+    const noStartRecord = await noStartExistingClient.command("runtime.record_opencode_wake_supervisor_execution", { sessionId }) as { status: string; action_execution_status: string; execution_id: string }
+    expect(noStartRecord).toMatchObject({ status: "recorded", action_execution_status: "not_executed" })
+    const afterNoStartRecord = await noStartExistingServer.eventStore.readAll()
+    const noStartNewEvents = afterNoStartRecord.slice(beforeNoStartRecord.length)
+    expect(noStartNewEvents.map((event) => event.kind)).toEqual(["opencode_wake_supervisor_execution_recorded"])
+    expect(noStartNewEvents.map((event) => event.kind)).not.toContain("runtime_started")
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    await noStartExistingClient.shutdown?.()
+
+    const noStartDir = await tempProject()
+    await makeProject(noStartDir, { approvedSpec: true })
+    const noStartServer = new RuntimeServer({ projectDir: noStartDir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server: noStartServer, autoStart: true, ownsServer: true })
+    await expect(client.command("runtime.preview_opencode_wake_supervisor_execution", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.record_opencode_wake_supervisor_execution", { sessionId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_opencode_wake_supervisor_executions")).resolves.toEqual([])
+    await expect(client.command("runtime.opencode_wake_supervisor_execution_summary")).resolves.toMatchObject({ total_executions: 0 })
+    expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
+    await client.shutdown?.()
+  })
+
+  test("wake supervisor execution batch counts skipped sessions after applying status filters", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const eventStore = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const service = new OpenCodeWakeSupervisorExecutionService({
+      eventStore,
+      wakeSupervisorService: {
+        summary: async () => ({
+          total_launched_sessions: 3,
+          status_counts: { human_paused: 1 },
+          healthy_count: 0,
+          watch_count: 0,
+          stale_count: 0,
+          timed_out_count: 0,
+          needs_report_count: 0,
+          needs_commander_answer_count: 0,
+          guidance_pending_delivery_count: 0,
+          human_attention_count: 1,
+          stop_requested_count: 0,
+          session_cards: [{
+            session_id: "session_human_paused",
+            launch_id: "launch_human_paused",
+            supervisor_status: "human_paused",
+            recommended_action: "review_human_control",
+            pending_question_count: 0,
+            pending_delivery_count: 0,
+            summary_preview: "human pause requested",
+            supervisor_hash: "supervisor_hash_human_paused",
+          }],
+          generated_at: "2026-07-06T10:00:00.000Z",
+        }),
+        preview: async () => ({
+          preview_id: "preview_human_paused",
+          status: "ready",
+          session_id: "session_human_paused",
+          launch_id: "launch_human_paused",
+          supervisor_status: "human_paused",
+          recommended_action: "review_human_control",
+          pending_question_count: 0,
+          unanswered_question_count: 0,
+          pending_delivery_count: 0,
+          human_pause_requested: true,
+          human_stop_requested: false,
+          human_correction_pending: false,
+          human_override_pending: false,
+          report_required: false,
+          timed_out: false,
+          stale: false,
+          blocked_by_human: true,
+          checks: [],
+          context_sections: [],
+          evidence_refs: [],
+          blockers: [],
+          warnings: [],
+          recommended_commands: [{ label: "Review controls", command: "/opencode-human-controls session=session_human_paused", command_type: "read" }],
+          generated_at: "2026-07-06T10:00:00.000Z",
+          redacted_summary_preview: "human pause requested",
+          supervisor_hash: "supervisor_hash_human_paused",
+        }),
+      } as never,
+      now: () => new Date("2026-07-06T10:00:00.000Z"),
+      idFactory: () => "execution_filtered_1",
+      batchIdFactory: () => "batch_filtered_1",
+    })
+
+    const preview = await service.batchPreview({ status_filter: "human_paused", limit: 10 })
+    expect(preview).toMatchObject({
+      status: "ready",
+      total_candidate_sessions: 1,
+      included_session_count: 1,
+      skipped_session_count: 0,
+    })
+    const recorded = await service.recordBatch({ status_filter: "human_paused", limit: 10 })
+    expect(recorded).toMatchObject({
+      status: "recorded",
+      total_candidate_sessions: 1,
+      recorded_execution_count: 1,
+      skipped_session_count: 0,
+    })
+
+    const watchCards = Array.from({ length: 20 }, (_, offset) => {
+      const index = offset + 1
+      return {
+        session_id: `session_watch_${index}`,
+        launch_id: `launch_watch_${index}`,
+        supervisor_status: "watch",
+        recommended_action: "prepare_result_review",
+        pending_question_count: 0,
+        pending_delivery_count: 0,
+        summary_preview: "completion report needs review",
+        supervisor_hash: `supervisor_hash_watch_${index}`,
+      }
+    })
+    const watchService = new OpenCodeWakeSupervisorExecutionService({
+      eventStore,
+      wakeSupervisorService: {
+        summary: async () => ({
+          total_launched_sessions: 25,
+          status_counts: { watch: 25 },
+          healthy_count: 0,
+          watch_count: 25,
+          stale_count: 0,
+          timed_out_count: 0,
+          needs_report_count: 0,
+          needs_commander_answer_count: 0,
+          guidance_pending_delivery_count: 0,
+          human_attention_count: 0,
+          stop_requested_count: 0,
+          session_cards: watchCards,
+          generated_at: "2026-07-06T10:00:00.000Z",
+        }),
+        preview: async (input: { session_id?: string }) => ({
+          preview_id: `preview_${input.session_id}`,
+          status: "ready",
+          session_id: input.session_id!,
+          launch_id: input.session_id!.replace("session", "launch"),
+          supervisor_status: "watch",
+          recommended_action: "prepare_result_review",
+          pending_question_count: 0,
+          unanswered_question_count: 0,
+          pending_delivery_count: 0,
+          human_pause_requested: false,
+          human_stop_requested: false,
+          human_correction_pending: false,
+          human_override_pending: false,
+          report_required: false,
+          timed_out: false,
+          stale: false,
+          blocked_by_human: false,
+          checks: [],
+          context_sections: [],
+          evidence_refs: [],
+          blockers: [],
+          warnings: [],
+          recommended_commands: [{ label: "Review result", command: `/opencode-progress-latest session=${input.session_id}`, command_type: "read" }],
+          generated_at: "2026-07-06T10:00:00.000Z",
+          redacted_summary_preview: "completion report needs review",
+          supervisor_hash: `supervisor_hash_${input.session_id}`,
+        }),
+      } as never,
+      now: () => new Date("2026-07-06T10:00:00.000Z"),
+      idFactory: () => "execution_watch_1",
+      batchIdFactory: () => "batch_watch_1",
+    })
+    const watchPreview = await watchService.batchPreview({ status_filter: "watch", limit: 20 })
+    expect(watchPreview).toMatchObject({
+      status: "partial",
+      total_candidate_sessions: 25,
+      included_session_count: 20,
+      skipped_session_count: 5,
+    })
   })
 
   test("wake supervisor summary counts all matching launched sessions before applying card limit", async () => {

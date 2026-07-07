@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -61,6 +61,8 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly commanderGuidanceRecords: CommanderGuidanceResultSummary[] = []
   private readonly commanderGuidanceDeliveryRecords: CommanderGuidanceDeliveryResultSummary[] = []
   private readonly opencodeHumanControlRecords: OpenCodeHumanControlResultSummary[] = []
+  private readonly opencodeWakeSupervisorExecutionRecords: OpenCodeWakeSupervisorExecutionResultSummary[] = []
+  private readonly opencodeWakeSupervisorBatchRecords: OpenCodeWakeSupervisorBatchResultSummary[] = []
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly executorReviewProposalCreates: ExecutorReviewProposalCreateResultSummary[] = []
   private readonly executorReviewProposalReviewRequests: ExecutorReviewProposalReviewRequestResultSummary[] = []
@@ -547,6 +549,22 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.previewOpenCodeWakeSupervisor(payload)
       case "runtime.opencode_wake_supervisor_summary":
         return this.opencodeWakeSupervisorSummary(payload)
+      case "runtime.preview_opencode_wake_supervisor_execution":
+        return this.previewOpenCodeWakeSupervisorExecution(payload)
+      case "runtime.record_opencode_wake_supervisor_execution":
+        return this.recordOpenCodeWakeSupervisorExecution(payload)
+      case "runtime.preview_opencode_wake_supervisor_batch":
+        return this.previewOpenCodeWakeSupervisorBatch(payload)
+      case "runtime.record_opencode_wake_supervisor_batch":
+        return this.recordOpenCodeWakeSupervisorBatch(payload)
+      case "runtime.list_opencode_wake_supervisor_executions":
+        return this.listOpenCodeWakeSupervisorExecutions(payload)
+      case "runtime.get_opencode_wake_supervisor_execution":
+        return this.getOpenCodeWakeSupervisorExecution(String(payload.executionId ?? payload.execution_id ?? ""))
+      case "runtime.latest_opencode_wake_supervisor_execution":
+        return this.latestOpenCodeWakeSupervisorExecution(payload)
+      case "runtime.opencode_wake_supervisor_execution_summary":
+        return this.opencodeWakeSupervisorExecutionSummary(payload)
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -3633,7 +3651,9 @@ export class FakeRuntimeClient implements RuntimeClient {
     const cards = matchingCards.slice(0, limit)
     return {
       total_launched_sessions: activeLaunches.length,
+      status_counts: fakeSupervisorStatusCounts(matchingCards),
       healthy_count: matchingCards.filter((card) => card.supervisor_status === "healthy").length,
+      watch_count: matchingCards.filter((card) => card.supervisor_status === "watch").length,
       stale_count: matchingCards.filter((card) => card.supervisor_status === "stale").length,
       timed_out_count: matchingCards.filter((card) => card.supervisor_status === "timed_out").length,
       needs_report_count: matchingCards.filter((card) => card.supervisor_status === "needs_report").length,
@@ -3642,6 +3662,172 @@ export class FakeRuntimeClient implements RuntimeClient {
       human_attention_count: matchingCards.filter((card) => card.supervisor_status === "human_attention" || card.supervisor_status === "human_paused").length,
       stop_requested_count: matchingCards.filter((card) => card.supervisor_status === "stop_requested").length,
       session_cards: cards,
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private previewOpenCodeWakeSupervisorExecution(payload: Record<string, unknown>): OpenCodeWakeSupervisorExecutionPreviewSummary {
+    const supervisor = this.previewOpenCodeWakeSupervisor(payload)
+    const evidenceRefs = fakeWakeExecutionEvidence(supervisor.evidence_refs)
+    const commands = fakeWakeExecutionCommands(supervisor.recommended_commands)
+    const executionHash = fakeNavigationStageHash(JSON.stringify({
+      mode: "single_session",
+      sessionId: supervisor.session_id,
+      launchId: supervisor.launch_id,
+      supervisorHash: supervisor.supervisor_hash,
+      status: supervisor.supervisor_status,
+      action: supervisor.recommended_action,
+      evidence: evidenceRefs.map((item) => `${item.evidence_kind}:${item.evidence_id}:${item.status ?? ""}`),
+    }))
+    const blockers = supervisor.status === "blocked" ? supervisor.blockers : []
+    return {
+      preview_id: `fake-wake-execution-preview-${executionHash.slice(0, 12)}`,
+      status: blockers.length ? "blocked" : supervisor.status === "partial" ? "partial" : "ready",
+      can_record: blockers.length === 0,
+      execution_mode: "single_session",
+      session_id: supervisor.session_id,
+      launch_id: supervisor.launch_id,
+      supervisor_preview_id: supervisor.preview_id,
+      supervisor_hash: supervisor.supervisor_hash,
+      supervisor_status: supervisor.supervisor_status,
+      recommended_action: supervisor.recommended_action,
+      action_execution_status: "not_executed",
+      recommended_commands_preview: commands,
+      evidence_refs: evidenceRefs,
+      context_section_count: supervisor.context_sections.length,
+      blockers,
+      warnings: [
+        "fake wake execution records metadata only; recommended commands are not executed",
+        "action_execution_status=not_executed",
+        ...supervisor.warnings.slice(0, 4),
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `fake wake execution would record ${supervisor.supervisor_status} and recommend ${supervisor.recommended_action}`,
+      execution_hash: executionHash,
+    }
+  }
+
+  private recordOpenCodeWakeSupervisorExecution(payload: Record<string, unknown>): OpenCodeWakeSupervisorExecutionResultSummary {
+    const preview = this.previewOpenCodeWakeSupervisorExecution(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const executionId = `fake_wake_execution_${preview.execution_hash.slice(0, 12)}_${this.opencodeWakeSupervisorExecutionRecords.length + 1}`
+    const result = fakeWakeExecutionResult(preview, executionId, preview.can_record ? dryRun ? "dry_run" : "recorded" : "blocked", this.opencodeWakeSupervisorExecutionRecords.length)
+    if (!dryRun && result.status === "recorded") this.opencodeWakeSupervisorExecutionRecords.unshift(result)
+    return result
+  }
+
+  private previewOpenCodeWakeSupervisorBatch(payload: Record<string, unknown>): OpenCodeWakeSupervisorBatchPreviewSummary {
+    const limit = readLimit(payload.limit, 20)
+    const statusFilter = optionalString(payload.statusFilter ?? payload.status_filter ?? payload.status)
+    const summary = this.opencodeWakeSupervisorSummary({ ...payload, limit })
+    const previews = summary.session_cards.slice(0, limit).map((card) => this.previewOpenCodeWakeSupervisorExecution({
+      ...payload,
+      sessionId: card.session_id,
+      launchId: card.launch_id,
+    })).filter((item) => item.can_record)
+    const totalCandidateSessions = fakeWakeSupervisorBatchCandidateCount(summary, statusFilter)
+    const skipped = Math.max(0, totalCandidateSessions - previews.length)
+    const hash = fakeNavigationStageHash(JSON.stringify({
+      mode: "batch_active_sessions",
+      total: totalCandidateSessions,
+      included: previews.map((item) => item.execution_hash),
+      skipped,
+    }))
+    const blockers = totalCandidateSessions === 0 ? ["no active launch_started or launched OpenCode sessions are available for batch wake execution"] : []
+    return {
+      preview_id: `fake-wake-batch-preview-${hash.slice(0, 12)}`,
+      status: blockers.length ? "blocked" : skipped > 0 || previews.some((item) => item.status === "partial") ? "partial" : "ready",
+      can_record: blockers.length === 0 && previews.length > 0,
+      execution_mode: "batch_active_sessions",
+      total_candidate_sessions: totalCandidateSessions,
+      included_session_count: previews.length,
+      skipped_session_count: skipped,
+      session_previews: previews,
+      blockers,
+      warnings: ["fake batch wake execution records metadata only; recommended commands are not executed"],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `fake batch wake execution would record ${previews.length} sessions without executing actions`,
+      execution_hash: hash,
+    }
+  }
+
+  private recordOpenCodeWakeSupervisorBatch(payload: Record<string, unknown>): OpenCodeWakeSupervisorBatchResultSummary {
+    const preview = this.previewOpenCodeWakeSupervisorBatch(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const batchId = `fake_wake_batch_${preview.execution_hash.slice(0, 12)}_${this.opencodeWakeSupervisorBatchRecords.length + 1}`
+    const records: OpenCodeWakeSupervisorExecutionRecordSummary[] = []
+    if (preview.can_record) {
+      for (const sessionPreview of preview.session_previews) {
+        const executionId = `fake_wake_execution_${sessionPreview.execution_hash.slice(0, 12)}_${this.opencodeWakeSupervisorExecutionRecords.length + records.length + 1}`
+        const result = fakeWakeExecutionResult({ ...sessionPreview, execution_mode: "batch_active_sessions" }, executionId, dryRun ? "dry_run" : "recorded", this.opencodeWakeSupervisorExecutionRecords.length + records.length)
+        records.push(recordFromFakeWakeExecution(result))
+        if (!dryRun) this.opencodeWakeSupervisorExecutionRecords.unshift(result)
+      }
+    }
+    const result: OpenCodeWakeSupervisorBatchResultSummary = {
+      batch_id: batchId,
+      status: preview.can_record ? dryRun ? "dry_run" : "recorded" : "blocked",
+      execution_mode: "batch_active_sessions",
+      total_candidate_sessions: preview.total_candidate_sessions,
+      recorded_execution_count: preview.can_record ? records.length : 0,
+      skipped_session_count: preview.skipped_session_count,
+      execution_records: preview.can_record ? records : [],
+      action_execution_status: "not_executed",
+      recorded_at: new Date(this.opencodeWakeSupervisorBatchRecords.length * 1000).toISOString(),
+      recorded_by: "operator",
+      error: preview.can_record ? undefined : preview.blockers[0] ?? "OpenCode wake supervisor batch execution is blocked",
+      batch_hash: preview.execution_hash,
+      recommended_commands: [
+        { label: "List wake executions", command: "/opencode-wake-executions", command_type: "read", notes: "read fake wake supervisor execution metadata" },
+      ],
+    }
+    if (!dryRun && result.status === "recorded") this.opencodeWakeSupervisorBatchRecords.unshift(result)
+    return result
+  }
+
+  private listOpenCodeWakeSupervisorExecutions(payload: Record<string, unknown>): OpenCodeWakeSupervisorExecutionRecordSummary[] {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchId = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    const status = optionalString(payload.supervisorStatus ?? payload.supervisor_status ?? payload.status)
+    const action = optionalString(payload.recommendedAction ?? payload.recommended_action ?? payload.action)
+    const mode = optionalString(payload.executionMode ?? payload.execution_mode ?? payload.mode)
+    return this.opencodeWakeSupervisorExecutionRecords
+      .filter((item) => !sessionId || item.session_id === sessionId)
+      .filter((item) => !launchId || item.launch_id === launchId)
+      .filter((item) => !status || item.supervisor_status === status)
+      .filter((item) => !action || item.recommended_action === action)
+      .filter((item) => !mode || item.execution_mode === mode)
+      .slice(0, readLimit(payload.limit, 20))
+      .map(recordFromFakeWakeExecution)
+  }
+
+  private getOpenCodeWakeSupervisorExecution(id: string): OpenCodeWakeSupervisorExecutionResultSummary | null {
+    return this.opencodeWakeSupervisorExecutionRecords.find((item) => item.execution_id === id) ?? null
+  }
+
+  private latestOpenCodeWakeSupervisorExecution(payload: Record<string, unknown>): OpenCodeWakeSupervisorExecutionResultSummary | null {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchId = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    return this.opencodeWakeSupervisorExecutionRecords.find((item) => (!sessionId || item.session_id === sessionId) && (!launchId || item.launch_id === launchId)) ?? null
+  }
+
+  private opencodeWakeSupervisorExecutionSummary(payload: Record<string, unknown>): OpenCodeWakeSupervisorExecutionSummaryState {
+    const records = this.opencodeWakeSupervisorExecutionRecords.map(recordFromFakeWakeExecution)
+    return {
+      total_executions: records.length,
+      session_count: new Set(records.map((item) => item.session_id).filter(Boolean)).size,
+      batch_count: this.opencodeWakeSupervisorBatchRecords.length,
+      healthy_count: records.filter((item) => item.supervisor_status === "healthy").length,
+      watch_count: records.filter((item) => item.supervisor_status === "watch").length,
+      needs_report_count: records.filter((item) => item.supervisor_status === "needs_report").length,
+      needs_commander_answer_count: records.filter((item) => item.supervisor_status === "needs_commander_answer").length,
+      guidance_pending_delivery_count: records.filter((item) => item.supervisor_status === "guidance_pending_delivery").length,
+      human_attention_count: records.filter((item) => item.supervisor_status === "human_attention" || item.supervisor_status === "human_paused" || item.supervisor_status === "stop_requested").length,
+      timed_out_count: records.filter((item) => item.supervisor_status === "timed_out").length,
+      stale_count: records.filter((item) => item.supervisor_status === "stale").length,
+      blocked_count: records.filter((item) => item.supervisor_status === "blocked").length,
+      action_executed_count: 0,
+      latest_executions: records.slice(0, readLimit(payload.limit, 10)),
       generated_at: new Date(0).toISOString(),
     }
   }
@@ -10013,6 +10199,73 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       notes: ["Read-only aggregate wake supervisor summary over active launched OpenCode sessions. It appends no events, executes no scheduled wake tick, sends no OpenCode prompt, controls no process, calls no provider/MCP, writes no research.db, and mutates no missions."],
       out: ["scheduled wake execution", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "research.db writes", "mission/proposal/review/apply mutation", "result ingestion", "checkpoint creation"],
     }),
+    fakeCommandAuthorityRecord("/opencode-wake-execution-preview", "runtime.preview_opencode_wake_supervisor_execution", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-supervisor-preview", "/opencode-wake-executions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+      aliases: ["/wake-execution-preview"],
+      notes: ["Read-only OpenCode wake-supervisor execution preview. It consumes the 9K preview and keeps action_execution_status=not_executed; recommended commands are not executed."],
+      out: ["scheduled daemon/background runner", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "recommended command execution", "research.db writes", "mission/proposal/review/apply mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-execution-dry-run", "runtime.record_opencode_wake_supervisor_execution", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-execution-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+      aliases: ["/wake-execution-dry-run"],
+      notes: ["Dry-run OpenCode wake-supervisor execution validates the preview without appending events or executing recommended commands."],
+      out: ["event append", "recommended command execution", "provider calls", "OpenCode prompt send", "process control", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-execution-record", "runtime.record_opencode_wake_supervisor_execution", "medium_risk_write", "opencode_runtime", "opencode_handoff", {
+      mutates: true,
+      lock: true,
+      events: ["opencode_wake_supervisor_execution_recorded"],
+      reads: ["/opencode-wake-execution-preview", "/opencode-wake-executions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+      aliases: ["/wake-execution-record"],
+      notes: ["Records bounded OpenCode wake-supervisor execution metadata only. action_execution_status=not_executed and no recommended commands are executed."],
+      out: ["scheduled daemon/background runner", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "recommended command execution", "research.db writes", "mission/proposal/review/apply mutation", "checkpoint/result ingestion"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-batch-preview", "runtime.preview_opencode_wake_supervisor_batch", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-supervisor-summary", "/opencode-wake-executions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+      aliases: ["/wake-batch-preview"],
+      notes: ["Read-only capped batch wake-supervisor execution preview; no scheduled daemon and no recommended action execution."],
+      out: ["event append", "recommended command execution", "provider calls", "OpenCode prompt send", "process control", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-batch-dry-run", "runtime.record_opencode_wake_supervisor_batch", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-batch-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+      aliases: ["/wake-batch-dry-run"],
+      notes: ["Dry-run batch wake-supervisor execution appends no events and executes no recommended commands."],
+      out: ["event append", "recommended command execution", "provider calls", "OpenCode prompt send", "process control", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-batch-record", "runtime.record_opencode_wake_supervisor_batch", "medium_risk_write", "opencode_runtime", "opencode_handoff", {
+      mutates: true,
+      lock: true,
+      events: ["opencode_wake_supervisor_batch_recorded", "opencode_wake_supervisor_execution_recorded"],
+      reads: ["/opencode-wake-batch-preview", "/opencode-wake-executions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+      aliases: ["/wake-batch-record"],
+      notes: ["Records bounded batch OpenCode wake-supervisor execution metadata only. action_execution_status=not_executed for every session."],
+      out: ["scheduled daemon/background runner", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "recommended command execution", "research.db writes", "mission/proposal/review/apply mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-executions", "runtime.list_opencode_wake_supervisor_executions", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-execution-show", "/opencode-wake-execution-latest"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+      aliases: ["/wake-executions"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-execution-latest", "runtime.latest_opencode_wake_supervisor_execution", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-executions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+      aliases: ["/wake-execution-latest"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-execution-show", "runtime.get_opencode_wake_supervisor_execution", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-executions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-wake-execution-summary", "runtime.opencode_wake_supervisor_execution_summary", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-wake-executions"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"],
+      aliases: ["/wake-execution-summary"],
+    }),
     fakeCommandAuthorityRecord("/research-memory-summary", "runtime.research_memory_summary", "safe_read", "none", "research", {
       targeted: ["tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"],
       notes: ["Read-only research memory summary; no provider calls, no MCP/online research, no research.db writes, no mission/proposal creation, no OpenCode launch."],
@@ -10523,6 +10776,88 @@ function recordFromOpenCodeHumanControl(item: OpenCodeHumanControlResultSummary)
   }
 }
 
+function fakeWakeExecutionEvidence(refs: OpenCodeWakeSupervisorEvidenceRefSummary[]): OpenCodeWakeSupervisorExecutionEvidenceRefSummary[] {
+  return refs.slice(0, 20).map((ref) => ({
+    evidence_kind: ref.evidence_kind,
+    evidence_id: ref.evidence_id,
+    status: ref.status,
+    summary_preview: ref.summary_preview,
+    pointer_only: true,
+  }))
+}
+
+function fakeWakeExecutionCommands(commands: OpenCodeWakeSupervisorPreviewSummary["recommended_commands"]): OpenCodeWakeSupervisorExecutionCommandSummary[] {
+  return commands.slice(0, 12).map((command) => ({
+    label: command.label,
+    command: command.command,
+    command_type: command.command_type,
+    requires_active_runtime: command.requires_active_runtime,
+    notes: [command.notes, "preview only; not executed by fake 9L wake supervisor execution"].filter(Boolean).join("; "),
+  }))
+}
+
+function fakeWakeSupervisorBatchCandidateCount(summary: OpenCodeWakeSupervisorSummaryState, statusFilter?: string): number {
+  if (!statusFilter) return summary.total_launched_sessions
+  if (typeof summary.status_counts[statusFilter] === "number") return summary.status_counts[statusFilter]
+  if (statusFilter === "healthy") return summary.healthy_count
+  if (statusFilter === "watch") return summary.watch_count
+  if (statusFilter === "stale") return summary.stale_count
+  if (statusFilter === "timed_out") return summary.timed_out_count
+  if (statusFilter === "needs_report") return summary.needs_report_count
+  if (statusFilter === "needs_commander_answer") return summary.needs_commander_answer_count
+  if (statusFilter === "guidance_pending_delivery") return summary.guidance_pending_delivery_count
+  if (statusFilter === "human_attention" || statusFilter === "human_paused") return summary.human_attention_count
+  if (statusFilter === "stop_requested") return summary.stop_requested_count
+  return summary.session_cards.length
+}
+
+function fakeWakeExecutionResult(
+  preview: OpenCodeWakeSupervisorExecutionPreviewSummary,
+  executionId: string,
+  status: OpenCodeWakeSupervisorExecutionResultSummary["status"],
+  index: number,
+): OpenCodeWakeSupervisorExecutionResultSummary {
+  return {
+    execution_id: executionId,
+    status,
+    execution_mode: preview.execution_mode,
+    session_id: preview.session_id,
+    launch_id: preview.launch_id,
+    supervisor_preview_id: preview.supervisor_preview_id,
+    supervisor_hash: preview.supervisor_hash,
+    supervisor_status: preview.supervisor_status,
+    recommended_action: preview.recommended_action,
+    action_execution_status: "not_executed",
+    recommended_commands_preview: preview.recommended_commands_preview,
+    evidence_refs: preview.evidence_refs,
+    context_section_count: preview.context_section_count,
+    recorded_at: new Date(index * 1000).toISOString(),
+    recorded_by: "operator",
+    error: status === "blocked" ? preview.blockers[0] ?? "OpenCode wake supervisor execution is blocked" : undefined,
+    execution_hash: preview.execution_hash,
+    recommended_commands: [
+      { label: "List wake executions", command: preview.session_id ? `/opencode-wake-executions session=${preview.session_id}` : "/opencode-wake-executions", command_type: "read", notes: "read fake wake supervisor execution metadata" },
+      { label: "Preview supervisor", command: preview.session_id ? `/opencode-wake-supervisor-preview session=${preview.session_id}` : "/opencode-wake-supervisor-summary", command_type: "read", notes: "recompute read-only supervisor preview" },
+    ],
+  }
+}
+
+function recordFromFakeWakeExecution(item: OpenCodeWakeSupervisorExecutionResultSummary): OpenCodeWakeSupervisorExecutionRecordSummary {
+  return {
+    execution_id: item.execution_id,
+    execution_mode: item.execution_mode,
+    session_id: item.session_id,
+    launch_id: item.launch_id,
+    supervisor_status: item.supervisor_status,
+    recommended_action: item.recommended_action,
+    action_execution_status: "not_executed",
+    recorded_at: item.recorded_at,
+    recorded_by: item.recorded_by,
+    summary_preview: `wake supervisor recorded ${item.supervisor_status ?? "unknown"}; recommended ${item.recommended_action ?? "unknown"}; action_execution_status=not_executed`,
+    execution_hash: item.execution_hash,
+  }
+}
+
 function fakeSupervisorDecision(
   latestProgress: OpenCodeProgressResultSummary | null,
   latestWatchdog: OpenCodeWatchdogResultSummary | null,
@@ -10667,6 +11002,12 @@ function fakeSupervisorCard(preview: OpenCodeWakeSupervisorPreviewSummary): Open
     summary_preview: preview.redacted_summary_preview,
     supervisor_hash: preview.supervisor_hash,
   }
+}
+
+function fakeSupervisorStatusCounts(cards: OpenCodeWakeSupervisorSessionCardSummary[]): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const card of cards) counts[card.supervisor_status] = (counts[card.supervisor_status] ?? 0) + 1
+  return counts
 }
 
 function readHumanControlKind(value: string | undefined): string {

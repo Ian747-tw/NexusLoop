@@ -123,6 +123,10 @@ const WRITE_COMMANDS = new Set([
   "human-force-report",
   "opencode-human-note",
   "human-note",
+  "opencode-wake-execution-record",
+  "wake-execution-record",
+  "opencode-wake-batch-record",
+  "wake-batch-record",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

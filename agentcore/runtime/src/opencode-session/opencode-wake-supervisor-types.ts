@@ -131,7 +131,9 @@ export type OpenCodeWakeSupervisorSessionCard = {
 
 export type OpenCodeWakeSupervisorSummary = {
   total_launched_sessions: number
+  status_counts: Partial<Record<OpenCodeWakeSupervisorStatus, number>>
   healthy_count: number
+  watch_count: number
   stale_count: number
   timed_out_count: number
   needs_report_count: number

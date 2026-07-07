@@ -474,6 +474,42 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("OpenCode wake supervisor execution slash commands are exact whitelist entries", () => {
+    let result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-wake-execution-preview session=session-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-wake-execution-preview", args: ["session=session-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/wake-execution-record launch=launch-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "wake-execution-record", args: ["launch=launch-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-wake-batch-record limit=10",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-wake-batch-record", args: ["limit=10"] }])
+
+    for (const message of ["/tmp/wake-execution", "/path/opencode-wake-execution-record", ".opencode-wake-execution-record session=session-1", ":opencode-wake-execution-record session=session-1"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("review slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -992,6 +1028,24 @@ describe("TUI keyboard command model", () => {
       ["/opencode-wake-supervisor-summary status=human_attention", "opencode-wake-supervisor-summary", ["status=human_attention"]],
       ["/wake-supervisor-summary", "wake-supervisor-summary", []],
       ["/supervisor-summary", "supervisor-summary", []],
+      ["/opencode-wake-execution-preview session=session-1", "opencode-wake-execution-preview", ["session=session-1"]],
+      ["/wake-execution-preview session=session-1", "wake-execution-preview", ["session=session-1"]],
+      ["/opencode-wake-execution-dry-run session=session-1", "opencode-wake-execution-dry-run", ["session=session-1"]],
+      ["/opencode-wake-execution-record session=session-1", "opencode-wake-execution-record", ["session=session-1"]],
+      ["/wake-execution-record session=session-1", "wake-execution-record", ["session=session-1"]],
+      ["/opencode-wake-batch-preview", "opencode-wake-batch-preview", []],
+      ["/wake-batch-preview", "wake-batch-preview", []],
+      ["/opencode-wake-batch-dry-run", "opencode-wake-batch-dry-run", []],
+      ["/wake-batch-dry-run", "wake-batch-dry-run", []],
+      ["/opencode-wake-batch-record", "opencode-wake-batch-record", []],
+      ["/wake-batch-record", "wake-batch-record", []],
+      ["/opencode-wake-executions session=session-1", "opencode-wake-executions", ["session=session-1"]],
+      ["/wake-executions session=session-1", "wake-executions", ["session=session-1"]],
+      ["/opencode-wake-execution-latest session=session-1", "opencode-wake-execution-latest", ["session=session-1"]],
+      ["/wake-execution-latest session=session-1", "wake-execution-latest", ["session=session-1"]],
+      ["/opencode-wake-execution-show execution-1", "opencode-wake-execution-show", ["execution-1"]],
+      ["/opencode-wake-execution-summary", "opencode-wake-execution-summary", []],
+      ["/wake-execution-summary", "wake-execution-summary", []],
       ["/opencode-ask-commander-preview session=session-1 question=prefer A or B", "opencode-ask-commander-preview", ["session=session-1", "question=prefer", "A", "or", "B"]],
       ["/ask-commander-preview session=session-1 question=prefer A or B", "ask-commander-preview", ["session=session-1", "question=prefer", "A", "or", "B"]],
       ["/opencode-ask-commander-dry-run session=session-1 question=prefer A or B", "opencode-ask-commander-dry-run", ["session=session-1", "question=prefer", "A", "or", "B"]],

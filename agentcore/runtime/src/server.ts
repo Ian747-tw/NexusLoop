@@ -96,6 +96,8 @@ import { OpenCodeHumanControlService, readOpenCodeHumanControlPreviewInput, read
 import type { OpenCodeHumanControlPreview, OpenCodeHumanControlRecord, OpenCodeHumanControlResult, OpenCodeHumanControlSummary } from "./opencode-session/opencode-human-control-types"
 import { OpenCodeWakeSupervisorService, readOpenCodeWakeSupervisorPreviewInput, readOpenCodeWakeSupervisorSummaryInput } from "./opencode-session/opencode-wake-supervisor-service"
 import type { OpenCodeWakeSupervisorPreview, OpenCodeWakeSupervisorSummary } from "./opencode-session/opencode-wake-supervisor-types"
+import { OpenCodeWakeSupervisorExecutionService, readOpenCodeWakeSupervisorBatchPreviewInput, readOpenCodeWakeSupervisorBatchRecordInput, readOpenCodeWakeSupervisorExecutionPreviewInput, readOpenCodeWakeSupervisorExecutionRecordInput } from "./opencode-session/opencode-wake-supervisor-execution-service"
+import type { OpenCodeWakeSupervisorBatchPreview, OpenCodeWakeSupervisorBatchResult, OpenCodeWakeSupervisorExecutionPreview, OpenCodeWakeSupervisorExecutionRecord, OpenCodeWakeSupervisorExecutionResult, OpenCodeWakeSupervisorExecutionSummary } from "./opencode-session/opencode-wake-supervisor-execution-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -340,6 +342,7 @@ export class RuntimeServer {
   private commanderGuidanceDeliveryServiceInstance: CommanderGuidanceDeliveryService | null = null
   private opencodeHumanControlServiceInstance: OpenCodeHumanControlService | null = null
   private opencodeWakeSupervisorServiceInstance: OpenCodeWakeSupervisorService | null = null
+  private opencodeWakeSupervisorExecutionServiceInstance: OpenCodeWakeSupervisorExecutionService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -1065,6 +1068,32 @@ export class RuntimeServer {
         return this.previewOpenCodeWakeSupervisor(readOpenCodeWakeSupervisorPreviewInput(payload))
       case "runtime.opencode_wake_supervisor_summary":
         return this.openCodeWakeSupervisorSummary(readOpenCodeWakeSupervisorSummaryInput(payload))
+      case "runtime.preview_opencode_wake_supervisor_execution":
+        return this.previewOpenCodeWakeSupervisorExecution(readOpenCodeWakeSupervisorExecutionPreviewInput(payload))
+      case "runtime.record_opencode_wake_supervisor_execution":
+        return this.recordOpenCodeWakeSupervisorExecution(readOpenCodeWakeSupervisorExecutionRecordInput(payload))
+      case "runtime.preview_opencode_wake_supervisor_batch":
+        return this.previewOpenCodeWakeSupervisorBatch(readOpenCodeWakeSupervisorBatchPreviewInput(payload))
+      case "runtime.record_opencode_wake_supervisor_batch":
+        return this.recordOpenCodeWakeSupervisorBatch(readOpenCodeWakeSupervisorBatchRecordInput(payload))
+      case "runtime.list_opencode_wake_supervisor_executions":
+        return this.listOpenCodeWakeSupervisorExecutions({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+          supervisor_status: optionalString(payload.supervisorStatus ?? payload.supervisor_status ?? payload.status, "supervisorStatus"),
+          recommended_action: optionalString(payload.recommendedAction ?? payload.recommended_action ?? payload.action, "recommendedAction"),
+          execution_mode: optionalString(payload.executionMode ?? payload.execution_mode ?? payload.mode, "executionMode"),
+        })
+      case "runtime.get_opencode_wake_supervisor_execution":
+        return this.getOpenCodeWakeSupervisorExecution(requiredString(payload.executionId ?? payload.execution_id, "executionId"))
+      case "runtime.latest_opencode_wake_supervisor_execution":
+        return this.latestOpenCodeWakeSupervisorExecution({
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+        })
+      case "runtime.opencode_wake_supervisor_execution_summary":
+        return this.openCodeWakeSupervisorExecutionSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -2138,6 +2167,40 @@ export class RuntimeServer {
 
   async openCodeWakeSupervisorSummary(input: Parameters<OpenCodeWakeSupervisorService["summary"]>[0] = {}): Promise<OpenCodeWakeSupervisorSummary> {
     return this.opencodeWakeSupervisorService().summary(input)
+  }
+
+  async previewOpenCodeWakeSupervisorExecution(input: Parameters<OpenCodeWakeSupervisorExecutionService["preview"]>[0] = {}): Promise<OpenCodeWakeSupervisorExecutionPreview> {
+    return this.opencodeWakeSupervisorExecutionService().preview(input)
+  }
+
+  async recordOpenCodeWakeSupervisorExecution(input: Parameters<OpenCodeWakeSupervisorExecutionService["record"]>[0] = {}): Promise<OpenCodeWakeSupervisorExecutionResult> {
+    if (input.dry_run === true) return this.opencodeWakeSupervisorExecutionService().record(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeWakeSupervisorExecutionService().record(input))
+  }
+
+  async previewOpenCodeWakeSupervisorBatch(input: Parameters<OpenCodeWakeSupervisorExecutionService["batchPreview"]>[0] = {}): Promise<OpenCodeWakeSupervisorBatchPreview> {
+    return this.opencodeWakeSupervisorExecutionService().batchPreview(input)
+  }
+
+  async recordOpenCodeWakeSupervisorBatch(input: Parameters<OpenCodeWakeSupervisorExecutionService["recordBatch"]>[0] = {}): Promise<OpenCodeWakeSupervisorBatchResult> {
+    if (input.dry_run === true) return this.opencodeWakeSupervisorExecutionService().recordBatch(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeWakeSupervisorExecutionService().recordBatch(input))
+  }
+
+  async listOpenCodeWakeSupervisorExecutions(input: Parameters<OpenCodeWakeSupervisorExecutionService["list"]>[0] = {}): Promise<OpenCodeWakeSupervisorExecutionRecord[]> {
+    return this.opencodeWakeSupervisorExecutionService().list(input)
+  }
+
+  async getOpenCodeWakeSupervisorExecution(executionId: string): Promise<OpenCodeWakeSupervisorExecutionResult | null> {
+    return this.opencodeWakeSupervisorExecutionService().get(executionId)
+  }
+
+  async latestOpenCodeWakeSupervisorExecution(input: Parameters<OpenCodeWakeSupervisorExecutionService["latest"]>[0] = {}): Promise<OpenCodeWakeSupervisorExecutionResult | null> {
+    return this.opencodeWakeSupervisorExecutionService().latest(input)
+  }
+
+  async openCodeWakeSupervisorExecutionSummary(input: Parameters<OpenCodeWakeSupervisorExecutionService["summary"]>[0] = {}): Promise<OpenCodeWakeSupervisorExecutionSummary> {
+    return this.opencodeWakeSupervisorExecutionService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -3326,6 +3389,14 @@ export class RuntimeServer {
       humanControlService: this.opencodeHumanControlService(),
     })
     return this.opencodeWakeSupervisorServiceInstance
+  }
+
+  private opencodeWakeSupervisorExecutionService(): OpenCodeWakeSupervisorExecutionService {
+    this.opencodeWakeSupervisorExecutionServiceInstance ??= new OpenCodeWakeSupervisorExecutionService({
+      eventStore: this.eventStore,
+      wakeSupervisorService: this.opencodeWakeSupervisorService(),
+    })
+    return this.opencodeWakeSupervisorExecutionServiceInstance
   }
 
   private createOpenCodeLaunchAdapter(): OpenCodeLaunchAdapter {
