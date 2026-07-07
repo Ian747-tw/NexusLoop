@@ -6082,11 +6082,13 @@ describe("runtime UI effects", () => {
     const sessionId = state.opencodeSessions?.latestPlan?.session_id
     expect(sessionId).toBeTruthy()
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress", args: [`session=${sessionId}`, "summary=done", "token=abc123"] })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress", args: [`session=${sessionId}`, "summary=done", "token=abc123"] })
+	    const progressId = state.opencodeProgress?.latestResult?.progress_id
+	    expect(progressId).toBeTruthy()
 
-    const commandCountBeforePreview = runtime.sentCommands.length
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-preview", args: [`session=${sessionId}`, "summary=implemented candidate fix token=abc123"] })
+	    const commandCountBeforePreview = runtime.sentCommands.length
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-preview", args: [`session=${sessionId}`, "summary=implemented candidate fix token=abc123"] })
     expect(state.opencodeResultReports?.preview).toMatchObject({
       status: "ready",
       can_record: true,
@@ -6101,9 +6103,11 @@ describe("runtime UI effects", () => {
     })
     expect(runtime.sentCommands).toHaveLength(commandCountBeforePreview)
 
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", "summary=implemented candidate fix token=abc123", "outcome=tests passed"] })
-    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "dry_run", result_kind: "completion_report", review_state: "needs_commander_review" })
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reports", args: [`session=${sessionId}`] })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", "summary=implemented candidate fix token=abc123", "outcome=tests passed"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "dry_run", result_kind: "completion_report", review_state: "needs_commander_review" })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`progress=${progressId}`, "kind=completion_report", "outcome=tests passed"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "dry_run", result_kind: "completion_report", review_state: "needs_commander_review" })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reports", args: [`session=${sessionId}`] })
     expect(state.opencodeResultReports?.records).toHaveLength(0)
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report", args: [`session=${sessionId}`, "kind=completion_report", "summary=implemented candidate fix token=abc123", "outcome=tests passed", "changed_files=fileA.ts", "tests_run=bun-test", "claims=fix-works", "followups=commander-review"] })

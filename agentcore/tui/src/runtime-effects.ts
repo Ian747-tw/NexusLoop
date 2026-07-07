@@ -17031,7 +17031,7 @@ function opencodeResultReportEffect(
     } else throw new Error("OpenCode result report arg is unsupported")
   }
   if (!effect.sessionId && !effect.launchId && !effect.progressId && !effect.watchdogId && !effect.questionId && !effect.guidanceId && !effect.deliveryId && !effect.wakeExecutionId && !effect.wakeActionExecutionId) throw new Error("OpenCode result report requires session=<id>, launch=<id>, or linked evidence")
-  if (requireSummary && !effect.summary) throw new Error("OpenCode result report requires summary=<text>")
+  if (requireSummary && !effect.summary && !effect.progressId) throw new Error("OpenCode result report requires summary=<text>")
   return effect
 }
 
