@@ -506,6 +506,7 @@ const runtimeCommands = new Set([
   "opencode-result-review-latest",
   "result-review-latest",
   "opencode-result-review-show",
+  "result-review-show",
   "opencode-result-review-summary",
   "result-review-summary",
   "research-memory-summary",

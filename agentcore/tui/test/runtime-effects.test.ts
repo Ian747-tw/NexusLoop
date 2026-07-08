@@ -6243,7 +6243,7 @@ describe("runtime UI effects", () => {
     expect(state.opencodeResultReviews?.records).toEqual([expect.objectContaining({ decision: "needs_revision", next_step: "request_revision" })])
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-review-latest", args: [`report=${reportId}`] })
     expect(state.opencodeResultReviews?.latest).toMatchObject({ review_id: reviewId, decision: "accepted" })
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-review-show", args: [reviewId!] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "result-review-show", args: [reviewId!] })
     expect(state.opencodeResultReviews?.selected).toMatchObject({ review_id: reviewId, decision: "accepted" })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-review-summary", args: [] })
     expect(state.opencodeResultReviews?.summary).toMatchObject({ total_reviews: 3, accepted_count: 1, rejected_count: 1, needs_revision_count: 1, research_ingestion_recommended_count: 1 })

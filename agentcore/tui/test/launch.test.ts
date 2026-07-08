@@ -1682,6 +1682,8 @@ describe("TUI launch boundary", () => {
       { type: "submit" },
       { type: "insert", text: "/result-review-latest report=report-1" },
       { type: "submit" },
+      { type: "insert", text: "/result-review-show result-review-test" },
+      { type: "submit" },
       { type: "insert", text: "/result-review-summary" },
       { type: "submit" },
       { type: "insert", text: "/authority-show /result-review-packet" },
@@ -1704,6 +1706,7 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.record_opencode_result_review")
     expect(runtime.commandNames).toContain("runtime.list_opencode_result_reviews")
     expect(runtime.commandNames).toContain("runtime.latest_opencode_result_review")
+    expect(runtime.commandNames).toContain("runtime.get_opencode_result_review")
     expect(runtime.commandNames).toContain("runtime.opencode_result_review_summary")
     expect(runtime.commandNames).toContain("runtime.command_authority_get")
     expect(runtime.commandNames).not.toContain("runtime.status")

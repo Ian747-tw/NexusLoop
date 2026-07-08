@@ -603,6 +603,14 @@ describe("TUI keyboard command model", () => {
       ...initialState("/tmp/demo"),
       screen: "main",
       focus: "message-box",
+      messageDraft: "/result-review-show review-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "result-review-show", args: ["review-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
       messageDraft: "/opencode-result-review-summary",
     }, { type: "submit" })
     expect(result.effects).toEqual([{ type: "send-command", command: "opencode-result-review-summary" }])

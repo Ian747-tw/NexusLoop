@@ -6246,6 +6246,7 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "result-review-latest":
       return applyRuntimeUiEffect(commandState, runtime, opencodeResultReviewLatestEffect(args))
     case "opencode-result-review-show":
+    case "result-review-show":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-result-review", reviewId: requiredArg(args, 0, "reviewId") })
     case "opencode-result-review-summary":
     case "result-review-summary":
@@ -7681,6 +7682,7 @@ const opencodeResultReviewGateCommands = new Set([
   "opencode-result-review-latest",
   "result-review-latest",
   "opencode-result-review-show",
+  "result-review-show",
   "opencode-result-review-summary",
   "result-review-summary",
 ])
