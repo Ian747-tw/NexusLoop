@@ -6235,6 +6235,12 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reviews", args: [`report=${reportId}`] })
     expect(state.opencodeResultReviews?.records).toEqual(expect.arrayContaining([expect.objectContaining({ review_id: reviewId, decision: "accepted" })]))
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reviews", args: ["disposition=accepted_as_evidence"] })
+    expect(state.opencodeResultReviews?.records).toEqual([expect.objectContaining({ review_id: reviewId, review_disposition: "accepted_as_evidence" })])
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reviews", args: ["projection=reviewed_rejected"] })
+    expect(state.opencodeResultReviews?.records).toEqual([expect.objectContaining({ decision: "rejected", projection_state_after: "reviewed_rejected" })])
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reviews", args: ["next_step=request_revision"] })
+    expect(state.opencodeResultReviews?.records).toEqual([expect.objectContaining({ decision: "needs_revision", next_step: "request_revision" })])
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-review-latest", args: [`report=${reportId}`] })
     expect(state.opencodeResultReviews?.latest).toMatchObject({ review_id: reviewId, decision: "accepted" })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-review-show", args: [reviewId!] })

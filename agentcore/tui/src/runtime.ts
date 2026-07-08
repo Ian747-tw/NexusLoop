@@ -4384,11 +4384,17 @@ export class FakeRuntimeClient implements RuntimeClient {
     const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
     const launchId = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
     const decision = optionalString(payload.decision)
+    const disposition = optionalString(payload.reviewDisposition ?? payload.review_disposition ?? payload.disposition)
+    const projection = optionalString(payload.projectionStateAfter ?? payload.projection_state_after ?? payload.projection)
+    const nextStep = optionalString(payload.nextStep ?? payload.next_step)
     return this.opencodeResultReviews
       .filter((item) => !reportId || item.report_id === reportId)
       .filter((item) => !sessionId || item.session_id === sessionId)
       .filter((item) => !launchId || item.launch_id === launchId)
       .filter((item) => !decision || item.decision === decision)
+      .filter((item) => !disposition || item.review_disposition === disposition)
+      .filter((item) => !projection || item.projection_state_after === projection)
+      .filter((item) => !nextStep || item.next_step === nextStep)
       .slice(0, readLimit(payload.limit, 20))
       .map(recordFromFakeResultReview)
   }
