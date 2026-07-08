@@ -582,6 +582,42 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("OpenCode result review slash commands are exact whitelist entries", () => {
+    let result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-result-review-preview report=report-1 decision=accepted rationale=ok",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-result-review-preview", args: ["report=report-1", "decision=accepted", "rationale=ok"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/result-review report=report-1 decision=needs_revision rationale=needs-work revision_requests=tests",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "result-review", args: ["report=report-1", "decision=needs_revision", "rationale=needs-work", "revision_requests=tests"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-result-review-summary",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-result-review-summary" }])
+
+    for (const message of ["/tmp/result-review", "/path/opencode-result-review", ".opencode-result-review report=report-1", ":opencode-result-review report=report-1"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("review slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
@@ -1006,8 +1042,7 @@ describe("TUI keyboard command model", () => {
       ["/authority-show /scheduler-nav-checkpoint-run", "authority-show", ["/scheduler-nav-checkpoint-run"]],
       ["/authority-profile /scheduler-nav-checkpoint-run", "authority-profile", ["/scheduler-nav-checkpoint-run"]],
       ["/result-review-packet handoff=handoff-1", "result-review-packet", ["handoff=handoff-1"]],
-      ["/result-review-summary", "result-review-summary", []],
-      ["/opencode-result-review mission=mission-1", "opencode-result-review", ["mission=mission-1"]],
+      ["/result-review-packet-summary", "result-review-packet-summary", []],
       ["/executor-result-review result=result-1", "executor-result-review", ["result=result-1"]],
       ["/handoff-result-review proposal=proposal-1", "handoff-result-review", ["proposal=proposal-1"]],
       ["/opencode-session-preview objective=inspect training progress", "opencode-session-preview", ["objective=inspect", "training", "progress"]],

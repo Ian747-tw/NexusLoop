@@ -99,6 +99,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeWakeSupervisorExecutionLines(state))
   out.push(...opencodeWakeActionExecutionLines(state))
   out.push(...opencodeResultReportLines(state))
+  out.push(...opencodeResultReviewGateLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -1518,6 +1519,55 @@ function opencodeResultReportLines(state: UiState): string[] {
   else out.push(...reports.records.slice(0, 12).map((record) => `    - ${record.report_id} session=${record.session_id} launch=${record.launch_id ?? "none"} kind=${record.result_kind} disposition=${record.result_disposition} review_state=${record.review_state} failures=${record.has_failures} artifacts=${record.has_artifacts} metrics=${record.has_metrics}: ${preview(redactText(record.summary_preview))}`))
   if (reports.commandError) out.push(`  command_error=${redactText(reports.commandError)}`)
   out.push("  note=result report is executor evidence only; mission not completed; research.db not written; checkpoint not created; Commander review is future work")
+  return out
+}
+
+function opencodeResultReviewGateLines(state: UiState): string[] {
+  const reviews = state.opencodeResultReviews
+  const out = ["OpenCode result reviews"]
+  if (!reviews) {
+    out.push("  preview=none")
+    out.push("  latest_result=none")
+    out.push("  records=0")
+    out.push("  note=result review is metadata only; mission not completed; research.db not written; checkpoint/follow-up mission not created; provider not called")
+    return out
+  }
+  if (reviews.preview) {
+    const item = reviews.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_record=${item.can_record} report=${item.report_id} decision=${item.decision} disposition=${item.review_disposition} projection_state_after=${item.projection_state_after} next_step=${item.next_step}`)
+    out.push(`  session=${item.session_id} launch=${item.launch_id ?? "none"} result_kind=${item.result_kind ?? "unknown"} report_review_state=${item.report_review_state ?? "unknown"} author=${item.author_kind}`)
+    out.push(`  rationale=${preview(redactText(item.rationale_preview))}`)
+    if (item.evidence_summary_preview) out.push(`  evidence_summary=${preview(redactText(item.evidence_summary_preview))}`)
+    out.push(`  previews accepted_claims=${item.accepted_claims_preview.join(",") || "none"} rejected_claims=${item.rejected_claims_preview.join(",") || "none"} revision_requests=${item.revision_requests_preview.join(",") || "none"} followup_requests=${item.followup_requests_preview.join(",") || "none"} risks=${item.risk_flags_preview.join(",") || "none"} artifacts=${item.artifact_refs_preview.join(",") || "none"} tests=${item.test_refs_preview.join(",") || "none"}`)
+    out.push(`  flags mission_mutated=${item.mission_mutated} research_db_written=${item.research_db_written} checkpoint_created=${item.checkpoint_created} followup_mission_created=${item.followup_mission_created} provider_called=${item.provider_called}`)
+    if (item.linked_progress_id || item.linked_watchdog_id || item.linked_question_id || item.linked_guidance_id || item.linked_delivery_id || item.linked_wake_execution_id || item.linked_wake_action_execution_id) out.push(`  linked progress=${item.linked_progress_id ?? "none"} watchdog=${item.linked_watchdog_id ?? "none"} question=${item.linked_question_id ?? "none"} guidance=${item.linked_guidance_id ?? "none"} delivery=${item.linked_delivery_id ?? "none"} wake_execution=${item.linked_wake_execution_id ?? "none"} wake_action=${item.linked_wake_action_execution_id ?? "none"}`)
+    if (item.blockers.length > 0) out.push(`  blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  warnings=${item.warnings.map(redactText).join("; ")}`)
+  } else {
+    out.push("  preview=none")
+  }
+  if (reviews.latestResult) {
+    const result = reviews.latestResult
+    out.push(`  latest_result=${result.review_id} status=${result.status} report=${result.report_id} decision=${result.decision} disposition=${result.review_disposition} projection_state_after=${result.projection_state_after} next_step=${result.next_step}`)
+    out.push(`  latest_session=${result.session_id} launch=${result.launch_id ?? "none"} rationale=${preview(redactText(result.rationale_preview))}`)
+    out.push(`  latest_flags mission_mutated=${result.mission_mutated} research_db_written=${result.research_db_written} checkpoint_created=${result.checkpoint_created} followup_mission_created=${result.followup_mission_created} provider_called=${result.provider_called}`)
+    if (result.error) out.push(`  latest_error=${redactText(result.error)}`)
+  } else {
+    out.push("  latest_result=none")
+  }
+  if (reviews.selected) out.push(`  selected=${reviews.selected.review_id} status=${reviews.selected.status} decision=${reviews.selected.decision} projection_state_after=${reviews.selected.projection_state_after}`)
+  if (reviews.latest) out.push(`  latest=${reviews.latest.review_id} status=${reviews.latest.status} decision=${reviews.latest.decision} projection_state_after=${reviews.latest.projection_state_after}`)
+  if (reviews.summary) {
+    const summary = reviews.summary
+    out.push(`  summary total=${summary.total_reviews} reviewed_reports=${summary.reviewed_report_count} accepted=${summary.accepted_count} rejected=${summary.rejected_count} needs_revision=${summary.needs_revision_count} needs_followup=${summary.needs_followup_count} inconclusive=${summary.inconclusive_count} needs_human=${summary.needs_human_count} deferred=${summary.deferred_count} research_ingestion_recommended=${summary.research_ingestion_recommended_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  out.push("  records")
+  if (reviews.records.length === 0) out.push("    - empty")
+  else out.push(...reviews.records.slice(0, 12).map((record) => `    - ${record.review_id} report=${record.report_id} session=${record.session_id} launch=${record.launch_id ?? "none"} decision=${record.decision} disposition=${record.review_disposition} projection_state_after=${record.projection_state_after} next_step=${record.next_step} revision=${record.has_revision_requests} followup=${record.has_followup_requests}: ${preview(redactText(record.rationale_preview))}`))
+  if (reviews.commandError) out.push(`  command_error=${redactText(reviews.commandError)}`)
+  out.push("  note=result review does not complete mission; research.db not ingested; checkpoint not created; follow-up mission not created; provider not called; OpenCode prompt not sent")
   return out
 }
 

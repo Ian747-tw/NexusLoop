@@ -113,6 +113,12 @@ import type {
   OpenCodeResultReportResultSummary,
   OpenCodeResultReportState,
   OpenCodeResultReportSummaryState,
+  OpenCodeResultReviewGateCommandSummary,
+  OpenCodeResultReviewGatePreviewSummary,
+  OpenCodeResultReviewGateRecordSummary,
+  OpenCodeResultReviewGateResultSummary,
+  OpenCodeResultReviewGateState,
+  OpenCodeResultReviewGateSummaryState,
   OpenCodeForcedReportRequestSummary,
   OpenCodeCommanderQuestionCommandSummary,
   OpenCodeCommanderQuestionPreviewSummary,
@@ -540,6 +546,12 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-result-report"; reportId: string }
   | { type: "load-latest-opencode-result-report"; sessionId?: string; launchId?: string }
   | { type: "load-opencode-result-report-summary"; limit?: number }
+  | { type: "preview-opencode-result-review"; reportId?: string; decision?: string; rationale?: string; evidenceSummary?: string; acceptedClaims?: string[]; rejectedClaims?: string[]; revisionRequests?: string[]; followupRequests?: string[]; riskFlags?: string[]; artifactRefs?: string[]; testRefs?: string[]; confidence?: string; authorKind?: string; nextStep?: string }
+  | { type: "record-opencode-result-review"; reportId?: string; decision?: string; rationale?: string; evidenceSummary?: string; acceptedClaims?: string[]; rejectedClaims?: string[]; revisionRequests?: string[]; followupRequests?: string[]; riskFlags?: string[]; artifactRefs?: string[]; testRefs?: string[]; confidence?: string; authorKind?: string; nextStep?: string; dryRun?: boolean }
+  | { type: "load-opencode-result-reviews"; reportId?: string; sessionId?: string; launchId?: string; decision?: string; reviewDisposition?: string; projectionStateAfter?: string; nextStep?: string; limit?: number }
+  | { type: "load-opencode-result-review"; reviewId: string }
+  | { type: "load-latest-opencode-result-review"; reportId?: string; sessionId?: string; launchId?: string }
+  | { type: "load-opencode-result-review-gate-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1245,7 +1257,7 @@ export async function applyRuntimeUiEffect(
       case "load-opencode-result-review-summary":
         return applyOpenCodeResultReviewSummary(
           state,
-          await runtime.command("runtime.opencode_result_review_summary", { staleAfterMs: effect.staleAfterMs, limit: effect.limit }),
+          await runtime.command("runtime.opencode_result_review_packet_summary", { staleAfterMs: effect.staleAfterMs, limit: effect.limit }),
         )
       case "preview-opencode-session-plan":
         return applyOpenCodeSessionPreview(state, await runtime.command("runtime.preview_opencode_session_plan", {
@@ -1557,6 +1569,22 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeResultReportLatest(state, await runtime.command("runtime.latest_opencode_result_report", { sessionId: effect.sessionId, launchId: effect.launchId }), effect.sessionId ?? effect.launchId ?? "latest")
       case "load-opencode-result-report-summary":
         return applyOpenCodeResultReportSummary(state, await runtime.command("runtime.opencode_result_report_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "preview-opencode-result-review":
+        return applyOpenCodeResultReviewPreview(state, await runtime.command("runtime.preview_opencode_result_review", opencodeResultReviewPayload(effect)))
+      case "record-opencode-result-review": {
+        const next = applyOpenCodeResultReviewResult(state, await runtime.command("runtime.record_opencode_result_review", { ...opencodeResultReviewPayload(effect), dryRun: effect.dryRun === true, recordedBy: "operator" }))
+        if (next.opencodeResultReviews?.commandError || effect.dryRun === true) return next
+        const result = next.opencodeResultReviews?.latestResult
+        return applyOpenCodeResultReviewRecords(next, await runtime.command("runtime.list_opencode_result_reviews", { limit: HANDOFF_LIMIT, reportId: result?.report_id ?? effect.reportId, sessionId: result?.session_id, launchId: result?.launch_id }))
+      }
+      case "load-opencode-result-reviews":
+        return applyOpenCodeResultReviewRecords(state, await runtime.command("runtime.list_opencode_result_reviews", { limit: effect.limit ?? HANDOFF_LIMIT, reportId: effect.reportId, sessionId: effect.sessionId, launchId: effect.launchId, decision: effect.decision, reviewDisposition: effect.reviewDisposition, projectionStateAfter: effect.projectionStateAfter, nextStep: effect.nextStep }))
+      case "load-opencode-result-review":
+        return applyOpenCodeResultReviewSelected(state, await runtime.command("runtime.get_opencode_result_review", { reviewId: effect.reviewId }), effect.reviewId)
+      case "load-latest-opencode-result-review":
+        return applyOpenCodeResultReviewLatest(state, await runtime.command("runtime.latest_opencode_result_review", { reportId: effect.reportId, sessionId: effect.sessionId, launchId: effect.launchId }), effect.reportId ?? effect.sessionId ?? effect.launchId ?? "latest")
+      case "load-opencode-result-review-gate-summary":
+        return applyOpenCodeResultReviewGateSummary(state, await runtime.command("runtime.opencode_result_review_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -2844,16 +2872,16 @@ function applyOpenCodeResultReviewPacket(state: UiState, value: unknown): UiStat
   }
 }
 
-function applyOpenCodeResultReviewSummary(state: UiState, value: unknown): UiState {
-  const summary = readOpenCodeResultReviewSummary(value)
+function applyOpenCodeResultReviewGateSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeResultReviewGateSummary(value)
   return {
     ...state,
-    opencodeResultReview: {
-      ...opencodeResultReviewState(state),
+    opencodeResultReviews: {
+      ...opencodeResultReviewGateState(state),
       summary,
       commandError: undefined,
     },
-    systemActions: [...state.systemActions, { title: "opencode result review summary", detail: `ready=${summary.ready_count} needs_result=${summary.needs_result_count} failed=${summary.failed_count}`, status: "loaded" }].slice(-12),
+    systemActions: [...state.systemActions, { title: "opencode result review summary", detail: `reviews=${summary.total_reviews} accepted=${summary.accepted_count} rejected=${summary.rejected_count}`, status: "loaded" }].slice(-12),
   }
 }
 
@@ -4327,6 +4355,89 @@ function applyOpenCodeResultReportSummary(state: UiState, value: unknown): UiSta
   }
 }
 
+function applyOpenCodeResultReviewPreview(state: UiState, value: unknown): UiState {
+  const preview = readOpenCodeResultReviewGatePreview(value)
+  const commandError = preview.status === "blocked" ? preview.blockers[0] ?? "OpenCode result review preview is blocked" : undefined
+  return {
+    ...state,
+    opencodeResultReviews: {
+      ...opencodeResultReviewGateState(state),
+      preview,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode result review preview", detail: `report=${preview.report_id || "missing"} decision=${preview.decision} projection=${preview.projection_state_after}`, status: preview.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeResultReviewResult(state: UiState, value: unknown): UiState {
+  const result = readOpenCodeResultReviewGateResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "OpenCode result review is blocked" : undefined
+  return {
+    ...state,
+    opencodeResultReviews: {
+      ...opencodeResultReviewGateState(state),
+      latestResult: result,
+      latest: result.status === "recorded" ? result : opencodeResultReviewGateState(state).latest,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode result review", detail: `review=${result.review_id} status=${result.status} decision=${result.decision}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyOpenCodeResultReviewRecords(state: UiState, value: unknown): UiState {
+  const records = readOpenCodeResultReviewGateRecords(value)
+  return {
+    ...state,
+    opencodeResultReviews: {
+      ...opencodeResultReviewGateState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode result reviews", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyOpenCodeResultReviewSelected(state: UiState, value: unknown, reviewId: string): UiState {
+  const selected = value ? readOpenCodeResultReviewGateResult(value) : null
+  const commandError = selected ? undefined : `OpenCode result review not found: ${reviewId}`
+  return {
+    ...state,
+    opencodeResultReviews: {
+      ...opencodeResultReviewGateState(state),
+      selected,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode result review show", detail: selected ? `review=${selected.review_id}` : `missing=${reviewId}`, status: selected ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeResultReviewLatest(state: UiState, value: unknown, target: string): UiState {
+  const latest = value ? readOpenCodeResultReviewGateResult(value) : null
+  const commandError = latest ? undefined : `OpenCode result review latest not found: ${target}`
+  return {
+    ...state,
+    opencodeResultReviews: {
+      ...opencodeResultReviewGateState(state),
+      latest,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "opencode result review latest", detail: latest ? `review=${latest.review_id}` : `missing=${target}`, status: latest ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyOpenCodeResultReviewSummary(state: UiState, value: unknown): UiState {
+  const summary = readOpenCodeResultReviewSummary(value)
+  return {
+    ...state,
+    opencodeResultReview: {
+      ...opencodeResultReviewState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "opencode result review summary", detail: `ready=${summary.ready_count} needs_result=${summary.needs_result_count} failed=${summary.failed_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchMemorySummary(state: UiState, value: unknown): UiState {
   const summary = readResearchMemorySummary(value)
   return {
@@ -5592,6 +5703,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeWakeSupervisorExecutionCommands.has(command)) return state.opencodeWakeSupervisorExecutions?.commandError
   if (opencodeWakeActionExecutionCommands.has(command)) return state.opencodeWakeActions?.commandError
   if (opencodeResultReportCommands.has(command)) return state.opencodeResultReports?.commandError
+  if (opencodeResultReviewGateCommands.has(command)) return state.opencodeResultReviews?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -5647,6 +5759,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeWakeSupervisorExecutionCommands.has(command)) return { ...state, opencodeWakeSupervisorExecutions: { ...opencodeWakeSupervisorExecutionState(state), commandError: undefined } }
   if (opencodeWakeActionExecutionCommands.has(command)) return { ...state, opencodeWakeActions: { ...opencodeWakeActionExecutionState(state), commandError: undefined } }
   if (opencodeResultReportCommands.has(command)) return { ...state, opencodeResultReports: { ...opencodeResultReportState(state), commandError: undefined } }
+  if (opencodeResultReviewGateCommands.has(command)) return { ...state, opencodeResultReviews: { ...opencodeResultReviewGateState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -5777,12 +5890,11 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "handoff-readiness-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-handoff-readiness-summary" })
     case "result-review-packet":
-    case "opencode-result-review":
     case "executor-result-review":
     case "handoff-result-review":
       return applyRuntimeUiEffect(commandState, runtime, resultReviewPacketEffect(args))
-    case "result-review-summary":
-      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-result-review-summary" })
+    case "result-review-packet-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-result-review-summary", limit: HANDOFF_LIMIT })
     case "opencode-session-preview":
     case "session-preview":
       return applyRuntimeUiEffect(commandState, runtime, opencodeSessionEffect("preview-opencode-session-plan", args, false))
@@ -6116,6 +6228,28 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "opencode-result-report-summary":
     case "result-report-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-result-report-summary", limit: HANDOFF_LIMIT })
+    case "opencode-result-review-preview":
+    case "result-review-preview":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeResultReviewEffect("preview-opencode-result-review", args, false))
+    case "opencode-result-review-dry-run":
+    case "result-review-dry-run": {
+      const effect = opencodeResultReviewEffect("record-opencode-result-review", args, true) as Extract<RuntimeUiEffect, { type: "record-opencode-result-review" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "opencode-result-review":
+    case "result-review":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeResultReviewEffect("record-opencode-result-review", args, true))
+    case "opencode-result-reviews":
+    case "result-reviews":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeResultReviewListEffect(args))
+    case "opencode-result-review-latest":
+    case "result-review-latest":
+      return applyRuntimeUiEffect(commandState, runtime, opencodeResultReviewLatestEffect(args))
+    case "opencode-result-review-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-result-review", reviewId: requiredArg(args, 0, "reviewId") })
+    case "opencode-result-review-summary":
+    case "result-review-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-result-review-gate-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -7258,8 +7392,7 @@ const opencodeHandoffReadinessCommands = new Set([
 
 const opencodeResultReviewCommands = new Set([
   "result-review-packet",
-  "result-review-summary",
-  "opencode-result-review",
+  "result-review-packet-summary",
   "executor-result-review",
   "handoff-result-review",
 ])
@@ -7534,6 +7667,22 @@ const opencodeResultReportCommands = new Set([
   "opencode-result-report-show",
   "opencode-result-report-summary",
   "result-report-summary",
+])
+
+const opencodeResultReviewGateCommands = new Set([
+  "opencode-result-review-preview",
+  "result-review-preview",
+  "opencode-result-review-dry-run",
+  "result-review-dry-run",
+  "opencode-result-review",
+  "result-review",
+  "opencode-result-reviews",
+  "result-reviews",
+  "opencode-result-review-latest",
+  "result-review-latest",
+  "opencode-result-review-show",
+  "opencode-result-review-summary",
+  "result-review-summary",
 ])
 
 const researchMemoryCommands = new Set([
@@ -9815,7 +9964,7 @@ function readOpenCodeResultReviewPacket(value: unknown): OpenCodeResultReviewPac
 }
 
 function readOpenCodeResultReviewSummary(value: unknown): OpenCodeResultReviewSummary {
-  if (!isRecord(value)) throw new Error("runtime.opencode_result_review_summary returned invalid summary")
+  if (!isRecord(value)) throw new Error("runtime.opencode_result_review_packet_summary returned invalid summary")
   return {
     total_considered: readNumber(value.total_considered, 0),
     ready_count: readNumber(value.ready_count, 0),
@@ -11652,6 +11801,125 @@ function readOpenCodeResultReportSummary(value: unknown): OpenCodeResultReportSu
 }
 
 function readOpenCodeResultReportCommands(value: unknown): OpenCodeResultReportCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readOpenCodeResultReviewGatePreview(value: unknown): OpenCodeResultReviewGatePreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_opencode_result_review returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    can_record: value.can_record === true,
+    ...readOpenCodeResultReviewGateCommon(value),
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 14).map(preview),
+    recommended_commands: readOpenCodeResultReviewGateCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    review_hash: readString(value.review_hash, ""),
+  }
+}
+
+function readOpenCodeResultReviewGateResult(value: unknown): OpenCodeResultReviewGateResultSummary {
+  if (!isRecord(value) || typeof value.review_id !== "string") throw new Error("runtime.record_opencode_result_review returned invalid result")
+  return {
+    review_id: redactText(value.review_id),
+    status: readString(value.status, "blocked"),
+    ...readOpenCodeResultReviewGateCommon(value),
+    recorded_at: readString(value.recorded_at, ""),
+    recorded_by: preview(readString(value.recorded_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    review_hash: readString(value.review_hash, ""),
+    recommended_commands: readOpenCodeResultReviewGateCommands(value.recommended_commands),
+  }
+}
+
+function readOpenCodeResultReviewGateRecords(value: unknown): OpenCodeResultReviewGateRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((record) => ({
+    review_id: redactText(readString(record.review_id, "")),
+    report_id: redactText(readString(record.report_id, "")),
+    session_id: redactText(readString(record.session_id, "")),
+    launch_id: typeof record.launch_id === "string" ? redactText(record.launch_id) : undefined,
+    decision: readString(record.decision, "unknown"),
+    review_disposition: readString(record.review_disposition, "unknown"),
+    projection_state_after: readString(record.projection_state_after, "unreviewed"),
+    next_step: readString(record.next_step, "unknown"),
+    author_kind: readString(record.author_kind, "human"),
+    rationale_preview: preview(readString(record.rationale_preview, "")),
+    recorded_at: readString(record.recorded_at, ""),
+    recorded_by: preview(readString(record.recorded_by, "")),
+    confidence: readPrimitiveConfidence(record.confidence),
+    has_revision_requests: record.has_revision_requests === true,
+    has_followup_requests: record.has_followup_requests === true,
+    review_hash: readString(record.review_hash, ""),
+  }))
+}
+
+function readOpenCodeResultReviewGateSummary(value: unknown): OpenCodeResultReviewGateSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.opencode_result_review_summary returned invalid summary")
+  return {
+    total_reviews: readNumber(value.total_reviews, 0),
+    reviewed_report_count: readNumber(value.reviewed_report_count, 0),
+    accepted_count: readNumber(value.accepted_count, 0),
+    rejected_count: readNumber(value.rejected_count, 0),
+    needs_revision_count: readNumber(value.needs_revision_count, 0),
+    needs_followup_count: readNumber(value.needs_followup_count, 0),
+    inconclusive_count: readNumber(value.inconclusive_count, 0),
+    needs_human_count: readNumber(value.needs_human_count, 0),
+    deferred_count: readNumber(value.deferred_count, 0),
+    research_ingestion_recommended_count: readNumber(value.research_ingestion_recommended_count, 0),
+    latest_reviews: readOpenCodeResultReviewGateRecords(value.latest_reviews),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readOpenCodeResultReviewGateCommon(value: Record<string, unknown>) {
+  return {
+    report_id: redactText(readString(value.report_id, "")),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    result_kind: typeof value.result_kind === "string" ? readString(value.result_kind, "") : undefined,
+    result_disposition: typeof value.result_disposition === "string" ? readString(value.result_disposition, "") : undefined,
+    report_review_state: typeof value.report_review_state === "string" ? readString(value.report_review_state, "") : undefined,
+    decision: readString(value.decision, "unknown"),
+    review_disposition: readString(value.review_disposition, "unknown"),
+    projection_state_after: readString(value.projection_state_after, "unreviewed"),
+    next_step: readString(value.next_step, "unknown"),
+    author_kind: readString(value.author_kind, "human"),
+    rationale_preview: preview(readString(value.rationale_preview, "")),
+    evidence_summary_preview: typeof value.evidence_summary_preview === "string" ? preview(readString(value.evidence_summary_preview, "")) : undefined,
+    accepted_claims_preview: readStringList(value.accepted_claims_preview, 12).map(preview),
+    rejected_claims_preview: readStringList(value.rejected_claims_preview, 12).map(preview),
+    revision_requests_preview: readStringList(value.revision_requests_preview, 12).map(preview),
+    followup_requests_preview: readStringList(value.followup_requests_preview, 12).map(preview),
+    risk_flags_preview: readStringList(value.risk_flags_preview, 12).map(preview),
+    artifact_refs_preview: readStringList(value.artifact_refs_preview, 12).map(preview),
+    test_refs_preview: readStringList(value.test_refs_preview, 12).map(preview),
+    confidence: readPrimitiveConfidence(value.confidence),
+    linked_progress_id: typeof value.linked_progress_id === "string" ? redactText(value.linked_progress_id) : undefined,
+    linked_watchdog_id: typeof value.linked_watchdog_id === "string" ? redactText(value.linked_watchdog_id) : undefined,
+    linked_question_id: typeof value.linked_question_id === "string" ? redactText(value.linked_question_id) : undefined,
+    linked_guidance_id: typeof value.linked_guidance_id === "string" ? redactText(value.linked_guidance_id) : undefined,
+    linked_delivery_id: typeof value.linked_delivery_id === "string" ? redactText(value.linked_delivery_id) : undefined,
+    linked_wake_execution_id: typeof value.linked_wake_execution_id === "string" ? redactText(value.linked_wake_execution_id) : undefined,
+    linked_wake_action_execution_id: typeof value.linked_wake_action_execution_id === "string" ? redactText(value.linked_wake_action_execution_id) : undefined,
+    mission_mutated: value.mission_mutated === true,
+    research_db_written: value.research_db_written === true,
+    checkpoint_created: value.checkpoint_created === true,
+    followup_mission_created: value.followup_mission_created === true,
+    provider_called: value.provider_called === true,
+  }
+}
+
+function readOpenCodeResultReviewGateCommands(value: unknown): OpenCodeResultReviewGateCommandSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -15296,6 +15564,10 @@ function opencodeResultReportState(state: UiState): OpenCodeResultReportState {
   return state.opencodeResultReports ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
 }
 
+function opencodeResultReviewGateState(state: UiState): OpenCodeResultReviewGateState {
+  return state.opencodeResultReviews ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
 function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
   return {
     sessionId: effect.sessionId,
@@ -15455,6 +15727,25 @@ function opencodeResultReportPayload(effect: Extract<RuntimeUiEffect, { type: "p
     wakeExecutionId: effect.wakeExecutionId,
     wakeActionExecutionId: effect.wakeActionExecutionId,
     reviewState: effect.reviewState,
+  }
+}
+
+function opencodeResultReviewPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-result-review" | "record-opencode-result-review" }>): Record<string, unknown> {
+  return {
+    reportId: effect.reportId,
+    decision: effect.decision,
+    rationale: effect.rationale,
+    evidenceSummary: effect.evidenceSummary,
+    acceptedClaims: effect.acceptedClaims,
+    rejectedClaims: effect.rejectedClaims,
+    revisionRequests: effect.revisionRequests,
+    followupRequests: effect.followupRequests,
+    riskFlags: effect.riskFlags,
+    artifactRefs: effect.artifactRefs,
+    testRefs: effect.testRefs,
+    confidence: effect.confidence,
+    authorKind: effect.authorKind,
+    nextStep: effect.nextStep,
   }
 }
 
@@ -17063,6 +17354,75 @@ function opencodeResultReportLatestEffect(args: string[]): Extract<RuntimeUiEffe
     else throw new Error("OpenCode result report latest arg is unsupported")
   }
   if (!effect.sessionId && !effect.launchId) throw new Error("OpenCode result report latest requires session=<id> or launch=<id>")
+  return effect
+}
+
+function opencodeResultReviewEffect(
+  type: "preview-opencode-result-review" | "record-opencode-result-review",
+  args: string[],
+  requireReport: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-opencode-result-review" | "record-opencode-result-review" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-opencode-result-review" | "record-opencode-result-review" }> = { type }
+  const knownKeys = new Set(["report", "decision", "rationale", "evidence_summary", "accepted_claims", "rejected_claims", "revision_requests", "followup_requests", "risk_flags", "artifact_refs", "test_refs", "confidence", "author", "author_kind", "next_step", "recorded_by"])
+  const freeTextKeys = new Set(["rationale", "evidence_summary"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "OpenCode result review args must use report=<id>, decision=<decision>, rationale=<text>, evidence_summary=<text>, accepted_claims=<csv>, rejected_claims=<csv>, revision_requests=<csv>, followup_requests=<csv>, risk_flags=<csv>, artifact_refs=<csv>, test_refs=<csv>, confidence=<value>, author=<kind>, author_kind=<kind>, or next_step=<step>")
+    index = nextIndex
+    if (key === "report") effect.reportId = value
+    else if (key === "decision") effect.decision = value
+    else if (key === "rationale") effect.rationale = value
+    else if (key === "evidence_summary") effect.evidenceSummary = value
+    else if (key === "accepted_claims") effect.acceptedClaims = commaList(value)
+    else if (key === "rejected_claims") effect.rejectedClaims = commaList(value)
+    else if (key === "revision_requests") effect.revisionRequests = commaList(value)
+    else if (key === "followup_requests") effect.followupRequests = commaList(value)
+    else if (key === "risk_flags") effect.riskFlags = commaList(value)
+    else if (key === "artifact_refs") effect.artifactRefs = commaList(value)
+    else if (key === "test_refs") effect.testRefs = commaList(value)
+    else if (key === "confidence") effect.confidence = value
+    else if (key === "author" || key === "author_kind") effect.authorKind = value
+    else if (key === "next_step") effect.nextStep = value
+    else if (key === "recorded_by") {
+      // Accepted for forward compatibility; runtime records operator for this branch.
+    } else throw new Error("OpenCode result review arg is unsupported")
+  }
+  if (requireReport && !effect.reportId) throw new Error("OpenCode result review requires report=<id>")
+  if (requireReport && !effect.decision) throw new Error("OpenCode result review requires decision=<decision>")
+  if (requireReport && effect.decision !== "deferred" && !effect.rationale) throw new Error("OpenCode result review requires rationale=<text> for non-deferred decisions")
+  return effect
+}
+
+function opencodeResultReviewListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-opencode-result-reviews" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-opencode-result-reviews" }> = { type: "load-opencode-result-reviews", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode result reviews args must use report=<id>, session=<id>, launch=<id>, decision=<decision>, disposition=<disposition>, projection=<state>, next_step=<step>, or limit=<n>")
+    if (key === "report") effect.reportId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "decision") effect.decision = value
+    else if (key === "disposition") effect.reviewDisposition = value
+    else if (key === "projection" || key === "projection_state_after") effect.projectionStateAfter = value
+    else if (key === "next_step") effect.nextStep = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("OpenCode result reviews arg is unsupported")
+  }
+  return effect
+}
+
+function opencodeResultReviewLatestEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-latest-opencode-result-review" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-latest-opencode-result-review" }> = { type: "load-latest-opencode-result-review" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("OpenCode result review latest args must use report=<id>, session=<id>, or launch=<id>")
+    if (key === "report") effect.reportId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else throw new Error("OpenCode result review latest arg is unsupported")
+  }
+  if (!effect.reportId && !effect.sessionId && !effect.launchId) throw new Error("OpenCode result review latest requires report=<id>, session=<id>, or launch=<id>")
   return effect
 }
 

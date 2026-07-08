@@ -995,11 +995,16 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/opencode-smoke-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.execute_opencode_process_smoke", creates_external_process: false, mutates_events: false })
     expect(service.get("/opencode-smoke")).toMatchObject({ risk: "low_risk_write", gate: "opencode_runtime", creates_external_process: true, mutates_events: true, blocked_by_default: true })
     expect(service.get("/result-review-packet")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_result_review_packet", owner: "opencode_handoff", mutates_events: false })
-    expect(service.get("/result-review-summary")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_result_review_summary", owner: "opencode_handoff", mutates_events: false })
+    expect(service.get("/result-review-packet-summary")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.opencode_result_review_packet_summary", owner: "opencode_handoff", mutates_events: false })
     expect(service.get("/opencode-result-report-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_result_report", mutates_events: false })
     expect(service.get("/opencode-result-report-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.record_opencode_result_report", mutates_events: false })
     expect(service.get("/opencode-result-report")).toMatchObject({ risk: "medium_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, expected_event_kinds: ["opencode_result_report_recorded"] })
     expect(service.get("/opencode-result-reports")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_opencode_result_reports", mutates_events: false })
+    expect(service.get("/opencode-result-review-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_result_review", mutates_events: false })
+    expect(service.get("/opencode-result-review-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.record_opencode_result_review", mutates_events: false })
+    expect(service.get("/opencode-result-review")).toMatchObject({ risk: "medium_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, expected_event_kinds: ["opencode_result_review_recorded"] })
+    expect(service.get("/opencode-result-reviews")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_opencode_result_reviews", mutates_events: false })
+    expect(service.get("/result-review-summary")).toMatchObject({ slash_command: "/opencode-result-review-summary", risk: "safe_read", runtime_command: "runtime.opencode_result_review_summary", owner: "opencode_handoff", mutates_events: false })
     expect(service.get("/opencode-session-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_session_plan", mutates_events: false, creates_external_process: false })
     expect(service.get("/opencode-session-plan-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.create_opencode_session_plan", mutates_events: false, creates_external_process: false })
     expect(service.get("/opencode-session-plan")).toMatchObject({ risk: "high_impact_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, creates_external_process: false, blocked_by_default: true })
@@ -1056,6 +1061,10 @@ describe("CommandAuthorityService", () => {
     const resultReport = service.validationProfile("/opencode-result-report")
     expect(resultReport.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_result_report_tui.py"])
     expect(resultReport.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py", "tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py", "tests/e2e_user/scenarios/test_opencode_progress_heartbeat_tui.py", "tests/e2e_user/scenarios/test_opencode_wake_supervisor_execution_tui.py"])
+
+    const resultReview = service.validationProfile("/opencode-result-review")
+    expect(resultReview.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"])
+    expect(resultReview.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py", "tests/e2e_user/scenarios/test_opencode_result_report_tui.py", "tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py", "tests/e2e_user/scenarios/test_opencode_progress_heartbeat_tui.py"])
 
     const minimax = service.validationProfile("/minimax-live-validate")
     expect(minimax.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"])
@@ -2320,7 +2329,7 @@ describe("RuntimeServer core", () => {
         expect.objectContaining({ command: "/authority-show /handoff", command_type: "read" }),
       ]),
     })
-    await expect(server.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+    await expect(server.command("runtime.opencode_result_review_packet_summary")).resolves.toMatchObject({
       total_considered: 0,
       ready_count: 0,
       needs_result_count: 0,
@@ -2570,7 +2579,7 @@ describe("RuntimeServer core", () => {
     expect(unrelatedPacket.objective_preview?.length ?? 0).toBeLessThanOrEqual(240)
     expect(unrelatedPacket.result_summary_preview?.length ?? 0).toBeLessThanOrEqual(240)
     expect(await readEventKinds(dir)).toEqual(before)
-    await expect(server.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+    await expect(server.command("runtime.opencode_result_review_packet_summary")).resolves.toMatchObject({
       total_considered: 1,
       ready_count: 1,
       latest_handoff_id: "handoff_packet_1",
@@ -3004,7 +3013,7 @@ describe("RuntimeServer core", () => {
       blockers: [],
       warnings: expect.arrayContaining([expect.stringContaining("no submitted mission result")]),
     })
-    await expect(staleReadServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
+    await expect(staleReadServer.command("runtime.opencode_result_review_packet_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
       total_considered: 1,
       stale_count: 1,
       blocked_count: 0,
@@ -3036,7 +3045,7 @@ describe("RuntimeServer core", () => {
       status: "needs_result",
       warnings: expect.arrayContaining([expect.stringContaining("no submitted mission result")]),
     })
-    await expect(freshProgressServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
+    await expect(freshProgressServer.command("runtime.opencode_result_review_packet_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
       total_considered: 1,
       needs_result_count: 1,
       stale_count: 0,
@@ -3064,7 +3073,7 @@ describe("RuntimeServer core", () => {
       status: "blocked",
       blockers: expect.arrayContaining([expect.stringContaining("blocked")]),
     })
-    await expect(blockedServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 86_400_000 })).resolves.toMatchObject({
+    await expect(blockedServer.command("runtime.opencode_result_review_packet_summary", { staleAfterMs: 86_400_000 })).resolves.toMatchObject({
       total_considered: 1,
       blocked_count: 1,
       failed_count: 0,
@@ -3099,7 +3108,7 @@ describe("RuntimeServer core", () => {
       requested_by: "operator",
       evidence_ids: [],
     })
-    await expect(agedBlockedServer.command("runtime.opencode_result_review_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
+    await expect(agedBlockedServer.command("runtime.opencode_result_review_packet_summary", { staleAfterMs: 1 })).resolves.toMatchObject({
       total_considered: 1,
       blocked_count: 1,
       stale_count: 0,
@@ -3208,7 +3217,7 @@ describe("RuntimeServer core", () => {
       result_id: failedResult.result_id,
       blockers: expect.arrayContaining([expect.stringContaining("mission is failed")]),
     })
-    await expect(failedResultServer.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+    await expect(failedResultServer.command("runtime.opencode_result_review_packet_summary")).resolves.toMatchObject({
       total_considered: 1,
       failed_count: 1,
       ready_count: 0,
@@ -3258,7 +3267,7 @@ describe("RuntimeServer core", () => {
       result_id: "result_rejected_packet",
       blockers: expect.arrayContaining([expect.stringContaining("mission result is rejected")]),
     })
-    await expect(rejectedResultReadServer.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+    await expect(rejectedResultReadServer.command("runtime.opencode_result_review_packet_summary")).resolves.toMatchObject({
       total_considered: 1,
       blocked_count: 1,
       ready_count: 0,
@@ -14872,7 +14881,7 @@ describe("RuntimeServerClient", () => {
       status: "blocked",
       blockers: expect.arrayContaining([expect.stringContaining("no OpenCode handoff")]),
     })
-    await expect(client.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+    await expect(client.command("runtime.opencode_result_review_packet_summary")).resolves.toMatchObject({
       total_considered: 0,
       ready_count: 0,
     })
@@ -14893,6 +14902,23 @@ describe("RuntimeServerClient", () => {
     await expect(client.command("runtime.get_opencode_result_report", { reportId: "missing" })).resolves.toBeNull()
     await expect(client.command("runtime.latest_opencode_result_report", { sessionId: "missing" })).resolves.toBeNull()
     await expect(client.command("runtime.opencode_result_report_summary")).resolves.toMatchObject({ total_reports: 0 })
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
+  test("OpenCode result review commands and dry-runs do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_opencode_result_review", { reportId: "missing", decision: "accepted", rationale: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.record_opencode_result_review", { reportId: "missing", decision: "accepted", rationale: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_opencode_result_reviews")).resolves.toEqual([])
+    await expect(client.command("runtime.get_opencode_result_review", { reviewId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.latest_opencode_result_review", { reportId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({ total_reviews: 0 })
 
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
     await client.shutdown()
@@ -19184,6 +19210,167 @@ describe("OpenCode launch readiness", () => {
     const authority = await server.command("runtime.command_authority_get", { command: "/opencode-result-report" }) as { risk: string; mutates_events: boolean; notes: string[] }
     expect(authority).toMatchObject({ risk: "medium_risk_write", mutates_events: true })
     expect(authority.notes.join(" ")).toContain("result-report metadata")
+    await server.shutdown()
+  })
+
+  test("result review records bounded Commander evidence without mission research or checkpoint side effects", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "completion_report", summary: "done with candidate fix token=review-secret" }) as { progress_id: string }
+
+    const makeReport = async (suffix: string, kind = "completion_report") => server.command("runtime.record_opencode_result_report", {
+      sessionId,
+      kind,
+      summary: `implemented candidate fix ${suffix} token=review-secret`,
+      outcome: "tests passed",
+      claims: [`claim ${suffix}`],
+      followups: ["commander review"],
+      progressId: progress.progress_id,
+    }) as Promise<{ status: string; report_id: string }>
+
+    const report = await makeReport("accepted")
+    expect(report.status).toBe("recorded")
+    let beforeReview = await server.eventStore.readAll()
+
+    await expect(server.command("runtime.preview_opencode_result_review", {})).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_review", { reportId: "missing", decision: "accepted", rationale: "missing" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, rationale: "missing" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, decision: "accepted" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, decision: "unknown", rationale: "unknown" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "diff --git a/file b/file\n@@ -1 +1" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "provider output says accepted" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+
+    const preview = await server.command("runtime.preview_opencode_result_review", {
+      reportId: report.report_id,
+      decision: "accepted",
+      rationale: "bounded report is enough for followup token=review-secret",
+      acceptedClaims: ["fix works"],
+      confidence: "high",
+    }) as {
+      status: string
+      can_record: boolean
+      decision: string
+      review_disposition: string
+      projection_state_after: string
+      next_step: string
+      mission_mutated: boolean
+      research_db_written: boolean
+      checkpoint_created: boolean
+      followup_mission_created: boolean
+      provider_called: boolean
+    }
+    expect(preview).toMatchObject({
+      status: "ready",
+      can_record: true,
+      decision: "accepted",
+      review_disposition: "accepted_as_evidence",
+      projection_state_after: "reviewed_accepted",
+      next_step: "prepare_research_ingestion",
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+    })
+    expect(JSON.stringify(preview)).not.toContain("review-secret")
+
+    await expect(server.command("runtime.record_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "bounded report is enough for followup token=review-secret", acceptedClaims: ["fix works"], dryRun: true })).resolves.toMatchObject({ status: "dry_run", decision: "accepted" })
+    expect(await server.eventStore.readAll()).toEqual(beforeReview)
+
+    const accepted = await server.command("runtime.record_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "bounded report is enough for followup token=review-secret", acceptedClaims: ["fix works"], confidence: "high" }) as {
+      status: string
+      review_id: string
+      report_id: string
+      decision: string
+      review_disposition: string
+      projection_state_after: string
+      next_step: string
+      mission_mutated: boolean
+      research_db_written: boolean
+      checkpoint_created: boolean
+      followup_mission_created: boolean
+      provider_called: boolean
+    }
+    expect(accepted).toMatchObject({
+      status: "recorded",
+      report_id: report.report_id,
+      decision: "accepted",
+      review_disposition: "accepted_as_evidence",
+      projection_state_after: "reviewed_accepted",
+      next_step: "prepare_research_ingestion",
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+    })
+    let events = await server.eventStore.readAll()
+    let newEvents = events.slice(beforeReview.length)
+    expect(newEvents.map((event) => event.kind)).toEqual(["opencode_result_review_recorded"])
+    expect(newEvents[0]).toMatchObject({
+      review_id: accepted.review_id,
+      report_id: report.report_id,
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      decision: "accepted",
+      review_disposition: "accepted_as_evidence",
+      projection_state_after: "reviewed_accepted",
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+    })
+    expect(JSON.stringify(newEvents)).not.toContain("review-secret")
+
+    await expect(server.command("runtime.record_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "bounded report is enough for followup", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(server.command("runtime.record_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "bounded report is enough for followup" })).resolves.toMatchObject({ status: "blocked" })
+    expect(await server.eventStore.readAll()).toEqual(events)
+
+    const rejectedReport = await makeReport("rejected")
+    const rejected = await server.command("runtime.record_opencode_result_review", { reportId: rejectedReport.report_id, decision: "rejected", rationale: "claim not supported", rejectedClaims: ["fix works"] }) as { status: string; projection_state_after: string; next_step: string }
+    expect(rejected).toMatchObject({ status: "recorded", projection_state_after: "reviewed_rejected", next_step: "none" })
+    const revisionReport = await makeReport("revision")
+    await expect(server.command("runtime.record_opencode_result_review", { reportId: revisionReport.report_id, decision: "needs_revision", rationale: "needs another patch", revisionRequests: ["tighten tests"] })).resolves.toMatchObject({ status: "recorded", review_disposition: "revision_requested", projection_state_after: "reviewed_needs_revision", next_step: "request_revision" })
+    const followupReport = await makeReport("followup")
+    await expect(server.command("runtime.record_opencode_result_review", { reportId: followupReport.report_id, decision: "needs_followup", rationale: "needs more validation", followupRequests: ["run targeted test"] })).resolves.toMatchObject({ status: "recorded", review_disposition: "followup_requested", projection_state_after: "reviewed_needs_followup", next_step: "request_followup" })
+    const inconclusiveReport = await makeReport("inconclusive")
+    await expect(server.command("runtime.record_opencode_result_review", { reportId: inconclusiveReport.report_id, decision: "inconclusive", rationale: "artifact needs inspection", artifactRefs: ["artifact://candidate"] })).resolves.toMatchObject({ status: "recorded", review_disposition: "inconclusive_evidence", projection_state_after: "reviewed_inconclusive", next_step: "inspect_artifacts" })
+    const humanReport = await makeReport("human")
+    await expect(server.command("runtime.record_opencode_result_review", { reportId: humanReport.report_id, decision: "needs_human_review", rationale: "risk needs human approval", riskFlags: ["risk"] })).resolves.toMatchObject({ status: "recorded", review_disposition: "human_review_required", projection_state_after: "reviewed_needs_human", next_step: "escalate_to_human" })
+    const deferredReport = await makeReport("deferred")
+    await expect(server.command("runtime.record_opencode_result_review", { reportId: deferredReport.report_id, decision: "deferred" })).resolves.toMatchObject({ status: "recorded", review_disposition: "deferred_review", projection_state_after: "review_deferred", next_step: "inspect_artifacts" })
+
+    events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "opencode_result_review_recorded")).toHaveLength(7)
+    await expect(server.command("runtime.list_opencode_result_reviews", { sessionId })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ review_id: accepted.review_id, decision: "accepted" })]))
+    await expect(server.command("runtime.get_opencode_result_review", { reviewId: accepted.review_id })).resolves.toMatchObject({ review_id: accepted.review_id, report_id: report.report_id, status: "recorded" })
+    await expect(server.command("runtime.latest_opencode_result_review", { reportId: report.report_id })).resolves.toMatchObject({ review_id: accepted.review_id, decision: "accepted" })
+    await expect(server.command("runtime.opencode_result_review_summary")).resolves.toMatchObject({
+      total_reviews: 7,
+      reviewed_report_count: 7,
+      accepted_count: 1,
+      rejected_count: 1,
+      needs_revision_count: 1,
+      needs_followup_count: 1,
+      inconclusive_count: 1,
+      needs_human_count: 1,
+      deferred_count: 1,
+      research_ingestion_recommended_count: 1,
+    })
+
+    const eventKinds = events.map((event) => event.kind)
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+    expect(eventKinds).not.toContain("research_result_ingested")
+    expect(eventKinds).not.toContain("runtime_checkpoint_created")
+    expect(eventKinds).not.toContain("followup_mission_created")
+    expect(eventKinds).not.toContain("opencode_prompt_sent")
+    expect(eventKinds).not.toContain("opencode_session_process_paused")
+    const authority = await server.command("runtime.command_authority_get", { command: "/opencode-result-review" }) as { risk: string; mutates_events: boolean; notes: string[] }
+    expect(authority).toMatchObject({ risk: "medium_risk_write", mutates_events: true })
+    expect(authority.notes.join(" ")).toContain("result-review metadata")
     await server.shutdown()
   })
 

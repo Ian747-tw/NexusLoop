@@ -102,6 +102,8 @@ import { OpenCodeWakeActionExecutionService, readOpenCodeWakeActionExecutionPrev
 import type { OpenCodeWakeActionExecutionPreview, OpenCodeWakeActionExecutionRecord, OpenCodeWakeActionExecutionResult, OpenCodeWakeActionExecutionSummary } from "./opencode-session/opencode-wake-action-execution-types"
 import { OpenCodeResultReportService, readOpenCodeResultReportPreviewInput, readOpenCodeResultReportRecordInput } from "./opencode-session/opencode-result-report-service"
 import type { OpenCodeResultReportPreview, OpenCodeResultReportRecord, OpenCodeResultReportResult, OpenCodeResultReportSummary } from "./opencode-session/opencode-result-report-types"
+import { OpenCodeResultReviewService, readOpenCodeResultReviewPreviewInput, readOpenCodeResultReviewRecordInput } from "./opencode-session/opencode-result-review-service"
+import type { OpenCodeResultReviewPreview, OpenCodeResultReviewRecord, OpenCodeResultReviewResult, OpenCodeResultReviewSummary as OpenCodeResultReviewGateSummary } from "./opencode-session/opencode-result-review-types"
 import { ContextBudgetService, readContextBudgetPreviewInput, readModelCapabilityGetInput, readModelCapabilityListInput } from "./context/context-budget-service"
 import type { ContextBudgetPreview, ContextBudgetSummary } from "./context/context-budget-types"
 import { ModelCapabilityRegistry } from "./context/model-capability-registry"
@@ -349,6 +351,7 @@ export class RuntimeServer {
   private opencodeWakeSupervisorExecutionServiceInstance: OpenCodeWakeSupervisorExecutionService | null = null
   private opencodeWakeActionExecutionServiceInstance: OpenCodeWakeActionExecutionService | null = null
   private opencodeResultReportServiceInstance: OpenCodeResultReportService | null = null
+  private opencodeResultReviewServiceInstance: OpenCodeResultReviewService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -875,7 +878,7 @@ export class RuntimeServer {
         })
       case "runtime.preview_opencode_result_review_packet":
         return this.previewOpenCodeResultReviewPacket(readOpenCodeResultReviewPacketInput(payload))
-      case "runtime.opencode_result_review_summary":
+      case "runtime.opencode_result_review_packet_summary":
         return this.openCodeResultReviewSummary(readOpenCodeResultReviewPacketInput(payload))
       case "runtime.preview_opencode_session_plan":
         return this.previewOpenCodeSessionPlan(readOpenCodeSessionPreviewInput(payload))
@@ -1146,6 +1149,31 @@ export class RuntimeServer {
         })
       case "runtime.opencode_result_report_summary":
         return this.openCodeResultReportSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
+      case "runtime.preview_opencode_result_review":
+        return this.previewOpenCodeResultReview(readOpenCodeResultReviewPreviewInput(payload))
+      case "runtime.record_opencode_result_review":
+        return this.recordOpenCodeResultReview(readOpenCodeResultReviewRecordInput(payload))
+      case "runtime.list_opencode_result_reviews":
+        return this.listOpenCodeResultReviews({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          report_id: optionalString(payload.reportId ?? payload.report_id ?? payload.report, "reportId"),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+          decision: optionalString(payload.decision, "decision"),
+          review_disposition: optionalString(payload.reviewDisposition ?? payload.review_disposition, "reviewDisposition"),
+          projection_state_after: optionalString(payload.projectionStateAfter ?? payload.projection_state_after, "projectionStateAfter"),
+          next_step: optionalString(payload.nextStep ?? payload.next_step, "nextStep"),
+        })
+      case "runtime.get_opencode_result_review":
+        return this.getOpenCodeResultReview(requiredString(payload.reviewId ?? payload.review_id, "reviewId"))
+      case "runtime.latest_opencode_result_review":
+        return this.latestOpenCodeResultReview({
+          report_id: optionalString(payload.reportId ?? payload.report_id ?? payload.report, "reportId"),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+        })
+      case "runtime.opencode_result_review_summary":
+        return this.openCodeResultReviewGateSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -2303,6 +2331,31 @@ export class RuntimeServer {
 
   async openCodeResultReportSummary(input: Parameters<OpenCodeResultReportService["summary"]>[0] = {}): Promise<OpenCodeResultReportSummary> {
     return this.opencodeResultReportService().summary(input)
+  }
+
+  async previewOpenCodeResultReview(input: Parameters<OpenCodeResultReviewService["preview"]>[0] = {}): Promise<OpenCodeResultReviewPreview> {
+    return this.opencodeResultReviewService().preview(input)
+  }
+
+  async recordOpenCodeResultReview(input: Parameters<OpenCodeResultReviewService["record"]>[0] = {}): Promise<OpenCodeResultReviewResult> {
+    if (input.dry_run === true) return this.opencodeResultReviewService().record(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeResultReviewService().record(input))
+  }
+
+  async listOpenCodeResultReviews(input: Parameters<OpenCodeResultReviewService["list"]>[0] = {}): Promise<OpenCodeResultReviewRecord[]> {
+    return this.opencodeResultReviewService().list(input)
+  }
+
+  async getOpenCodeResultReview(reviewId: string): Promise<OpenCodeResultReviewResult | null> {
+    return this.opencodeResultReviewService().get(reviewId)
+  }
+
+  async latestOpenCodeResultReview(input: Parameters<OpenCodeResultReviewService["latest"]>[0] = {}): Promise<OpenCodeResultReviewResult | null> {
+    return this.opencodeResultReviewService().latest(input)
+  }
+
+  async openCodeResultReviewGateSummary(input: Parameters<OpenCodeResultReviewService["summary"]>[0] = {}): Promise<OpenCodeResultReviewGateSummary> {
+    return this.opencodeResultReviewService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -3528,6 +3581,16 @@ export class RuntimeServer {
       wakeActionExecutionService: this.opencodeWakeActionExecutionService(),
     })
     return this.opencodeResultReportServiceInstance
+  }
+
+  private opencodeResultReviewService(): OpenCodeResultReviewService {
+    this.opencodeResultReviewServiceInstance ??= new OpenCodeResultReviewService({
+      eventStore: this.eventStore,
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+      resultReportService: this.opencodeResultReportService(),
+    })
+    return this.opencodeResultReviewServiceInstance
   }
 
   private createOpenCodeLaunchAdapter(): OpenCodeLaunchAdapter {

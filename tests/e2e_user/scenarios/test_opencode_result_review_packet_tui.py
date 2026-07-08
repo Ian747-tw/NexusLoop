@@ -45,7 +45,7 @@ def test_user_inspects_opencode_result_review_packet_without_execution(sandbox) 
         {"type": "submit"},
         {"type": "insert", "text": "/result-review-packet"},
         {"type": "submit"},
-        {"type": "insert", "text": "/result-review-summary"},
+        {"type": "insert", "text": "/result-review-packet-summary"},
         {"type": "submit"},
         {"type": "insert", "text": "/result-review-packet handoff=handoff_test token=abc123"},
         {"type": "submit"},

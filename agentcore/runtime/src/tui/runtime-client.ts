@@ -42,6 +42,7 @@ import type { OpenCodeWakeSupervisorPreview, OpenCodeWakeSupervisorPreviewInput,
 import type { OpenCodeWakeSupervisorBatchPreview, OpenCodeWakeSupervisorBatchPreviewInput, OpenCodeWakeSupervisorBatchRecordInput, OpenCodeWakeSupervisorBatchResult, OpenCodeWakeSupervisorExecutionPreview, OpenCodeWakeSupervisorExecutionPreviewInput, OpenCodeWakeSupervisorExecutionRecord, OpenCodeWakeSupervisorExecutionRecordInput, OpenCodeWakeSupervisorExecutionResult, OpenCodeWakeSupervisorExecutionSummary } from "../opencode-session/opencode-wake-supervisor-execution-types"
 import type { OpenCodeWakeActionExecutionPreview, OpenCodeWakeActionExecutionPreviewInput, OpenCodeWakeActionExecutionRecord, OpenCodeWakeActionExecutionRecordInput, OpenCodeWakeActionExecutionResult, OpenCodeWakeActionExecutionSummary } from "../opencode-session/opencode-wake-action-execution-types"
 import type { OpenCodeResultReportPreview, OpenCodeResultReportPreviewInput, OpenCodeResultReportRecord, OpenCodeResultReportRecordInput, OpenCodeResultReportResult, OpenCodeResultReportSummary } from "../opencode-session/opencode-result-report-types"
+import type { OpenCodeResultReviewPreview, OpenCodeResultReviewPreviewInput, OpenCodeResultReviewRecord, OpenCodeResultReviewRecordInput, OpenCodeResultReviewResult, OpenCodeResultReviewSummary as OpenCodeResultReviewGateSummary } from "../opencode-session/opencode-result-review-types"
 import type { ContextBudgetPreview, ContextBudgetPreviewInput, ContextBudgetSummary } from "../context/context-budget-types"
 import type { ModelCapability } from "../context/model-capability-types"
 import type { ContextPacketPreview, ContextPacketPreviewInput, ContextPacketSummary } from "../context/context-packet-types"
@@ -276,7 +277,7 @@ export interface RuntimeClient {
     proposalId?: string
     staleAfterMs?: number
   }): Promise<OpenCodeResultReviewPacket>
-  command(name: "runtime.opencode_result_review_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number; limit?: number }): Promise<OpenCodeResultReviewSummary>
+  command(name: "runtime.opencode_result_review_packet_summary", payload?: { staleAfterMs?: number; stale_after_ms?: number; limit?: number }): Promise<OpenCodeResultReviewSummary>
   command(name: "runtime.preview_opencode_session_plan", payload?: OpenCodeSessionPreviewInput | {
     missionId?: string
     proposalId?: string
@@ -425,6 +426,12 @@ export interface RuntimeClient {
   command(name: "runtime.get_opencode_result_report", payload: { report_id: string } | { reportId: string }): Promise<OpenCodeResultReportResult | null>
   command(name: "runtime.latest_opencode_result_report", payload?: { session_id?: string; sessionId?: string; session?: string; launch_id?: string; launchId?: string; launch?: string }): Promise<OpenCodeResultReportResult | null>
   command(name: "runtime.opencode_result_report_summary", payload?: { limit?: number }): Promise<OpenCodeResultReportSummary>
+  command(name: "runtime.preview_opencode_result_review", payload?: OpenCodeResultReviewPreviewInput | { reportId?: string; report_id?: string; report?: string; decision?: string; rationale?: string; evidenceSummary?: string; evidence_summary?: string; acceptedClaims?: string[]; accepted_claims?: string[]; rejectedClaims?: string[]; rejected_claims?: string[]; revisionRequests?: string[]; revision_requests?: string[]; followupRequests?: string[]; followup_requests?: string[]; riskFlags?: string[]; risk_flags?: string[]; artifactRefs?: string[]; artifact_refs?: string[]; testRefs?: string[]; test_refs?: string[]; confidence?: number | string; authorKind?: string; author_kind?: string; author?: string; nextStep?: string; next_step?: string; recordedBy?: string; recorded_by?: string }): Promise<OpenCodeResultReviewPreview>
+  command(name: "runtime.record_opencode_result_review", payload?: OpenCodeResultReviewRecordInput | { reportId?: string; report_id?: string; report?: string; decision?: string; rationale?: string; evidenceSummary?: string; evidence_summary?: string; acceptedClaims?: string[]; accepted_claims?: string[]; rejectedClaims?: string[]; rejected_claims?: string[]; revisionRequests?: string[]; revision_requests?: string[]; followupRequests?: string[]; followup_requests?: string[]; riskFlags?: string[]; risk_flags?: string[]; artifactRefs?: string[]; artifact_refs?: string[]; testRefs?: string[]; test_refs?: string[]; confidence?: number | string; authorKind?: string; author_kind?: string; author?: string; nextStep?: string; next_step?: string; dryRun?: boolean; dry_run?: boolean; recordedBy?: string; recorded_by?: string }): Promise<OpenCodeResultReviewResult>
+  command(name: "runtime.list_opencode_result_reviews", payload?: { limit?: number; report_id?: string; reportId?: string; report?: string; session_id?: string; sessionId?: string; session?: string; launch_id?: string; launchId?: string; launch?: string; decision?: string; review_disposition?: string; reviewDisposition?: string; projection_state_after?: string; projectionStateAfter?: string; next_step?: string; nextStep?: string }): Promise<OpenCodeResultReviewRecord[]>
+  command(name: "runtime.get_opencode_result_review", payload: { review_id: string } | { reviewId: string }): Promise<OpenCodeResultReviewResult | null>
+  command(name: "runtime.latest_opencode_result_review", payload?: { report_id?: string; reportId?: string; report?: string; session_id?: string; sessionId?: string; session?: string; launch_id?: string; launchId?: string; launch?: string }): Promise<OpenCodeResultReviewResult | null>
+  command(name: "runtime.opencode_result_review_summary", payload?: { limit?: number }): Promise<OpenCodeResultReviewGateSummary>
   command(name: "runtime.research_memory_summary", payload?: Record<string, never>): Promise<ResearchMemorySummary>
   command(name: "runtime.preview_research_memory_retrieval", payload?: ResearchMemoryRetrievalInput | { query?: string; labels?: string[]; limit?: number; sourceKind?: string; source_kind?: string; missionId?: string; mission_id?: string; sessionId?: string; session_id?: string; includeFailures?: boolean; include_failures?: boolean; includeArtifacts?: boolean; include_artifacts?: boolean }): Promise<ResearchMemoryRetrievalPreview>
   command(name: "runtime.preview_research_novelty_check", payload?: ResearchNoveltyInput | { question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; mission_id?: string; sessionId?: string; session_id?: string; repetitionReason?: string; repetition_reason?: string; reason?: string; includeFailures?: boolean; include_failures?: boolean }): Promise<ResearchNoveltyPreview>
@@ -660,7 +667,7 @@ export interface RuntimeCommandEnvelope {
     | "runtime.preview_opencode_handoff_readiness"
     | "runtime.opencode_handoff_readiness_summary"
     | "runtime.preview_opencode_result_review_packet"
-    | "runtime.opencode_result_review_summary"
+    | "runtime.opencode_result_review_packet_summary"
     | "runtime.preview_opencode_session_plan"
     | "runtime.create_opencode_session_plan"
     | "runtime.list_opencode_sessions"

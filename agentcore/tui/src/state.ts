@@ -2788,6 +2788,146 @@ export type OpenCodeResultReportState = {
   commandError?: string
 }
 
+export type OpenCodeResultReviewGateCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type OpenCodeResultReviewGatePreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_record: boolean
+  report_id: string
+  session_id: string
+  launch_id?: string
+  result_kind?: string
+  result_disposition?: string
+  report_review_state?: string
+  decision: string
+  review_disposition: string
+  projection_state_after: string
+  next_step: string
+  author_kind: string
+  rationale_preview: string
+  evidence_summary_preview?: string
+  accepted_claims_preview: string[]
+  rejected_claims_preview: string[]
+  revision_requests_preview: string[]
+  followup_requests_preview: string[]
+  risk_flags_preview: string[]
+  artifact_refs_preview: string[]
+  test_refs_preview: string[]
+  confidence?: number | string
+  linked_progress_id?: string
+  linked_watchdog_id?: string
+  linked_question_id?: string
+  linked_guidance_id?: string
+  linked_delivery_id?: string
+  linked_wake_execution_id?: string
+  linked_wake_action_execution_id?: string
+  mission_mutated: false | boolean
+  research_db_written: false | boolean
+  checkpoint_created: false | boolean
+  followup_mission_created: false | boolean
+  provider_called: false | boolean
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: OpenCodeResultReviewGateCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  review_hash: string
+}
+
+export type OpenCodeResultReviewGateResultSummary = {
+  review_id: string
+  status: "recorded" | "blocked" | "dry_run" | "failed" | string
+  report_id: string
+  session_id: string
+  launch_id?: string
+  result_kind?: string
+  result_disposition?: string
+  report_review_state?: string
+  decision: string
+  review_disposition: string
+  projection_state_after: string
+  next_step: string
+  author_kind: string
+  rationale_preview: string
+  evidence_summary_preview?: string
+  accepted_claims_preview: string[]
+  rejected_claims_preview: string[]
+  revision_requests_preview: string[]
+  followup_requests_preview: string[]
+  risk_flags_preview: string[]
+  artifact_refs_preview: string[]
+  test_refs_preview: string[]
+  confidence?: number | string
+  linked_progress_id?: string
+  linked_watchdog_id?: string
+  linked_question_id?: string
+  linked_guidance_id?: string
+  linked_delivery_id?: string
+  linked_wake_execution_id?: string
+  linked_wake_action_execution_id?: string
+  mission_mutated: false | boolean
+  research_db_written: false | boolean
+  checkpoint_created: false | boolean
+  followup_mission_created: false | boolean
+  provider_called: false | boolean
+  recorded_at: string
+  recorded_by: string
+  error?: string
+  review_hash: string
+  recommended_commands: OpenCodeResultReviewGateCommandSummary[]
+}
+
+export type OpenCodeResultReviewGateRecordSummary = {
+  review_id: string
+  report_id: string
+  session_id: string
+  launch_id?: string
+  decision: string
+  review_disposition: string
+  projection_state_after: string
+  next_step: string
+  author_kind: string
+  rationale_preview: string
+  recorded_at: string
+  recorded_by: string
+  confidence?: number | string
+  has_revision_requests: boolean
+  has_followup_requests: boolean
+  review_hash: string
+}
+
+export type OpenCodeResultReviewGateSummaryState = {
+  total_reviews: number
+  reviewed_report_count: number
+  accepted_count: number
+  rejected_count: number
+  needs_revision_count: number
+  needs_followup_count: number
+  inconclusive_count: number
+  needs_human_count: number
+  deferred_count: number
+  research_ingestion_recommended_count: number
+  latest_reviews: OpenCodeResultReviewGateRecordSummary[]
+  generated_at: string
+}
+
+export type OpenCodeResultReviewGateState = {
+  preview?: OpenCodeResultReviewGatePreviewSummary | null
+  latestResult?: OpenCodeResultReviewGateResultSummary | null
+  records: OpenCodeResultReviewGateRecordSummary[]
+  selected?: OpenCodeResultReviewGateResultSummary | null
+  latest?: OpenCodeResultReviewGateResultSummary | null
+  summary?: OpenCodeResultReviewGateSummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -5177,6 +5317,7 @@ export type UiState = {
   opencodeWakeSupervisorExecutions?: OpenCodeWakeSupervisorExecutionsState
   opencodeWakeActions?: OpenCodeWakeActionExecutionState
   opencodeResultReports?: OpenCodeResultReportState
+  opencodeResultReviews?: OpenCodeResultReviewGateState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
