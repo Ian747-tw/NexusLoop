@@ -2226,6 +2226,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeHandoffEffect(effect)) return recordOpenCodeHandoffCommandError(state, error)
     if (isOpenCodeProcessSmokeEffect(effect)) return recordOpenCodeProcessSmokeCommandError(state, error)
     if (isOpenCodeHandoffReadinessEffect(effect)) return recordOpenCodeHandoffReadinessCommandError(state, error)
+    if (isOpenCodeResultReviewGateEffect(effect)) return recordOpenCodeResultReviewGateCommandError(state, error)
     if (isOpenCodeResultReviewEffect(effect)) return recordOpenCodeResultReviewCommandError(state, error)
     if (isOpenCodeSessionEffect(effect)) return recordOpenCodeSessionCommandError(state, error)
     if (isContextBudgetEffect(effect)) return recordContextBudgetCommandError(state, error)
@@ -7147,6 +7148,11 @@ function isOpenCodeResultReviewEffect(effect: RuntimeUiEffect): boolean {
   return opencodeResultReviewCommands.has(effect.command)
 }
 
+function isOpenCodeResultReviewGateEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return opencodeResultReviewGateEffectTypes.has(effect.type)
+  return opencodeResultReviewGateCommands.has(effect.command)
+}
+
 function isOpenCodeSessionEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return opencodeSessionEffectTypes.has(effect.type)
   return opencodeSessionCommands.has(effect.command)
@@ -8017,6 +8023,15 @@ const opencodeHandoffReadinessEffectTypes = new Set<RuntimeUiEffect["type"]>([
 const opencodeResultReviewEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "preview-opencode-result-review-packet",
   "load-opencode-result-review-summary",
+])
+
+const opencodeResultReviewGateEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-opencode-result-review",
+  "record-opencode-result-review",
+  "load-opencode-result-reviews",
+  "load-opencode-result-review",
+  "load-latest-opencode-result-review",
+  "load-opencode-result-review-gate-summary",
 ])
 
 const commanderExecutorReviewEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -9130,6 +9145,18 @@ function recordOpenCodeResultReviewCommandError(state: UiState, error: unknown):
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "opencode result review command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordOpenCodeResultReviewGateCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    opencodeResultReviews: {
+      ...opencodeResultReviewGateState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "opencode result review gate command error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
