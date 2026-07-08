@@ -146,6 +146,7 @@ export class OpenCodeResultReviewService {
     const disposition = dispositionForDecision(decision)
     const projection = projectionForDecision(decision)
     const nextStep = readNextStep(input.next_step, defaultNextStep(decision, input))
+    if (input.next_step && nextStep === "unknown") blockers.push("next_step is invalid")
     const authorKind = readAuthorKind(input.author_kind)
     const rawBlocked = inputLooksRaw(input)
     if (rawBlocked) blockers.push("raw logs, full diffs, file contents, provider output, raw OpenCode output, full event logs, research.db dumps, mission mutation claims, and checkpoint claims are out of scope for result reviews")

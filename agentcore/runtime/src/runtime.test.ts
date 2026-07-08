@@ -19239,6 +19239,12 @@ describe("OpenCode launch readiness", () => {
     await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, rationale: "missing" })).resolves.toMatchObject({ status: "blocked", can_record: false })
     await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, decision: "accepted" })).resolves.toMatchObject({ status: "blocked", can_record: false })
     await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, decision: "unknown", rationale: "unknown" })).resolves.toMatchObject({ status: "blocked", can_record: false })
+    await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "bounded rationale", nextStep: "prepare-research-ingest" })).resolves.toMatchObject({
+      status: "blocked",
+      can_record: false,
+      next_step: "unknown",
+      blockers: expect.arrayContaining(["next_step is invalid"]),
+    })
     await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "diff --git a/file b/file\n@@ -1 +1" })).resolves.toMatchObject({ status: "blocked", can_record: false })
     await expect(server.command("runtime.preview_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "provider output says accepted" })).resolves.toMatchObject({ status: "blocked", can_record: false })
 
