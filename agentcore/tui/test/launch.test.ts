@@ -146,7 +146,71 @@ class TestRuntimeClient implements RuntimeClient {
         redacted_summary_preview: "no OpenCode handoff evidence",
       }
     }
-    if (name === "runtime.opencode_result_review_summary") return { total_considered: 0, ready_count: 0, needs_result_count: 0, failed_count: 0, blocked_count: 0, stale_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
+    if (name === "runtime.opencode_result_review_packet_summary") return { total_considered: 0, ready_count: 0, needs_result_count: 0, failed_count: 0, blocked_count: 0, stale_count: 0, generated_at: "2026-06-20T00:00:00.000Z" }
+    if (name === "runtime.preview_opencode_result_review") return {
+      preview_id: "result-review-preview-test",
+      status: "blocked",
+      can_record: false,
+      report_id: payload?.report_id ?? "report-test",
+      session_id: "session-test",
+      decision: payload?.decision ?? "accepted",
+      review_disposition: "accepted_as_evidence",
+      projection_state_after: "reviewed_accepted",
+      next_step: "prepare_research_ingestion",
+      author_kind: "human",
+      rationale_preview: "bounded rationale",
+      accepted_claims_preview: [],
+      rejected_claims_preview: [],
+      revision_requests_preview: [],
+      followup_requests_preview: [],
+      risk_flags_preview: [],
+      artifact_refs_preview: [],
+      test_refs_preview: [],
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      blockers: ["report_id was not found"],
+      warnings: [],
+      recommended_commands: [],
+      generated_at: "2026-06-20T00:00:00.000Z",
+      redacted_summary_preview: "result review preview",
+      review_hash: "hash-preview",
+    }
+    if (name === "runtime.record_opencode_result_review") return {
+      review_id: "result-review-test",
+      status: payload?.dry_run === true ? "dry_run" : "blocked",
+      report_id: payload?.report_id ?? "report-test",
+      session_id: "session-test",
+      decision: payload?.decision ?? "accepted",
+      review_disposition: "accepted_as_evidence",
+      projection_state_after: "reviewed_accepted",
+      next_step: "prepare_research_ingestion",
+      author_kind: "human",
+      rationale_preview: "bounded rationale",
+      accepted_claims_preview: [],
+      rejected_claims_preview: [],
+      revision_requests_preview: [],
+      followup_requests_preview: [],
+      risk_flags_preview: [],
+      artifact_refs_preview: [],
+      test_refs_preview: [],
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      recorded_at: "2026-06-20T00:00:00.000Z",
+      recorded_by: "operator",
+      error: payload?.dry_run === true ? undefined : "report_id was not found",
+      review_hash: "hash-result",
+      recommended_commands: [],
+    }
+    if (name === "runtime.list_opencode_result_reviews") return []
+    if (name === "runtime.latest_opencode_result_review") return null
+    if (name === "runtime.get_opencode_result_review") return null
+    if (name === "runtime.opencode_result_review_summary") return { total_reviews: 0, reviewed_report_count: 0, accepted_count: 0, rejected_count: 0, needs_revision_count: 0, needs_followup_count: 0, inconclusive_count: 0, needs_human_count: 0, deferred_count: 0, research_ingestion_recommended_count: 0, latest_reviews: [], generated_at: "2026-06-20T00:00:00.000Z" }
     if (name === "runtime.preview_opencode_session_plan") return opencodeSessionPreview(payload)
     if (name === "runtime.create_opencode_session_plan") return opencodeSessionPlan(payload, payload?.dry_run === true || payload?.dryRun === true ? "dry_run" : "planned")
     if (name === "runtime.list_opencode_sessions") return []
@@ -1604,9 +1668,21 @@ describe("TUI launch boundary", () => {
       { type: "submit" },
       { type: "insert", text: "/result-review-packet" },
       { type: "submit" },
-      { type: "insert", text: "/result-review-summary" },
+      { type: "insert", text: "/result-review-packet-summary" },
       { type: "submit" },
       { type: "insert", text: "/opencode-result-review" },
+      { type: "submit" },
+      { type: "insert", text: "/result-review-preview report=report-1 decision=accepted rationale=ok" },
+      { type: "submit" },
+      { type: "insert", text: "/result-review-dry-run report=report-1 decision=accepted rationale=ok" },
+      { type: "submit" },
+      { type: "insert", text: "/result-review report=report-1 decision=accepted rationale=ok" },
+      { type: "submit" },
+      { type: "insert", text: "/result-reviews report=report-1" },
+      { type: "submit" },
+      { type: "insert", text: "/result-review-latest report=report-1" },
+      { type: "submit" },
+      { type: "insert", text: "/result-review-summary" },
       { type: "submit" },
       { type: "insert", text: "/authority-show /result-review-packet" },
       { type: "submit" },
@@ -1621,7 +1697,13 @@ describe("TUI launch boundary", () => {
 
     const snapshot = output.join("\n")
     expect(snapshot).toContain("OpenCode result review packet")
+    expect(snapshot).toContain("OpenCode result reviews")
     expect(runtime.commandNames).toContain("runtime.preview_opencode_result_review_packet")
+    expect(runtime.commandNames).toContain("runtime.opencode_result_review_packet_summary")
+    expect(runtime.commandNames).toContain("runtime.preview_opencode_result_review")
+    expect(runtime.commandNames).toContain("runtime.record_opencode_result_review")
+    expect(runtime.commandNames).toContain("runtime.list_opencode_result_reviews")
+    expect(runtime.commandNames).toContain("runtime.latest_opencode_result_review")
     expect(runtime.commandNames).toContain("runtime.opencode_result_review_summary")
     expect(runtime.commandNames).toContain("runtime.command_authority_get")
     expect(runtime.commandNames).not.toContain("runtime.status")
