@@ -6075,6 +6075,102 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
 
+  test("OpenCode result report slash commands record bounded executor evidence only", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=result", "report", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-progress", args: [`session=${sessionId}`, "summary=done", "token=abc123"] })
+	    const progressId = state.opencodeProgress?.latestResult?.progress_id
+	    expect(progressId).toBeTruthy()
+
+	    const commandCountBeforePreview = runtime.sentCommands.length
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-preview", args: [`session=${sessionId}`, "summary=implemented candidate fix token=abc123"] })
+    expect(state.opencodeResultReports?.preview).toMatchObject({
+      status: "ready",
+      can_record: true,
+      session_id: sessionId,
+      result_kind: "status_report",
+      result_disposition: "reported_status_only",
+      review_state: "review_not_required",
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      commander_review_created: false,
+    })
+    expect(runtime.sentCommands).toHaveLength(commandCountBeforePreview)
+
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", "summary=implemented candidate fix token=abc123", "outcome=tests passed"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "dry_run", result_kind: "completion_report", review_state: "needs_commander_review" })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`progress=${progressId}`, "kind=completion_report", "outcome=tests passed"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "dry_run", result_kind: "completion_report", review_state: "needs_commander_review" })
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", "review_state=review_not_required", "summary=implemented candidate fix", "outcome=tests passed"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "blocked", result_kind: "completion_report", review_state: "needs_commander_review" })
+	    expect(state.opencodeResultReports?.commandError).toContain("terminal OpenCode result reports require Commander or human review")
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", `summary=${"x".repeat(180)} diff --git a/file b/file`, "outcome=tests passed"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "blocked", result_kind: "completion_report" })
+	    expect(state.opencodeResultReports?.commandError).toContain("raw logs")
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-dry-run", args: [`session=${sessionId}`, "kind=completion_report", "summary=provider output says done", "outcome=file contents omitted"] })
+	    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "blocked", result_kind: "completion_report" })
+	    expect(state.opencodeResultReports?.commandError).toContain("raw logs")
+	    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reports", args: [`session=${sessionId}`] })
+    expect(state.opencodeResultReports?.records).toHaveLength(0)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report", args: [`session=${sessionId}`, "kind=completion_report", "summary=implemented candidate fix token=abc123", "outcome=tests passed", "changed_files=fileA.ts", "tests_run=bun-test", "claims=fix-works", "followups=commander-review"] })
+    expect(state.opencodeResultReports?.latestResult).toMatchObject({
+      status: "recorded",
+      result_kind: "completion_report",
+      result_disposition: "reported_done",
+      review_state: "needs_commander_review",
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      commander_review_created: false,
+    })
+    const reportId = state.opencodeResultReports?.latestResult?.report_id
+    expect(reportId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report", args: [`session=${sessionId}`, "kind=completion_report", "summary=implemented candidate fix token=abc123", "outcome=tests passed", "changed_files=fileA.ts", "tests_run=bun-test", "claims=fix-works", "followups=commander-review"] })
+    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "blocked" })
+    expect(state.opencodeResultReports?.commandError).toContain("duplicate")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report", args: [`session=${sessionId}`, "kind=failure_report", "summary=failed alternative", "known_failures=test still fails"] })
+    expect(state.opencodeResultReports?.latestResult).toMatchObject({ status: "recorded", result_kind: "failure_report" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-reports", args: [`session=${sessionId}`] })
+    expect(state.opencodeResultReports?.records).toEqual(expect.arrayContaining([expect.objectContaining({ report_id: reportId, result_kind: "completion_report" })]))
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-latest", args: [`session=${sessionId}`] })
+    expect(state.opencodeResultReports?.latest).toMatchObject({ result_kind: "failure_report" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-show", args: [reportId!] })
+    expect(state.opencodeResultReports?.selected).toMatchObject({ report_id: reportId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report-summary", args: [] })
+    expect(state.opencodeResultReports?.summary).toMatchObject({ total_reports: 2, completion_count: 1, failure_count: 1, needs_commander_review_count: 2 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/opencode-result-report", `session=${sessionId}`, "kind=completion_report", "summary=done", "outcome=ok"] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-result-report"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/opencode-result-report",
+      risk: "medium_risk_write",
+      calls_provider: false,
+      creates_external_process: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("result-report metadata")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("OpenCode result reports")
+    expect(snapshot).toContain("review_state=needs_commander_review")
+    expect(snapshot).toContain("mission_mutated=false")
+    expect(snapshot).toContain("research_db_written=false")
+    expect(snapshot).toContain("checkpoint_created=false")
+    expect(snapshot).toContain("commander_review_created=false")
+    expect(snapshot).toContain("mission not completed")
+    expect(snapshot).toContain("selected=/opencode-result-report risk=medium_risk_write")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

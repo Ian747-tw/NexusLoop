@@ -546,6 +546,42 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("OpenCode result report slash commands are exact whitelist entries", () => {
+    let result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-result-report-preview session=session-1 summary=done",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-result-report-preview", args: ["session=session-1", "summary=done"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/result-report session=session-1 kind=completion_report summary=done outcome=tests-passed",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "result-report", args: ["session=session-1", "kind=completion_report", "summary=done", "outcome=tests-passed"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/opencode-result-report-summary",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "opencode-result-report-summary" }])
+
+    for (const message of ["/tmp/result-report", "/path/opencode-result-report", ".opencode-result-report session=session-1", ":opencode-result-report session=session-1"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("review slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
