@@ -535,8 +535,8 @@ class FailingAddArtifactResearchDb extends TrackingResearchDb {
   }
 }
 
-class FailingProposeResearchResultDb extends TrackingResearchDb {
-  override proposeResearchResult(_input: Parameters<RuntimeResearchDbProjection["proposeResearchResult"]>[0]): ReturnType<RuntimeResearchDbProjection["proposeResearchResult"]> {
+class FailingAcceptResearchResultDb extends TrackingResearchDb {
+  override acceptResearchResult(_resultId: string): ReturnType<RuntimeResearchDbProjection["acceptResearchResult"]> {
     throw new Error("ResearchDb ingestion write failed token=ingestion-secret")
   }
 }
@@ -17724,12 +17724,13 @@ describe("OpenCode launch readiness", () => {
     db.createTopic({ id: "topic_launch_low_novelty", title: "Launch low novelty" })
     db.proposeResearchResult({
       result_id: "result_adapter_timeout_prior",
-      result_type: "evaluation_result",
+      result_type: "implementation_change",
       title: "adapter timeout watchdog",
       summary: "prior timeout watchdog result",
       confidence: "medium",
       created_by: "commander",
     })
+    db.acceptResearchResult("result_adapter_timeout_prior")
     db.close()
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
     await server.start()
@@ -19578,12 +19579,12 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
-  test("research ingestion persists bounded failure events when ResearchDb write fails", async () => {
+  test("research ingestion persists bounded failure events and hides proposed-only rows when accept fails", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
     const rawDb = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
     rawDb.createTopic({ id: "topic_ingestion_failure", title: "Ingestion failure" })
-    const researchDb = new FailingProposeResearchResultDb(rawDb)
+    const researchDb = new FailingAcceptResearchResultDb(rawDb)
     const server = new RuntimeServer({
       projectDir: dir,
       adapter: new LongLivedAdapter(),
@@ -19614,6 +19615,7 @@ describe("OpenCode launch readiness", () => {
     const result = await server.command("runtime.record_research_ingestion", { reviewId: review.review_id }) as {
       status: string
       ingestion_id: string
+      research_memory_id?: string
       research_db_write_status: string
       research_db_written: boolean
       error?: string
@@ -19626,8 +19628,9 @@ describe("OpenCode launch readiness", () => {
     })
     const events = await server.eventStore.readAll()
     const newEvents = events.slice(before.length)
-    expect(newEvents.map((event) => event.kind)).toEqual(["research_memory_ingestion_recorded"])
-    expect(newEvents[0]).toMatchObject({
+    expect(newEvents.map((event) => event.kind)).toEqual(["research_event", "research_memory_ingestion_recorded"])
+    expect(newEvents[0]).toMatchObject({ event_type: "ResearchResultProposed" })
+    expect(newEvents[1]).toMatchObject({
       ingestion_id: result.ingestion_id,
       review_id: review.review_id,
       report_id: report.report_id,
@@ -19645,6 +19648,8 @@ describe("OpenCode launch readiness", () => {
     await expect(server.command("runtime.list_research_ingestions", { reviewId: review.review_id })).resolves.toEqual([expect.objectContaining({ ingestion_id: result.ingestion_id, research_db_written: false })])
     await expect(server.command("runtime.latest_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id, status: "failed" })
     await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, db_written_count: 0, failed_count: 1 })
+    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "implemented bounded candidate", limit: 10 }) as { candidates: Array<{ result_id: string }> }
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).not.toContain(result.research_memory_id)
     await server.shutdown()
     researchDb.close()
   })
@@ -20825,6 +20830,7 @@ describe("OpenCode launch readiness", () => {
     })
     db.linkResultArtifact("finding_timeout", "artifact_timeout")
     db.linkResultCitation("finding_timeout", "citation_timeout")
+    db.acceptResearchResult("finding_timeout")
     db.proposeResearchResult({
       result_id: "failure_timeout",
       result_type: "negative_finding",
@@ -20833,22 +20839,25 @@ describe("OpenCode launch readiness", () => {
       confidence: "medium",
       created_by: "executor",
     })
+    db.acceptResearchResult("failure_timeout")
     db.proposeResearchResult({
       result_id: "unrelated_result",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "unrelated optimizer",
       summary: "optimizer result not about adapter timeout",
       confidence: "low",
       created_by: "commander",
     })
+    db.acceptResearchResult("unrelated_result")
     db.proposeResearchResult({
       result_id: "finding_timeout_recent",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "adapter timeout watchdog recent",
       summary: "recent short interval watchdog improved timeout reporting",
       confidence: "high",
       created_by: "commander",
     })
+    db.acceptResearchResult("finding_timeout_recent")
     db.proposeResearchResult({
       result_id: "failure_timeout_recent",
       result_type: "negative_finding",
@@ -20856,6 +20865,15 @@ describe("OpenCode launch readiness", () => {
       summary: "recent short interval failed because heartbeat was missing",
       confidence: "medium",
       created_by: "executor",
+    })
+    db.acceptResearchResult("failure_timeout_recent")
+    db.proposeResearchResult({
+      result_id: "proposed_timeout_leak",
+      result_type: "implementation_change",
+      title: "adapter timeout proposed leak",
+      summary: "proposed result should not surface in research memory",
+      confidence: "high",
+      created_by: "commander",
     })
     db.createCandidate({ candidate_id: "candidate_mission_in", claim: "mission scoped adapter timeout candidate", source: "commander" })
     db.createCandidate({ candidate_id: "candidate_mission_out", claim: "mission scoped adapter timeout candidate", source: "commander" })
@@ -20879,7 +20897,7 @@ describe("OpenCode launch readiness", () => {
     })
     db.proposeResearchResult({
       result_id: "result_mission_in_linked",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "mission scoped adapter timeout linked result",
       summary: "mission result linked through candidate trial and training run",
       confidence: "high",
@@ -20888,9 +20906,10 @@ describe("OpenCode launch readiness", () => {
       training_run_id: "training_mission_in",
       created_by: "commander",
     })
+    db.acceptResearchResult("result_mission_in_linked")
     db.proposeResearchResult({
       result_id: "result_mission_out_linked",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "mission scoped adapter timeout linked result",
       summary: "out of scope mission result linked through candidate trial and training run",
       confidence: "high",
@@ -20899,6 +20918,7 @@ describe("OpenCode launch readiness", () => {
       training_run_id: "training_mission_out",
       created_by: "commander",
     })
+    db.acceptResearchResult("result_mission_out_linked")
     db.close()
     const beforeEvents = await readJsonlEvents(dir)
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
@@ -20912,6 +20932,7 @@ describe("OpenCode launch readiness", () => {
     expect(retrieval.status).toBe("ready")
     expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("finding_timeout_recent")
     expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("failure_timeout_recent")
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).not.toContain("proposed_timeout_leak")
     expect(retrieval.candidates[0]?.matched_terms).toContain("adapter")
     expect(retrieval.candidates[0]?.relevance_score).toBeGreaterThan(0)
     expect(retrieval.candidates.flatMap((candidate) => candidate.source_refs).every((ref) => ref.pointer_only)).toBe(true)
@@ -20948,7 +20969,7 @@ describe("OpenCode launch readiness", () => {
       label: null,
       title: "latecap needle result",
       summary: "latecap lexical match should survive backend scan before preview limit",
-      status: "proposed",
+      status: "accepted",
       confidence: "high",
       mission_id: null,
       candidate_id: null,
@@ -21021,6 +21042,7 @@ describe("OpenCode launch readiness", () => {
         policy: "projection_read",
         searchResearchResults: (options) => {
           seenOrders.push(options?.order)
+          expect(options?.status).toBe("accepted")
           return options?.order === "newest" ? [lateResult] : []
         },
         searchCandidates: (options) => {
@@ -21103,7 +21125,7 @@ describe("OpenCode launch readiness", () => {
       label: null,
       title: "mission scope result needle",
       summary: "result linked through mission candidate trial and training run",
-      status: "proposed",
+      status: "accepted",
       confidence: "high",
       mission_id: null,
       candidate_id: "mission_candidate_scope",
@@ -21125,6 +21147,7 @@ describe("OpenCode launch readiness", () => {
         available: true,
         policy: "projection_read",
         searchResearchResults: (options) => {
+          expect(options?.status).toBe("accepted")
           resultQueries.push(options?.candidate_id ?? options?.trial_id ?? options?.training_run_id ?? options?.mission_id)
           return options?.candidate_id === "mission_candidate_scope" || options?.trial_id === "mission_trial_scope" || options?.training_run_id === "mission_training_scope"
             ? [missionResult]
