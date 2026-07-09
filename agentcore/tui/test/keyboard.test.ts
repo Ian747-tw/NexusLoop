@@ -626,6 +626,50 @@ describe("TUI keyboard command model", () => {
     }
   })
 
+  test("research ingestion slash commands are exact whitelist entries", () => {
+    let result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/research-ingestion-preview review=review-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "research-ingestion-preview", args: ["review=review-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/research-ingest review=review-1 tags=opencode,reviewed",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "research-ingest", args: ["review=review-1", "tags=opencode,reviewed"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/research-ingestion-show ingestion-1",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "research-ingestion-show", args: ["ingestion-1"] }])
+
+    result = applyKeyCommandWithEffects({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/research-ingestion-summary",
+    }, { type: "submit" })
+    expect(result.effects).toEqual([{ type: "send-command", command: "research-ingestion-summary" }])
+
+    for (const message of ["/tmp/research-ingestion", "/path/research-ingestion", ".research-ingestion review=review-1", ":research-ingestion review=review-1"]) {
+      result = applyKeyCommandWithEffects({
+        ...initialState("/tmp/demo"),
+        screen: "main",
+        focus: "message-box",
+        messageDraft: message,
+      }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("review slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

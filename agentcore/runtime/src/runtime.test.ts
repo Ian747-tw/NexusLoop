@@ -489,6 +489,14 @@ class TrackingResearchDb implements RuntimeResearchDbProjection {
     return this.db.addArtifact(input)
   }
 
+  proposeResearchResult(input: Parameters<RuntimeResearchDbProjection["proposeResearchResult"]>[0]): ReturnType<RuntimeResearchDbProjection["proposeResearchResult"]> {
+    return this.db.proposeResearchResult(input)
+  }
+
+  acceptResearchResult(resultId: string): ReturnType<RuntimeResearchDbProjection["acceptResearchResult"]> {
+    return this.db.acceptResearchResult(resultId)
+  }
+
   listResearchEvents(options?: ListResearchEventsOptions): ResearchEvent[] {
     return this.db.listResearchEvents(options)
   }
@@ -1005,6 +1013,10 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/opencode-result-review")).toMatchObject({ risk: "medium_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, expected_event_kinds: ["opencode_result_review_recorded"] })
     expect(service.get("/opencode-result-reviews")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_opencode_result_reviews", mutates_events: false })
     expect(service.get("/result-review-summary")).toMatchObject({ slash_command: "/opencode-result-review-summary", risk: "safe_read", runtime_command: "runtime.opencode_result_review_summary", owner: "opencode_handoff", mutates_events: false })
+    expect(service.get("/research-ingestion-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_research_ingestion", owner: "research", mutates_events: false })
+    expect(service.get("/research-ingestion-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.record_research_ingestion", owner: "research", mutates_events: false })
+    expect(service.get("/research-ingestion")).toMatchObject({ risk: "high_impact_write", gate: "opencode_runtime", owner: "research", mutates_events: true, expected_event_kinds: ["research_event", "research_memory_ingestion_recorded"] })
+    expect(service.get("/research-ingestions")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_research_ingestions", owner: "research", mutates_events: false })
     expect(service.get("/opencode-session-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_session_plan", mutates_events: false, creates_external_process: false })
     expect(service.get("/opencode-session-plan-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.create_opencode_session_plan", mutates_events: false, creates_external_process: false })
     expect(service.get("/opencode-session-plan")).toMatchObject({ risk: "high_impact_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, creates_external_process: false, blocked_by_default: true })
@@ -1065,6 +1077,10 @@ describe("CommandAuthorityService", () => {
     const resultReview = service.validationProfile("/opencode-result-review")
     expect(resultReview.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"])
     expect(resultReview.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py", "tests/e2e_user/scenarios/test_opencode_result_report_tui.py", "tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py", "tests/e2e_user/scenarios/test_opencode_progress_heartbeat_tui.py"])
+
+    const researchIngestion = service.validationProfile("/research-ingestion")
+    expect(researchIngestion.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_research_ingestion_tui.py"])
+    expect(researchIngestion.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py", "tests/e2e_user/scenarios/test_opencode_result_review_tui.py", "tests/e2e_user/scenarios/test_opencode_result_report_tui.py", "tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"])
 
     const minimax = service.validationProfile("/minimax-live-validate")
     expect(minimax.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"])
@@ -14924,6 +14940,23 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("research ingestion commands and dry-runs do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_research_ingestion", { reviewId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.record_research_ingestion", { reviewId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_research_ingestions")).resolves.toEqual([])
+    await expect(client.command("runtime.get_research_ingestion", { ingestionId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.latest_research_ingestion", { reviewId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 0 })
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
   test("commander executor review commands do not auto-start the runtime", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -19377,6 +19410,159 @@ describe("OpenCode launch readiness", () => {
     const authority = await server.command("runtime.command_authority_get", { command: "/opencode-result-review" }) as { risk: string; mutates_events: boolean; notes: string[] }
     expect(authority).toMatchObject({ risk: "medium_risk_write", mutates_events: true })
     expect(authority.notes.join(" ")).toContain("result-review metadata")
+    await server.shutdown()
+  })
+
+  test("research ingestion promotes accepted result review into bounded research memory only", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "completion_report", summary: "done with candidate fix token=ingest-secret" }) as { progress_id: string }
+    const report = await server.command("runtime.record_opencode_result_report", {
+      sessionId,
+      kind: "completion_report",
+      summary: "implemented candidate fix token=ingest-secret",
+      outcome: "tests passed",
+      changedFiles: ["fileA.ts"],
+      testsRun: ["bun-test"],
+      testResults: ["passed"],
+      artifacts: ["artifact://result"],
+      metrics: ["tests=1"],
+      claims: ["fix works"],
+      followups: ["research ingestion"],
+      progressId: progress.progress_id,
+      confidence: "high",
+    }) as { report_id: string }
+    const accepted = await server.command("runtime.record_opencode_result_review", {
+      reportId: report.report_id,
+      decision: "accepted",
+      rationale: "bounded evidence is suitable for memory token=ingest-secret",
+      acceptedClaims: ["fix works"],
+      confidence: "high",
+    }) as { review_id: string }
+    const rejectedReport = await server.command("runtime.record_opencode_result_report", { sessionId, kind: "failure_report", summary: "failed alternative", knownFailures: ["test failed"] }) as { report_id: string }
+    const rejected = await server.command("runtime.record_opencode_result_review", { reportId: rejectedReport.report_id, decision: "rejected", rationale: "not enough evidence" }) as { review_id: string }
+
+    await expect(server.command("runtime.preview_research_ingestion", {})).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: "missing" })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: rejected.review_id })).resolves.toMatchObject({ status: "blocked", can_ingest: false, ingestion_decision: "block" })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: accepted.review_id, evidenceKind: "negative_result" })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: accepted.review_id, researchTitle: "diff --git a/file b/file\n@@ -1 +1" })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+
+    const preview = await server.command("runtime.preview_research_ingestion", { reviewId: accepted.review_id, tags: ["opencode", "reviewed"] }) as {
+      status: string
+      can_ingest: boolean
+      evidence_kind: string
+      ingestion_decision: string
+      research_title_preview: string
+      research_db_written: boolean
+      mission_mutated: boolean
+      checkpoint_created: boolean
+      followup_mission_created: boolean
+      provider_called: boolean
+      mcp_called: boolean
+      provenance_refs: Array<{ source_kind: string; source_id: string; pointer_only: boolean }>
+    }
+    expect(preview).toMatchObject({
+      status: "ready",
+      can_ingest: true,
+      evidence_kind: "positive_finding",
+      ingestion_decision: "ingest",
+      research_db_written: false,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    expect(preview.research_title_preview).toContain("adapter spectral curriculum")
+    expect(preview.provenance_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source_kind: "result_review", source_id: accepted.review_id, pointer_only: true }),
+      expect.objectContaining({ source_kind: "result_report", source_id: report.report_id, pointer_only: true }),
+      expect.objectContaining({ source_kind: "opencode_session", source_id: sessionId, pointer_only: true }),
+      expect.objectContaining({ source_kind: "opencode_launch", source_id: launched.launch_id, pointer_only: true }),
+    ]))
+    expect(JSON.stringify(preview)).not.toContain("ingest-secret")
+
+    const beforeIngestion = await server.eventStore.readAll()
+    await expect(server.command("runtime.record_research_ingestion", { reviewId: accepted.review_id, tags: ["opencode", "reviewed"], dryRun: true })).resolves.toMatchObject({ status: "dry_run", research_db_write_status: "dry_run", research_db_written: false })
+    expect(await server.eventStore.readAll()).toEqual(beforeIngestion)
+
+    const result = await server.command("runtime.record_research_ingestion", { reviewId: accepted.review_id, tags: ["opencode", "reviewed"] }) as {
+      status: string
+      ingestion_id: string
+      research_memory_id: string
+      research_db_row_id: string
+      research_db_write_status: string
+      research_db_written: boolean
+      mission_mutated: boolean
+      checkpoint_created: boolean
+      followup_mission_created: boolean
+      provider_called: boolean
+      mcp_called: boolean
+    }
+    expect(result).toMatchObject({
+      status: "recorded",
+      research_db_write_status: "written",
+      research_db_written: true,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    expect(result.research_memory_id).toBe(result.research_db_row_id)
+    const events = await server.eventStore.readAll()
+    const newEvents = events.slice(beforeIngestion.length)
+    expect(newEvents.map((event) => event.kind)).toEqual(["research_event", "research_event", "research_memory_ingestion_recorded"])
+    expect(newEvents[0]).toMatchObject({ event_type: "ResearchResultProposed" })
+    expect(newEvents[1]).toMatchObject({ event_type: "ResearchResultAccepted" })
+    expect(newEvents[2]).toMatchObject({
+      ingestion_id: result.ingestion_id,
+      research_memory_id: result.research_memory_id,
+      review_id: accepted.review_id,
+      report_id: report.report_id,
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      source_kind: "opencode_result_review",
+      evidence_kind: "positive_finding",
+      ingestion_decision: "ingest",
+      review_decision: "accepted",
+      review_disposition: "accepted_as_evidence",
+      review_projection_state: "reviewed_accepted",
+      research_db_write_status: "written",
+      research_db_written: true,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    expect(JSON.stringify(newEvents)).not.toContain("ingest-secret")
+
+    await expect(server.command("runtime.record_research_ingestion", { reviewId: accepted.review_id, dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(server.command("runtime.record_research_ingestion", { reviewId: accepted.review_id })).resolves.toMatchObject({ status: "blocked" })
+    expect(await server.eventStore.readAll()).toEqual(events)
+
+    await expect(server.command("runtime.list_research_ingestions", { reviewId: accepted.review_id })).resolves.toEqual([expect.objectContaining({ ingestion_id: result.ingestion_id, research_db_written: true })])
+    await expect(server.command("runtime.get_research_ingestion", { ingestionId: result.ingestion_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id, research_memory_id: result.research_memory_id })
+    await expect(server.command("runtime.latest_research_ingestion", { reviewId: accepted.review_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id })
+    await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, research_memory_count: 1, positive_finding_count: 1, db_written_count: 1 })
+    await expect(server.command("runtime.research_memory_summary")).resolves.toMatchObject({ total_candidates_available: expect.any(Number), has_research_db_projection: true })
+    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter spectral curriculum", limit: 10 }) as { candidates: Array<{ result_id: string; source_refs: Array<{ pointer_only: boolean }> }> }
+    expect(retrieval.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ result_id: result.research_memory_id })]))
+    expect(retrieval.candidates.find((candidate) => candidate.result_id === result.research_memory_id)?.source_refs.every((ref) => ref.pointer_only)).toBe(true)
+
+    const eventKinds = events.map((event) => event.kind)
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+    expect(eventKinds).not.toContain("runtime_checkpoint_created")
+    expect(eventKinds).not.toContain("followup_mission_created")
+    expect(eventKinds).not.toContain("opencode_prompt_sent")
+    expect(eventKinds).not.toContain("opencode_session_process_paused")
+    const authority = await server.command("runtime.command_authority_get", { command: "/research-ingestion" }) as { risk: string; mutates_events: boolean; notes: string[] }
+    expect(authority).toMatchObject({ risk: "high_impact_write", mutates_events: true })
+    expect(authority.notes.join(" ")).toContain("research-memory")
     await server.shutdown()
   })
 

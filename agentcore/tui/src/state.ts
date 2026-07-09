@@ -2928,6 +2928,122 @@ export type OpenCodeResultReviewGateState = {
   commandError?: string
 }
 
+export type ResearchIngestionCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write" | string
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type ResearchIngestionProvenanceRefSummary = {
+  source_kind: string
+  source_id: string
+  status?: string
+  summary_preview?: string
+  pointer_only: true
+}
+
+export type ResearchIngestionPreviewSummary = {
+  preview_id: string
+  status: "ready" | "blocked" | string
+  can_ingest: boolean
+  review_id: string
+  report_id: string
+  session_id: string
+  launch_id?: string
+  source_kind: string
+  evidence_kind: string
+  ingestion_decision: string
+  review_decision?: string
+  review_disposition?: string
+  review_projection_state?: string
+  report_kind?: string
+  report_disposition?: string
+  research_title_preview: string
+  research_question_preview?: string
+  hypothesis_preview?: string
+  method_preview?: string
+  outcome_preview?: string
+  evidence_summary_preview: string
+  claims_preview: string[]
+  metrics_preview: string[]
+  artifacts_preview: string[]
+  tests_preview: string[]
+  failures_preview: string[]
+  followups_preview: string[]
+  tags_preview: string[]
+  confidence?: number | string
+  novelty_key_preview?: string
+  provenance_refs: ResearchIngestionProvenanceRefSummary[]
+  research_db_write_status: string
+  research_db_written: false | boolean
+  mission_mutated: false | boolean
+  checkpoint_created: false | boolean
+  followup_mission_created: false | boolean
+  provider_called: false | boolean
+  mcp_called: false | boolean
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: ResearchIngestionCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  ingestion_hash: string
+}
+
+export type ResearchIngestionResultSummary = Omit<ResearchIngestionPreviewSummary, "preview_id" | "status" | "can_ingest" | "generated_at" | "blockers" | "warnings" | "redacted_summary_preview"> & {
+  ingestion_id: string
+  status: "recorded" | "blocked" | "dry_run" | "failed" | string
+  research_memory_id?: string
+  research_db_row_id?: string
+  recorded_at: string
+  recorded_by: string
+  error?: string
+}
+
+export type ResearchIngestionRecordSummary = {
+  ingestion_id: string
+  research_memory_id?: string
+  review_id: string
+  report_id: string
+  session_id: string
+  launch_id?: string
+  evidence_kind: string
+  ingestion_decision: string
+  research_title_preview: string
+  evidence_summary_preview: string
+  research_db_written: boolean
+  recorded_at: string
+  recorded_by: string
+  confidence?: number | string
+  ingestion_hash: string
+}
+
+export type ResearchIngestionSummaryState = {
+  total_ingestions: number
+  research_memory_count: number
+  session_count: number
+  positive_finding_count: number
+  negative_result_count: number
+  inconclusive_result_count: number
+  partial_result_count: number
+  blocked_result_count: number
+  db_written_count: number
+  failed_count: number
+  latest_ingestions: ResearchIngestionRecordSummary[]
+  generated_at: string
+}
+
+export type ResearchIngestionState = {
+  preview?: ResearchIngestionPreviewSummary | null
+  latestResult?: ResearchIngestionResultSummary | null
+  records: ResearchIngestionRecordSummary[]
+  selected?: ResearchIngestionResultSummary | null
+  latest?: ResearchIngestionResultSummary | null
+  summary?: ResearchIngestionSummaryState | null
+  commandError?: string
+}
+
 export type ResearchMemoryCommandSummary = {
   label: string
   command: string
@@ -5318,6 +5434,7 @@ export type UiState = {
   opencodeWakeActions?: OpenCodeWakeActionExecutionState
   opencodeResultReports?: OpenCodeResultReportState
   opencodeResultReviews?: OpenCodeResultReviewGateState
+  researchIngestions?: ResearchIngestionState
   researchMemory?: ResearchMemoryState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

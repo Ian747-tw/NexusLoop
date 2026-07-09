@@ -100,6 +100,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeWakeActionExecutionLines(state))
   out.push(...opencodeResultReportLines(state))
   out.push(...opencodeResultReviewGateLines(state))
+  out.push(...researchIngestionLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -1568,6 +1569,60 @@ function opencodeResultReviewGateLines(state: UiState): string[] {
   else out.push(...reviews.records.slice(0, 12).map((record) => `    - ${record.review_id} report=${record.report_id} session=${record.session_id} launch=${record.launch_id ?? "none"} decision=${record.decision} disposition=${record.review_disposition} projection_state_after=${record.projection_state_after} next_step=${record.next_step} revision=${record.has_revision_requests} followup=${record.has_followup_requests}: ${preview(redactText(record.rationale_preview))}`))
   if (reviews.commandError) out.push(`  command_error=${redactText(reviews.commandError)}`)
   out.push("  note=result review does not complete mission; research.db not ingested; checkpoint not created; follow-up mission not created; provider not called; OpenCode prompt not sent")
+  return out
+}
+
+function researchIngestionLines(state: UiState): string[] {
+  const ingestions = state.researchIngestions
+  const out = ["Research ingestions"]
+  if (!ingestions) {
+    out.push("  preview=none")
+    out.push("  latest_result=none")
+    out.push("  records=0")
+    out.push("  note=ingestion writes bounded research memory only; no mission mutation, checkpoint, follow-up mission, provider/MCP/online research, OpenCode prompt, or process control")
+    return out
+  }
+  const renderDetail = (prefix: string, item: NonNullable<typeof ingestions.preview> | NonNullable<typeof ingestions.latestResult>) => {
+    out.push(`  ${prefix}_source review=${item.review_id} report=${item.report_id} session=${item.session_id} launch=${item.launch_id ?? "none"} source=${item.source_kind} evidence=${item.evidence_kind} decision=${item.ingestion_decision}`)
+    out.push(`  ${prefix}_review decision=${item.review_decision ?? "unknown"} disposition=${item.review_disposition ?? "unknown"} projection=${item.review_projection_state ?? "unknown"} report_kind=${item.report_kind ?? "unknown"} report_disposition=${item.report_disposition ?? "unknown"}`)
+    out.push(`  ${prefix}_memory title=${preview(redactText(item.research_title_preview))} question=${preview(redactText(item.research_question_preview ?? "none"))} hypothesis=${preview(redactText(item.hypothesis_preview ?? "none"))} method=${preview(redactText(item.method_preview ?? "none"))}`)
+    out.push(`  ${prefix}_outcome=${preview(redactText(item.outcome_preview ?? "none"))}`)
+    out.push(`  ${prefix}_evidence_summary=${preview(redactText(item.evidence_summary_preview))}`)
+    out.push(`  ${prefix}_arrays claims=${item.claims_preview.join(",") || "none"} metrics=${item.metrics_preview.join(",") || "none"} artifacts=${item.artifacts_preview.join(",") || "none"} tests=${item.tests_preview.join(",") || "none"} failures=${item.failures_preview.join(",") || "none"} followups=${item.followups_preview.join(",") || "none"} tags=${item.tags_preview.join(",") || "none"}`)
+    out.push(`  ${prefix}_db write_status=${item.research_db_write_status} written=${item.research_db_written} confidence=${item.confidence ?? "unknown"} novelty_key=${preview(redactText(item.novelty_key_preview ?? "none"))}`)
+    out.push(`  ${prefix}_flags mission_mutated=${item.mission_mutated} checkpoint_created=${item.checkpoint_created} followup_mission_created=${item.followup_mission_created} provider_called=${item.provider_called} mcp_called=${item.mcp_called}`)
+    if (item.provenance_refs.length > 0) out.push(`  ${prefix}_provenance=${item.provenance_refs.slice(0, 8).map((ref) => `${ref.source_kind}:${preview(redactText(ref.source_id))}`).join(",")}`)
+  }
+  if (ingestions.preview) {
+    const item = ingestions.preview
+    out.push(`  preview=${item.preview_id} status=${item.status} can_ingest=${item.can_ingest}`)
+    renderDetail("preview", item)
+    if (item.blockers.length > 0) out.push(`  blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  warnings=${item.warnings.map(redactText).join("; ")}`)
+  } else {
+    out.push("  preview=none")
+  }
+  if (ingestions.latestResult) {
+    const item = ingestions.latestResult
+    out.push(`  latest_result=${item.ingestion_id} status=${item.status} research_memory_id=${item.research_memory_id ?? "none"} research_db_row_id=${item.research_db_row_id ?? "none"}`)
+    renderDetail("latest_result", item)
+    if (item.error) out.push(`  latest_error=${redactText(item.error)}`)
+  } else {
+    out.push("  latest_result=none")
+  }
+  if (ingestions.selected) out.push(`  selected=${ingestions.selected.ingestion_id} status=${ingestions.selected.status} evidence=${ingestions.selected.evidence_kind} research_db_written=${ingestions.selected.research_db_written}`)
+  if (ingestions.latest) out.push(`  latest=${ingestions.latest.ingestion_id} status=${ingestions.latest.status} evidence=${ingestions.latest.evidence_kind} research_db_written=${ingestions.latest.research_db_written}`)
+  if (ingestions.summary) {
+    const summary = ingestions.summary
+    out.push(`  summary total=${summary.total_ingestions} research_memory=${summary.research_memory_count} sessions=${summary.session_count} positive=${summary.positive_finding_count} negative=${summary.negative_result_count} inconclusive=${summary.inconclusive_result_count} partial=${summary.partial_result_count} blocked=${summary.blocked_result_count} db_written=${summary.db_written_count} failed=${summary.failed_count}`)
+  } else {
+    out.push("  summary=none")
+  }
+  out.push("  records")
+  if (ingestions.records.length === 0) out.push("    - empty")
+  else out.push(...ingestions.records.slice(0, 12).map((record) => `    - ${record.ingestion_id} memory=${record.research_memory_id ?? "none"} review=${record.review_id} report=${record.report_id} session=${record.session_id} launch=${record.launch_id ?? "none"} evidence=${record.evidence_kind} decision=${record.ingestion_decision} research_db_written=${record.research_db_written}: ${preview(redactText(record.evidence_summary_preview))}`))
+  if (ingestions.commandError) out.push(`  command_error=${redactText(ingestions.commandError)}`)
+  out.push("  note=ingestion writes bounded research memory only; no mission mutation, checkpoint, follow-up mission, provider/MCP/online research, OpenCode prompt, or process control")
   return out
 }
 

@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeResultReportCommandSummary, OpenCodeResultReportPreviewSummary, OpenCodeResultReportRecordSummary, OpenCodeResultReportResultSummary, OpenCodeResultReportSummaryState, OpenCodeResultReviewGateCommandSummary, OpenCodeResultReviewGatePreviewSummary, OpenCodeResultReviewGateRecordSummary, OpenCodeResultReviewGateResultSummary, OpenCodeResultReviewGateSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeResultReportCommandSummary, OpenCodeResultReportPreviewSummary, OpenCodeResultReportRecordSummary, OpenCodeResultReportResultSummary, OpenCodeResultReportSummaryState, OpenCodeResultReviewGateCommandSummary, OpenCodeResultReviewGatePreviewSummary, OpenCodeResultReviewGateRecordSummary, OpenCodeResultReviewGateResultSummary, OpenCodeResultReviewGateSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchIngestionCommandSummary, ResearchIngestionPreviewSummary, ResearchIngestionProvenanceRefSummary, ResearchIngestionRecordSummary, ResearchIngestionResultSummary, ResearchIngestionSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -66,6 +66,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly opencodeWakeActionExecutionRecords: OpenCodeWakeActionExecutionResultSummary[] = []
   private readonly opencodeResultReports: OpenCodeResultReportResultSummary[] = []
   private readonly opencodeResultReviews: OpenCodeResultReviewGateResultSummary[] = []
+  private readonly researchIngestions: ResearchIngestionResultSummary[] = []
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly executorReviewProposalCreates: ExecutorReviewProposalCreateResultSummary[] = []
   private readonly executorReviewProposalReviewRequests: ExecutorReviewProposalReviewRequestResultSummary[] = []
@@ -604,6 +605,18 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.latestOpenCodeResultReview(payload)
       case "runtime.opencode_result_review_summary":
         return this.opencodeResultReviewSummary(payload)
+      case "runtime.preview_research_ingestion":
+        return this.previewResearchIngestion(payload)
+      case "runtime.record_research_ingestion":
+        return this.recordResearchIngestion(payload)
+      case "runtime.list_research_ingestions":
+        return this.listResearchIngestions(payload)
+      case "runtime.get_research_ingestion":
+        return this.getResearchIngestion(String(payload.ingestionId ?? payload.ingestion_id ?? ""))
+      case "runtime.latest_research_ingestion":
+        return this.latestResearchIngestion(payload)
+      case "runtime.research_ingestion_summary":
+        return this.researchIngestionSummary(payload)
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -4428,6 +4441,149 @@ export class FakeRuntimeClient implements RuntimeClient {
     }
   }
 
+  private previewResearchIngestion(payload: Record<string, unknown>): ResearchIngestionPreviewSummary {
+    const reviewId = optionalString(payload.reviewId ?? payload.review_id ?? payload.review) ?? ""
+    const review = this.opencodeResultReviews.find((item) => item.review_id === reviewId)
+    const report = review ? this.opencodeResultReports.find((item) => item.report_id === review.report_id) : undefined
+    const blockers: string[] = []
+    if (!reviewId) blockers.push("review_id is required")
+    if (reviewId && !review) blockers.push("review_id does not resolve to an OpenCode result review")
+    if (review && !report) blockers.push("linked result report does not resolve")
+    if (review && (review.decision !== "accepted" || review.review_disposition !== "accepted_as_evidence" || review.projection_state_after !== "reviewed_accepted")) blockers.push("research ingestion requires an accepted-as-evidence result review")
+    if (reviewId && this.researchIngestions.some((item) => item.review_id === reviewId)) blockers.push("research ingestion already exists for this review_id")
+    const explicitEvidenceKind = optionalString(payload.evidenceKind ?? payload.evidence_kind)
+    const derivedKind = fakeResearchEvidenceKind(report?.result_kind)
+    const evidenceKind = explicitEvidenceKind ?? derivedKind
+    if (explicitEvidenceKind && explicitEvidenceKind !== derivedKind && !(derivedKind === "positive_finding" && explicitEvidenceKind === "metric_observation")) blockers.push("evidence_kind override is incompatible with the accepted result report kind")
+    const title = preview(redactText(String(payload.researchTitle ?? payload.research_title ?? report?.summary_preview ?? "fake accepted OpenCode evidence")))
+    const question = optionalString(payload.researchQuestion ?? payload.research_question) ?? report?.summary_preview
+    const hypothesis = optionalString(payload.hypothesis) ?? report?.claims_preview?.[0]
+    const method = optionalString(payload.method) ?? (report?.tests_run_preview?.length ? `tests: ${report.tests_run_preview.join(",")}` : report?.result_kind)
+    const outcome = preview(redactText([report?.outcome_preview, review?.rationale_preview].filter(Boolean).join("; ")))
+    const evidenceSummary = preview(redactText([report?.summary_preview, review?.rationale_preview].filter(Boolean).join("; ") || "fake accepted evidence"))
+    const claims = uniqueStrings([...(report?.claims_preview ?? []), ...(review?.accepted_claims_preview ?? [])])
+    const metrics = uniqueStrings(report?.metrics_preview ?? [])
+    const artifacts = uniqueStrings([...(report?.artifacts_preview ?? []), ...(review?.artifact_refs_preview ?? [])])
+    const tests = uniqueStrings([...(report?.tests_run_preview ?? []), ...(report?.test_results_preview ?? []), ...(review?.test_refs_preview ?? [])])
+    const failures = uniqueStrings([...(report?.known_failures_preview ?? []), ...(review?.risk_flags_preview ?? [])])
+    const followups = uniqueStrings([...(report?.followups_preview ?? []), ...(review?.followup_requests_preview ?? [])])
+    const tags = uniqueStrings([...readCsvPayload(payload.tags), "opencode", "reviewed", "accepted", report?.result_kind ?? "", evidenceKind])
+    const noveltyKey = optionalString(payload.noveltyKey ?? payload.novelty_key) ?? question ?? title
+    const hash = fakeStableHash(JSON.stringify({ reviewId, report: report?.report_id, evidenceKind, title, question, hypothesis, method, outcome, claims, tags }))
+    return {
+      preview_id: `fake-research-ingestion-preview-${hash.slice(0, 12)}`,
+      status: blockers.length ? "blocked" : "ready",
+      can_ingest: blockers.length === 0,
+      review_id: reviewId,
+      report_id: review?.report_id ?? "",
+      session_id: review?.session_id ?? report?.session_id ?? "",
+      launch_id: review?.launch_id ?? report?.launch_id,
+      source_kind: "opencode_result_review",
+      evidence_kind: evidenceKind,
+      ingestion_decision: blockers.length ? "block" : "ingest",
+      review_decision: review?.decision,
+      review_disposition: review?.review_disposition,
+      review_projection_state: review?.projection_state_after,
+      report_kind: report?.result_kind,
+      report_disposition: report?.result_disposition,
+      research_title_preview: title,
+      research_question_preview: question ? preview(redactText(question)) : undefined,
+      hypothesis_preview: hypothesis ? preview(redactText(hypothesis)) : undefined,
+      method_preview: method ? preview(redactText(method)) : undefined,
+      outcome_preview: outcome,
+      evidence_summary_preview: evidenceSummary,
+      claims_preview: claims,
+      metrics_preview: metrics,
+      artifacts_preview: artifacts,
+      tests_preview: tests,
+      failures_preview: failures,
+      followups_preview: followups,
+      tags_preview: tags,
+      confidence: review?.confidence ?? report?.confidence,
+      novelty_key_preview: noveltyKey ? preview(redactText(noveltyKey)) : undefined,
+      provenance_refs: [
+        fakeResearchIngestionRef("result_review", reviewId, review?.decision, review?.rationale_preview),
+        ...(report ? [fakeResearchIngestionRef("result_report", report.report_id, report.result_kind, report.summary_preview)] : []),
+        ...(report ? [fakeResearchIngestionRef("opencode_session", report.session_id, "session", report.summary_preview)] : []),
+        ...(report?.launch_id ? [fakeResearchIngestionRef("opencode_launch", report.launch_id, "launch", report.result_disposition)] : []),
+      ],
+      research_db_write_status: "not_written",
+      research_db_written: false,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+      blockers: blockers.map(redactText),
+      warnings: ["fake research ingestion writes bounded research-memory evidence only; no mission mutation, checkpoint, follow-up mission, provider, MCP, OpenCode prompt, or process control occurs"],
+      recommended_commands: fakeResearchIngestionCommands(reviewId, blockers.length === 0),
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? "fake research ingestion ready",
+      ingestion_hash: hash,
+    }
+  }
+
+  private recordResearchIngestion(payload: Record<string, unknown>): ResearchIngestionResultSummary {
+    const previewResult = this.previewResearchIngestion(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const memoryId = `fake_research_memory_${previewResult.ingestion_hash.slice(0, 12)}`
+    const result = {
+      ...previewResult,
+      ingestion_id: `fake_research_ingestion_${previewResult.ingestion_hash.slice(0, 12)}_${this.researchIngestions.length + 1}`,
+      status: previewResult.can_ingest ? dryRun ? "dry_run" : "recorded" : "blocked",
+      research_memory_id: previewResult.can_ingest ? memoryId : undefined,
+      research_db_row_id: previewResult.can_ingest ? memoryId : undefined,
+      research_db_write_status: previewResult.can_ingest ? dryRun ? "dry_run" : "written" : "not_written",
+      research_db_written: previewResult.can_ingest && !dryRun,
+      recorded_at: new Date(this.researchIngestions.length * 1000).toISOString(),
+      recorded_by: "operator",
+      error: previewResult.can_ingest ? undefined : previewResult.blockers[0] ?? "research ingestion is blocked",
+    } as ResearchIngestionResultSummary
+    if (!dryRun && result.status === "recorded") this.researchIngestions.unshift(result)
+    return result
+  }
+
+  private listResearchIngestions(payload: Record<string, unknown>): ResearchIngestionRecordSummary[] {
+    const reviewId = optionalString(payload.reviewId ?? payload.review_id ?? payload.review)
+    const reportId = optionalString(payload.reportId ?? payload.report_id ?? payload.report)
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    return this.researchIngestions
+      .filter((item) => !reviewId || item.review_id === reviewId)
+      .filter((item) => !reportId || item.report_id === reportId)
+      .filter((item) => !sessionId || item.session_id === sessionId)
+      .slice(0, readLimit(payload.limit, 20))
+      .map(recordFromResearchIngestion)
+  }
+
+  private getResearchIngestion(id: string): ResearchIngestionResultSummary | null {
+    return this.researchIngestions.find((item) => item.ingestion_id === id) ?? null
+  }
+
+  private latestResearchIngestion(payload: Record<string, unknown>): ResearchIngestionResultSummary | null {
+    const reviewId = optionalString(payload.reviewId ?? payload.review_id ?? payload.review)
+    const reportId = optionalString(payload.reportId ?? payload.report_id ?? payload.report)
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    return this.researchIngestions.find((item) => (!reviewId || item.review_id === reviewId) && (!reportId || item.report_id === reportId) && (!sessionId || item.session_id === sessionId)) ?? null
+  }
+
+  private researchIngestionSummary(payload: Record<string, unknown>): ResearchIngestionSummaryState {
+    const records = this.researchIngestions.map(recordFromResearchIngestion)
+    return {
+      total_ingestions: records.length,
+      research_memory_count: new Set(records.map((item) => item.research_memory_id).filter(Boolean)).size,
+      session_count: new Set(records.map((item) => item.session_id)).size,
+      positive_finding_count: records.filter((item) => item.evidence_kind === "positive_finding").length,
+      negative_result_count: records.filter((item) => item.evidence_kind === "negative_result").length,
+      inconclusive_result_count: records.filter((item) => item.evidence_kind === "inconclusive_result").length,
+      partial_result_count: records.filter((item) => item.evidence_kind === "partial_result").length,
+      blocked_result_count: records.filter((item) => item.evidence_kind === "blocked_result").length,
+      db_written_count: records.filter((item) => item.research_db_written).length,
+      failed_count: 0,
+      latest_ingestions: records.slice(0, readLimit(payload.limit, 10)),
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
   private resolveHumanControlEvidence(input: { progressId?: string; watchdogId?: string; forcedReportId?: string; questionId?: string; guidanceId?: string; deliveryId?: string }): { sessionId?: string; launchId?: string; hasEvidence: boolean; blockers: string[] } {
     const blockers: string[] = []
     const chains: Array<{ sessionId?: string; launchId?: string; label: string }> = []
@@ -4471,7 +4627,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   }
 
   private researchMemorySummary(): ResearchMemorySummaryState {
-    const candidates = fakeResearchMemoryCandidates("adapter timeout")
+    const candidates = this.researchMemoryCandidates("adapter timeout")
     return {
       total_candidates_available: candidates.length,
       label_counts: fakeResearchCountBy(candidates, "label"),
@@ -4490,7 +4646,7 @@ export class FakeRuntimeClient implements RuntimeClient {
     const queryTokens = fakeResearchTokens(query)
     const candidates = blockers.length
       ? []
-      : fakeResearchMemoryCandidates(query)
+      : this.researchMemoryCandidates(query)
         .filter((candidate) => labels.length === 0 || labels.includes(candidate.label))
         .map((candidate) => fakeScoreResearchCandidate(candidate, queryTokens))
         .filter((candidate) => queryTokens.length > 0 && candidate.matched_terms.length > 0)
@@ -4564,6 +4720,15 @@ export class FakeRuntimeClient implements RuntimeClient {
       generated_at: new Date(0).toISOString(),
       novelty_hash: hash,
     }
+  }
+
+  private researchMemoryCandidates(query: string): ResearchMemoryCandidateSummary[] {
+    return [
+      ...fakeResearchMemoryCandidates(query),
+      ...this.researchIngestions
+        .filter((item) => item.research_db_written)
+        .map(fakeResearchCandidateFromIngestion),
+    ]
   }
 
   private fakeInstructionPackFiles(session: OpenCodeSessionPlanSummary, packet: ContextPacketPreviewSummary): OpenCodeSessionInstructionPackFilePreviewSummary[] {
@@ -8719,6 +8884,92 @@ function fakeResearchMemoryCandidates(_query: string): ResearchMemoryCandidateSu
   ]
 }
 
+function fakeResearchEvidenceKind(resultKind: string | undefined): ResearchIngestionPreviewSummary["evidence_kind"] {
+  if (resultKind === "completion_report") return "positive_finding"
+  if (resultKind === "partial_report") return "partial_result"
+  if (resultKind === "failure_report") return "negative_result"
+  if (resultKind === "inconclusive_report") return "inconclusive_result"
+  if (resultKind === "blocked_report") return "blocked_result"
+  if (resultKind === "status_report") return "status_note"
+  return "unknown"
+}
+
+function fakeResearchIngestionRef(sourceKind: string, sourceId: string, status?: string, summary?: string): ResearchIngestionProvenanceRefSummary {
+  return {
+    source_kind: redactText(sourceKind),
+    source_id: redactText(sourceId),
+    status: status ? preview(redactText(status)) : undefined,
+    summary_preview: summary ? preview(redactText(summary)) : undefined,
+    pointer_only: true,
+  }
+}
+
+function fakeResearchIngestionCommands(reviewId: string, canIngest: boolean): ResearchIngestionCommandSummary[] {
+  const commands: ResearchIngestionCommandSummary[] = [
+    { label: "List ingestions", command: reviewId ? `/research-ingestions review=${reviewId}` : "/research-ingestions", command_type: "read" },
+    { label: "Research memory summary", command: "/research-memory-summary", command_type: "read" },
+    { label: "Show authority", command: "/authority-show /research-ingestion", command_type: "read" },
+  ]
+  if (canIngest) commands.unshift({ label: "Record ingestion", command: `/research-ingestion review=${reviewId}`, command_type: "write", requires_active_runtime: true, notes: "explicit research-memory write only; no mission/checkpoint/provider/MCP/OpenCode/process side effects" })
+  return commands
+}
+
+function recordFromResearchIngestion(result: ResearchIngestionResultSummary): ResearchIngestionRecordSummary {
+  return {
+    ingestion_id: result.ingestion_id,
+    research_memory_id: result.research_memory_id,
+    review_id: result.review_id,
+    report_id: result.report_id,
+    session_id: result.session_id,
+    launch_id: result.launch_id,
+    evidence_kind: result.evidence_kind,
+    ingestion_decision: result.ingestion_decision,
+    research_title_preview: result.research_title_preview,
+    evidence_summary_preview: result.evidence_summary_preview,
+    research_db_written: result.research_db_written,
+    recorded_at: result.recorded_at,
+    recorded_by: result.recorded_by,
+    confidence: result.confidence,
+    ingestion_hash: result.ingestion_hash,
+  }
+}
+
+function fakeResearchCandidateFromIngestion(result: ResearchIngestionResultSummary): ResearchMemoryCandidateSummary {
+  const label = result.evidence_kind === "negative_result" || result.evidence_kind === "blocked_result"
+    ? "failure"
+    : result.evidence_kind === "partial_result"
+      ? "trial"
+      : result.evidence_kind === "inconclusive_result"
+        ? "probe"
+        : "finding"
+  return fakeResearchCandidate({
+    result_id: result.research_memory_id ?? result.ingestion_id,
+    label,
+    source_kind: "research_db",
+    question_preview: result.research_title_preview,
+    hypothesis_preview: result.hypothesis_preview,
+    method_preview: result.method_preview,
+    config_preview: result.tags_preview.join(", "),
+    outcome_preview: result.outcome_preview ?? result.evidence_summary_preview,
+    metric_preview: result.metrics_preview.join(", "),
+    confidence: typeof result.confidence === "number" ? result.confidence : undefined,
+    status: "accepted",
+    source_session_id: result.session_id,
+    artifact_ids: result.artifacts_preview,
+    citation_ids: [],
+    related_event_ids: [result.ingestion_id, result.review_id, result.report_id].filter(Boolean),
+    source_refs: [
+      fakeResearchMemorySourceRef("research_memory_ingestion", result.ingestion_id, "ingested research memory", result.evidence_summary_preview),
+      fakeResearchMemorySourceRef("result_review", result.review_id, "result review", result.evidence_summary_preview),
+      fakeResearchMemorySourceRef("result_report", result.report_id, "result report", result.research_title_preview),
+    ],
+  })
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => preview(redactText(value.trim()))))).slice(0, 12)
+}
+
 function fakeResearchCandidate(input: Partial<ResearchMemoryCandidateSummary> & Pick<ResearchMemoryCandidateSummary, "result_id" | "label" | "question_preview" | "method_preview" | "outcome_preview">): ResearchMemoryCandidateSummary {
   return {
     result_id: redactText(input.result_id),
@@ -10991,6 +11242,46 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"],
       aliases: ["/result-review-summary"],
     }),
+    fakeCommandAuthorityRecord("/research-ingestion-preview", "runtime.preview_research_ingestion", "safe_read", "none", "research", {
+      reads: ["/opencode-result-review-show", "/opencode-result-report-show", "/research-ingestions"],
+      targeted: ["tests/e2e_user/scenarios/test_research_ingestion_tui.py"],
+      aliases: ["/research-ingest-preview", "/research-promote-preview"],
+      notes: ["Read-only research-memory ingestion preview; consumes one accepted-as-evidence result review and derives bounded pointer-only provenance without writing research.db."],
+      out: ["research.db writes", "mission/proposal/review/apply mutation", "mission/session completion", "checkpoint creation", "follow-up mission creation", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "research direction decision"],
+    }),
+    fakeCommandAuthorityRecord("/research-ingestion-dry-run", "runtime.record_research_ingestion", "safe_read", "none", "research", {
+      reads: ["/research-ingestion-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_research_ingestion_tui.py"],
+      aliases: ["/research-ingest-dry-run", "/research-promote-dry-run"],
+      notes: ["Dry-run research ingestion validates accepted-as-evidence gating and duplicate behavior without appending events or writing research.db."],
+      out: ["event append", "research.db writes", "mission/proposal/review/apply mutation", "checkpoint creation", "follow-up mission creation", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume"],
+    }),
+    fakeCommandAuthorityRecord("/research-ingestion", "runtime.record_research_ingestion", "high_impact_write", "opencode_runtime", "research", {
+      mutates: true,
+      lock: true,
+      events: ["research_event", "research_memory_ingestion_recorded"],
+      reads: ["/research-ingestion-preview", "/research-ingestions", "/research-ingestion-latest", "/research-memory-summary", "/research-memory-search"],
+      targeted: ["tests/e2e_user/scenarios/test_research_ingestion_tui.py"],
+      aliases: ["/research-ingest", "/research-promote", "/research-memory-ingest"],
+      notes: ["Consumes one accepted-as-evidence 9O result review and writes bounded research-memory/research.db evidence only. Rejected, unreviewed, deferred, revision-needed, and follow-up-needed reviews are blocked; ingestion is evidence storage, not research direction or mission mutation."],
+      out: ["mission/proposal/review/apply mutation", "mission/session completion", "checkpoint creation", "follow-up mission creation", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "automatic ingestion", "rejected/unreviewed/deferred review ingestion"],
+    }),
+    fakeCommandAuthorityRecord("/research-ingestions", "runtime.list_research_ingestions", "safe_read", "none", "research", {
+      targeted: ["tests/e2e_user/scenarios/test_research_ingestion_tui.py"],
+      reads: ["/research-ingestion-show", "/research-ingestion-latest"],
+    }),
+    fakeCommandAuthorityRecord("/research-ingestion-latest", "runtime.latest_research_ingestion", "safe_read", "none", "research", {
+      targeted: ["tests/e2e_user/scenarios/test_research_ingestion_tui.py"],
+      reads: ["/research-ingestions"],
+    }),
+    fakeCommandAuthorityRecord("/research-ingestion-show", "runtime.get_research_ingestion", "safe_read", "none", "research", {
+      targeted: ["tests/e2e_user/scenarios/test_research_ingestion_tui.py"],
+      reads: ["/research-ingestions"],
+    }),
+    fakeCommandAuthorityRecord("/research-ingestion-summary", "runtime.research_ingestion_summary", "safe_read", "none", "research", {
+      targeted: ["tests/e2e_user/scenarios/test_research_ingestion_tui.py"],
+      reads: ["/research-ingestions"],
+    }),
     fakeCommandAuthorityRecord("/research-memory-summary", "runtime.research_memory_summary", "safe_read", "none", "research", {
       targeted: ["tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"],
       notes: ["Read-only research memory summary; no provider calls, no MCP/online research, no research.db writes, no mission/proposal creation, no OpenCode launch."],
@@ -11807,7 +12098,7 @@ function fakeResultReviewCommands(reportId: string, decision: string, nextStep: 
     { label: "List result reviews", command: reportId ? `/opencode-result-reviews report=${reportId}` : "/opencode-result-reviews", command_type: "read", notes: "read bounded fake result-review metadata" },
     { label: "Latest result review", command: reportId ? `/opencode-result-review-latest report=${reportId}` : "/opencode-result-review-latest", command_type: "read", notes: "read latest fake result-review metadata" },
   ]
-  if (nextStep === "prepare_research_ingestion") commands.push({ label: "Prepare research ingestion", command: "/research-ingestion-preview report=<report_id>", command_type: "write", notes: "future branch only; not executed by fake 9O result review" })
+  if (nextStep === "prepare_research_ingestion") commands.push({ label: "Prepare research ingestion", command: "/research-ingestion-preview review=<review_id>", command_type: "write", notes: "manual explicit command required; 9P ingests only accepted-as-evidence reviews" })
   if (decision !== "unknown") commands.push({ label: "Record result review", command: reportId ? `/opencode-result-review report=${reportId} decision=${decision} rationale=<rationale>` : "/opencode-result-review report=<report_id> decision=<decision> rationale=<rationale>", command_type: "write", requires_active_runtime: true, notes: "metadata only; no mission completion, research ingestion, checkpoint, provider call, OpenCode prompt, or process control" })
   return commands
 }

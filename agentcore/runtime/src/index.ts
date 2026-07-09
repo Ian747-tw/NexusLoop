@@ -36,6 +36,8 @@ export { CommanderTargetContextService } from "./missions/commander-target-conte
 export { ExternalApiConnectorRegistry, readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
 export { ExternalApiRequestService } from "./external-api/api-request-service"
 export { ExternalApiResearchIngestionService } from "./external-api/api-research-ingestion-service"
+export { ResearchIngestionService } from "./research/research-ingestion-service"
+export * from "./research/research-ingestion-types"
 export { MiniMaxReasoningProvider } from "./reasoning/minimax-provider"
 export { ReasoningProviderHealthService } from "./reasoning/reasoning-health-service"
 export { MiniMaxLiveValidationService } from "./reasoning/minimax-live-validation-service"
