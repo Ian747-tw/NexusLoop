@@ -19449,6 +19449,10 @@ describe("OpenCode launch readiness", () => {
     await expect(server.command("runtime.preview_research_ingestion", { reviewId: rejected.review_id })).resolves.toMatchObject({ status: "blocked", can_ingest: false, ingestion_decision: "block" })
     await expect(server.command("runtime.preview_research_ingestion", { reviewId: accepted.review_id, evidenceKind: "negative_result" })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
     await expect(server.command("runtime.preview_research_ingestion", { reviewId: accepted.review_id, researchTitle: "diff --git a/file b/file\n@@ -1 +1" })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+    await expect(server.command("runtime.preview_research_ingestion", {
+      reviewId: accepted.review_id,
+      method: `${"a".repeat(130)}\n${"b".repeat(130)}\n${"c".repeat(130)}`,
+    })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
 
     const preview = await server.command("runtime.preview_research_ingestion", { reviewId: accepted.review_id, tags: ["opencode", "reviewed"] }) as {
       status: string

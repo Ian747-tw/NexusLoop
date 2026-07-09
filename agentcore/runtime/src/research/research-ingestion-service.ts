@@ -671,7 +671,7 @@ function readConfidence(value: unknown): string | number | undefined {
 }
 
 function inputLooksRaw(value: unknown): boolean {
-  const text = JSON.stringify(value ?? "")
+  const text = JSON.stringify(value ?? "").replace(/\\r\\n|\\n|\\r/g, "\n")
   return RAW_PATTERNS.some((pattern) => pattern.test(text))
 }
 
