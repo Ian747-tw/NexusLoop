@@ -21141,6 +21141,15 @@ describe("OpenCode launch readiness", () => {
     expect(search.candidates[0]?.source_refs.every((ref) => ref.pointer_only)).toBe(true)
     expect(JSON.stringify(search)).not.toContain("abc123")
 
+    const nonAcceptedStatusSearch = await server.command("runtime.preview_research_memory_retrieval", {
+      query: "memory search proposed leak",
+      source_kind: "research_db",
+      result_status: "proposed",
+      labels: ["finding"],
+    }) as { status: string; candidates: Array<{ result_id: string }> }
+    expect(nonAcceptedStatusSearch.candidates.map((candidate) => candidate.result_id)).not.toContain("finding_memory_search")
+    expect(nonAcceptedStatusSearch.candidates.map((candidate) => candidate.result_id)).not.toContain("proposed_memory_search")
+
     const inspect = await server.command("runtime.get_research_memory_record", { id: "finding_memory_search" }) as { status: string; memory_id: string; artifact_refs: Array<{ source_id: string; pointer_only: boolean }>; citation_refs: Array<{ source_id: string; pointer_only: boolean }>; provenance_refs: Array<{ pointer_only: boolean }> }
     expect(inspect).toMatchObject({ status: "ready", memory_id: "finding_memory_search" })
     expect(inspect.artifact_refs).toEqual([expect.objectContaining({ source_id: "artifact_search", pointer_only: true })])
@@ -21148,6 +21157,16 @@ describe("OpenCode launch readiness", () => {
     expect(inspect.provenance_refs.every((ref) => ref.pointer_only)).toBe(true)
     expect(JSON.stringify(inspect)).not.toContain("raw artifact token")
     expect(JSON.stringify(inspect)).not.toContain("citation body")
+
+    const blockedInspect = await server.command("runtime.get_research_memory_record", { id: "proposed_memory_search" }) as { status: string; blockers: string[]; title_preview?: string; summary_preview?: string; artifact_refs: unknown[]; citation_refs: unknown[]; provenance_refs: unknown[] }
+    expect(blockedInspect.status).toBe("blocked")
+    expect(blockedInspect.blockers.join(" ")).toContain("only returns accepted research results")
+    expect(blockedInspect.title_preview).toBeUndefined()
+    expect(blockedInspect.summary_preview).toBeUndefined()
+    expect(blockedInspect.artifact_refs).toEqual([])
+    expect(blockedInspect.citation_refs).toEqual([])
+    expect(blockedInspect.provenance_refs).toEqual([])
+    expect(JSON.stringify(blockedInspect)).not.toContain("proposed leak")
 
     const near = await server.command("runtime.preview_research_memory_near_duplicates", { query: "memory search expansion", include_failures: true }) as { status: string; novelty_risk: string; likely_duplicate_count: number; candidates: Array<{ result_id: string }> }
     expect(near.status).toBe("ready")

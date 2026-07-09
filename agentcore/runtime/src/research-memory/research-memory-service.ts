@@ -183,9 +183,10 @@ export class ResearchMemoryService {
     const adapter = this.options.readAdapter()
     if (!adapter.available) blockers.push(adapter.unavailableReason ?? "research memory projection is unavailable")
     if (sourceKind !== "research_db") blockers.push(`research memory inspection only supports source_kind=research_db in this branch; got ${sourceKind}`)
-    const result = blockers.length === 0 ? adapter.getResearchResult?.(memoryId) ?? null : null
-    if (blockers.length === 0 && !result) blockers.push(`research memory record was not found: ${memoryId}`)
-    if (result && result.status !== "accepted") blockers.push(`research memory inspection only returns accepted research results; ${memoryId} is ${result.status}`)
+    const resolvedResult = blockers.length === 0 ? adapter.getResearchResult?.(memoryId) ?? null : null
+    if (blockers.length === 0 && !resolvedResult) blockers.push(`research memory record was not found: ${memoryId}`)
+    if (resolvedResult && resolvedResult.status !== "accepted") blockers.push(`research memory inspection only returns accepted research results; ${memoryId} is ${resolvedResult.status}`)
+    const result = resolvedResult?.status === "accepted" ? resolvedResult : null
     const citations = result && input.include_citations !== false
       ? adapter.listResultCitationPointers?.(result.result_id, 8) ?? adapter.listResultCitations?.(result.result_id).map(citationPointerFromFullRow) ?? []
       : []
@@ -193,7 +194,7 @@ export class ResearchMemoryService {
       ? adapter.listResultArtifactPointers?.(result.result_id, 8) ?? adapter.listResultArtifacts?.(result.result_id).map(artifactPointerFromFullRow) ?? []
       : []
     const label = result ? labelForResearchResult(result) : "unknown"
-    const inspectionHash = hash(stableJson({ memoryId, sourceKind, status: result?.status, citations: citations.map((item) => item.citation_id), artifacts: artifacts.map((item) => item.id) }))
+    const inspectionHash = hash(stableJson({ memoryId, sourceKind, status: resolvedResult?.status, citations: citations.map((item) => item.citation_id), artifacts: artifacts.map((item) => item.id) }))
     const provenanceRefs = result
       ? [
           sourceRef("research_db", result.result_id, "accepted research result", `${result.title}: ${result.summary}`),
@@ -333,19 +334,21 @@ export class ResearchMemoryService {
 
   private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[]; result_type?: string; result_status?: string; confidence?: string; evidence_kind?: string; has_artifacts?: boolean; has_citations?: boolean; has_metrics?: boolean; since?: string; until?: string }): RawCandidate[] {
     const out: RawCandidate[] = []
+    const resultStatusFilter = isResearchResultStatus(input.result_status) ? input.result_status : "accepted"
+    const includeAcceptedResults = resultStatusFilter === "accepted"
     const missionRuns = input.mission_id ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? [] : []
     const missionRunIds = new Set(missionRuns.map((run) => run.training_run_id))
     const missionCandidateIds = new Set(missionRuns.map((run) => run.candidate_id).filter((id): id is string => !!id))
     const missionTrialIds = new Set(missionRuns.map((run) => run.trial_id).filter((id): id is string => !!id))
-    if (!input.source_kind || input.source_kind === "research_db") {
+    if ((!input.source_kind || input.source_kind === "research_db") && includeAcceptedResults) {
       const resultRows = input.mission_id
         ? [
-            ...(adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, mission_id: input.mission_id, status: "accepted", order: "newest" }) ?? []),
-            ...Array.from(missionCandidateIds).flatMap((candidateId) => adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, candidate_id: candidateId, status: "accepted", order: "newest" }) ?? []),
-            ...Array.from(missionTrialIds).flatMap((trialId) => adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, trial_id: trialId, status: "accepted", order: "newest" }) ?? []),
-            ...Array.from(missionRunIds).flatMap((runId) => adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, training_run_id: runId, status: "accepted", order: "newest" }) ?? []),
+            ...(adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, mission_id: input.mission_id, status: resultStatusFilter, order: "newest" }) ?? []),
+            ...Array.from(missionCandidateIds).flatMap((candidateId) => adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, candidate_id: candidateId, status: resultStatusFilter, order: "newest" }) ?? []),
+            ...Array.from(missionTrialIds).flatMap((trialId) => adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, trial_id: trialId, status: resultStatusFilter, order: "newest" }) ?? []),
+            ...Array.from(missionRunIds).flatMap((runId) => adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, training_run_id: runId, status: resultStatusFilter, order: "newest" }) ?? []),
           ]
-        : adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, status: "accepted", order: "newest" }) ?? []
+        : adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, status: resultStatusFilter, order: "newest" }) ?? []
       for (const result of resultRows) {
         const linkedToMission =
           !input.mission_id ||
