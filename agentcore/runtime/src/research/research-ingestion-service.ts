@@ -38,6 +38,7 @@ const RAW_PATTERNS = [
 ]
 
 export type ResearchIngestionDbWriter = {
+  getResearchResult?: (resultId: string) => ResearchResult | null
   proposeResearchResult(input: {
     result_id?: string
     result_type: "implementation_change" | "negative_finding" | "reproduction_record"
@@ -85,12 +86,12 @@ export class ResearchIngestionService {
     const ingestionId = this.idFactory()
     const recordedAt = this.now().toISOString()
     const recordedBy = bound(input.recorded_by ?? "operator") ?? "operator"
-    const memoryId = preview.can_ingest ? researchMemoryId(preview.review_id, preview.ingestion_hash) : undefined
+    const memoryId = preview.can_ingest ? researchMemoryId(preview.review_id) : undefined
     if (!preview.can_ingest) return resultFromPreview(preview, { ingestion_id: ingestionId, status: "blocked", recorded_at: recordedAt, recorded_by: recordedBy, error: preview.blockers[0] ?? "research ingestion is blocked" })
     if (input.dry_run === true) return resultFromPreview(preview, { ingestion_id: ingestionId, status: "dry_run", recorded_at: recordedAt, recorded_by: recordedBy, research_memory_id: memoryId, research_db_write_status: "dry_run" })
     return this.serializeRecord(async () => {
       const rebuilt = await this.buildPreview(input)
-      const rebuiltMemoryId = rebuilt.can_ingest ? researchMemoryId(rebuilt.review_id, rebuilt.ingestion_hash) : undefined
+      const rebuiltMemoryId = rebuilt.can_ingest ? researchMemoryId(rebuilt.review_id) : undefined
       if (!rebuilt.can_ingest) return resultFromPreview(rebuilt, { ingestion_id: ingestionId, status: "blocked", recorded_at: recordedAt, recorded_by: recordedBy, error: rebuilt.blockers[0] ?? "research ingestion is blocked" })
       let researchResult: ResearchResult
       try {
@@ -290,6 +291,8 @@ export class ResearchIngestionService {
   }
 
   private writeResearchMemory(preview: ResearchIngestionPreview, researchMemoryId: string, recordedBy: string): ResearchResult {
+    const existing = this.options.researchDb.getResearchResult?.(researchMemoryId)
+    if (existing?.status === "accepted") return existing
     const resultType = resultTypeForEvidenceKind(preview.evidence_kind)
     const result = this.options.researchDb.proposeResearchResult({
       result_id: researchMemoryId,
@@ -556,13 +559,13 @@ function evidenceKindForReport(report: OpenCodeResultReportResult): ResearchEvid
 
 function resultTypeForEvidenceKind(kind: ResearchEvidenceKind): "implementation_change" | "negative_finding" | "reproduction_record" {
   if (kind === "negative_result" || kind === "blocked_result") return "negative_finding"
-  if (kind === "status_note" || kind === "artifact_index" || kind === "metric_observation") return "reproduction_record"
+  if (kind === "partial_result" || kind === "inconclusive_result" || kind === "status_note" || kind === "artifact_index" || kind === "metric_observation") return "reproduction_record"
   return "implementation_change"
 }
 
 function researchMemoryLabelForEvidenceKind(kind: ResearchEvidenceKind): string {
   if (kind === "negative_result" || kind === "blocked_result") return "failure"
-  if (kind === "status_note" || kind === "artifact_index" || kind === "metric_observation") return "probe"
+  if (kind === "partial_result" || kind === "inconclusive_result" || kind === "status_note" || kind === "artifact_index" || kind === "metric_observation") return "probe"
   return "finding"
 }
 
@@ -648,8 +651,8 @@ function recommendedCommands(reviewId: string, sessionId: string | undefined, ca
   return commands
 }
 
-function researchMemoryId(reviewId: string, ingestionHash: string): string {
-  return `research_memory_${hash(`${reviewId}:${ingestionHash}`).slice(0, 24)}`
+function researchMemoryId(reviewId: string): string {
+  return `research_memory_${hash(reviewId).slice(0, 24)}`
 }
 
 function noveltyKeyFor(question: string | undefined, title: string, claims: string[]): string | undefined {

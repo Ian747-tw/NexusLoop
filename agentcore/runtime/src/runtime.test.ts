@@ -19567,6 +19567,27 @@ describe("OpenCode launch readiness", () => {
     const findingRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter spectral curriculum", labels: ["finding"], limit: 10 }) as { candidates: Array<{ result_id: string; label: string }> }
     expect(findingRetrieval.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ result_id: result.research_memory_id, label: "finding" })]))
 
+    const partialReport = await server.command("runtime.record_opencode_result_report", {
+      sessionId,
+      kind: "partial_report",
+      summary: "implemented partial candidate",
+      followups: ["needs more testing"],
+      claims: ["partial behavior observed"],
+    }) as { report_id: string }
+    const partialReview = await server.command("runtime.record_opencode_result_review", {
+      reportId: partialReport.report_id,
+      decision: "accepted",
+      rationale: "partial evidence is useful but not a positive finding",
+      acceptedClaims: ["partial behavior observed"],
+    }) as { review_id: string }
+    const partialIngestion = await server.command("runtime.record_research_ingestion", { reviewId: partialReview.review_id }) as { research_memory_id: string; evidence_kind: string }
+    expect(partialIngestion).toMatchObject({ evidence_kind: "partial_result" })
+    await expect(server.command("runtime.research_memory_summary")).resolves.toMatchObject({ label_counts: expect.objectContaining({ finding: expect.any(Number), probe: expect.any(Number) }) })
+    const probeRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "partial candidate", labels: ["probe"], limit: 10 }) as { candidates: Array<{ result_id: string; label: string }> }
+    expect(probeRetrieval.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ result_id: partialIngestion.research_memory_id, label: "probe" })]))
+    const partialFindingRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "partial candidate", labels: ["finding"], limit: 10 }) as { candidates: Array<{ result_id: string }> }
+    expect(partialFindingRetrieval.candidates.map((candidate) => candidate.result_id)).not.toContain(partialIngestion.research_memory_id)
+
     const eventKinds = events.map((event) => event.kind)
     expect(eventKinds).not.toContain("mission_progress_recorded")
     expect(eventKinds).not.toContain("runtime_checkpoint_created")
@@ -19734,9 +19755,16 @@ describe("OpenCode launch readiness", () => {
     await expect(server.command("runtime.preview_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ status: "ready", can_ingest: true, ingestion_decision: "ingest" })
 
     server.eventStore.append = append
-    const retry = await server.command("runtime.record_research_ingestion", { reviewId: review.review_id }) as { status: string; research_db_write_status: string; research_db_written: boolean }
+    const retry = await server.command("runtime.record_research_ingestion", {
+      reviewId: review.review_id,
+      tags: ["retry", "changed-metadata"],
+      researchTitle: "changed title after append failure",
+      method: "changed method after append failure",
+    }) as { status: string; research_memory_id: string; research_db_write_status: string; research_db_written: boolean }
     expect(retry).toMatchObject({ status: "recorded", research_db_write_status: "written", research_db_written: true })
     await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, research_memory_count: 1, db_written_count: 1, failed_count: 0 })
+    const retryRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "event append failure", limit: 10 }) as { candidates: Array<{ result_id: string }> }
+    expect(retryRetrieval.candidates.filter((candidate) => candidate.result_id === retry.research_memory_id)).toHaveLength(1)
     await server.shutdown()
   })
 
