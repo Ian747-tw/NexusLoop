@@ -92,20 +92,9 @@ export class ResearchIngestionService {
       const rebuilt = await this.buildPreview(input)
       const rebuiltMemoryId = rebuilt.can_ingest ? researchMemoryId(rebuilt.review_id, rebuilt.ingestion_hash) : undefined
       if (!rebuilt.can_ingest) return resultFromPreview(rebuilt, { ingestion_id: ingestionId, status: "blocked", recorded_at: recordedAt, recorded_by: recordedBy, error: rebuilt.blockers[0] ?? "research ingestion is blocked" })
+      let researchResult: ResearchResult
       try {
-        const researchResult = this.writeResearchMemory(rebuilt, rebuiltMemoryId ?? memoryId ?? ingestionId, recordedBy)
-        const result = resultFromPreview(rebuilt, {
-          ingestion_id: ingestionId,
-          status: "recorded",
-          recorded_at: recordedAt,
-          recorded_by: recordedBy,
-          research_memory_id: researchResult.result_id,
-          research_db_row_id: researchResult.result_id,
-          research_db_write_status: "written",
-          research_db_written: true,
-        })
-        await this.options.eventStore.append(eventPayload(result) as JsonlEvent)
-        return redactValue(result)
+        researchResult = this.writeResearchMemory(rebuilt, rebuiltMemoryId ?? memoryId ?? ingestionId, recordedBy)
       } catch (error) {
         const result = resultFromPreview(rebuilt, {
           ingestion_id: ingestionId,
@@ -120,6 +109,18 @@ export class ResearchIngestionService {
         await this.options.eventStore.append(eventPayload(result) as JsonlEvent)
         return result
       }
+      const result = resultFromPreview(rebuilt, {
+        ingestion_id: ingestionId,
+        status: "recorded",
+        recorded_at: recordedAt,
+        recorded_by: recordedBy,
+        research_memory_id: researchResult.result_id,
+        research_db_row_id: researchResult.result_id,
+        research_db_write_status: "written",
+        research_db_written: true,
+      })
+      await this.options.eventStore.append(eventPayload(result) as JsonlEvent)
+      return redactValue(result)
     })
   }
 
@@ -197,7 +198,6 @@ export class ResearchIngestionService {
     const derivedKind = report ? evidenceKindForReport(report) : "unknown"
     const evidenceKind = readEvidenceKind(input.evidence_kind ?? derivedKind)
     if (input.evidence_kind && !isCompatibleEvidenceKind(evidenceKind, derivedKind)) blockers.push("evidence_kind override is incompatible with the accepted result report kind")
-    const decision: ResearchIngestionDecision = review?.decision === "accepted" && blockers.length === 0 ? "ingest" : review?.decision === "needs_followup" ? "defer" : blockers.length ? "block" : "unknown"
     const title = bound(input.research_title) ?? deriveTitle(session, report)
     const question = bound(input.research_question) ?? deriveQuestion(session, report)
     const hypothesis = bound(input.hypothesis) ?? firstBound(report?.claims_preview)
@@ -239,6 +239,7 @@ export class ResearchIngestionService {
     const duplicateHash = ingestionHash ? (await this.sequencedRecords()).find((item) => item.record.research_db_written && item.record.ingestion_hash === ingestionHash) : null
     if (duplicateHash) blockers.push("research ingestion with the same ingestion_hash already exists")
     const canIngest = blockers.length === 0
+    const decision: ResearchIngestionDecision = canIngest && review?.decision === "accepted" ? "ingest" : review?.decision === "needs_followup" ? "defer" : blockers.length ? "block" : "unknown"
     return redactValue({
       preview_id: `research_ingestion_preview_${ingestionHash.slice(0, 16)}`,
       status: canIngest ? "ready" : "blocked",

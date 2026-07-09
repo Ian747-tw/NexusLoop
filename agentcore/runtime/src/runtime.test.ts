@@ -19697,6 +19697,49 @@ describe("OpenCode launch readiness", () => {
     db.close()
   })
 
+  test("research ingestion preserves successful DB writes when ingestion event append fails", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await expect(server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })).resolves.toMatchObject({ status: "launched" })
+    const report = await server.command("runtime.record_opencode_result_report", {
+      sessionId,
+      kind: "completion_report",
+      summary: "event append failure result",
+      outcome: "tests passed",
+      claims: ["event append claim"],
+    }) as { report_id: string }
+    const review = await server.command("runtime.record_opencode_result_review", {
+      reportId: report.report_id,
+      decision: "accepted",
+      rationale: "event append failure evidence is acceptable",
+      acceptedClaims: ["event append claim"],
+    }) as { review_id: string }
+
+    const append = server.eventStore.append.bind(server.eventStore)
+    const before = await server.eventStore.readAll()
+    server.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if ((event as { kind?: string }).kind === "research_memory_ingestion_recorded") throw new Error("ingestion event append failed token=append-secret")
+      return append(event)
+    }
+    await expect(server.command("runtime.record_research_ingestion", { reviewId: review.review_id })).rejects.toThrow("ingestion event append failed")
+    const afterFailure = await server.eventStore.readAll()
+    const failureEvents = afterFailure.slice(before.length)
+    expect(failureEvents.map((event) => event.kind)).toEqual(["research_event", "research_event"])
+    expect(failureEvents[0]).toMatchObject({ event_type: "ResearchResultProposed" })
+    expect(failureEvents[1]).toMatchObject({ event_type: "ResearchResultAccepted" })
+    expect(failureEvents.map((event) => event.kind)).not.toContain("research_memory_ingestion_recorded")
+    await expect(server.command("runtime.preview_research_memory_retrieval", { query: "event append failure", limit: 10 })).resolves.toMatchObject({
+      candidates: expect.arrayContaining([expect.objectContaining({ status: "accepted" })]),
+    })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ status: "ready", can_ingest: true, ingestion_decision: "ingest" })
+
+    server.eventStore.append = append
+    const retry = await server.command("runtime.record_research_ingestion", { reviewId: review.review_id }) as { status: string; research_db_write_status: string; research_db_written: boolean }
+    expect(retry).toMatchObject({ status: "recorded", research_db_write_status: "written", research_db_written: true })
+    await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, research_memory_count: 1, db_written_count: 1, failed_count: 0 })
+    await server.shutdown()
+  })
+
   test("wake supervisor summary counts all matching launched sessions before applying card limit", async () => {
     const launches = Array.from({ length: 101 }, (_, offset) => {
       const index = offset + 1
