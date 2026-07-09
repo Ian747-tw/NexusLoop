@@ -215,6 +215,30 @@ export class ResearchIngestionService {
     const confidence = readConfidence(review?.confidence ?? report?.confidence)
     const noveltyKey = bound(input.novelty_key) ?? noveltyKeyFor(question, title, claims)
     const provenanceRefs = report && review ? provenanceFor(report, review) : []
+    const stableMemoryId = reviewId ? researchMemoryId(reviewId) : ""
+    const existingMemory = stableMemoryId ? this.options.researchDb.getResearchResult?.(stableMemoryId) : null
+    if (existingMemory?.status === "accepted" && !acceptedMemoryMatchesPreview(existingMemory, {
+      evidenceKind,
+      title,
+      evidenceSummary,
+      missionId: session?.mission_id,
+      metrics,
+      reviewId,
+      reportId: report?.report_id ?? review?.report_id ?? "",
+      launchId: report?.launch_id ?? review?.launch_id,
+      noveltyKey,
+      outcome,
+      method,
+      claims,
+      artifacts,
+      tests,
+      failures,
+      followups,
+      tags,
+      provenanceRefs,
+    })) {
+      blockers.push("accepted research memory row already exists for this review_id with different bounded content; retry without changed ingestion metadata")
+    }
     const ingestionHash = hash(stableJson({
       review_id: reviewId,
       report_id: report?.report_id,
@@ -567,6 +591,60 @@ function researchMemoryLabelForEvidenceKind(kind: ResearchEvidenceKind): string 
   if (kind === "negative_result" || kind === "blocked_result") return "failure"
   if (kind === "partial_result" || kind === "inconclusive_result" || kind === "status_note" || kind === "artifact_index" || kind === "metric_observation") return "probe"
   return "finding"
+}
+
+function acceptedMemoryMatchesPreview(existing: ResearchResult, preview: {
+  evidenceKind: ResearchEvidenceKind
+  title: string
+  evidenceSummary: string
+  missionId?: string
+  metrics: string[]
+  reviewId: string
+  reportId: string
+  launchId?: string
+  noveltyKey?: string
+  outcome?: string
+  method?: string
+  claims: string[]
+  artifacts: string[]
+  tests: string[]
+  failures: string[]
+  followups: string[]
+  tags: string[]
+  provenanceRefs: ResearchIngestionProvenanceRef[]
+}): boolean {
+  if (existing.result_type !== resultTypeForEvidenceKind(preview.evidenceKind)) return false
+  if (existing.label !== researchMemoryLabelForEvidenceKind(preview.evidenceKind)) return false
+  if (existing.title !== redactText(preview.title)) return false
+  if (existing.summary !== redactText(preview.evidenceSummary)) return false
+  if ((existing.mission_id ?? undefined) !== preview.missionId) return false
+  const existingMetrics = isRecord(existing.metrics) ? existing.metrics : {}
+  const expectedMetrics = redactValue({
+    metrics_preview: preview.metrics,
+    evidence_kind: preview.evidenceKind,
+    review_id: preview.reviewId,
+    report_id: preview.reportId,
+    launch_id: preview.launchId,
+    novelty_key: preview.noveltyKey,
+  })
+  if (stableJson(existingMetrics) !== stableJson(expectedMetrics)) return false
+  const existingReproduction = isRecord(existing.reproduction) ? existing.reproduction : {}
+  const expectedReproduction = redactValue({
+    source_kind: "opencode_result_review",
+    outcome_preview: preview.outcome,
+    method_preview: preview.method,
+    claims_preview: preview.claims,
+    artifacts_preview: preview.artifacts,
+    tests_preview: preview.tests,
+    failures_preview: preview.failures,
+    followups_preview: preview.followups,
+    tags_preview: preview.tags,
+    provenance_refs: preview.provenanceRefs,
+  })
+  for (const key of Object.keys(expectedReproduction as Record<string, unknown>)) {
+    if (stableJson(existingReproduction[key]) !== stableJson((expectedReproduction as Record<string, unknown>)[key])) return false
+  }
+  return true
 }
 
 function isCompatibleEvidenceKind(input: ResearchEvidenceKind, derived: ResearchEvidenceKind): boolean {

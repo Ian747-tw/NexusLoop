@@ -19753,14 +19753,19 @@ describe("OpenCode launch readiness", () => {
       candidates: expect.arrayContaining([expect.objectContaining({ status: "accepted" })]),
     })
     await expect(server.command("runtime.preview_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ status: "ready", can_ingest: true, ingestion_decision: "ingest" })
-
-    server.eventStore.append = append
-    const retry = await server.command("runtime.record_research_ingestion", {
+    await expect(server.command("runtime.preview_research_ingestion", {
       reviewId: review.review_id,
       tags: ["retry", "changed-metadata"],
       researchTitle: "changed title after append failure",
       method: "changed method after append failure",
-    }) as { status: string; research_memory_id: string; research_db_write_status: string; research_db_written: boolean }
+    })).resolves.toMatchObject({
+      status: "blocked",
+      can_ingest: false,
+      blockers: expect.arrayContaining(["accepted research memory row already exists for this review_id with different bounded content; retry without changed ingestion metadata"]),
+    })
+
+    server.eventStore.append = append
+    const retry = await server.command("runtime.record_research_ingestion", { reviewId: review.review_id }) as { status: string; research_memory_id: string; research_db_write_status: string; research_db_written: boolean }
     expect(retry).toMatchObject({ status: "recorded", research_db_write_status: "written", research_db_written: true })
     await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, research_memory_count: 1, db_written_count: 1, failed_count: 0 })
     const retryRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "event append failure", limit: 10 }) as { candidates: Array<{ result_id: string }> }
