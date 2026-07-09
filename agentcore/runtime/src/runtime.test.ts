@@ -535,6 +535,12 @@ class FailingAddArtifactResearchDb extends TrackingResearchDb {
   }
 }
 
+class FailingProposeResearchResultDb extends TrackingResearchDb {
+  override proposeResearchResult(_input: Parameters<RuntimeResearchDbProjection["proposeResearchResult"]>[0]): ReturnType<RuntimeResearchDbProjection["proposeResearchResult"]> {
+    throw new Error("ResearchDb ingestion write failed token=ingestion-secret")
+  }
+}
+
 class CountingSynthesisProvider implements ResearchSynthesisProvider {
   readonly provider_id = "counting-synthesis"
   calls = 0
@@ -19570,6 +19576,77 @@ describe("OpenCode launch readiness", () => {
     expect(authority).toMatchObject({ risk: "high_impact_write", mutates_events: true })
     expect(authority.notes.join(" ")).toContain("research-memory")
     await server.shutdown()
+  })
+
+  test("research ingestion persists bounded failure events when ResearchDb write fails", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const rawDb = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    rawDb.createTopic({ id: "topic_ingestion_failure", title: "Ingestion failure" })
+    const researchDb = new FailingProposeResearchResultDb(rawDb)
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["opencode"] },
+      researchProjectionMode: "check_only",
+      researchDb,
+      opencodeLaunchId: () => "launch_ingestion_failure",
+    })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "adapter ingestion failure" }) as { session_id: string }
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    await expect(server.command("runtime.launch_opencode_session", { sessionId: session.session_id, packId: pack.pack_id, providerKind: "local", modelId: "local-medium" })).resolves.toMatchObject({ status: "launched", launch_id: "launch_ingestion_failure" })
+    const report = await server.command("runtime.record_opencode_result_report", {
+      sessionId: session.session_id,
+      kind: "completion_report",
+      summary: "implemented bounded candidate token=ingestion-secret",
+      outcome: "tests passed",
+      claims: ["candidate works"],
+    }) as { report_id: string }
+    const review = await server.command("runtime.record_opencode_result_review", {
+      reportId: report.report_id,
+      decision: "accepted",
+      rationale: "bounded evidence is acceptable token=ingestion-secret",
+      acceptedClaims: ["candidate works"],
+    }) as { review_id: string }
+
+    const before = await server.eventStore.readAll()
+    const result = await server.command("runtime.record_research_ingestion", { reviewId: review.review_id }) as {
+      status: string
+      ingestion_id: string
+      research_db_write_status: string
+      research_db_written: boolean
+      error?: string
+    }
+    expect(result).toMatchObject({
+      status: "failed",
+      research_db_write_status: "write_failed",
+      research_db_written: false,
+      error: "ResearchDb ingestion write failed [REDACTED]",
+    })
+    const events = await server.eventStore.readAll()
+    const newEvents = events.slice(before.length)
+    expect(newEvents.map((event) => event.kind)).toEqual(["research_memory_ingestion_recorded"])
+    expect(newEvents[0]).toMatchObject({
+      ingestion_id: result.ingestion_id,
+      review_id: review.review_id,
+      report_id: report.report_id,
+      session_id: session.session_id,
+      research_db_write_status: "write_failed",
+      research_db_written: false,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    expect(JSON.stringify(newEvents)).not.toContain("ingestion-secret")
+    await expect(server.command("runtime.get_research_ingestion", { ingestionId: result.ingestion_id })).resolves.toMatchObject({ status: "failed", research_db_write_status: "write_failed", research_db_written: false })
+    await expect(server.command("runtime.list_research_ingestions", { reviewId: review.review_id })).resolves.toEqual([expect.objectContaining({ ingestion_id: result.ingestion_id, research_db_written: false })])
+    await expect(server.command("runtime.latest_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id, status: "failed" })
+    await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, db_written_count: 0, failed_count: 1 })
+    await server.shutdown()
+    researchDb.close()
   })
 
   test("wake supervisor summary counts all matching launched sessions before applying card limit", async () => {

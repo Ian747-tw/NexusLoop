@@ -107,7 +107,7 @@ export class ResearchIngestionService {
         await this.options.eventStore.append(eventPayload(result) as JsonlEvent)
         return redactValue(result)
       } catch (error) {
-        return resultFromPreview(rebuilt, {
+        const result = resultFromPreview(rebuilt, {
           ingestion_id: ingestionId,
           status: "failed",
           recorded_at: recordedAt,
@@ -117,6 +117,8 @@ export class ResearchIngestionService {
           research_db_written: false,
           error: redactText(error instanceof Error ? error.message : String(error)),
         })
+        await this.options.eventStore.append(eventPayload(result) as JsonlEvent)
+        return result
       }
     })
   }
@@ -457,14 +459,16 @@ function eventPayload(result: ResearchIngestionResult): Record<string, unknown> 
     mcp_called: false,
     recorded_at: result.recorded_at,
     recorded_by: result.recorded_by,
+    error: result.error,
     ingestion_hash: result.ingestion_hash,
   }
 }
 
 function resultFromEvent(event: Record<string, unknown>): ResearchIngestionResult {
+  const writeStatus = readWriteStatus(event.research_db_write_status)
   return redactValue({
     ingestion_id: String(event.ingestion_id ?? ""),
-    status: "recorded",
+    status: writeStatus === "write_failed" ? "failed" : "recorded",
     review_id: String(event.review_id ?? ""),
     report_id: String(event.report_id ?? ""),
     session_id: String(event.session_id ?? ""),
@@ -495,7 +499,7 @@ function resultFromEvent(event: Record<string, unknown>): ResearchIngestionResul
     confidence: typeof event.confidence === "number" || typeof event.confidence === "string" ? event.confidence : undefined,
     novelty_key_preview: optional(event.novelty_key_preview),
     provenance_refs: provenanceArray(event.provenance_refs),
-    research_db_write_status: event.research_db_write_status === "written" ? "written" : "not_written",
+    research_db_write_status: writeStatus,
     research_db_written: event.research_db_written === true,
     mission_mutated: false,
     checkpoint_created: false,
@@ -504,6 +508,7 @@ function resultFromEvent(event: Record<string, unknown>): ResearchIngestionResul
     mcp_called: false,
     recorded_at: String(event.recorded_at ?? ""),
     recorded_by: String(event.recorded_by ?? "unknown"),
+    error: optional(event.error),
     ingestion_hash: String(event.ingestion_hash ?? ""),
     recommended_commands: recommendedCommands(String(event.review_id ?? ""), String(event.session_id ?? ""), false),
   })
@@ -651,6 +656,11 @@ function readEvidenceKind(value: unknown): ResearchEvidenceKind {
 
 function readDecision(value: unknown): ResearchIngestionDecision {
   return value === "ingest" || value === "block" || value === "defer" ? value : "unknown"
+}
+
+function readWriteStatus(value: unknown): ResearchIngestionResult["research_db_write_status"] {
+  if (value === "written" || value === "write_failed" || value === "dry_run" || value === "not_written") return value
+  return "not_written"
 }
 
 function confidenceForDb(value: unknown): "low" | "medium" | "high" {
