@@ -233,7 +233,9 @@ export class ResearchMemoryService {
       source_session_id: undefined,
       artifact_refs: result
         ? artifacts.slice(0, 8).map((artifact) => sourceRef("artifact", artifact.id, "artifact pointer", artifact.description ?? artifact.kind))
-        : rawCandidate?.artifact_ids.slice(0, 8).map((id) => sourceRef("artifact", id, "artifact pointer", id)) ?? [],
+        : input.include_artifacts === false
+          ? []
+          : rawCandidate?.artifact_ids.slice(0, 8).map((id) => sourceRef("artifact", id, "artifact pointer", id)) ?? [],
       citation_refs: citations.slice(0, 8).map((citation) => sourceRef("research_db", citation.citation_id, "citation pointer", citation.title ?? citation.source_type)),
       provenance_refs: provenanceRefs,
       related_event_ids: rawCandidate?.related_event_ids ?? [],

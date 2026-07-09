@@ -21116,6 +21116,9 @@ describe("OpenCode launch readiness", () => {
 	      created_by: "commander",
 	    })
 	    db.createCandidate({ candidate_id: "candidate_memory_search", claim: "memory search candidate should inspect", source: "commander" })
+	    db.planTrainingRun({ training_run_id: "training_memory_search", label: "probe" })
+	    db.addArtifact({ id: "artifact_training_checkpoint", topic_id: "topic_search_inspection", kind: "snapshot", content: "checkpoint raw token=abc123", produced_by_run_id: "training_memory_search" })
+	    db.recordTrainingCheckpoint({ checkpoint_id: "checkpoint_memory_search", training_run_id: "training_memory_search", artifact_id: "artifact_training_checkpoint" })
 	    db.close()
     const beforeEvents = await readJsonlEvents(dir)
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
@@ -21179,6 +21182,13 @@ describe("OpenCode launch readiness", () => {
 	    const candidateInspect = await server.command("runtime.get_research_memory_record", { id: "candidate_memory_search" }) as { status: string; memory_id: string; title_preview?: string; provenance_refs: Array<{ source_id: string; pointer_only: boolean }> }
 	    expect(candidateInspect).toMatchObject({ status: "ready", memory_id: "candidate_memory_search", title_preview: "memory search candidate should inspect" })
 	    expect(candidateInspect.provenance_refs).toEqual([expect.objectContaining({ source_id: "candidate_memory_search", pointer_only: true })])
+
+	    const trainingInspect = await server.command("runtime.get_research_memory_record", { id: "training_memory_search", include_artifacts: false }) as { status: string; memory_id: string; label: string; artifact_refs: Array<{ source_id: string }> }
+	    expect(trainingInspect).toMatchObject({ status: "ready", memory_id: "training_memory_search", label: "probe" })
+	    expect(trainingInspect.artifact_refs).toEqual([])
+	    const trainingInspectWithArtifacts = await server.command("runtime.get_research_memory_record", { id: "training_memory_search" }) as { artifact_refs: Array<{ source_id: string; pointer_only: boolean }> }
+	    expect(trainingInspectWithArtifacts.artifact_refs).toEqual([expect.objectContaining({ source_id: "checkpoint_memory_search", pointer_only: true })])
+	    expect(JSON.stringify(trainingInspectWithArtifacts)).not.toContain("checkpoint raw")
 
 	    const near = await server.command("runtime.preview_research_memory_near_duplicates", { query: "memory search expansion", include_failures: true }) as { status: string; novelty_risk: string; likely_duplicate_count: number; candidates: Array<{ result_id: string }> }
     expect(near.status).toBe("ready")
