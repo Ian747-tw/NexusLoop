@@ -152,7 +152,7 @@ export class ResearchIngestionService {
     const limit = positiveInteger(input.limit, 10, MAX_LIST)
     return redactValue({
       total_ingestions: records.length,
-      research_memory_count: new Set(records.map((record) => record.research_memory_id).filter(Boolean)).size,
+      research_memory_count: new Set(records.filter((record) => record.research_db_written).map((record) => record.research_memory_id).filter(Boolean)).size,
       session_count: new Set(records.map((record) => record.session_id)).size,
       positive_finding_count: records.filter((record) => record.evidence_kind === "positive_finding").length,
       negative_result_count: records.filter((record) => record.evidence_kind === "negative_result").length,
@@ -189,7 +189,7 @@ export class ResearchIngestionService {
     if (review && (review.decision !== "accepted" || review.review_disposition !== "accepted_as_evidence" || review.projection_state_after !== "reviewed_accepted")) {
       blockers.push(blockedReviewMessage(review.decision))
     }
-    const existing = reviewId ? await this.latestForReview(reviewId) : null
+    const existing = reviewId ? await this.latestSuccessfulForReview(reviewId) : null
     if (existing) blockers.push("research ingestion already exists for this review_id")
     const rawBlocked = inputLooksRaw(input) || inputLooksRaw(review) || inputLooksRaw(report)
     if (rawBlocked) blockers.push("raw logs, full diffs, file contents, raw OpenCode output, provider output, full event logs, research.db dumps, mission mutation claims, checkpoints, follow-up missions, providers, MCPs, and online research are out of scope for research ingestion")
@@ -236,7 +236,7 @@ export class ResearchIngestionService {
       confidence,
       noveltyKey,
     }))
-    const duplicateHash = ingestionHash ? (await this.sequencedRecords()).find((item) => item.record.ingestion_hash === ingestionHash) : null
+    const duplicateHash = ingestionHash ? (await this.sequencedRecords()).find((item) => item.record.research_db_written && item.record.ingestion_hash === ingestionHash) : null
     if (duplicateHash) blockers.push("research ingestion with the same ingestion_hash already exists")
     const canIngest = blockers.length === 0
     return redactValue({
@@ -246,6 +246,7 @@ export class ResearchIngestionService {
       review_id: reviewId,
       report_id: report?.report_id ?? review?.report_id ?? "",
       session_id: report?.session_id ?? review?.session_id ?? "",
+      mission_id: session?.mission_id,
       launch_id: report?.launch_id ?? review?.launch_id,
       source_kind: "opencode_result_review",
       evidence_kind: evidenceKind,
@@ -296,7 +297,7 @@ export class ResearchIngestionService {
       title: preview.research_title_preview,
       summary: preview.evidence_summary_preview,
       confidence: confidenceForDb(preview.confidence),
-      mission_id: preview.session_id,
+      mission_id: preview.mission_id,
       metrics: {
         metrics_preview: preview.metrics_preview,
         evidence_kind: preview.evidence_kind,
@@ -323,9 +324,9 @@ export class ResearchIngestionService {
     return this.options.researchDb.acceptResearchResult(result.result_id)
   }
 
-  private async latestForReview(reviewId: string): Promise<ResearchIngestionRecord | null> {
+  private async latestSuccessfulForReview(reviewId: string): Promise<ResearchIngestionRecord | null> {
     return (await this.sequencedRecords())
-      .filter((item) => item.record.review_id === reviewId)
+      .filter((item) => item.record.review_id === reviewId && item.record.research_db_written)
       .sort(compareSequencedDesc)[0]?.record ?? null
   }
 
@@ -374,6 +375,7 @@ function resultFromPreview(preview: ResearchIngestionPreview, overrides: { inges
     review_id: preview.review_id,
     report_id: preview.report_id,
     session_id: preview.session_id,
+    mission_id: preview.mission_id,
     launch_id: preview.launch_id,
     source_kind: preview.source_kind,
     evidence_kind: preview.evidence_kind,
@@ -425,6 +427,7 @@ function eventPayload(result: ResearchIngestionResult): Record<string, unknown> 
     review_id: result.review_id,
     report_id: result.report_id,
     session_id: result.session_id,
+    mission_id: result.mission_id,
     launch_id: result.launch_id,
     source_kind: result.source_kind,
     evidence_kind: result.evidence_kind,
@@ -472,6 +475,7 @@ function resultFromEvent(event: Record<string, unknown>): ResearchIngestionResul
     review_id: String(event.review_id ?? ""),
     report_id: String(event.report_id ?? ""),
     session_id: String(event.session_id ?? ""),
+    mission_id: optional(event.mission_id),
     launch_id: optional(event.launch_id),
     source_kind: "opencode_result_review",
     evidence_kind: readEvidenceKind(event.evidence_kind),
@@ -521,6 +525,7 @@ function recordFromEvent(event: Record<string, unknown>): ResearchIngestionRecor
     review_id: String(event.review_id ?? ""),
     report_id: String(event.report_id ?? ""),
     session_id: String(event.session_id ?? ""),
+    mission_id: optional(event.mission_id),
     launch_id: optional(event.launch_id),
     evidence_kind: readEvidenceKind(event.evidence_kind),
     ingestion_decision: readDecision(event.ingestion_decision),

@@ -19647,11 +19647,54 @@ describe("OpenCode launch readiness", () => {
     await expect(server.command("runtime.get_research_ingestion", { ingestionId: result.ingestion_id })).resolves.toMatchObject({ status: "failed", research_db_write_status: "write_failed", research_db_written: false })
     await expect(server.command("runtime.list_research_ingestions", { reviewId: review.review_id })).resolves.toEqual([expect.objectContaining({ ingestion_id: result.ingestion_id, research_db_written: false })])
     await expect(server.command("runtime.latest_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id, status: "failed" })
-    await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, db_written_count: 0, failed_count: 1 })
+    await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, research_memory_count: 0, db_written_count: 0, failed_count: 1 })
     const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "implemented bounded candidate", limit: 10 }) as { candidates: Array<{ result_id: string }> }
     expect(retrieval.candidates.map((candidate) => candidate.result_id)).not.toContain(result.research_memory_id)
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ status: "ready", can_ingest: true })
     await server.shutdown()
     researchDb.close()
+  })
+
+  test("research ingestion writes the linked mission id and not the OpenCode session id", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["opencode"] },
+      researchProjectionMode: "check_only",
+      opencodeLaunchId: () => "launch_ingestion_mission",
+    })
+    await server.start()
+    const submitted = await server.submitUserMessage("mission linked research ingestion") as { missionId: string }
+    const session = await server.command("runtime.create_opencode_session_plan", { missionId: submitted.missionId }) as { session_id: string; mission_id?: string }
+    expect(session.mission_id).toBe(submitted.missionId)
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    await expect(server.command("runtime.launch_opencode_session", { sessionId: session.session_id, packId: pack.pack_id, providerKind: "local", modelId: "local-medium" })).resolves.toMatchObject({ status: "launched", launch_id: "launch_ingestion_mission" })
+    const report = await server.command("runtime.record_opencode_result_report", {
+      sessionId: session.session_id,
+      kind: "completion_report",
+      summary: "mission linked result",
+      outcome: "tests passed",
+      claims: ["mission linked claim"],
+    }) as { report_id: string }
+    const review = await server.command("runtime.record_opencode_result_review", {
+      reportId: report.report_id,
+      decision: "accepted",
+      rationale: "mission linked evidence is acceptable",
+      acceptedClaims: ["mission linked claim"],
+    }) as { review_id: string }
+    const preview = await server.command("runtime.preview_research_ingestion", { reviewId: review.review_id }) as { status: string; mission_id?: string }
+    expect(preview).toMatchObject({ status: "ready", mission_id: submitted.missionId })
+    const result = await server.command("runtime.record_research_ingestion", { reviewId: review.review_id }) as { status: string; research_memory_id: string; mission_id?: string }
+    expect(result).toMatchObject({ status: "recorded", mission_id: submitted.missionId })
+    await server.shutdown()
+
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused_read" })
+    const row = db.getResearchResult(result.research_memory_id)
+    expect(row?.mission_id).toBe(submitted.missionId)
+    expect(row?.mission_id).not.toBe(session.session_id)
+    db.close()
   })
 
   test("wake supervisor summary counts all matching launched sessions before applying card limit", async () => {

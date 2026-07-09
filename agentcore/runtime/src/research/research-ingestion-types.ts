@@ -38,6 +38,7 @@ export type ResearchIngestionPreview = {
   review_id: string
   report_id: string
   session_id: string
+  mission_id?: string
   launch_id?: string
   source_kind: "opencode_result_review"
   evidence_kind: ResearchEvidenceKind
@@ -96,6 +97,7 @@ export type ResearchIngestionRecord = {
   review_id: string
   report_id: string
   session_id: string
+  mission_id?: string
   launch_id?: string
   evidence_kind: ResearchEvidenceKind
   ingestion_decision: ResearchIngestionDecision
