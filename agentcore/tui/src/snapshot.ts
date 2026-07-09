@@ -1738,6 +1738,7 @@ function researchMemoryLines(state: UiState): string[] {
   if (memory.commandError) out.push(`  command_error=${redactText(memory.commandError)}`)
   out.push("  note=previews do not include raw research records, full research.db, raw artifacts, provider output, OpenCode output, raw event log, or online research")
   out.push("  note=search is bounded lexical retrieval; semantic_search_enabled=false vector_index_enabled=false fts_index_enabled=false")
+  out.push("  note=retrieval/novelty previews do not call providers, call MCPs, launch OpenCode, write research.db, or decide research direction")
   out.push("  note=retrieval/inspection/near-duplicate/profile previews do not call providers, call MCPs, launch OpenCode, write research.db, mutate missions/proposals/reviews/apply, create proposals, or decide research direction")
   return out
 }
