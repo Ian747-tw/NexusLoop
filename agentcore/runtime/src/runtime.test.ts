@@ -21145,15 +21145,23 @@ describe("OpenCode launch readiness", () => {
     expect(search.candidates[0]?.source_refs.every((ref) => ref.pointer_only)).toBe(true)
     expect(JSON.stringify(search)).not.toContain("abc123")
 
-	    const nonAcceptedStatusSearch = await server.command("runtime.preview_research_memory_retrieval", {
-	      query: "memory search proposed leak",
-	      source_kind: "research_db",
-	      result_status: "proposed",
-	      labels: ["finding"],
-	    }) as { status: string; candidates: Array<{ result_id: string }> }
-	    expect(nonAcceptedStatusSearch.candidates.map((candidate) => candidate.result_id)).not.toContain("finding_memory_search")
-	    expect(nonAcceptedStatusSearch.candidates.map((candidate) => candidate.result_id)).toContain("proposed_memory_search")
-	    expect(nonAcceptedStatusSearch.candidates.map((candidate) => candidate.result_id)).not.toContain("candidate_memory_search")
+    const nonAcceptedStatusSearch = await server.command("runtime.preview_research_memory_retrieval", {
+      query: "memory search proposed leak",
+      source_kind: "research_db",
+      result_status: "proposed",
+      labels: ["finding"],
+    }) as { status: string; candidates: Array<{ result_id: string }> }
+    expect(nonAcceptedStatusSearch.candidates.map((candidate) => candidate.result_id)).not.toContain("finding_memory_search")
+    expect(nonAcceptedStatusSearch.candidates.map((candidate) => candidate.result_id)).toContain("proposed_memory_search")
+    expect(nonAcceptedStatusSearch.candidates.map((candidate) => candidate.result_id)).not.toContain("candidate_memory_search")
+
+    const resultTypeOnlySearch = await server.command("runtime.preview_research_memory_retrieval", {
+      query: "memory search candidate inspect",
+      source_kind: "research_db",
+      result_type: "finding",
+      labels: ["finding"],
+    }) as { candidates: Array<{ result_id: string }> }
+    expect(resultTypeOnlySearch.candidates.map((candidate) => candidate.result_id)).not.toContain("candidate_memory_search")
 
     const inspect = await server.command("runtime.get_research_memory_record", { id: "finding_memory_search" }) as { status: string; memory_id: string; artifact_refs: Array<{ source_id: string; pointer_only: boolean }>; citation_refs: Array<{ source_id: string; pointer_only: boolean }>; provenance_refs: Array<{ pointer_only: boolean }> }
     expect(inspect).toMatchObject({ status: "ready", memory_id: "finding_memory_search" })
@@ -21168,29 +21176,38 @@ describe("OpenCode launch readiness", () => {
     expect(blockedInspect.blockers.join(" ")).toContain("only returns accepted research results")
     expect(blockedInspect.title_preview).toBeUndefined()
     expect(blockedInspect.summary_preview).toBeUndefined()
-	    expect(blockedInspect.artifact_refs).toEqual([])
-	    expect(blockedInspect.citation_refs).toEqual([])
-	    expect(blockedInspect.provenance_refs).toEqual([])
-	    expect(JSON.stringify(blockedInspect)).not.toContain("proposed leak")
+    expect(blockedInspect.artifact_refs).toEqual([])
+    expect(blockedInspect.citation_refs).toEqual([])
+    expect(blockedInspect.provenance_refs).toEqual([])
+    expect(JSON.stringify(blockedInspect)).not.toContain("proposed leak")
 
-	    const candidateSearch = await server.command("runtime.preview_research_memory_retrieval", {
-	      query: "memory search candidate inspect",
-	      source_kind: "research_db",
-	      labels: ["finding"],
-	    }) as { status: string; candidates: Array<{ result_id: string }> }
-	    expect(candidateSearch.candidates.map((candidate) => candidate.result_id)).toContain("candidate_memory_search")
-	    const candidateInspect = await server.command("runtime.get_research_memory_record", { id: "candidate_memory_search" }) as { status: string; memory_id: string; title_preview?: string; provenance_refs: Array<{ source_id: string; pointer_only: boolean }> }
-	    expect(candidateInspect).toMatchObject({ status: "ready", memory_id: "candidate_memory_search", title_preview: "memory search candidate should inspect" })
-	    expect(candidateInspect.provenance_refs).toEqual([expect.objectContaining({ source_id: "candidate_memory_search", pointer_only: true })])
+    const candidateSearch = await server.command("runtime.preview_research_memory_retrieval", {
+      query: "memory search candidate inspect",
+      source_kind: "research_db",
+      labels: ["finding"],
+    }) as { status: string; candidates: Array<{ result_id: string }> }
+    expect(candidateSearch.candidates.map((candidate) => candidate.result_id)).toContain("candidate_memory_search")
+    const candidateInspect = await server.command("runtime.get_research_memory_record", { id: "candidate_memory_search" }) as { status: string; memory_id: string; title_preview?: string; provenance_refs: Array<{ source_id: string; pointer_only: boolean }> }
+    expect(candidateInspect).toMatchObject({ status: "ready", memory_id: "candidate_memory_search", title_preview: "memory search candidate should inspect" })
+    expect(candidateInspect.provenance_refs).toEqual([expect.objectContaining({ source_id: "candidate_memory_search", pointer_only: true })])
 
-	    const trainingInspect = await server.command("runtime.get_research_memory_record", { id: "training_memory_search", include_artifacts: false }) as { status: string; memory_id: string; label: string; artifact_refs: Array<{ source_id: string }> }
-	    expect(trainingInspect).toMatchObject({ status: "ready", memory_id: "training_memory_search", label: "probe" })
-	    expect(trainingInspect.artifact_refs).toEqual([])
-	    const trainingInspectWithArtifacts = await server.command("runtime.get_research_memory_record", { id: "training_memory_search" }) as { artifact_refs: Array<{ source_id: string; pointer_only: boolean }> }
-	    expect(trainingInspectWithArtifacts.artifact_refs).toEqual([expect.objectContaining({ source_id: "checkpoint_memory_search", pointer_only: true })])
-	    expect(JSON.stringify(trainingInspectWithArtifacts)).not.toContain("checkpoint raw")
+    const trainingInspect = await server.command("runtime.get_research_memory_record", { id: "training_memory_search", include_artifacts: false }) as { status: string; memory_id: string; label: string; artifact_refs: Array<{ source_id: string }> }
+    expect(trainingInspect).toMatchObject({ status: "ready", memory_id: "training_memory_search", label: "probe" })
+    expect(trainingInspect.artifact_refs).toEqual([])
+    const trainingInspectWithArtifacts = await server.command("runtime.get_research_memory_record", { id: "training_memory_search" }) as { artifact_refs: Array<{ source_id: string; pointer_only: boolean }> }
+    expect(trainingInspectWithArtifacts.artifact_refs).toEqual([expect.objectContaining({ source_id: "checkpoint_memory_search", pointer_only: true })])
+    expect(JSON.stringify(trainingInspectWithArtifacts)).not.toContain("checkpoint raw")
 
-	    const near = await server.command("runtime.preview_research_memory_near_duplicates", { query: "memory search expansion", include_failures: true }) as { status: string; novelty_risk: string; likely_duplicate_count: number; candidates: Array<{ result_id: string }> }
+    const hiddenArtifactSearch = await server.command("runtime.preview_research_memory_retrieval", {
+      query: "memory search expansion",
+      result_type: "finding",
+      has_artifacts: true,
+      include_artifacts: false,
+    }) as { candidates: Array<{ result_id: string; artifact_ids: string[]; source_refs: Array<{ source_kind: string }> }> }
+    expect(hiddenArtifactSearch.candidates).toEqual([expect.objectContaining({ result_id: "finding_memory_search", artifact_ids: [] })])
+    expect(hiddenArtifactSearch.candidates[0]?.source_refs.map((ref) => ref.source_kind)).not.toContain("artifact")
+
+    const near = await server.command("runtime.preview_research_memory_near_duplicates", { query: "memory search expansion", include_failures: true }) as { status: string; novelty_risk: string; likely_duplicate_count: number; candidates: Array<{ result_id: string }> }
     expect(near.status).toBe("ready")
     expect(near.novelty_risk).toBe("high")
     expect(near.likely_duplicate_count).toBeGreaterThanOrEqual(1)

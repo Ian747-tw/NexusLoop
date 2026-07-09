@@ -351,7 +351,8 @@ export class ResearchMemoryService {
   private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[]; result_type?: string; result_status?: string; confidence?: string; evidence_kind?: string; has_artifacts?: boolean; has_citations?: boolean; has_metrics?: boolean; since?: string; until?: string }): RawCandidate[] {
     const out: RawCandidate[] = []
     const resultStatusFilter = isResearchResultStatus(input.result_status) ? input.result_status : "accepted"
-    const includeNonResultRows = !isResearchResultStatus(input.result_status)
+    const resultTypeFilter = isResearchResultType(input.result_type) ? input.result_type : undefined
+    const includeNonResultRows = !resultTypeFilter && !isResearchResultStatus(input.result_status)
     const missionRuns = input.mission_id ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? [] : []
     const missionRunIds = new Set(missionRuns.map((run) => run.training_run_id))
     const missionCandidateIds = new Set(missionRuns.map((run) => run.candidate_id).filter((id): id is string => !!id))
@@ -373,7 +374,7 @@ export class ResearchMemoryService {
           (!!result.trial_id && missionTrialIds.has(result.trial_id)) ||
           (!!result.training_run_id && missionRunIds.has(result.training_run_id))
         if (!linkedToMission) continue
-        out.push(candidateFromResearchResult(result, adapter, input.include_artifacts !== false, input.mission_id && linkedToMission ? input.mission_id : undefined))
+        out.push(candidateFromResearchResult(result, adapter, true, input.mission_id && linkedToMission ? input.mission_id : undefined))
       }
     }
     if ((!input.source_kind || input.source_kind === "research_db") && includeNonResultRows) {
@@ -407,7 +408,8 @@ export class ResearchMemoryService {
       .filter((candidate) => input.has_metrics === undefined || (input.has_metrics ? !!candidate.metric_preview : !candidate.metric_preview))
       .filter((candidate) => !input.since || !candidate.created_at_preview || candidate.created_at_preview >= input.since)
       .filter((candidate) => !input.until || !candidate.created_at_preview || candidate.created_at_preview <= input.until)
-    return uniqueRawCandidates(filtered)
+    const visible = input.include_artifacts === false ? filtered.map(candidateWithoutArtifacts) : filtered
+    return uniqueRawCandidates(visible)
   }
 }
 
@@ -574,6 +576,14 @@ function candidateFromTrainingRun(run: TrainingRun): RawCandidate {
     warning_flags: run.status === "failed" || run.status === "cancelled" ? ["failed/cancelled training run evidence included"] : [],
     source_refs: [sourceRef("research_db", run.training_run_id, "training run pointer", `${run.label} ${run.status}`)],
   })
+}
+
+function candidateWithoutArtifacts(candidate: RawCandidate): RawCandidate {
+  return {
+    ...candidate,
+    artifact_ids: [],
+    source_refs: candidate.source_refs.filter((ref) => ref.source_kind !== "artifact"),
+  }
 }
 
 function labelForResearchResult(result: ResearchResult): string {
