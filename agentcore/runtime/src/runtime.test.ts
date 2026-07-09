@@ -21081,6 +21081,92 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
+  test("research memory search inspection near-duplicates and profile remain bounded read-only", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    db.createTopic({ id: "topic_search_inspection", title: "Search inspection" })
+    db.addArtifact({ id: "artifact_search", topic_id: "topic_search_inspection", kind: "report", content: "raw artifact token=abc123 must not leak", description: "memory search artifact pointer" })
+    db.recordCitation({ citation_id: "citation_search", source_type: "event", source_uri: "event://search", quoted_text_or_summary: "citation body token=abc123 must not leak", title: "memory search citation pointer" })
+    db.proposeResearchResult({
+      result_id: "finding_memory_search",
+      result_type: "finding",
+      title: "memory search expansion",
+      summary: "bounded lexical search exposes matched fields and scoring explanations",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.linkResultArtifact("finding_memory_search", "artifact_search")
+    db.linkResultCitation("finding_memory_search", "citation_search")
+    db.acceptResearchResult("finding_memory_search")
+    db.proposeResearchResult({
+      result_id: "failure_memory_search",
+      result_type: "negative_finding",
+      title: "memory search expansion failure",
+      summary: "older duplicate attempt failed on explainability",
+      confidence: "medium",
+      created_by: "executor",
+    })
+    db.acceptResearchResult("failure_memory_search")
+    db.proposeResearchResult({
+      result_id: "proposed_memory_search",
+      result_type: "finding",
+      title: "memory search proposed leak",
+      summary: "proposed result should not be returned",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.close()
+    const beforeEvents = await readJsonlEvents(dir)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+
+    const search = await server.command("runtime.preview_research_memory_retrieval", {
+      query: "memory search expansion scoring token=abc123",
+      labels: ["finding"],
+      result_type: "finding",
+      confidence: "high",
+      has_artifacts: true,
+      has_citations: true,
+      sort: "similarity",
+      limit: 5,
+    }) as {
+      status: string
+      candidates: Array<{ result_id: string; label: string; matched_terms: string[]; unmatched_query_terms: string[]; matched_fields: string[]; scoring_explanation_preview: string; pointer_only: boolean; source_refs: Array<{ pointer_only: boolean }> }>
+    }
+    expect(search.status).toBe("ready")
+    expect(search.candidates).toEqual([expect.objectContaining({ result_id: "finding_memory_search", label: "finding", pointer_only: true })])
+    expect(search.candidates[0]?.matched_terms).toEqual(expect.arrayContaining(["memory", "search", "expansion"]))
+    expect(search.candidates[0]?.unmatched_query_terms).toEqual(expect.any(Array))
+    expect(search.candidates[0]?.matched_fields).toContain("question/title")
+    expect(search.candidates[0]?.scoring_explanation_preview).toContain("bounded lexical score")
+    expect(search.candidates[0]?.source_refs.every((ref) => ref.pointer_only)).toBe(true)
+    expect(JSON.stringify(search)).not.toContain("abc123")
+
+    const inspect = await server.command("runtime.get_research_memory_record", { id: "finding_memory_search" }) as { status: string; memory_id: string; artifact_refs: Array<{ source_id: string; pointer_only: boolean }>; citation_refs: Array<{ source_id: string; pointer_only: boolean }>; provenance_refs: Array<{ pointer_only: boolean }> }
+    expect(inspect).toMatchObject({ status: "ready", memory_id: "finding_memory_search" })
+    expect(inspect.artifact_refs).toEqual([expect.objectContaining({ source_id: "artifact_search", pointer_only: true })])
+    expect(inspect.citation_refs).toEqual([expect.objectContaining({ source_id: "citation_search", pointer_only: true })])
+    expect(inspect.provenance_refs.every((ref) => ref.pointer_only)).toBe(true)
+    expect(JSON.stringify(inspect)).not.toContain("raw artifact token")
+    expect(JSON.stringify(inspect)).not.toContain("citation body")
+
+    const near = await server.command("runtime.preview_research_memory_near_duplicates", { query: "memory search expansion", include_failures: true }) as { status: string; novelty_risk: string; likely_duplicate_count: number; candidates: Array<{ result_id: string }> }
+    expect(near.status).toBe("ready")
+    expect(near.novelty_risk).toBe("high")
+    expect(near.likely_duplicate_count).toBeGreaterThanOrEqual(1)
+    expect(near.candidates.map((candidate) => candidate.result_id)).toContain("failure_memory_search")
+
+    const profile = await server.command("runtime.research_memory_search_profile") as { search_engine: string; semantic_search_enabled: boolean; vector_index_enabled: boolean; fts_index_enabled: boolean; max_limit: number; supported_filters: string[]; label_counts: Record<string, number> }
+    expect(profile).toMatchObject({ search_engine: "bounded_lexical", semantic_search_enabled: false, vector_index_enabled: false, fts_index_enabled: false, max_limit: 20 })
+    expect(profile.supported_filters).toEqual(expect.arrayContaining(["labels", "result_type", "confidence", "has_artifacts"]))
+    expect(profile.label_counts.finding).toBeGreaterThanOrEqual(1)
+    expect(profile.label_counts.failure).toBeGreaterThanOrEqual(1)
+
+    await expect(server.command("runtime.get_research_memory_record", {})).resolves.toMatchObject({ status: "blocked" })
+    await expect(server.command("runtime.preview_research_memory_near_duplicates", {})).resolves.toMatchObject({ status: "blocked" })
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+    await server.shutdown()
+  })
+
   test("research memory retrieval asks for a latest-first bounded result window before lexical scoring", () => {
     const lateResult: ResearchResult = {
       result_id: "zz_latecap_finding",
@@ -21185,7 +21271,7 @@ describe("OpenCode launch readiness", () => {
     expect(seenTrialOrders).toEqual(["newest"])
     expect(seenTrainingOrders).toEqual(["newest"])
     expect(preview.status).toBe("ready")
-    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_candidate", "zz_latecap_finding", "zz_latecap_training", "zz_latecap_trial"])
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["zz_latecap_finding", "zz_latecap_candidate", "zz_latecap_trial", "zz_latecap_training"])
   })
 
   test("research memory mission scope loads known linked ids without global candidate caps", () => {
@@ -21459,6 +21545,9 @@ describe("OpenCode launch readiness", () => {
 
     await expect(client.command("runtime.research_memory_summary")).resolves.toMatchObject({ total_candidates_available: 0 })
     await expect(client.command("runtime.preview_research_memory_retrieval", { query: "adapter timeout" })).resolves.toMatchObject({ status: "empty" })
+    await expect(client.command("runtime.get_research_memory_record", { id: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.preview_research_memory_near_duplicates", { query: "adapter timeout" })).resolves.toMatchObject({ status: "empty" })
+    await expect(client.command("runtime.research_memory_search_profile")).resolves.toMatchObject({ search_engine: "bounded_lexical", semantic_search_enabled: false })
     await expect(client.command("runtime.preview_research_novelty_check", { question: "adapter timeout" })).resolves.toMatchObject({ status: "partial", duplicate_risk: "unknown" })
     expect(adapter.startCalls).toBe(0)
     expect(await readEventKinds(dir)).not.toContain("runtime_started")
@@ -21467,7 +21556,7 @@ describe("OpenCode launch readiness", () => {
   })
 
   test("authority registry includes research memory and novelty safe-read commands", () => {
-    for (const command of ["/research-memory-summary", "/research-memory-search", "/research-memory-preview", "/research-novelty-preview"]) {
+    for (const command of ["/research-memory-summary", "/research-memory-search", "/research-memory-preview", "/research-memory-show", "/research-memory-near-duplicates", "/research-memory-profile", "/research-novelty-preview"]) {
       const record = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === command)
       expect(record).toMatchObject({
         risk: "safe_read",
@@ -21477,10 +21566,22 @@ describe("OpenCode launch readiness", () => {
         requires_active_runtime: false,
         requires_run_lock: false,
       })
-      expect(record?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_research_memory_novelty_tui.py")
-      expect(record?.notes.join(" ")).toContain("does not call providers")
-      expect(record?.notes.join(" ")).toContain("launch OpenCode")
+      expect(record?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_research_memory_search_inspection_tui.py")
+      expect(record?.notes.join(" ")).toMatch(/provider|providers/)
+      expect(record?.notes.join(" ")).toMatch(/OpenCode|launch/)
     }
+    const search = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-search")
+    expect(search?.aliases).toEqual(expect.arrayContaining(["/research-search", "/memory-search"]))
+    expect(search?.notes.join(" ")).toContain("bounded lexical")
+    expect(search?.notes.join(" ")).toContain("Semantic/vector search is not enabled")
+    const show = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-show")
+    expect(show?.aliases).toEqual(expect.arrayContaining(["/memory-show", "/research-memory-inspect", "/memory-inspect", "/research-inspect"]))
+    const duplicates = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-near-duplicates")
+    expect(duplicates?.aliases).toEqual(expect.arrayContaining(["/research-duplicates", "/memory-duplicates", "/research-near-duplicates"]))
+    expect(duplicates?.notes.join(" ")).toContain("advisory")
+    const profile = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-profile")
+    expect(profile?.aliases).toEqual(expect.arrayContaining(["/research-search-profile", "/memory-profile"]))
+    expect(profile?.notes.join(" ")).toContain("semantic/vector/FTS/provider search is disabled")
     const novelty = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-novelty-preview")
     expect(novelty?.aliases).toEqual(expect.arrayContaining(["/novelty-preview", "/research-dup-check"]))
     expect(novelty?.notes.join(" ")).toContain("flagged, not forbidden")
