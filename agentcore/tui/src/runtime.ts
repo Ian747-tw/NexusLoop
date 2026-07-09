@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeResultReportCommandSummary, OpenCodeResultReportPreviewSummary, OpenCodeResultReportRecordSummary, OpenCodeResultReportResultSummary, OpenCodeResultReportSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeResultReportCommandSummary, OpenCodeResultReportPreviewSummary, OpenCodeResultReportRecordSummary, OpenCodeResultReportResultSummary, OpenCodeResultReportSummaryState, OpenCodeResultReviewGateCommandSummary, OpenCodeResultReviewGatePreviewSummary, OpenCodeResultReviewGateRecordSummary, OpenCodeResultReviewGateResultSummary, OpenCodeResultReviewGateSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -65,6 +65,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly opencodeWakeSupervisorBatchRecords: OpenCodeWakeSupervisorBatchResultSummary[] = []
   private readonly opencodeWakeActionExecutionRecords: OpenCodeWakeActionExecutionResultSummary[] = []
   private readonly opencodeResultReports: OpenCodeResultReportResultSummary[] = []
+  private readonly opencodeResultReviews: OpenCodeResultReviewGateResultSummary[] = []
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly executorReviewProposalCreates: ExecutorReviewProposalCreateResultSummary[] = []
   private readonly executorReviewProposalReviewRequests: ExecutorReviewProposalReviewRequestResultSummary[] = []
@@ -427,7 +428,7 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.openCodeHandoffReadinessSummary()
       case "runtime.preview_opencode_result_review_packet":
         return this.previewOpenCodeResultReviewPacket(payload)
-      case "runtime.opencode_result_review_summary":
+      case "runtime.opencode_result_review_packet_summary":
         return this.openCodeResultReviewSummary()
       case "runtime.preview_opencode_session_plan":
         return this.previewOpenCodeSessionPlan(payload)
@@ -591,6 +592,18 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.latestOpenCodeResultReport(payload)
       case "runtime.opencode_result_report_summary":
         return this.opencodeResultReportSummary(payload)
+      case "runtime.preview_opencode_result_review":
+        return this.previewOpenCodeResultReview(payload)
+      case "runtime.record_opencode_result_review":
+        return this.recordOpenCodeResultReview(payload)
+      case "runtime.list_opencode_result_reviews":
+        return this.listOpenCodeResultReviews(payload)
+      case "runtime.get_opencode_result_review":
+        return this.getOpenCodeResultReview(String(payload.reviewId ?? payload.review_id ?? ""))
+      case "runtime.latest_opencode_result_review":
+        return this.latestOpenCodeResultReview(payload)
+      case "runtime.opencode_result_review_summary":
+        return this.opencodeResultReviewSummary(payload)
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -4244,6 +4257,173 @@ export class FakeRuntimeClient implements RuntimeClient {
       needs_commander_review_count: records.filter((item) => item.review_state === "needs_commander_review").length,
       needs_human_review_count: records.filter((item) => item.review_state === "needs_human_review").length,
       latest_reports: records.slice(0, readLimit(payload.limit, 10)),
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private previewOpenCodeResultReview(payload: Record<string, unknown>): OpenCodeResultReviewGatePreviewSummary {
+    const reportId = optionalString(payload.reportId ?? payload.report_id ?? payload.report) ?? ""
+    const report = this.opencodeResultReports.find((item) => item.report_id === reportId)
+    const decision = fakeResultReviewDecision(optionalString(payload.decision))
+    const rationale = preview(redactText(String(payload.rationale ?? "")))
+    const evidenceSummary = optionalString(payload.evidenceSummary ?? payload.evidence_summary)
+    const acceptedClaims = readCsvPayload(payload.acceptedClaims ?? payload.accepted_claims)
+    const rejectedClaims = readCsvPayload(payload.rejectedClaims ?? payload.rejected_claims)
+    const revisionRequests = readCsvPayload(payload.revisionRequests ?? payload.revision_requests)
+    const followupRequests = readCsvPayload(payload.followupRequests ?? payload.followup_requests)
+    const riskFlags = readCsvPayload(payload.riskFlags ?? payload.risk_flags)
+    const artifactRefs = readCsvPayload(payload.artifactRefs ?? payload.artifact_refs)
+    const testRefs = readCsvPayload(payload.testRefs ?? payload.test_refs)
+    const blockers: string[] = []
+    if (!reportId) blockers.push("result review requires report=<report_id>")
+    if (reportId && !report) blockers.push("linked result report does not resolve")
+    if (report && this.opencodeResultReviews.some((item) => item.report_id === report.report_id)) blockers.push("result report already has a result review")
+    if (!payload.decision || decision === "unknown") blockers.push("explicit valid decision is required")
+    if (decision !== "deferred" && !rationale) blockers.push("rationale is required for non-deferred result review decisions")
+    const rawValues = [payload.rationale, payload.evidenceSummary ?? payload.evidence_summary, payload.acceptedClaims ?? payload.accepted_claims, payload.rejectedClaims ?? payload.rejected_claims, payload.revisionRequests ?? payload.revision_requests, payload.followupRequests ?? payload.followup_requests, payload.riskFlags ?? payload.risk_flags, payload.artifactRefs ?? payload.artifact_refs, payload.testRefs ?? payload.test_refs].filter(Boolean).join("\n")
+    if (looksLikeRawResultPayload(rawValues) || /research\.db|checkpoint|mission completed|provider output|file contents/i.test(rawValues)) blockers.push("raw logs, full diffs, file contents, provider output, full event logs, research.db dumps, mission mutation claims, and checkpoint claims are out of scope")
+    const nextStep = fakeResultReviewNextStep(optionalString(payload.nextStep ?? payload.next_step), decision, revisionRequests, artifactRefs)
+    const reviewHash = fakeNavigationStageHash(JSON.stringify({ reportId, decision, rationale, evidenceSummary, acceptedClaims, rejectedClaims, revisionRequests, followupRequests, riskFlags, artifactRefs, testRefs, nextStep }))
+    return {
+      preview_id: `fake-result-review-preview-${reviewHash.slice(0, 12)}`,
+      status: blockers.length ? "blocked" : "ready",
+      can_record: blockers.length === 0,
+      report_id: reportId,
+      session_id: report?.session_id ?? "",
+      launch_id: report?.launch_id,
+      result_kind: report?.result_kind,
+      result_disposition: report?.result_disposition,
+      report_review_state: report?.review_state,
+      decision,
+      review_disposition: fakeResultReviewDisposition(decision),
+      projection_state_after: fakeResultReviewProjection(decision),
+      next_step: nextStep,
+      author_kind: fakeResultReviewAuthorKind(optionalString(payload.authorKind ?? payload.author_kind ?? payload.author)),
+      rationale_preview: rationale,
+      evidence_summary_preview: evidenceSummary ? preview(redactText(evidenceSummary)) : undefined,
+      accepted_claims_preview: acceptedClaims,
+      rejected_claims_preview: rejectedClaims,
+      revision_requests_preview: revisionRequests,
+      followup_requests_preview: followupRequests,
+      risk_flags_preview: riskFlags,
+      artifact_refs_preview: artifactRefs,
+      test_refs_preview: testRefs,
+      confidence: readConfidence(payload.confidence),
+      linked_progress_id: report?.linked_progress_id,
+      linked_watchdog_id: report?.linked_watchdog_id,
+      linked_question_id: report?.linked_question_id,
+      linked_guidance_id: report?.linked_guidance_id,
+      linked_delivery_id: report?.linked_delivery_id,
+      linked_wake_execution_id: report?.linked_wake_execution_id,
+      linked_wake_action_execution_id: report?.linked_wake_action_execution_id,
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      blockers: blockers.map(redactText),
+      warnings: ["fake result reviews are metadata only; no mission completion, research.db ingestion, checkpoint, follow-up mission, provider call, OpenCode prompt, or process control occurs"],
+      recommended_commands: fakeResultReviewCommands(reportId, decision, nextStep),
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `fake result review ${decision}`,
+      review_hash: reviewHash,
+    }
+  }
+
+  private recordOpenCodeResultReview(payload: Record<string, unknown>): OpenCodeResultReviewGateResultSummary {
+    const previewResult = this.previewOpenCodeResultReview(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const result: OpenCodeResultReviewGateResultSummary = {
+      review_id: `fake_result_review_${previewResult.review_hash.slice(0, 12)}_${this.opencodeResultReviews.length + 1}`,
+      status: previewResult.can_record ? dryRun ? "dry_run" : "recorded" : "blocked",
+      report_id: previewResult.report_id,
+      session_id: previewResult.session_id,
+      launch_id: previewResult.launch_id,
+      result_kind: previewResult.result_kind,
+      result_disposition: previewResult.result_disposition,
+      report_review_state: previewResult.report_review_state,
+      decision: previewResult.decision,
+      review_disposition: previewResult.review_disposition,
+      projection_state_after: previewResult.projection_state_after,
+      next_step: previewResult.next_step,
+      author_kind: previewResult.author_kind,
+      rationale_preview: previewResult.rationale_preview,
+      evidence_summary_preview: previewResult.evidence_summary_preview,
+      accepted_claims_preview: previewResult.accepted_claims_preview,
+      rejected_claims_preview: previewResult.rejected_claims_preview,
+      revision_requests_preview: previewResult.revision_requests_preview,
+      followup_requests_preview: previewResult.followup_requests_preview,
+      risk_flags_preview: previewResult.risk_flags_preview,
+      artifact_refs_preview: previewResult.artifact_refs_preview,
+      test_refs_preview: previewResult.test_refs_preview,
+      confidence: previewResult.confidence,
+      linked_progress_id: previewResult.linked_progress_id,
+      linked_watchdog_id: previewResult.linked_watchdog_id,
+      linked_question_id: previewResult.linked_question_id,
+      linked_guidance_id: previewResult.linked_guidance_id,
+      linked_delivery_id: previewResult.linked_delivery_id,
+      linked_wake_execution_id: previewResult.linked_wake_execution_id,
+      linked_wake_action_execution_id: previewResult.linked_wake_action_execution_id,
+      mission_mutated: false,
+      research_db_written: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      recorded_at: new Date(this.opencodeResultReviews.length * 1000).toISOString(),
+      recorded_by: "operator",
+      error: previewResult.can_record ? undefined : previewResult.blockers[0] ?? "result review is blocked",
+      review_hash: previewResult.review_hash,
+      recommended_commands: previewResult.recommended_commands,
+    }
+    if (!dryRun && result.status === "recorded") this.opencodeResultReviews.unshift(result)
+    return result
+  }
+
+  private listOpenCodeResultReviews(payload: Record<string, unknown>): OpenCodeResultReviewGateRecordSummary[] {
+    const reportId = optionalString(payload.reportId ?? payload.report_id ?? payload.report)
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchId = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    const decision = optionalString(payload.decision)
+    const disposition = optionalString(payload.reviewDisposition ?? payload.review_disposition ?? payload.disposition)
+    const projection = optionalString(payload.projectionStateAfter ?? payload.projection_state_after ?? payload.projection)
+    const nextStep = optionalString(payload.nextStep ?? payload.next_step)
+    return this.opencodeResultReviews
+      .filter((item) => !reportId || item.report_id === reportId)
+      .filter((item) => !sessionId || item.session_id === sessionId)
+      .filter((item) => !launchId || item.launch_id === launchId)
+      .filter((item) => !decision || item.decision === decision)
+      .filter((item) => !disposition || item.review_disposition === disposition)
+      .filter((item) => !projection || item.projection_state_after === projection)
+      .filter((item) => !nextStep || item.next_step === nextStep)
+      .slice(0, readLimit(payload.limit, 20))
+      .map(recordFromFakeResultReview)
+  }
+
+  private getOpenCodeResultReview(id: string): OpenCodeResultReviewGateResultSummary | null {
+    return this.opencodeResultReviews.find((item) => item.review_id === id) ?? null
+  }
+
+  private latestOpenCodeResultReview(payload: Record<string, unknown>): OpenCodeResultReviewGateResultSummary | null {
+    const reportId = optionalString(payload.reportId ?? payload.report_id ?? payload.report)
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchId = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    return this.opencodeResultReviews.find((item) => (!reportId || item.report_id === reportId) && (!sessionId || item.session_id === sessionId) && (!launchId || item.launch_id === launchId)) ?? null
+  }
+
+  private opencodeResultReviewSummary(payload: Record<string, unknown>): OpenCodeResultReviewGateSummaryState {
+    const records = this.opencodeResultReviews.map(recordFromFakeResultReview)
+    return {
+      total_reviews: records.length,
+      reviewed_report_count: new Set(records.map((item) => item.report_id)).size,
+      accepted_count: records.filter((item) => item.decision === "accepted").length,
+      rejected_count: records.filter((item) => item.decision === "rejected").length,
+      needs_revision_count: records.filter((item) => item.decision === "needs_revision").length,
+      needs_followup_count: records.filter((item) => item.decision === "needs_followup").length,
+      inconclusive_count: records.filter((item) => item.decision === "inconclusive").length,
+      needs_human_count: records.filter((item) => item.decision === "needs_human_review").length,
+      deferred_count: records.filter((item) => item.decision === "deferred").length,
+      research_ingestion_recommended_count: records.filter((item) => item.next_step === "prepare_research_ingestion").length,
+      latest_reviews: records.slice(0, readLimit(payload.limit, 10)),
       generated_at: new Date(0).toISOString(),
     }
   }
@@ -10131,11 +10311,11 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
     fakeCommandAuthorityRecord("/result-review-packet", "runtime.preview_opencode_result_review_packet", "safe_read", "handoff_runtime", "opencode_handoff", {
       reads: ["/handoff-followups", "/handoff-readiness", "/authority-show /handoff"],
       targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_packet_tui.py"],
-      aliases: ["/opencode-result-review", "/executor-result-review", "/handoff-result-review"],
+      aliases: ["/executor-result-review", "/handoff-result-review"],
       notes: ["Read-only OpenCode result review packet; does not call Commander, providers, handoff execution, or OpenCode."],
       out: ["OpenCode launch", "handoff execution", "provider calls", "mission mutation", "proposal mutation", "review mutation"],
     }),
-    fakeCommandAuthorityRecord("/result-review-summary", "runtime.opencode_result_review_summary", "safe_read", "handoff_runtime", "opencode_handoff", {
+    fakeCommandAuthorityRecord("/result-review-packet-summary", "runtime.opencode_result_review_packet_summary", "safe_read", "handoff_runtime", "opencode_handoff", {
       reads: ["/result-review-packet", "/handoff-followups", "/handoff-readiness"],
       targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_packet_tui.py"],
       notes: ["Read-only OpenCode result review summary; does not mutate executor or commander state."],
@@ -10767,6 +10947,49 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       reads: ["/opencode-result-reports"],
       targeted: ["tests/e2e_user/scenarios/test_opencode_result_report_tui.py"],
       aliases: ["/result-report-summary"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-result-review-preview", "runtime.preview_opencode_result_review", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-result-report-show", "/opencode-result-reviews"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"],
+      aliases: ["/result-review-preview"],
+      notes: ["Read-only OpenCode result-review preview. It validates one bounded result report review and never completes missions, writes research.db, creates checkpoints/follow-up missions, calls providers, prompts OpenCode, or controls processes."],
+      out: ["mission/session completion", "research.db writes/ingestion", "checkpoint creation", "follow-up mission creation", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "mission/proposal/review/apply mutation"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-result-review-dry-run", "runtime.record_opencode_result_review", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-result-review-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"],
+      aliases: ["/result-review-dry-run"],
+      notes: ["Dry-run OpenCode result-review metadata write validates explicit decision/rationale and duplicate behavior without appending events or creating any mission/research/checkpoint/provider/OpenCode/process side effect."],
+      out: ["event append", "mission/session completion", "research.db writes/ingestion", "checkpoint creation", "follow-up mission creation", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process control"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-result-review", "runtime.record_opencode_result_review", "medium_risk_write", "opencode_runtime", "opencode_handoff", {
+      mutates: true,
+      lock: true,
+      events: ["opencode_result_review_recorded"],
+      reads: ["/opencode-result-review-preview", "/opencode-result-reviews", "/opencode-result-review-latest"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"],
+      aliases: ["/result-review"],
+      notes: ["Appends bounded OpenCode result-review metadata only. Review decisions are not mission completion, research.db ingestion, checkpoint creation, follow-up mission creation, provider calls, OpenCode prompt delivery, or process control; accepted means accepted as evidence for future ingestion."],
+      out: ["mission/session completion", "research.db writes/ingestion", "checkpoint creation", "follow-up mission creation", "provider/MiniMax calls", "MCP/online research", "OpenCode prompt send", "process pause/kill/stop/resume", "mission/proposal/review/apply mutation", "result ingestion"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-result-reviews", "runtime.list_opencode_result_reviews", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-result-review-show", "/opencode-result-review-latest"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"],
+      aliases: ["/result-reviews"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-result-review-latest", "runtime.latest_opencode_result_review", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-result-reviews"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"],
+      aliases: ["/result-review-latest"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-result-review-show", "runtime.get_opencode_result_review", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-result-reviews"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"],
+    }),
+    fakeCommandAuthorityRecord("/opencode-result-review-summary", "runtime.opencode_result_review_summary", "safe_read", "none", "opencode_handoff", {
+      reads: ["/opencode-result-reviews"],
+      targeted: ["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"],
+      aliases: ["/result-review-summary"],
     }),
     fakeCommandAuthorityRecord("/research-memory-summary", "runtime.research_memory_summary", "safe_read", "none", "research", {
       targeted: ["tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"],
@@ -11532,6 +11755,81 @@ function recordFromFakeResultReport(item: OpenCodeResultReportResultSummary): Op
     has_artifacts: item.artifacts_preview.length > 0,
     has_metrics: item.metrics_preview.length > 0,
     report_hash: item.report_hash,
+  }
+}
+
+function fakeResultReviewDecision(value: string | undefined): string {
+  if (value === "accepted" || value === "rejected" || value === "needs_revision" || value === "needs_followup" || value === "inconclusive" || value === "needs_human_review" || value === "deferred") return value
+  return "unknown"
+}
+
+function fakeResultReviewDisposition(decision: string): string {
+  if (decision === "accepted") return "accepted_as_evidence"
+  if (decision === "rejected") return "rejected_as_evidence"
+  if (decision === "needs_revision") return "revision_requested"
+  if (decision === "needs_followup") return "followup_requested"
+  if (decision === "inconclusive") return "inconclusive_evidence"
+  if (decision === "needs_human_review") return "human_review_required"
+  if (decision === "deferred") return "deferred_review"
+  return "unknown"
+}
+
+function fakeResultReviewProjection(decision: string): string {
+  if (decision === "accepted") return "reviewed_accepted"
+  if (decision === "rejected") return "reviewed_rejected"
+  if (decision === "needs_revision") return "reviewed_needs_revision"
+  if (decision === "needs_followup") return "reviewed_needs_followup"
+  if (decision === "inconclusive") return "reviewed_inconclusive"
+  if (decision === "needs_human_review") return "reviewed_needs_human"
+  if (decision === "deferred") return "review_deferred"
+  return "unreviewed"
+}
+
+function fakeResultReviewNextStep(input: string | undefined, decision: string, revisionRequests: string[], artifactRefs: string[]): string {
+  if (input && ["none", "prepare_research_ingestion", "request_revision", "request_followup", "ask_commander_question", "escalate_to_human", "inspect_artifacts", "inspect_tests"].includes(input)) return input
+  if (decision === "accepted") return "prepare_research_ingestion"
+  if (decision === "rejected") return revisionRequests.length ? "request_revision" : "none"
+  if (decision === "needs_revision") return "request_revision"
+  if (decision === "needs_followup") return "request_followup"
+  if (decision === "inconclusive") return artifactRefs.length ? "inspect_artifacts" : "request_followup"
+  if (decision === "needs_human_review") return "escalate_to_human"
+  if (decision === "deferred") return "inspect_artifacts"
+  return "unknown"
+}
+
+function fakeResultReviewAuthorKind(value: string | undefined): string {
+  if (value === "human" || value === "commander_manual" || value === "system" || value === "unknown") return value
+  return "human"
+}
+
+function fakeResultReviewCommands(reportId: string, decision: string, nextStep: string): OpenCodeResultReviewGateCommandSummary[] {
+  const commands: OpenCodeResultReviewGateCommandSummary[] = [
+    { label: "List result reviews", command: reportId ? `/opencode-result-reviews report=${reportId}` : "/opencode-result-reviews", command_type: "read", notes: "read bounded fake result-review metadata" },
+    { label: "Latest result review", command: reportId ? `/opencode-result-review-latest report=${reportId}` : "/opencode-result-review-latest", command_type: "read", notes: "read latest fake result-review metadata" },
+  ]
+  if (nextStep === "prepare_research_ingestion") commands.push({ label: "Prepare research ingestion", command: "/research-ingestion-preview report=<report_id>", command_type: "write", notes: "future branch only; not executed by fake 9O result review" })
+  if (decision !== "unknown") commands.push({ label: "Record result review", command: reportId ? `/opencode-result-review report=${reportId} decision=${decision} rationale=<rationale>` : "/opencode-result-review report=<report_id> decision=<decision> rationale=<rationale>", command_type: "write", requires_active_runtime: true, notes: "metadata only; no mission completion, research ingestion, checkpoint, provider call, OpenCode prompt, or process control" })
+  return commands
+}
+
+function recordFromFakeResultReview(item: OpenCodeResultReviewGateResultSummary): OpenCodeResultReviewGateRecordSummary {
+  return {
+    review_id: item.review_id,
+    report_id: item.report_id,
+    session_id: item.session_id,
+    launch_id: item.launch_id,
+    decision: item.decision,
+    review_disposition: item.review_disposition,
+    projection_state_after: item.projection_state_after,
+    next_step: item.next_step,
+    author_kind: item.author_kind,
+    rationale_preview: item.rationale_preview,
+    recorded_at: item.recorded_at,
+    recorded_by: item.recorded_by,
+    confidence: item.confidence,
+    has_revision_requests: item.revision_requests_preview.length > 0,
+    has_followup_requests: item.followup_requests_preview.length > 0,
+    review_hash: item.review_hash,
   }
 }
 
