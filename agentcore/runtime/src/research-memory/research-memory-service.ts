@@ -7,6 +7,8 @@ import type {
   ResultArtifactPointer,
   ResultCitationPointer,
   ResearchResult,
+  ResearchResultStatus,
+  ResearchResultType,
   SearchCandidatesOptions,
   SearchResearchResultsOptions,
   SearchTrainingRunsOptions,
@@ -16,9 +18,14 @@ import type {
 } from "../research-db/research-db"
 import type {
   ResearchMemoryCandidate,
+  ResearchMemoryInspectionInput,
+  ResearchMemoryInspectionPreview,
+  ResearchMemoryNearDuplicateInput,
+  ResearchMemoryNearDuplicatePreview,
   ResearchMemoryRetrievalInput,
   ResearchMemoryRetrievalPolicy,
   ResearchMemoryRetrievalPreview,
+  ResearchMemorySearchProfile,
   ResearchMemorySourceRef,
   ResearchMemorySummary,
 } from "./research-memory-types"
@@ -51,6 +58,7 @@ export type ResearchMemoryReadAdapter = {
   available: boolean
   unavailableReason?: string
   policy?: ResearchMemoryRetrievalPolicy
+  getResearchResult?: (resultId: string) => ResearchResult | null
   searchResearchResults?: (options?: SearchResearchResultsOptions) => ResearchResult[]
   listResultCitationPointers?: (resultId: string, limit?: number) => ResultCitationPointer[]
   listResultArtifactPointers?: (resultId: string, limit?: number) => ResultArtifactPointer[]
@@ -66,7 +74,7 @@ export type ResearchMemoryServiceOptions = {
   now?: () => Date
 }
 
-type RawCandidate = Omit<ResearchMemoryCandidate, "relevance_score" | "duplicate_similarity_score" | "matched_terms" | "difference_preview">
+type RawCandidate = Omit<ResearchMemoryCandidate, "relevance_score" | "duplicate_similarity_score" | "matched_terms" | "unmatched_query_terms" | "matched_fields" | "scoring_explanation_preview" | "difference_preview" | "pointer_only">
 
 export class ResearchMemoryService {
   private readonly now: () => Date
@@ -119,6 +127,15 @@ export class ResearchMemoryService {
           session_id: input.session_id,
           source_kind: input.source_kind,
           labels,
+          result_type: input.result_type,
+          result_status: input.result_status,
+          confidence: input.confidence,
+          evidence_kind: input.evidence_kind,
+          has_artifacts: input.has_artifacts,
+          has_citations: input.has_citations,
+          has_metrics: input.has_metrics,
+          since: input.since,
+          until: input.until,
         })
       : []
     const sessionScopeUnsupported = !!input.session_id && rawCandidates.length > 0 && rawCandidates.every((candidate) => !candidate.source_session_id)
@@ -128,7 +145,7 @@ export class ResearchMemoryService {
       .map((candidate) => scoreCandidate(candidate, queryTokens))
       .filter((candidate) => queryTokens.length > 0 && candidate.matched_terms.length > 0)
       .filter((candidate) => labels.length === 0 || labels.includes(candidate.label))
-      .sort(candidateSort)
+      .sort(candidateSort(input.sort))
     const candidates = blockers.length === 0 ? scored.slice(0, limit) : []
     const omittedCount = Math.max(0, scored.length - candidates.length)
     if (adapter.available && blockers.length === 0 && candidates.length === 0) warnings.add("no internal research memory candidates matched the query")
@@ -154,7 +171,167 @@ export class ResearchMemoryService {
     })
   }
 
-  private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[] }): RawCandidate[] {
+  inspect(input: ResearchMemoryInspectionInput = {}): ResearchMemoryInspectionPreview {
+    const generatedAt = this.now().toISOString()
+    const memoryId = bound(input.memory_id ?? "")
+    const sourceKind = bound(input.source_kind ?? "research_db", 80)
+    const blockers: string[] = []
+    const warnings = new Set<string>([
+      "research-memory inspection is read-only and bounded; it does not load raw artifacts, raw logs, full research.db, provider output, OpenCode output, or event dumps",
+    ])
+    if (!memoryId) blockers.push("research memory inspection requires id=<memoryId>")
+    const adapter = this.options.readAdapter()
+    if (!adapter.available) blockers.push(adapter.unavailableReason ?? "research memory projection is unavailable")
+    if (sourceKind !== "research_db") blockers.push(`research memory inspection only supports source_kind=research_db in this branch; got ${sourceKind}`)
+    const result = blockers.length === 0 ? adapter.getResearchResult?.(memoryId) ?? null : null
+    if (blockers.length === 0 && !result) blockers.push(`research memory record was not found: ${memoryId}`)
+    if (result && result.status !== "accepted") blockers.push(`research memory inspection only returns accepted research results; ${memoryId} is ${result.status}`)
+    const citations = result && input.include_citations !== false
+      ? adapter.listResultCitationPointers?.(result.result_id, 8) ?? adapter.listResultCitations?.(result.result_id).map(citationPointerFromFullRow) ?? []
+      : []
+    const artifacts = result && input.include_artifacts !== false
+      ? adapter.listResultArtifactPointers?.(result.result_id, 8) ?? adapter.listResultArtifacts?.(result.result_id).map(artifactPointerFromFullRow) ?? []
+      : []
+    const label = result ? labelForResearchResult(result) : "unknown"
+    const inspectionHash = hash(stableJson({ memoryId, sourceKind, status: result?.status, citations: citations.map((item) => item.citation_id), artifacts: artifacts.map((item) => item.id) }))
+    const provenanceRefs = result
+      ? [
+          sourceRef("research_db", result.result_id, "accepted research result", `${result.title}: ${result.summary}`),
+          ...[result.candidate_id, result.trial_id, result.training_run_id, result.mission_id].filter((item): item is string => !!item).map((id) => sourceRef("research_db", id, "linked research provenance", id)),
+        ].slice(0, 8)
+      : []
+    return redactValue({
+      inspection_id: `research_memory_inspection_${inspectionHash.slice(0, 16)}`,
+      status: blockers.length > 0 ? "blocked" : "ready",
+      memory_id: memoryId,
+      source_kind: sourceKind,
+      label,
+      title_preview: result ? bound(result.title) : undefined,
+      summary_preview: result ? bound(result.summary) : undefined,
+      question_preview: result ? bound(result.title) : undefined,
+      hypothesis_preview: result?.label ? bound(result.label) : undefined,
+      method_preview: result ? bound(result.result_type) : undefined,
+      outcome_preview: result ? bound(result.summary) : undefined,
+      metric_preview: result ? previewUnknown(result.metrics) : undefined,
+      config_preview: result ? previewUnknown(result.reproduction) : undefined,
+      confidence: result?.confidence,
+      status_preview: result?.status,
+      source_mission_id: result?.mission_id ?? undefined,
+      source_session_id: undefined,
+      artifact_refs: artifacts.slice(0, 8).map((artifact) => sourceRef("artifact", artifact.id, "artifact pointer", artifact.description ?? artifact.kind)),
+      citation_refs: citations.slice(0, 8).map((citation) => sourceRef("research_db", citation.citation_id, "citation pointer", citation.title ?? citation.source_type)),
+      provenance_refs: provenanceRefs,
+      related_event_ids: [],
+      warning_flags: label === "failure" ? ["failure evidence included to avoid repeated work"] : [],
+      recommended_commands: [
+        { label: "Search related memory", command: result ? `/research-memory-search query=${shellish(result.title)}` : "/research-memory-search query=<query>", command_type: "read" },
+        { label: "Near duplicates", command: result ? `/research-memory-near-duplicates query=${shellish(result.title)}` : "/research-memory-near-duplicates query=<query>", command_type: "read" },
+        { label: "Show authority", command: "/authority-show /research-memory-inspect", command_type: "read" },
+      ],
+      blockers: blockers.map((item) => bound(item)),
+      warnings: Array.from(warnings).map((item) => bound(item)).slice(0, 12),
+      generated_at: generatedAt,
+      redacted_summary_preview: blockers[0] ?? `Inspected bounded research-memory record ${memoryId}.`,
+      inspection_hash: inspectionHash,
+    })
+  }
+
+  nearDuplicates(input: ResearchMemoryNearDuplicateInput = {}): ResearchMemoryNearDuplicatePreview {
+    const generatedAt = this.now().toISOString()
+    const query = bound(input.query ?? input.objective ?? "")
+    const objective = input.objective ? bound(input.objective) : undefined
+    const limit = clampLimit(input.limit)
+    const threshold = clampThreshold(input.duplicate_threshold)
+    const labels = (input.labels ?? []).map((item) => bound(item, 80)).filter(Boolean)
+    const blockers: string[] = []
+    const warnings = new Set<string>([
+      "near-duplicate preview is advisory read-only lexical retrieval; it does not block proposals, call providers/MCPs/online sources, or write research.db",
+    ])
+    if (!query) blockers.push("research memory near-duplicate preview requires query=<query> or objective=<objective>")
+    const retrieval = blockers.length
+      ? null
+      : this.preview({
+          query,
+          labels,
+          limit,
+          mission_id: input.mission_id,
+          session_id: input.session_id,
+          include_failures: input.include_failures,
+          include_artifacts: input.include_artifacts,
+          sort: "similarity",
+        })
+    if (retrieval?.warnings) for (const warning of retrieval.warnings) warnings.add(warning)
+    const candidates = retrieval?.candidates ?? []
+    const strongest = candidates[0]?.duplicate_similarity_score
+    const likelyCount = candidates.filter((candidate) => candidate.duplicate_similarity_score >= threshold && candidate.matched_terms.length >= 3).length
+    const warningCount = candidates.filter((candidate) => candidate.duplicate_similarity_score >= threshold * 0.75 || candidate.matched_terms.length >= 2).length
+    const noveltyRisk = blockers.length ? "unknown" : strongest === undefined ? "unknown" : likelyCount > 0 ? "high" : warningCount > 0 ? "medium" : candidates.length > 0 ? "low" : "unknown"
+    const nearHash = hash(stableJson({ query, labels, limit, threshold, candidates: candidates.map((candidate) => [candidate.result_id, candidate.duplicate_similarity_score]) }))
+    return redactValue({
+      preview_id: `research_memory_near_duplicate_${nearHash.slice(0, 16)}`,
+      status: blockers.length > 0 ? "blocked" : candidates.length > 0 ? "ready" : "empty",
+      query_preview: query,
+      objective_preview: objective,
+      labels,
+      limit,
+      duplicate_threshold: threshold,
+      candidates,
+      likely_duplicate_count: likelyCount,
+      warning_duplicate_count: warningCount,
+      strongest_duplicate_score: strongest,
+      novelty_risk: noveltyRisk,
+      blockers: blockers.map((item) => bound(item)),
+      warnings: Array.from(warnings).map((item) => bound(item)).slice(0, 12),
+      recommended_commands: [
+        { label: "Research memory search", command: query ? `/research-memory-search query=${shellish(query)}` : "/research-memory-search query=<query>", command_type: "read" },
+        { label: "Search profile", command: "/research-memory-profile", command_type: "read" },
+        { label: "Show authority", command: "/authority-show /research-memory-near-duplicates", command_type: "read" },
+      ],
+      generated_at: generatedAt,
+      redacted_summary_preview: blockers[0] ?? (candidates.length ? `Near-duplicate risk ${noveltyRisk} from ${candidates.length} bounded candidates.` : "No bounded near-duplicate candidates were found."),
+      near_duplicate_hash: nearHash,
+    })
+  }
+
+  searchProfile(): ResearchMemorySearchProfile {
+    const generatedAt = this.now().toISOString()
+    const adapter = this.options.readAdapter()
+    const candidates = adapter.available ? this.collectCandidates(adapter, { include_failures: true, include_artifacts: true }) : []
+    const acceptedResultCount = adapter.available ? adapter.searchResearchResults?.({ limit: SCAN_LIMIT, status: "accepted", order: "newest" }).length : undefined
+    const candidateCount = adapter.available ? adapter.searchCandidates?.({ limit: SCAN_LIMIT, order: "newest" }).length : undefined
+    const trialCount = adapter.available ? adapter.searchTrials?.({ limit: SCAN_LIMIT, order: "newest" }).length : undefined
+    const trainingRunCount = adapter.available ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, order: "newest" }).length : undefined
+    const warnings = [
+      "search is bounded lexical retrieval; semantic, vector, FTS, provider, MCP, and online research are not enabled",
+      ...(!adapter.available ? [adapter.unavailableReason ?? "research memory projection is unavailable"] : []),
+    ]
+    return redactValue({
+      profile_id: `research_memory_profile_${hash(stableJson({ generatedAt, policy: adapter.policy, available: adapter.available, total: candidates.length })).slice(0, 16)}`,
+      status: adapter.available ? "ready" : "degraded",
+      retrieval_policy: adapter.available ? adapter.policy ?? "projection_read" : "empty_projection",
+      has_research_db_projection: adapter.available,
+      search_engine: "bounded_lexical",
+      semantic_search_enabled: false,
+      vector_index_enabled: false,
+      fts_index_enabled: false,
+      scan_limit: SCAN_LIMIT,
+      default_limit: DEFAULT_LIMIT,
+      max_limit: MAX_LIMIT,
+      supported_filters: ["query", "labels", "source_kind", "mission_id", "session_id", "include_failures", "include_artifacts", "result_type", "result_status", "confidence", "evidence_kind", "has_artifacts", "has_citations", "has_metrics", "since", "until", "sort", "explain"],
+      unsupported_filters: ["semantic_search", "vector_index", "fts_query", "raw_sql", "artifact_contents", "file_contents"],
+      source_counts: countBy(candidates.map((candidate) => candidate.source_kind)),
+      label_counts: countBy(candidates.map((candidate) => candidate.label)),
+      accepted_result_count: acceptedResultCount,
+      candidate_count: candidateCount,
+      trial_count: trialCount,
+      training_run_count: trainingRunCount,
+      warnings: warnings.map((item) => bound(item)).slice(0, 12),
+      generated_at: generatedAt,
+      redacted_summary_preview: adapter.available ? `bounded_lexical scan_limit=${SCAN_LIMIT} max_limit=${MAX_LIMIT}` : "research memory projection unavailable; bounded lexical search is degraded",
+    })
+  }
+
+  private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[]; result_type?: string; result_status?: string; confidence?: string; evidence_kind?: string; has_artifacts?: boolean; has_citations?: boolean; has_metrics?: boolean; since?: string; until?: string }): RawCandidate[] {
     const out: RawCandidate[] = []
     const missionRuns = input.mission_id ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? [] : []
     const missionRunIds = new Set(missionRuns.map((run) => run.training_run_id))
@@ -163,12 +340,12 @@ export class ResearchMemoryService {
     if (!input.source_kind || input.source_kind === "research_db") {
       const resultRows = input.mission_id
         ? [
-            ...(adapter.searchResearchResults?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, status: "accepted", order: "newest" }) ?? []),
-            ...Array.from(missionCandidateIds).flatMap((candidateId) => adapter.searchResearchResults?.({ limit: SCAN_LIMIT, candidate_id: candidateId, status: "accepted", order: "newest" }) ?? []),
-            ...Array.from(missionTrialIds).flatMap((trialId) => adapter.searchResearchResults?.({ limit: SCAN_LIMIT, trial_id: trialId, status: "accepted", order: "newest" }) ?? []),
-            ...Array.from(missionRunIds).flatMap((runId) => adapter.searchResearchResults?.({ limit: SCAN_LIMIT, training_run_id: runId, status: "accepted", order: "newest" }) ?? []),
+            ...(adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, mission_id: input.mission_id, status: "accepted", order: "newest" }) ?? []),
+            ...Array.from(missionCandidateIds).flatMap((candidateId) => adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, candidate_id: candidateId, status: "accepted", order: "newest" }) ?? []),
+            ...Array.from(missionTrialIds).flatMap((trialId) => adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, trial_id: trialId, status: "accepted", order: "newest" }) ?? []),
+            ...Array.from(missionRunIds).flatMap((runId) => adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, training_run_id: runId, status: "accepted", order: "newest" }) ?? []),
           ]
-        : adapter.searchResearchResults?.({ limit: SCAN_LIMIT, status: "accepted", order: "newest" }) ?? []
+        : adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, status: "accepted", order: "newest" }) ?? []
       for (const result of resultRows) {
         const linkedToMission =
           !input.mission_id ||
@@ -204,6 +381,13 @@ export class ResearchMemoryService {
       .filter((candidate) => !input.mission_id || candidate.source_mission_id === input.mission_id)
       .filter((candidate, _index, candidates) => !input.session_id || !candidates.some((item) => !!item.source_session_id) || candidate.source_session_id === input.session_id)
       .filter((candidate) => !input.labels?.length || input.labels.includes(candidate.label))
+      .filter((candidate) => !input.confidence || candidate.confidence === input.confidence)
+      .filter((candidate) => !input.evidence_kind || candidate.evidence_kind_preview === input.evidence_kind || candidate.label === input.evidence_kind)
+      .filter((candidate) => input.has_artifacts === undefined || (input.has_artifacts ? candidate.artifact_ids.length > 0 : candidate.artifact_ids.length === 0))
+      .filter((candidate) => input.has_citations === undefined || (input.has_citations ? candidate.citation_ids.length > 0 : candidate.citation_ids.length === 0))
+      .filter((candidate) => input.has_metrics === undefined || (input.has_metrics ? !!candidate.metric_preview : !candidate.metric_preview))
+      .filter((candidate) => !input.since || !candidate.created_at_preview || candidate.created_at_preview >= input.since)
+      .filter((candidate) => !input.until || !candidate.created_at_preview || candidate.created_at_preview <= input.until)
     return uniqueRawCandidates(filtered)
   }
 }
@@ -215,6 +399,42 @@ export function readResearchMemoryRetrievalInput(value: unknown): ResearchMemory
     labels: arrayOfStrings(input.labels),
     limit: optionalNumber(input.limit),
     source_kind: optional(input.sourceKind ?? input.source_kind),
+    mission_id: optional(input.missionId ?? input.mission_id ?? input.mission),
+    session_id: optional(input.sessionId ?? input.session_id ?? input.session),
+    include_failures: optionalBoolean(input.includeFailures ?? input.include_failures),
+    include_artifacts: optionalBoolean(input.includeArtifacts ?? input.include_artifacts),
+    result_type: optional(input.resultType ?? input.result_type),
+    result_status: optional(input.resultStatus ?? input.result_status),
+    confidence: optional(input.confidence),
+    evidence_kind: optional(input.evidenceKind ?? input.evidence_kind),
+    has_artifacts: optionalBoolean(input.hasArtifacts ?? input.has_artifacts),
+    has_citations: optionalBoolean(input.hasCitations ?? input.has_citations),
+    has_metrics: optionalBoolean(input.hasMetrics ?? input.has_metrics),
+    since: optional(input.since),
+    until: optional(input.until),
+    sort: optional(input.sort),
+    explain: optionalBoolean(input.explain),
+  }
+}
+
+export function readResearchMemoryInspectionInput(value: unknown): ResearchMemoryInspectionInput {
+  const input = isRecord(value) ? value : {}
+  return {
+    memory_id: optional(input.memoryId ?? input.memory_id ?? input.id),
+    source_kind: optional(input.sourceKind ?? input.source_kind ?? input.source),
+    include_artifacts: optionalBoolean(input.includeArtifacts ?? input.include_artifacts),
+    include_citations: optionalBoolean(input.includeCitations ?? input.include_citations),
+  }
+}
+
+export function readResearchMemoryNearDuplicateInput(value: unknown): ResearchMemoryNearDuplicateInput {
+  const input = isRecord(value) ? value : {}
+  return {
+    query: optional(input.query),
+    objective: optional(input.objective),
+    labels: arrayOfStrings(input.labels),
+    limit: optionalNumber(input.limit),
+    duplicate_threshold: optionalNumber(input.duplicateThreshold ?? input.duplicate_threshold),
     mission_id: optional(input.missionId ?? input.mission_id ?? input.mission),
     session_id: optional(input.sessionId ?? input.session_id ?? input.session),
     include_failures: optionalBoolean(input.includeFailures ?? input.include_failures),
@@ -248,6 +468,9 @@ function candidateFromResearchResult(result: ResearchResult, adapter: ResearchMe
     artifact_ids: artifacts.map((artifact) => bound(artifact.id, 160)),
     citation_ids: citations.map((citation) => bound(citation.citation_id, 160)),
     related_event_ids: [],
+    evidence_kind_preview: evidenceKindForResearchResult(result),
+    created_at_preview: result.created_at,
+    updated_at_preview: result.updated_at,
     warning_flags: label === "failure" ? ["failure evidence included to avoid repeated work"] : [],
     source_refs: sourceRefs,
   })
@@ -284,6 +507,8 @@ function candidateFromCandidate(candidate: Candidate, missionId?: string): RawCa
     artifact_ids: [],
     citation_ids: [],
     related_event_ids: [],
+    created_at_preview: candidate.created_at,
+    updated_at_preview: candidate.updated_at,
     warning_flags: candidate.status === "rejected" ? ["rejected candidate evidence included"] : [],
     source_refs: [sourceRef("research_db", candidate.candidate_id, "candidate pointer", candidate.claim)],
   })
@@ -303,6 +528,8 @@ function candidateFromTrial(trial: Trial, missionId?: string): RawCandidate {
     artifact_ids: [],
     citation_ids: [],
     related_event_ids: [],
+    created_at_preview: trial.created_at,
+    updated_at_preview: trial.updated_at,
     warning_flags: trial.status === "failed" || trial.status === "cancelled" ? ["failed/cancelled trial evidence included"] : [],
     source_refs: [sourceRef("research_db", trial.trial_id, "trial pointer", trial.trial_kind)],
   })
@@ -323,6 +550,8 @@ function candidateFromTrainingRun(run: TrainingRun): RawCandidate {
     artifact_ids: [run.latest_checkpoint_id].filter((item): item is string => typeof item === "string"),
     citation_ids: [],
     related_event_ids: [],
+    created_at_preview: run.created_at,
+    updated_at_preview: run.updated_at,
     warning_flags: run.status === "failed" || run.status === "cancelled" ? ["failed/cancelled training run evidence included"] : [],
     source_refs: [sourceRef("research_db", run.training_run_id, "training run pointer", `${run.label} ${run.status}`)],
   })
@@ -336,6 +565,16 @@ function labelForResearchResult(result: ResearchResult): string {
   if (result.result_type === "smoke_test_result" || result.result_type === "evaluation_result" || result.result_type === "ablation_result") return "trial"
   if (result.result_type === "finding" || result.result_type === "literature_finding") return "finding"
   return result.label ?? "unknown"
+}
+
+function evidenceKindForResearchResult(result: ResearchResult): string {
+  const raw = `${result.label ?? ""} ${result.result_type}`.toLowerCase()
+  if (raw.includes("negative") || raw.includes("bug") || raw.includes("failure")) return "negative_result"
+  if (raw.includes("inconclusive")) return "inconclusive_result"
+  if (raw.includes("partial")) return "partial_result"
+  if (raw.includes("blocked")) return "blocked_result"
+  if (raw.includes("status")) return "status_note"
+  return "positive_finding"
 }
 
 function baseCandidate(input: Omit<RawCandidate, "source_kind"> & { source_kind?: string }): RawCandidate {
@@ -357,33 +596,54 @@ function baseCandidate(input: Omit<RawCandidate, "source_kind"> & { source_kind?
     artifact_ids: input.artifact_ids.map((item) => bound(item, 160)).slice(0, 8),
     citation_ids: input.citation_ids.map((item) => bound(item, 160)).slice(0, 8),
     related_event_ids: input.related_event_ids.map((item) => bound(item, 160)).slice(0, 8),
+    evidence_kind_preview: optionalBound(input.evidence_kind_preview, 80),
+    created_at_preview: optionalBound(input.created_at_preview, 80),
+    updated_at_preview: optionalBound(input.updated_at_preview, 80),
     warning_flags: input.warning_flags.map((item) => bound(item, 160)).slice(0, 6),
     source_refs: input.source_refs.slice(0, 8),
   }
 }
 
 function scoreCandidate(candidate: RawCandidate, queryTokens: string[]): ResearchMemoryCandidate {
-  const text = [
-    candidate.question_preview,
-    candidate.hypothesis_preview,
-    candidate.method_preview,
-    candidate.config_preview,
-    candidate.outcome_preview,
-    candidate.metric_preview,
-  ].join(" ")
-  const candidateTokens = new Set(tokenize(text))
-  const matchedTerms = queryTokens.filter((token) => candidateTokens.has(token))
-  const baseScore = queryTokens.length === 0 ? 0 : matchedTerms.length / queryTokens.length
+  const fieldTexts: Array<[string, string | undefined, number]> = [
+    ["question/title", candidate.question_preview, 1],
+    ["hypothesis", candidate.hypothesis_preview, 0.75],
+    ["method", candidate.method_preview, 0.7],
+    ["config", candidate.config_preview, 0.55],
+    ["outcome/summary", candidate.outcome_preview, 0.85],
+    ["metric", candidate.metric_preview, 0.55],
+    ["label", candidate.label, 0.25],
+    ["source refs", candidate.source_refs.map((ref) => `${ref.source_kind} ${ref.label ?? ""} ${ref.summary_preview ?? ""}`).join(" "), 0.2],
+  ]
+  const matched = new Map<string, number>()
+  const matchedFields = new Set<string>()
+  for (const [field, text, weight] of fieldTexts) {
+    const fieldTokens = new Set(tokenize(text ?? ""))
+    for (const token of queryTokens) {
+      if (!fieldTokens.has(token)) continue
+      matched.set(token, Math.max(matched.get(token) ?? 0, weight))
+      matchedFields.add(field)
+    }
+  }
+  const matchedTerms = queryTokens.filter((token) => matched.has(token))
+  const unmatchedTerms = queryTokens.filter((token) => !matched.has(token))
+  const weighted = Array.from(matched.values()).reduce((sum, item) => sum + item, 0)
+  const baseScore = queryTokens.length === 0 ? 0 : weighted / queryTokens.length
   const labelBoost = candidate.label === "failure" ? 0.05 : candidate.label === "finding" ? 0.04 : 0.02
-  const duplicateSimilarityScore = clampScore(baseScore + (matchedTerms.length >= 3 ? 0.15 : 0))
+  const titleBoost = matchedFields.has("question/title") ? 0.08 : 0
+  const duplicateSimilarityScore = clampScore(baseScore + (matchedTerms.length >= 3 ? 0.15 : 0) + titleBoost)
   return {
     ...candidate,
     relevance_score: clampScore(baseScore + labelBoost),
     duplicate_similarity_score: duplicateSimilarityScore,
     matched_terms: matchedTerms.slice(0, 12),
+    unmatched_query_terms: unmatchedTerms.slice(0, 12),
+    matched_fields: Array.from(matchedFields).slice(0, 12),
+    scoring_explanation_preview: bound(`bounded lexical score matched ${matchedTerms.length}/${queryTokens.length} query terms across ${Array.from(matchedFields).join(", ") || "no fields"}`),
     difference_preview: matchedTerms.length
       ? bound(`matched terms: ${matchedTerms.slice(0, 8).join(", ")}`)
       : "no strong lexical overlap with this prior record",
+    pointer_only: true,
   }
 }
 
@@ -398,10 +658,42 @@ function tokenize(value: string): string[] {
   return out
 }
 
-function candidateSort(left: ResearchMemoryCandidate, right: ResearchMemoryCandidate): number {
-  return right.relevance_score - left.relevance_score
-    || right.duplicate_similarity_score - left.duplicate_similarity_score
-    || left.result_id.localeCompare(right.result_id)
+function candidateSort(sort?: string): (left: ResearchMemoryCandidate, right: ResearchMemoryCandidate) => number {
+  return (left, right) => {
+    if (sort === "oldest") return (left.created_at_preview ?? "").localeCompare(right.created_at_preview ?? "") || left.result_id.localeCompare(right.result_id)
+    if (sort === "newest") return (right.created_at_preview ?? "").localeCompare(left.created_at_preview ?? "") || left.result_id.localeCompare(right.result_id)
+    if (sort === "confidence") return confidenceRank(right.confidence) - confidenceRank(left.confidence) || right.relevance_score - left.relevance_score || left.result_id.localeCompare(right.result_id)
+    if (sort === "similarity") return right.duplicate_similarity_score - left.duplicate_similarity_score || right.relevance_score - left.relevance_score || left.result_id.localeCompare(right.result_id)
+    return right.relevance_score - left.relevance_score
+      || right.duplicate_similarity_score - left.duplicate_similarity_score
+      || confidenceRank(right.confidence) - confidenceRank(left.confidence)
+      || (right.created_at_preview ?? "").localeCompare(left.created_at_preview ?? "")
+      || left.result_id.localeCompare(right.result_id)
+  }
+}
+
+function confidenceRank(value?: string): number {
+  if (value === "high") return 3
+  if (value === "medium") return 2
+  if (value === "low") return 1
+  return 0
+}
+
+function researchResultSearchOptions(input: { result_type?: string; result_status?: string }): Partial<SearchResearchResultsOptions> {
+  const out: Partial<SearchResearchResultsOptions> = {}
+  if (isResearchResultType(input.result_type)) out.result_type = input.result_type
+  if (isResearchResultStatus(input.result_status)) out.status = input.result_status
+  return out
+}
+
+function isResearchResultType(value: unknown): value is ResearchResultType {
+  return typeof value === "string" && [
+    "probe_result", "smoke_test_result", "full_training_result", "evaluation_result", "ablation_result", "finding", "negative_finding", "bug_diagnosis", "literature_finding", "implementation_change", "checkpoint_selection", "promotion_decision", "reproduction_record",
+  ].includes(value)
+}
+
+function isResearchResultStatus(value: unknown): value is ResearchResultStatus {
+  return typeof value === "string" && ["proposed", "accepted", "rejected", "superseded"].includes(value)
 }
 
 function uniqueRawCandidates(candidates: RawCandidate[]): RawCandidate[] {
@@ -491,6 +783,11 @@ function arrayOfStrings(value: unknown): string[] | undefined {
 function clampLimit(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_LIMIT
   return Math.max(1, Math.min(Math.floor(value), MAX_LIMIT))
+}
+
+function clampThreshold(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0.55
+  return Math.round(Math.max(0.05, Math.min(value, 1)) * 100) / 100
 }
 
 function clampScore(value: number): number {
