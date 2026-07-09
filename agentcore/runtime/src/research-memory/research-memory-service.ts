@@ -184,7 +184,12 @@ export class ResearchMemoryService {
     if (!adapter.available) blockers.push(adapter.unavailableReason ?? "research memory projection is unavailable")
     if (sourceKind !== "research_db") blockers.push(`research memory inspection only supports source_kind=research_db in this branch; got ${sourceKind}`)
     const resolvedResult = blockers.length === 0 ? adapter.getResearchResult?.(memoryId) ?? null : null
-    if (blockers.length === 0 && !resolvedResult) blockers.push(`research memory record was not found: ${memoryId}`)
+    const resolvedCandidate = blockers.length === 0 && !resolvedResult ? adapter.searchCandidates?.({ candidate_id: memoryId, limit: 1 })[0] ?? null : null
+    const resolvedTrial = blockers.length === 0 && !resolvedResult && !resolvedCandidate ? adapter.searchTrials?.({ trial_id: memoryId, limit: 1 })[0] ?? null : null
+    const resolvedTrainingRun = blockers.length === 0 && !resolvedResult && !resolvedCandidate && !resolvedTrial
+      ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, order: "newest" }).find((run) => run.training_run_id === memoryId) ?? null
+      : null
+    if (blockers.length === 0 && !resolvedResult && !resolvedCandidate && !resolvedTrial && !resolvedTrainingRun) blockers.push(`research memory record was not found: ${memoryId}`)
     if (resolvedResult && resolvedResult.status !== "accepted") blockers.push(`research memory inspection only returns accepted research results; ${memoryId} is ${resolvedResult.status}`)
     const result = resolvedResult?.status === "accepted" ? resolvedResult : null
     const citations = result && input.include_citations !== false
@@ -193,40 +198,49 @@ export class ResearchMemoryService {
     const artifacts = result && input.include_artifacts !== false
       ? adapter.listResultArtifactPointers?.(result.result_id, 8) ?? adapter.listResultArtifacts?.(result.result_id).map(artifactPointerFromFullRow) ?? []
       : []
-    const label = result ? labelForResearchResult(result) : "unknown"
+    const rawCandidate = !result && resolvedCandidate
+      ? candidateFromCandidate(resolvedCandidate)
+      : !result && resolvedTrial
+        ? candidateFromTrial(resolvedTrial)
+        : !result && resolvedTrainingRun
+          ? candidateFromTrainingRun(resolvedTrainingRun)
+          : null
+    const label = result ? labelForResearchResult(result) : rawCandidate?.label ?? "unknown"
     const inspectionHash = hash(stableJson({ memoryId, sourceKind, status: resolvedResult?.status, citations: citations.map((item) => item.citation_id), artifacts: artifacts.map((item) => item.id) }))
     const provenanceRefs = result
       ? [
           sourceRef("research_db", result.result_id, "accepted research result", `${result.title}: ${result.summary}`),
           ...[result.candidate_id, result.trial_id, result.training_run_id, result.mission_id].filter((item): item is string => !!item).map((id) => sourceRef("research_db", id, "linked research provenance", id)),
         ].slice(0, 8)
-      : []
+      : rawCandidate?.source_refs.slice(0, 8) ?? []
     return redactValue({
       inspection_id: `research_memory_inspection_${inspectionHash.slice(0, 16)}`,
       status: blockers.length > 0 ? "blocked" : "ready",
       memory_id: memoryId,
       source_kind: sourceKind,
       label,
-      title_preview: result ? bound(result.title) : undefined,
-      summary_preview: result ? bound(result.summary) : undefined,
-      question_preview: result ? bound(result.title) : undefined,
-      hypothesis_preview: result?.label ? bound(result.label) : undefined,
-      method_preview: result ? bound(result.result_type) : undefined,
-      outcome_preview: result ? bound(result.summary) : undefined,
-      metric_preview: result ? previewUnknown(result.metrics) : undefined,
-      config_preview: result ? previewUnknown(result.reproduction) : undefined,
-      confidence: result?.confidence,
-      status_preview: result?.status,
-      source_mission_id: result?.mission_id ?? undefined,
+      title_preview: result ? bound(result.title) : rawCandidate?.question_preview ? bound(rawCandidate.question_preview) : undefined,
+      summary_preview: result ? bound(result.summary) : rawCandidate?.outcome_preview ? bound(rawCandidate.outcome_preview) : undefined,
+      question_preview: result ? bound(result.title) : rawCandidate?.question_preview ? bound(rawCandidate.question_preview) : undefined,
+      hypothesis_preview: result?.label ? bound(result.label) : rawCandidate?.hypothesis_preview ? bound(rawCandidate.hypothesis_preview) : undefined,
+      method_preview: result ? bound(result.result_type) : rawCandidate?.method_preview ? bound(rawCandidate.method_preview) : undefined,
+      outcome_preview: result ? bound(result.summary) : rawCandidate?.outcome_preview ? bound(rawCandidate.outcome_preview) : undefined,
+      metric_preview: result ? previewUnknown(result.metrics) : rawCandidate?.metric_preview ? bound(rawCandidate.metric_preview) : undefined,
+      config_preview: result ? previewUnknown(result.reproduction) : rawCandidate?.config_preview ? bound(rawCandidate.config_preview) : undefined,
+      confidence: result?.confidence ?? rawCandidate?.confidence,
+      status_preview: result?.status ?? rawCandidate?.status,
+      source_mission_id: result?.mission_id ?? rawCandidate?.source_mission_id ?? undefined,
       source_session_id: undefined,
-      artifact_refs: artifacts.slice(0, 8).map((artifact) => sourceRef("artifact", artifact.id, "artifact pointer", artifact.description ?? artifact.kind)),
+      artifact_refs: result
+        ? artifacts.slice(0, 8).map((artifact) => sourceRef("artifact", artifact.id, "artifact pointer", artifact.description ?? artifact.kind))
+        : rawCandidate?.artifact_ids.slice(0, 8).map((id) => sourceRef("artifact", id, "artifact pointer", id)) ?? [],
       citation_refs: citations.slice(0, 8).map((citation) => sourceRef("research_db", citation.citation_id, "citation pointer", citation.title ?? citation.source_type)),
       provenance_refs: provenanceRefs,
-      related_event_ids: [],
-      warning_flags: label === "failure" ? ["failure evidence included to avoid repeated work"] : [],
+      related_event_ids: rawCandidate?.related_event_ids ?? [],
+      warning_flags: rawCandidate?.warning_flags ?? (label === "failure" ? ["failure evidence included to avoid repeated work"] : []),
       recommended_commands: [
-        { label: "Search related memory", command: result ? `/research-memory-search query=${shellish(result.title)}` : "/research-memory-search query=<query>", command_type: "read" },
-        { label: "Near duplicates", command: result ? `/research-memory-near-duplicates query=${shellish(result.title)}` : "/research-memory-near-duplicates query=<query>", command_type: "read" },
+        { label: "Search related memory", command: result ? `/research-memory-search query=${shellish(result.title)}` : rawCandidate ? `/research-memory-search query=${shellish(rawCandidate.question_preview)}` : "/research-memory-search query=<query>", command_type: "read" },
+        { label: "Near duplicates", command: result ? `/research-memory-near-duplicates query=${shellish(result.title)}` : rawCandidate ? `/research-memory-near-duplicates query=${shellish(rawCandidate.question_preview)}` : "/research-memory-near-duplicates query=<query>", command_type: "read" },
         { label: "Show authority", command: "/authority-show /research-memory-inspect", command_type: "read" },
       ],
       blockers: blockers.map((item) => bound(item)),
@@ -335,12 +349,12 @@ export class ResearchMemoryService {
   private collectCandidates(adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[]; result_type?: string; result_status?: string; confidence?: string; evidence_kind?: string; has_artifacts?: boolean; has_citations?: boolean; has_metrics?: boolean; since?: string; until?: string }): RawCandidate[] {
     const out: RawCandidate[] = []
     const resultStatusFilter = isResearchResultStatus(input.result_status) ? input.result_status : "accepted"
-    const includeAcceptedResults = resultStatusFilter === "accepted"
+    const includeNonResultRows = !isResearchResultStatus(input.result_status)
     const missionRuns = input.mission_id ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, mission_id: input.mission_id, order: "newest" }) ?? [] : []
     const missionRunIds = new Set(missionRuns.map((run) => run.training_run_id))
     const missionCandidateIds = new Set(missionRuns.map((run) => run.candidate_id).filter((id): id is string => !!id))
     const missionTrialIds = new Set(missionRuns.map((run) => run.trial_id).filter((id): id is string => !!id))
-    if ((!input.source_kind || input.source_kind === "research_db") && includeAcceptedResults) {
+    if (!input.source_kind || input.source_kind === "research_db") {
       const resultRows = input.mission_id
         ? [
             ...(adapter.searchResearchResults?.({ ...researchResultSearchOptions(input), limit: SCAN_LIMIT, mission_id: input.mission_id, status: resultStatusFilter, order: "newest" }) ?? []),
@@ -360,7 +374,7 @@ export class ResearchMemoryService {
         out.push(candidateFromResearchResult(result, adapter, input.include_artifacts !== false, input.mission_id && linkedToMission ? input.mission_id : undefined))
       }
     }
-    if (!input.source_kind || input.source_kind === "research_db") {
+    if ((!input.source_kind || input.source_kind === "research_db") && includeNonResultRows) {
       const candidates = input.mission_id
         ? Array.from(missionCandidateIds).flatMap((candidateId) => adapter.searchCandidates?.({ limit: 1, candidate_id: candidateId }) ?? [])
         : adapter.searchCandidates?.({ limit: SCAN_LIMIT, order: "newest" }) ?? []
