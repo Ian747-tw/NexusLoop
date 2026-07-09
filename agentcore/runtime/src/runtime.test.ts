@@ -489,6 +489,14 @@ class TrackingResearchDb implements RuntimeResearchDbProjection {
     return this.db.addArtifact(input)
   }
 
+  proposeResearchResult(input: Parameters<RuntimeResearchDbProjection["proposeResearchResult"]>[0]): ReturnType<RuntimeResearchDbProjection["proposeResearchResult"]> {
+    return this.db.proposeResearchResult(input)
+  }
+
+  acceptResearchResult(resultId: string): ReturnType<RuntimeResearchDbProjection["acceptResearchResult"]> {
+    return this.db.acceptResearchResult(resultId)
+  }
+
   listResearchEvents(options?: ListResearchEventsOptions): ResearchEvent[] {
     return this.db.listResearchEvents(options)
   }
@@ -524,6 +532,12 @@ class FailingAddSourceResearchDb extends TrackingResearchDb {
 class FailingAddArtifactResearchDb extends TrackingResearchDb {
   override addArtifact(_input: Parameters<RuntimeResearchDbProjection["addArtifact"]>[0]): ReturnType<RuntimeResearchDbProjection["addArtifact"]> {
     throw new Error("ResearchDb artifact write failed token=artifact-secret")
+  }
+}
+
+class FailingAcceptResearchResultDb extends TrackingResearchDb {
+  override acceptResearchResult(_resultId: string): ReturnType<RuntimeResearchDbProjection["acceptResearchResult"]> {
+    throw new Error("ResearchDb ingestion write failed token=ingestion-secret")
   }
 }
 
@@ -1005,6 +1019,10 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/opencode-result-review")).toMatchObject({ risk: "medium_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, expected_event_kinds: ["opencode_result_review_recorded"] })
     expect(service.get("/opencode-result-reviews")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_opencode_result_reviews", mutates_events: false })
     expect(service.get("/result-review-summary")).toMatchObject({ slash_command: "/opencode-result-review-summary", risk: "safe_read", runtime_command: "runtime.opencode_result_review_summary", owner: "opencode_handoff", mutates_events: false })
+    expect(service.get("/research-ingestion-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_research_ingestion", owner: "research", mutates_events: false })
+    expect(service.get("/research-ingestion-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.record_research_ingestion", owner: "research", mutates_events: false })
+    expect(service.get("/research-ingestion")).toMatchObject({ risk: "high_impact_write", gate: "opencode_runtime", owner: "research", mutates_events: true, expected_event_kinds: ["research_event", "research_memory_ingestion_recorded"] })
+    expect(service.get("/research-ingestions")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_research_ingestions", owner: "research", mutates_events: false })
     expect(service.get("/opencode-session-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_opencode_session_plan", mutates_events: false, creates_external_process: false })
     expect(service.get("/opencode-session-plan-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.create_opencode_session_plan", mutates_events: false, creates_external_process: false })
     expect(service.get("/opencode-session-plan")).toMatchObject({ risk: "high_impact_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, creates_external_process: false, blocked_by_default: true })
@@ -1065,6 +1083,10 @@ describe("CommandAuthorityService", () => {
     const resultReview = service.validationProfile("/opencode-result-review")
     expect(resultReview.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_opencode_result_review_tui.py"])
     expect(resultReview.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py", "tests/e2e_user/scenarios/test_opencode_result_report_tui.py", "tests/e2e_user/scenarios/test_opencode_wake_action_execution_tui.py", "tests/e2e_user/scenarios/test_opencode_progress_heartbeat_tui.py"])
+
+    const researchIngestion = service.validationProfile("/research-ingestion")
+    expect(researchIngestion.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_research_ingestion_tui.py"])
+    expect(researchIngestion.optional_regression_e2e).toEqual(["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py", "tests/e2e_user/scenarios/test_opencode_result_review_tui.py", "tests/e2e_user/scenarios/test_opencode_result_report_tui.py", "tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"])
 
     const minimax = service.validationProfile("/minimax-live-validate")
     expect(minimax.targeted_e2e).toEqual(["tests/e2e_user/scenarios/test_minimax_live_validation_tui.py"])
@@ -14924,6 +14946,23 @@ describe("RuntimeServerClient", () => {
     await client.shutdown()
   })
 
+  test("research ingestion commands and dry-runs do not auto-start the runtime", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+
+    await expect(client.command("runtime.preview_research_ingestion", { reviewId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.record_research_ingestion", { reviewId: "missing", dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.list_research_ingestions")).resolves.toEqual([])
+    await expect(client.command("runtime.get_research_ingestion", { ingestionId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.latest_research_ingestion", { reviewId: "missing" })).resolves.toBeNull()
+    await expect(client.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 0 })
+
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+    await client.shutdown()
+  })
+
   test("commander executor review commands do not auto-start the runtime", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -17685,12 +17724,13 @@ describe("OpenCode launch readiness", () => {
     db.createTopic({ id: "topic_launch_low_novelty", title: "Launch low novelty" })
     db.proposeResearchResult({
       result_id: "result_adapter_timeout_prior",
-      result_type: "evaluation_result",
+      result_type: "implementation_change",
       title: "adapter timeout watchdog",
       summary: "prior timeout watchdog result",
       confidence: "medium",
       created_by: "commander",
     })
+    db.acceptResearchResult("result_adapter_timeout_prior")
     db.close()
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
     await server.start()
@@ -19380,6 +19420,359 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
+  test("research ingestion promotes accepted result review into bounded research memory only", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "completion_report", summary: "done with candidate fix token=ingest-secret" }) as { progress_id: string }
+    const report = await server.command("runtime.record_opencode_result_report", {
+      sessionId,
+      kind: "completion_report",
+      summary: "implemented candidate fix token=ingest-secret",
+      outcome: "tests passed",
+      changedFiles: ["fileA.ts"],
+      testsRun: ["bun-test"],
+      testResults: ["passed"],
+      artifacts: ["artifact://result"],
+      metrics: ["tests=1"],
+      claims: ["fix works"],
+      followups: ["research ingestion"],
+      progressId: progress.progress_id,
+      confidence: "high",
+    }) as { report_id: string }
+    const accepted = await server.command("runtime.record_opencode_result_review", {
+      reportId: report.report_id,
+      decision: "accepted",
+      rationale: "bounded evidence is suitable for memory token=ingest-secret",
+      acceptedClaims: ["fix works"],
+      confidence: "high",
+    }) as { review_id: string }
+    const rejectedReport = await server.command("runtime.record_opencode_result_report", { sessionId, kind: "failure_report", summary: "failed alternative", knownFailures: ["test failed"] }) as { report_id: string }
+    const rejected = await server.command("runtime.record_opencode_result_review", { reportId: rejectedReport.report_id, decision: "rejected", rationale: "not enough evidence" }) as { review_id: string }
+
+    await expect(server.command("runtime.preview_research_ingestion", {})).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: "missing" })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: rejected.review_id })).resolves.toMatchObject({ status: "blocked", can_ingest: false, ingestion_decision: "block" })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: accepted.review_id, evidenceKind: "negative_result" })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: accepted.review_id, researchTitle: "diff --git a/file b/file\n@@ -1 +1" })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+    await expect(server.command("runtime.preview_research_ingestion", {
+      reviewId: accepted.review_id,
+      method: `${"a".repeat(130)}\n${"b".repeat(130)}\n${"c".repeat(130)}`,
+    })).resolves.toMatchObject({ status: "blocked", can_ingest: false })
+
+    const preview = await server.command("runtime.preview_research_ingestion", { reviewId: accepted.review_id, tags: ["opencode", "reviewed"] }) as {
+      status: string
+      can_ingest: boolean
+      evidence_kind: string
+      ingestion_decision: string
+      research_title_preview: string
+      research_db_written: boolean
+      mission_mutated: boolean
+      checkpoint_created: boolean
+      followup_mission_created: boolean
+      provider_called: boolean
+      mcp_called: boolean
+      provenance_refs: Array<{ source_kind: string; source_id: string; pointer_only: boolean }>
+    }
+    expect(preview).toMatchObject({
+      status: "ready",
+      can_ingest: true,
+      evidence_kind: "positive_finding",
+      ingestion_decision: "ingest",
+      research_db_written: false,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    expect(preview.research_title_preview).toContain("adapter spectral curriculum")
+    expect(preview.provenance_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source_kind: "result_review", source_id: accepted.review_id, pointer_only: true }),
+      expect.objectContaining({ source_kind: "result_report", source_id: report.report_id, pointer_only: true }),
+      expect.objectContaining({ source_kind: "opencode_session", source_id: sessionId, pointer_only: true }),
+      expect.objectContaining({ source_kind: "opencode_launch", source_id: launched.launch_id, pointer_only: true }),
+    ]))
+    expect(JSON.stringify(preview)).not.toContain("ingest-secret")
+
+    const beforeIngestion = await server.eventStore.readAll()
+    await expect(server.command("runtime.record_research_ingestion", { reviewId: accepted.review_id, tags: ["opencode", "reviewed"], dryRun: true })).resolves.toMatchObject({ status: "dry_run", research_db_write_status: "dry_run", research_db_written: false })
+    expect(await server.eventStore.readAll()).toEqual(beforeIngestion)
+
+    const result = await server.command("runtime.record_research_ingestion", { reviewId: accepted.review_id, tags: ["opencode", "reviewed"] }) as {
+      status: string
+      ingestion_id: string
+      research_memory_id: string
+      research_db_row_id: string
+      research_db_write_status: string
+      research_db_written: boolean
+      mission_mutated: boolean
+      checkpoint_created: boolean
+      followup_mission_created: boolean
+      provider_called: boolean
+      mcp_called: boolean
+    }
+    expect(result).toMatchObject({
+      status: "recorded",
+      research_db_write_status: "written",
+      research_db_written: true,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    expect(result.research_memory_id).toBe(result.research_db_row_id)
+    const events = await server.eventStore.readAll()
+    const newEvents = events.slice(beforeIngestion.length)
+    expect(newEvents.map((event) => event.kind)).toEqual(["research_event", "research_event", "research_memory_ingestion_recorded"])
+    expect(newEvents[0]).toMatchObject({ event_type: "ResearchResultProposed" })
+    expect(newEvents[1]).toMatchObject({ event_type: "ResearchResultAccepted" })
+    expect(newEvents[2]).toMatchObject({
+      ingestion_id: result.ingestion_id,
+      research_memory_id: result.research_memory_id,
+      review_id: accepted.review_id,
+      report_id: report.report_id,
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      source_kind: "opencode_result_review",
+      evidence_kind: "positive_finding",
+      ingestion_decision: "ingest",
+      review_decision: "accepted",
+      review_disposition: "accepted_as_evidence",
+      review_projection_state: "reviewed_accepted",
+      research_db_write_status: "written",
+      research_db_written: true,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    expect(JSON.stringify(newEvents)).not.toContain("ingest-secret")
+
+    await expect(server.command("runtime.record_research_ingestion", { reviewId: accepted.review_id, dryRun: true })).resolves.toMatchObject({ status: "blocked" })
+    await expect(server.command("runtime.record_research_ingestion", { reviewId: accepted.review_id })).resolves.toMatchObject({ status: "blocked" })
+    expect(await server.eventStore.readAll()).toEqual(events)
+
+    await expect(server.command("runtime.list_research_ingestions", { reviewId: accepted.review_id })).resolves.toEqual([expect.objectContaining({ ingestion_id: result.ingestion_id, research_db_written: true })])
+    await expect(server.command("runtime.get_research_ingestion", { ingestionId: result.ingestion_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id, research_memory_id: result.research_memory_id })
+    await expect(server.command("runtime.latest_research_ingestion", { reviewId: accepted.review_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id })
+    await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, research_memory_count: 1, positive_finding_count: 1, db_written_count: 1 })
+    await expect(server.command("runtime.research_memory_summary")).resolves.toMatchObject({ total_candidates_available: expect.any(Number), has_research_db_projection: true, label_counts: expect.objectContaining({ finding: expect.any(Number) }) })
+    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter spectral curriculum", limit: 10 }) as { candidates: Array<{ result_id: string; source_refs: Array<{ pointer_only: boolean }> }> }
+    expect(retrieval.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ result_id: result.research_memory_id })]))
+    expect(retrieval.candidates.find((candidate) => candidate.result_id === result.research_memory_id)?.source_refs.every((ref) => ref.pointer_only)).toBe(true)
+    const findingRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter spectral curriculum", labels: ["finding"], limit: 10 }) as { candidates: Array<{ result_id: string; label: string }> }
+    expect(findingRetrieval.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ result_id: result.research_memory_id, label: "finding" })]))
+
+    const partialReport = await server.command("runtime.record_opencode_result_report", {
+      sessionId,
+      kind: "partial_report",
+      summary: "implemented partial candidate",
+      followups: ["needs more testing"],
+      claims: ["partial behavior observed"],
+    }) as { report_id: string }
+    const partialReview = await server.command("runtime.record_opencode_result_review", {
+      reportId: partialReport.report_id,
+      decision: "accepted",
+      rationale: "partial evidence is useful but not a positive finding",
+      acceptedClaims: ["partial behavior observed"],
+    }) as { review_id: string }
+    const partialIngestion = await server.command("runtime.record_research_ingestion", { reviewId: partialReview.review_id }) as { research_memory_id: string; evidence_kind: string }
+    expect(partialIngestion).toMatchObject({ evidence_kind: "partial_result" })
+    await expect(server.command("runtime.research_memory_summary")).resolves.toMatchObject({ label_counts: expect.objectContaining({ finding: expect.any(Number), probe: expect.any(Number) }) })
+    const probeRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "partial candidate", labels: ["probe"], limit: 10 }) as { candidates: Array<{ result_id: string; label: string }> }
+    expect(probeRetrieval.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ result_id: partialIngestion.research_memory_id, label: "probe" })]))
+    const partialFindingRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "partial candidate", labels: ["finding"], limit: 10 }) as { candidates: Array<{ result_id: string }> }
+    expect(partialFindingRetrieval.candidates.map((candidate) => candidate.result_id)).not.toContain(partialIngestion.research_memory_id)
+
+    const eventKinds = events.map((event) => event.kind)
+    expect(eventKinds).not.toContain("mission_progress_recorded")
+    expect(eventKinds).not.toContain("runtime_checkpoint_created")
+    expect(eventKinds).not.toContain("followup_mission_created")
+    expect(eventKinds).not.toContain("opencode_prompt_sent")
+    expect(eventKinds).not.toContain("opencode_session_process_paused")
+    const authority = await server.command("runtime.command_authority_get", { command: "/research-ingestion" }) as { risk: string; mutates_events: boolean; notes: string[] }
+    expect(authority).toMatchObject({ risk: "high_impact_write", mutates_events: true })
+    expect(authority.notes.join(" ")).toContain("research-memory")
+    await server.shutdown()
+  })
+
+  test("research ingestion persists bounded failure events and hides proposed-only rows when accept fails", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const rawDb = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    rawDb.createTopic({ id: "topic_ingestion_failure", title: "Ingestion failure" })
+    const researchDb = new FailingAcceptResearchResultDb(rawDb)
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["opencode"] },
+      researchProjectionMode: "check_only",
+      researchDb,
+      opencodeLaunchId: () => "launch_ingestion_failure",
+    })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "adapter ingestion failure" }) as { session_id: string }
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    await expect(server.command("runtime.launch_opencode_session", { sessionId: session.session_id, packId: pack.pack_id, providerKind: "local", modelId: "local-medium" })).resolves.toMatchObject({ status: "launched", launch_id: "launch_ingestion_failure" })
+    const report = await server.command("runtime.record_opencode_result_report", {
+      sessionId: session.session_id,
+      kind: "completion_report",
+      summary: "implemented bounded candidate token=ingestion-secret",
+      outcome: "tests passed",
+      claims: ["candidate works"],
+    }) as { report_id: string }
+    const review = await server.command("runtime.record_opencode_result_review", {
+      reportId: report.report_id,
+      decision: "accepted",
+      rationale: "bounded evidence is acceptable token=ingestion-secret",
+      acceptedClaims: ["candidate works"],
+    }) as { review_id: string }
+
+    const before = await server.eventStore.readAll()
+    const result = await server.command("runtime.record_research_ingestion", { reviewId: review.review_id }) as {
+      status: string
+      ingestion_id: string
+      research_memory_id?: string
+      research_db_write_status: string
+      research_db_written: boolean
+      error?: string
+    }
+    expect(result).toMatchObject({
+      status: "failed",
+      research_db_write_status: "write_failed",
+      research_db_written: false,
+      error: "ResearchDb ingestion write failed [REDACTED]",
+    })
+    const events = await server.eventStore.readAll()
+    const newEvents = events.slice(before.length)
+    expect(newEvents.map((event) => event.kind)).toEqual(["research_event", "research_memory_ingestion_recorded"])
+    expect(newEvents[0]).toMatchObject({ event_type: "ResearchResultProposed" })
+    expect(newEvents[1]).toMatchObject({
+      ingestion_id: result.ingestion_id,
+      review_id: review.review_id,
+      report_id: report.report_id,
+      session_id: session.session_id,
+      research_db_write_status: "write_failed",
+      research_db_written: false,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    expect(JSON.stringify(newEvents)).not.toContain("ingestion-secret")
+    await expect(server.command("runtime.get_research_ingestion", { ingestionId: result.ingestion_id })).resolves.toMatchObject({ status: "failed", research_db_write_status: "write_failed", research_db_written: false })
+    await expect(server.command("runtime.list_research_ingestions", { reviewId: review.review_id })).resolves.toEqual([expect.objectContaining({ ingestion_id: result.ingestion_id, research_db_written: false })])
+    await expect(server.command("runtime.latest_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id, status: "failed" })
+    await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, research_memory_count: 0, db_written_count: 0, failed_count: 1 })
+    const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "implemented bounded candidate", limit: 10 }) as { candidates: Array<{ result_id: string }> }
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).not.toContain(result.research_memory_id)
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ status: "ready", can_ingest: true })
+    await server.shutdown()
+    researchDb.close()
+  })
+
+  test("research ingestion writes the linked mission id and not the OpenCode session id", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["opencode"] },
+      researchProjectionMode: "check_only",
+      opencodeLaunchId: () => "launch_ingestion_mission",
+    })
+    await server.start()
+    const submitted = await server.submitUserMessage("mission linked research ingestion") as { missionId: string }
+    const session = await server.command("runtime.create_opencode_session_plan", { missionId: submitted.missionId }) as { session_id: string; mission_id?: string }
+    expect(session.mission_id).toBe(submitted.missionId)
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    await expect(server.command("runtime.launch_opencode_session", { sessionId: session.session_id, packId: pack.pack_id, providerKind: "local", modelId: "local-medium" })).resolves.toMatchObject({ status: "launched", launch_id: "launch_ingestion_mission" })
+    const report = await server.command("runtime.record_opencode_result_report", {
+      sessionId: session.session_id,
+      kind: "completion_report",
+      summary: "mission linked result",
+      outcome: "tests passed",
+      claims: ["mission linked claim"],
+    }) as { report_id: string }
+    const review = await server.command("runtime.record_opencode_result_review", {
+      reportId: report.report_id,
+      decision: "accepted",
+      rationale: "mission linked evidence is acceptable",
+      acceptedClaims: ["mission linked claim"],
+    }) as { review_id: string }
+    const preview = await server.command("runtime.preview_research_ingestion", { reviewId: review.review_id }) as { status: string; mission_id?: string }
+    expect(preview).toMatchObject({ status: "ready", mission_id: submitted.missionId })
+    const result = await server.command("runtime.record_research_ingestion", { reviewId: review.review_id }) as { status: string; research_memory_id: string; mission_id?: string }
+    expect(result).toMatchObject({ status: "recorded", mission_id: submitted.missionId })
+    await server.shutdown()
+
+    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused_read" })
+    const row = db.getResearchResult(result.research_memory_id)
+    expect(row?.mission_id).toBe(submitted.missionId)
+    expect(row?.mission_id).not.toBe(session.session_id)
+    db.close()
+  })
+
+  test("research ingestion preserves successful DB writes when ingestion event append fails", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    await expect(server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" })).resolves.toMatchObject({ status: "launched" })
+    const report = await server.command("runtime.record_opencode_result_report", {
+      sessionId,
+      kind: "completion_report",
+      summary: "event append failure result",
+      outcome: "tests passed",
+      claims: ["event append claim"],
+    }) as { report_id: string }
+    const review = await server.command("runtime.record_opencode_result_review", {
+      reportId: report.report_id,
+      decision: "accepted",
+      rationale: "event append failure evidence is acceptable",
+      acceptedClaims: ["event append claim"],
+    }) as { review_id: string }
+
+    const append = server.eventStore.append.bind(server.eventStore)
+    const before = await server.eventStore.readAll()
+    server.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if ((event as { kind?: string }).kind === "research_memory_ingestion_recorded") throw new Error("ingestion event append failed token=append-secret")
+      return append(event)
+    }
+    await expect(server.command("runtime.record_research_ingestion", { reviewId: review.review_id })).rejects.toThrow("ingestion event append failed")
+    const afterFailure = await server.eventStore.readAll()
+    const failureEvents = afterFailure.slice(before.length)
+    expect(failureEvents.map((event) => event.kind)).toEqual(["research_event", "research_event"])
+    expect(failureEvents[0]).toMatchObject({ event_type: "ResearchResultProposed" })
+    expect(failureEvents[1]).toMatchObject({ event_type: "ResearchResultAccepted" })
+    expect(failureEvents.map((event) => event.kind)).not.toContain("research_memory_ingestion_recorded")
+    await expect(server.command("runtime.preview_research_memory_retrieval", { query: "event append failure", limit: 10 })).resolves.toMatchObject({
+      candidates: expect.arrayContaining([expect.objectContaining({ status: "accepted" })]),
+    })
+    await expect(server.command("runtime.preview_research_ingestion", { reviewId: review.review_id })).resolves.toMatchObject({ status: "ready", can_ingest: true, ingestion_decision: "ingest" })
+    await expect(server.command("runtime.preview_research_ingestion", {
+      reviewId: review.review_id,
+      tags: ["retry", "changed-metadata"],
+      researchTitle: "changed title after append failure",
+      method: "changed method after append failure",
+    })).resolves.toMatchObject({
+      status: "blocked",
+      can_ingest: false,
+      blockers: expect.arrayContaining(["accepted research memory row already exists for this review_id with different bounded content; retry without changed ingestion metadata"]),
+    })
+
+    server.eventStore.append = append
+    const retry = await server.command("runtime.record_research_ingestion", { reviewId: review.review_id }) as { status: string; research_memory_id: string; research_db_write_status: string; research_db_written: boolean }
+    expect(retry).toMatchObject({ status: "recorded", research_db_write_status: "written", research_db_written: true })
+    await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, research_memory_count: 1, db_written_count: 1, failed_count: 0 })
+    const retryRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "event append failure", limit: 10 }) as { candidates: Array<{ result_id: string }> }
+    expect(retryRetrieval.candidates.filter((candidate) => candidate.result_id === retry.research_memory_id)).toHaveLength(1)
+    await server.shutdown()
+  })
+
   test("wake supervisor summary counts all matching launched sessions before applying card limit", async () => {
     const launches = Array.from({ length: 101 }, (_, offset) => {
       const index = offset + 1
@@ -20556,6 +20949,7 @@ describe("OpenCode launch readiness", () => {
     })
     db.linkResultArtifact("finding_timeout", "artifact_timeout")
     db.linkResultCitation("finding_timeout", "citation_timeout")
+    db.acceptResearchResult("finding_timeout")
     db.proposeResearchResult({
       result_id: "failure_timeout",
       result_type: "negative_finding",
@@ -20564,22 +20958,25 @@ describe("OpenCode launch readiness", () => {
       confidence: "medium",
       created_by: "executor",
     })
+    db.acceptResearchResult("failure_timeout")
     db.proposeResearchResult({
       result_id: "unrelated_result",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "unrelated optimizer",
       summary: "optimizer result not about adapter timeout",
       confidence: "low",
       created_by: "commander",
     })
+    db.acceptResearchResult("unrelated_result")
     db.proposeResearchResult({
       result_id: "finding_timeout_recent",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "adapter timeout watchdog recent",
       summary: "recent short interval watchdog improved timeout reporting",
       confidence: "high",
       created_by: "commander",
     })
+    db.acceptResearchResult("finding_timeout_recent")
     db.proposeResearchResult({
       result_id: "failure_timeout_recent",
       result_type: "negative_finding",
@@ -20587,6 +20984,15 @@ describe("OpenCode launch readiness", () => {
       summary: "recent short interval failed because heartbeat was missing",
       confidence: "medium",
       created_by: "executor",
+    })
+    db.acceptResearchResult("failure_timeout_recent")
+    db.proposeResearchResult({
+      result_id: "proposed_timeout_leak",
+      result_type: "implementation_change",
+      title: "adapter timeout proposed leak",
+      summary: "proposed result should not surface in research memory",
+      confidence: "high",
+      created_by: "commander",
     })
     db.createCandidate({ candidate_id: "candidate_mission_in", claim: "mission scoped adapter timeout candidate", source: "commander" })
     db.createCandidate({ candidate_id: "candidate_mission_out", claim: "mission scoped adapter timeout candidate", source: "commander" })
@@ -20610,7 +21016,7 @@ describe("OpenCode launch readiness", () => {
     })
     db.proposeResearchResult({
       result_id: "result_mission_in_linked",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "mission scoped adapter timeout linked result",
       summary: "mission result linked through candidate trial and training run",
       confidence: "high",
@@ -20619,9 +21025,10 @@ describe("OpenCode launch readiness", () => {
       training_run_id: "training_mission_in",
       created_by: "commander",
     })
+    db.acceptResearchResult("result_mission_in_linked")
     db.proposeResearchResult({
       result_id: "result_mission_out_linked",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "mission scoped adapter timeout linked result",
       summary: "out of scope mission result linked through candidate trial and training run",
       confidence: "high",
@@ -20630,6 +21037,7 @@ describe("OpenCode launch readiness", () => {
       training_run_id: "training_mission_out",
       created_by: "commander",
     })
+    db.acceptResearchResult("result_mission_out_linked")
     db.close()
     const beforeEvents = await readJsonlEvents(dir)
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
@@ -20643,6 +21051,7 @@ describe("OpenCode launch readiness", () => {
     expect(retrieval.status).toBe("ready")
     expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("finding_timeout_recent")
     expect(retrieval.candidates.map((candidate) => candidate.result_id)).toContain("failure_timeout_recent")
+    expect(retrieval.candidates.map((candidate) => candidate.result_id)).not.toContain("proposed_timeout_leak")
     expect(retrieval.candidates[0]?.matched_terms).toContain("adapter")
     expect(retrieval.candidates[0]?.relevance_score).toBeGreaterThan(0)
     expect(retrieval.candidates.flatMap((candidate) => candidate.source_refs).every((ref) => ref.pointer_only)).toBe(true)
@@ -20679,7 +21088,7 @@ describe("OpenCode launch readiness", () => {
       label: null,
       title: "latecap needle result",
       summary: "latecap lexical match should survive backend scan before preview limit",
-      status: "proposed",
+      status: "accepted",
       confidence: "high",
       mission_id: null,
       candidate_id: null,
@@ -20752,6 +21161,7 @@ describe("OpenCode launch readiness", () => {
         policy: "projection_read",
         searchResearchResults: (options) => {
           seenOrders.push(options?.order)
+          expect(options?.status).toBe("accepted")
           return options?.order === "newest" ? [lateResult] : []
         },
         searchCandidates: (options) => {
@@ -20834,7 +21244,7 @@ describe("OpenCode launch readiness", () => {
       label: null,
       title: "mission scope result needle",
       summary: "result linked through mission candidate trial and training run",
-      status: "proposed",
+      status: "accepted",
       confidence: "high",
       mission_id: null,
       candidate_id: "mission_candidate_scope",
@@ -20856,6 +21266,7 @@ describe("OpenCode launch readiness", () => {
         available: true,
         policy: "projection_read",
         searchResearchResults: (options) => {
+          expect(options?.status).toBe("accepted")
           resultQueries.push(options?.candidate_id ?? options?.trial_id ?? options?.training_run_id ?? options?.mission_id)
           return options?.candidate_id === "mission_candidate_scope" || options?.trial_id === "mission_trial_scope" || options?.training_run_id === "mission_training_scope"
             ? [missionResult]

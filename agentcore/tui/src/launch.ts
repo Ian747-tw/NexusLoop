@@ -299,6 +299,23 @@ function isNoStartInspectionText(text: string): boolean {
     || trimmed.startsWith("/send-guidance")
     || trimmed.startsWith("/guidance-deliveries")
     || trimmed.startsWith("/guidance-delivery-latest")
+    || trimmed.startsWith("/research-ingestion-preview")
+    || trimmed.startsWith("/research-ingestion-dry-run")
+    || trimmed === "/research-ingestion"
+    || trimmed.startsWith("/research-ingestion ")
+    || trimmed.startsWith("/research-ingest-preview")
+    || trimmed.startsWith("/research-ingest-dry-run")
+    || trimmed === "/research-ingest"
+    || trimmed.startsWith("/research-ingest ")
+    || trimmed.startsWith("/research-promote-preview")
+    || trimmed.startsWith("/research-promote-dry-run")
+    || trimmed === "/research-promote"
+    || trimmed.startsWith("/research-promote ")
+    || trimmed.startsWith("/research-memory-ingest")
+    || trimmed.startsWith("/research-ingestions")
+    || trimmed.startsWith("/research-ingestion-latest")
+    || trimmed.startsWith("/research-ingestion-show")
+    || trimmed.startsWith("/research-ingestion-summary")
     || trimmed.startsWith("/research-memory-summary")
     || trimmed.startsWith("/research-memory-search")
     || trimmed.startsWith("/research-memory-preview")

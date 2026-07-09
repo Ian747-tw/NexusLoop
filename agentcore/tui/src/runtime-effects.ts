@@ -119,6 +119,13 @@ import type {
   OpenCodeResultReviewGateResultSummary,
   OpenCodeResultReviewGateState,
   OpenCodeResultReviewGateSummaryState,
+  ResearchIngestionCommandSummary,
+  ResearchIngestionPreviewSummary,
+  ResearchIngestionProvenanceRefSummary,
+  ResearchIngestionRecordSummary,
+  ResearchIngestionResultSummary,
+  ResearchIngestionState,
+  ResearchIngestionSummaryState,
   OpenCodeForcedReportRequestSummary,
   OpenCodeCommanderQuestionCommandSummary,
   OpenCodeCommanderQuestionPreviewSummary,
@@ -552,6 +559,12 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-result-review"; reviewId: string }
   | { type: "load-latest-opencode-result-review"; reportId?: string; sessionId?: string; launchId?: string }
   | { type: "load-opencode-result-review-gate-summary"; limit?: number }
+  | { type: "preview-research-ingestion"; reviewId?: string; evidenceKind?: string; tags?: string[]; researchTitle?: string; researchQuestion?: string; hypothesis?: string; method?: string; noveltyKey?: string }
+  | { type: "record-research-ingestion"; reviewId?: string; evidenceKind?: string; tags?: string[]; researchTitle?: string; researchQuestion?: string; hypothesis?: string; method?: string; noveltyKey?: string; dryRun?: boolean }
+  | { type: "load-research-ingestions"; reviewId?: string; reportId?: string; sessionId?: string; launchId?: string; evidenceKind?: string; researchDbWritten?: boolean; limit?: number }
+  | { type: "load-research-ingestion"; ingestionId: string }
+  | { type: "load-latest-research-ingestion"; reviewId?: string; reportId?: string; sessionId?: string; launchId?: string }
+  | { type: "load-research-ingestion-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
   | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
@@ -1585,6 +1598,22 @@ export async function applyRuntimeUiEffect(
         return applyOpenCodeResultReviewLatest(state, await runtime.command("runtime.latest_opencode_result_review", { reportId: effect.reportId, sessionId: effect.sessionId, launchId: effect.launchId }), effect.reportId ?? effect.sessionId ?? effect.launchId ?? "latest")
       case "load-opencode-result-review-gate-summary":
         return applyOpenCodeResultReviewGateSummary(state, await runtime.command("runtime.opencode_result_review_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
+      case "preview-research-ingestion":
+        return applyResearchIngestionPreview(state, await runtime.command("runtime.preview_research_ingestion", researchIngestionPayload(effect)))
+      case "record-research-ingestion": {
+        const next = applyResearchIngestionResult(state, await runtime.command("runtime.record_research_ingestion", { ...researchIngestionPayload(effect), dryRun: effect.dryRun === true, recordedBy: "operator" }))
+        if (next.researchIngestions?.commandError || effect.dryRun === true) return next
+        const result = next.researchIngestions?.latestResult
+        return applyResearchIngestionRecords(next, await runtime.command("runtime.list_research_ingestions", { limit: HANDOFF_LIMIT, reviewId: result?.review_id ?? effect.reviewId }))
+      }
+      case "load-research-ingestions":
+        return applyResearchIngestionRecords(state, await runtime.command("runtime.list_research_ingestions", { limit: effect.limit ?? HANDOFF_LIMIT, reviewId: effect.reviewId, reportId: effect.reportId, sessionId: effect.sessionId, launchId: effect.launchId, evidenceKind: effect.evidenceKind, researchDbWritten: effect.researchDbWritten }))
+      case "load-research-ingestion":
+        return applyResearchIngestionSelected(state, await runtime.command("runtime.get_research_ingestion", { ingestionId: effect.ingestionId }), effect.ingestionId)
+      case "load-latest-research-ingestion":
+        return applyResearchIngestionLatest(state, await runtime.command("runtime.latest_research_ingestion", { reviewId: effect.reviewId, reportId: effect.reportId, sessionId: effect.sessionId, launchId: effect.launchId }), effect.reviewId ?? effect.reportId ?? effect.sessionId ?? effect.launchId ?? "latest")
+      case "load-research-ingestion-summary":
+        return applyResearchIngestionSummary(state, await runtime.command("runtime.research_ingestion_summary", { limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-research-memory-summary":
         return applyResearchMemorySummary(state, await runtime.command("runtime.research_memory_summary"))
       case "preview-research-memory-retrieval":
@@ -2232,6 +2261,7 @@ export async function applyRuntimeUiEffect(
     if (isContextBudgetEffect(effect)) return recordContextBudgetCommandError(state, error)
     if (isContextPacketEffect(effect)) return recordContextPacketCommandError(state, error)
     if (isOpenCodeSessionInstructionPackEffect(effect)) return recordOpenCodeSessionInstructionPackCommandError(state, error)
+    if (isResearchIngestionEffect(effect)) return recordResearchIngestionCommandError(state, error)
     if (isResearchMemoryEffect(effect)) return recordResearchMemoryCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
@@ -4426,6 +4456,89 @@ function applyOpenCodeResultReviewLatest(state: UiState, value: unknown, target:
   }
 }
 
+function applyResearchIngestionPreview(state: UiState, value: unknown): UiState {
+  const preview = readResearchIngestionPreview(value)
+  const commandError = preview.status === "blocked" ? preview.blockers[0] ?? "research ingestion preview is blocked" : undefined
+  return {
+    ...state,
+    researchIngestions: {
+      ...researchIngestionState(state),
+      preview,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "research ingestion preview", detail: `review=${preview.review_id || "missing"} evidence=${preview.evidence_kind} decision=${preview.ingestion_decision}`, status: preview.status }].slice(-12),
+  }
+}
+
+function applyResearchIngestionResult(state: UiState, value: unknown): UiState {
+  const result = readResearchIngestionResult(value)
+  const commandError = result.status === "blocked" || result.status === "failed" ? result.error ?? "research ingestion is blocked" : undefined
+  return {
+    ...state,
+    researchIngestions: {
+      ...researchIngestionState(state),
+      latestResult: result,
+      latest: result.status === "recorded" ? result : researchIngestionState(state).latest,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "research ingestion", detail: `ingestion=${result.ingestion_id} status=${result.status} db_written=${result.research_db_written}`, status: result.status }].slice(-12),
+  }
+}
+
+function applyResearchIngestionRecords(state: UiState, value: unknown): UiState {
+  const records = readResearchIngestionRecords(value)
+  return {
+    ...state,
+    researchIngestions: {
+      ...researchIngestionState(state),
+      records,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "research ingestions", detail: `records=${records.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyResearchIngestionSelected(state: UiState, value: unknown, ingestionId: string): UiState {
+  const selected = value ? readResearchIngestionResult(value) : null
+  const commandError = selected ? undefined : `research ingestion not found: ${ingestionId}`
+  return {
+    ...state,
+    researchIngestions: {
+      ...researchIngestionState(state),
+      selected,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "research ingestion show", detail: selected ? `ingestion=${selected.ingestion_id}` : `missing=${ingestionId}`, status: selected ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyResearchIngestionLatest(state: UiState, value: unknown, target: string): UiState {
+  const latest = value ? readResearchIngestionResult(value) : null
+  const commandError = latest ? undefined : `research ingestion latest not found: ${target}`
+  return {
+    ...state,
+    researchIngestions: {
+      ...researchIngestionState(state),
+      latest,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "research ingestion latest", detail: latest ? `ingestion=${latest.ingestion_id}` : `missing=${target}`, status: latest ? "loaded" : "blocked" }].slice(-12),
+  }
+}
+
+function applyResearchIngestionSummary(state: UiState, value: unknown): UiState {
+  const summary = readResearchIngestionSummary(value)
+  return {
+    ...state,
+    researchIngestions: {
+      ...researchIngestionState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "research ingestion summary", detail: `ingestions=${summary.total_ingestions} db=${summary.db_written_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyOpenCodeResultReviewSummary(state: UiState, value: unknown): UiState {
   const summary = readOpenCodeResultReviewSummary(value)
   return {
@@ -5705,6 +5818,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeWakeActionExecutionCommands.has(command)) return state.opencodeWakeActions?.commandError
   if (opencodeResultReportCommands.has(command)) return state.opencodeResultReports?.commandError
   if (opencodeResultReviewGateCommands.has(command)) return state.opencodeResultReviews?.commandError
+  if (researchIngestionCommands.has(command)) return state.researchIngestions?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -5761,6 +5875,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeWakeActionExecutionCommands.has(command)) return { ...state, opencodeWakeActions: { ...opencodeWakeActionExecutionState(state), commandError: undefined } }
   if (opencodeResultReportCommands.has(command)) return { ...state, opencodeResultReports: { ...opencodeResultReportState(state), commandError: undefined } }
   if (opencodeResultReviewGateCommands.has(command)) return { ...state, opencodeResultReviews: { ...opencodeResultReviewGateState(state), commandError: undefined } }
+  if (researchIngestionCommands.has(command)) return { ...state, researchIngestions: { ...researchIngestionState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -6252,6 +6367,29 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "opencode-result-review-summary":
     case "result-review-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-opencode-result-review-gate-summary", limit: HANDOFF_LIMIT })
+    case "research-ingestion-preview":
+    case "research-ingest-preview":
+    case "research-promote-preview":
+      return applyRuntimeUiEffect(commandState, runtime, researchIngestionEffect("preview-research-ingestion", args, true))
+    case "research-ingestion-dry-run":
+    case "research-ingest-dry-run":
+    case "research-promote-dry-run": {
+      const effect = researchIngestionEffect("record-research-ingestion", args, true) as Extract<RuntimeUiEffect, { type: "record-research-ingestion" }>
+      return applyRuntimeUiEffect(commandState, runtime, { ...effect, dryRun: true })
+    }
+    case "research-ingestion":
+    case "research-ingest":
+    case "research-promote":
+    case "research-memory-ingest":
+      return applyRuntimeUiEffect(commandState, runtime, researchIngestionEffect("record-research-ingestion", args, true))
+    case "research-ingestions":
+      return applyRuntimeUiEffect(commandState, runtime, researchIngestionListEffect(args))
+    case "research-ingestion-latest":
+      return applyRuntimeUiEffect(commandState, runtime, researchIngestionLatestEffect(args))
+    case "research-ingestion-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-ingestion", ingestionId: requiredArg(args, 0, "ingestionId") })
+    case "research-ingestion-summary":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-ingestion-summary", limit: HANDOFF_LIMIT })
     case "research-memory-summary":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-summary" })
     case "research-memory-search":
@@ -7153,6 +7291,11 @@ function isOpenCodeResultReviewGateEffect(effect: RuntimeUiEffect): boolean {
   return opencodeResultReviewGateCommands.has(effect.command)
 }
 
+function isResearchIngestionEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return researchIngestionEffectTypes.has(effect.type)
+  return researchIngestionCommands.has(effect.command)
+}
+
 function isOpenCodeSessionEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return opencodeSessionEffectTypes.has(effect.type)
   return opencodeSessionCommands.has(effect.command)
@@ -7693,6 +7836,23 @@ const opencodeResultReviewGateCommands = new Set([
   "result-review-summary",
 ])
 
+const researchIngestionCommands = new Set([
+  "research-ingestion-preview",
+  "research-ingest-preview",
+  "research-promote-preview",
+  "research-ingestion-dry-run",
+  "research-ingest-dry-run",
+  "research-promote-dry-run",
+  "research-ingestion",
+  "research-ingest",
+  "research-promote",
+  "research-memory-ingest",
+  "research-ingestions",
+  "research-ingestion-latest",
+  "research-ingestion-show",
+  "research-ingestion-summary",
+])
+
 const researchMemoryCommands = new Set([
   "research-memory-summary",
   "research-memory-search",
@@ -7708,6 +7868,15 @@ const researchMemoryEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-research-memory-summary",
   "preview-research-memory-retrieval",
   "preview-research-novelty-check",
+])
+
+const researchIngestionEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-research-ingestion",
+  "record-research-ingestion",
+  "load-research-ingestions",
+  "load-research-ingestion",
+  "load-latest-research-ingestion",
+  "load-research-ingestion-summary",
 ])
 
 const commanderExecutorReviewCommands = new Set([
@@ -9217,6 +9386,18 @@ function recordResearchMemoryCommandError(state: UiState, error: unknown): UiSta
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "research memory command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordResearchIngestionCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    researchIngestions: {
+      ...researchIngestionState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "research ingestion command error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
@@ -11949,6 +12130,141 @@ function readOpenCodeResultReviewGateCommon(value: Record<string, unknown>) {
 }
 
 function readOpenCodeResultReviewGateCommands(value: unknown): OpenCodeResultReviewGateCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 12).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readResearchIngestionPreview(value: unknown): ResearchIngestionPreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_research_ingestion returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked") as ResearchIngestionPreviewSummary["status"],
+    can_ingest: value.can_ingest === true,
+    ...readResearchIngestionCommon(value),
+    research_db_write_status: readString(value.research_db_write_status, "not_written") as ResearchIngestionPreviewSummary["research_db_write_status"],
+    research_db_written: value.research_db_written === true,
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 12).map(preview),
+    recommended_commands: readResearchIngestionCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    ingestion_hash: readString(value.ingestion_hash, ""),
+  }
+}
+
+function readResearchIngestionResult(value: unknown): ResearchIngestionResultSummary {
+  if (!isRecord(value) || typeof value.ingestion_id !== "string") throw new Error("runtime.record_research_ingestion returned invalid result")
+  return {
+    ingestion_id: redactText(value.ingestion_id),
+    status: readString(value.status, "blocked") as ResearchIngestionResultSummary["status"],
+    ...readResearchIngestionCommon(value),
+    research_memory_id: typeof value.research_memory_id === "string" ? redactText(value.research_memory_id) : undefined,
+    research_db_row_id: typeof value.research_db_row_id === "string" ? redactText(value.research_db_row_id) : undefined,
+    research_db_write_status: readString(value.research_db_write_status, "not_written") as ResearchIngestionResultSummary["research_db_write_status"],
+    research_db_written: value.research_db_written === true,
+    recorded_at: readString(value.recorded_at, ""),
+    recorded_by: preview(readString(value.recorded_by, "")),
+    error: typeof value.error === "string" ? preview(readString(value.error, "")) : undefined,
+    ingestion_hash: readString(value.ingestion_hash, ""),
+    recommended_commands: readResearchIngestionCommands(value.recommended_commands),
+  }
+}
+
+function readResearchIngestionRecords(value: unknown): ResearchIngestionRecordSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, HANDOFF_LIMIT).map((record) => ({
+    ingestion_id: redactText(readString(record.ingestion_id, "")),
+    research_memory_id: typeof record.research_memory_id === "string" ? redactText(record.research_memory_id) : undefined,
+    review_id: redactText(readString(record.review_id, "")),
+    report_id: redactText(readString(record.report_id, "")),
+    session_id: redactText(readString(record.session_id, "")),
+    launch_id: typeof record.launch_id === "string" ? redactText(record.launch_id) : undefined,
+    evidence_kind: readString(record.evidence_kind, "unknown"),
+    ingestion_decision: readString(record.ingestion_decision, "unknown"),
+    research_title_preview: preview(readString(record.research_title_preview, "")),
+    evidence_summary_preview: preview(readString(record.evidence_summary_preview, "")),
+    research_db_written: record.research_db_written === true,
+    recorded_at: readString(record.recorded_at, ""),
+    recorded_by: preview(readString(record.recorded_by, "")),
+    confidence: readPrimitiveConfidence(record.confidence),
+    ingestion_hash: readString(record.ingestion_hash, ""),
+  }))
+}
+
+function readResearchIngestionSummary(value: unknown): ResearchIngestionSummaryState {
+  if (!isRecord(value)) throw new Error("runtime.research_ingestion_summary returned invalid summary")
+  return {
+    total_ingestions: readNumber(value.total_ingestions, 0),
+    research_memory_count: readNumber(value.research_memory_count, 0),
+    session_count: readNumber(value.session_count, 0),
+    positive_finding_count: readNumber(value.positive_finding_count, 0),
+    negative_result_count: readNumber(value.negative_result_count, 0),
+    inconclusive_result_count: readNumber(value.inconclusive_result_count, 0),
+    partial_result_count: readNumber(value.partial_result_count, 0),
+    blocked_result_count: readNumber(value.blocked_result_count, 0),
+    db_written_count: readNumber(value.db_written_count, 0),
+    failed_count: readNumber(value.failed_count, 0),
+    latest_ingestions: readResearchIngestionRecords(value.latest_ingestions),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readResearchIngestionCommon(value: Record<string, unknown>) {
+  return {
+    review_id: redactText(readString(value.review_id, "")),
+    report_id: redactText(readString(value.report_id, "")),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    source_kind: readString(value.source_kind, "opencode_result_review"),
+    evidence_kind: readString(value.evidence_kind, "unknown"),
+    ingestion_decision: readString(value.ingestion_decision, "unknown"),
+    review_decision: typeof value.review_decision === "string" ? readString(value.review_decision, "") : undefined,
+    review_disposition: typeof value.review_disposition === "string" ? readString(value.review_disposition, "") : undefined,
+    review_projection_state: typeof value.review_projection_state === "string" ? readString(value.review_projection_state, "") : undefined,
+    report_kind: typeof value.report_kind === "string" ? readString(value.report_kind, "") : undefined,
+    report_disposition: typeof value.report_disposition === "string" ? readString(value.report_disposition, "") : undefined,
+    research_title_preview: preview(readString(value.research_title_preview, "")),
+    research_question_preview: typeof value.research_question_preview === "string" ? preview(readString(value.research_question_preview, "")) : undefined,
+    hypothesis_preview: typeof value.hypothesis_preview === "string" ? preview(readString(value.hypothesis_preview, "")) : undefined,
+    method_preview: typeof value.method_preview === "string" ? preview(readString(value.method_preview, "")) : undefined,
+    outcome_preview: typeof value.outcome_preview === "string" ? preview(readString(value.outcome_preview, "")) : undefined,
+    evidence_summary_preview: preview(readString(value.evidence_summary_preview, "")),
+    claims_preview: readStringList(value.claims_preview, 12).map(preview),
+    metrics_preview: readStringList(value.metrics_preview, 12).map(preview),
+    artifacts_preview: readStringList(value.artifacts_preview, 12).map(preview),
+    tests_preview: readStringList(value.tests_preview, 12).map(preview),
+    failures_preview: readStringList(value.failures_preview, 12).map(preview),
+    followups_preview: readStringList(value.followups_preview, 12).map(preview),
+    tags_preview: readStringList(value.tags_preview, 12).map(preview),
+    confidence: readPrimitiveConfidence(value.confidence),
+    novelty_key_preview: typeof value.novelty_key_preview === "string" ? preview(readString(value.novelty_key_preview, "")) : undefined,
+    provenance_refs: readResearchIngestionProvenanceRefs(value.provenance_refs),
+    mission_mutated: value.mission_mutated === true,
+    checkpoint_created: value.checkpoint_created === true,
+    followup_mission_created: value.followup_mission_created === true,
+    provider_called: value.provider_called === true,
+    mcp_called: value.mcp_called === true,
+  }
+}
+
+function readResearchIngestionProvenanceRefs(value: unknown): ResearchIngestionProvenanceRefSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 16).map((ref) => ({
+    source_kind: readString(ref.source_kind, "unknown"),
+    source_id: redactText(readString(ref.source_id, "")),
+    status: typeof ref.status === "string" ? preview(readString(ref.status, "")) : undefined,
+    summary_preview: typeof ref.summary_preview === "string" ? preview(readString(ref.summary_preview, "")) : undefined,
+    pointer_only: true,
+  }))
+}
+
+function readResearchIngestionCommands(value: unknown): ResearchIngestionCommandSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 12).map((command) => ({
     label: preview(readString(command.label, "")),
@@ -15597,6 +15913,10 @@ function opencodeResultReviewGateState(state: UiState): OpenCodeResultReviewGate
   return state.opencodeResultReviews ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
 }
 
+function researchIngestionState(state: UiState): ResearchIngestionState {
+  return state.researchIngestions ?? { preview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
 function progressPayload(effect: Extract<RuntimeUiEffect, { type: "preview-opencode-progress" | "record-opencode-progress" }>): Record<string, unknown> {
   return {
     sessionId: effect.sessionId,
@@ -15775,6 +16095,19 @@ function opencodeResultReviewPayload(effect: Extract<RuntimeUiEffect, { type: "p
     confidence: effect.confidence,
     authorKind: effect.authorKind,
     nextStep: effect.nextStep,
+  }
+}
+
+function researchIngestionPayload(effect: Extract<RuntimeUiEffect, { type: "preview-research-ingestion" | "record-research-ingestion" }>): Record<string, unknown> {
+  return {
+    reviewId: effect.reviewId,
+    evidenceKind: effect.evidenceKind,
+    tags: effect.tags,
+    researchTitle: effect.researchTitle,
+    researchQuestion: effect.researchQuestion,
+    hypothesis: effect.hypothesis,
+    method: effect.method,
+    noveltyKey: effect.noveltyKey,
   }
 }
 
@@ -17452,6 +17785,67 @@ function opencodeResultReviewLatestEffect(args: string[]): Extract<RuntimeUiEffe
     else throw new Error("OpenCode result review latest arg is unsupported")
   }
   if (!effect.reportId && !effect.sessionId && !effect.launchId) throw new Error("OpenCode result review latest requires report=<id>, session=<id>, or launch=<id>")
+  return effect
+}
+
+function researchIngestionEffect(
+  type: "preview-research-ingestion" | "record-research-ingestion",
+  args: string[],
+  requireReview: boolean,
+): Extract<RuntimeUiEffect, { type: "preview-research-ingestion" | "record-research-ingestion" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-research-ingestion" | "record-research-ingestion" }> = { type }
+  const knownKeys = new Set(["review", "evidence_kind", "tags", "research_title", "research_question", "hypothesis", "method", "novelty_key", "recorded_by"])
+  const freeTextKeys = new Set(["research_title", "research_question", "hypothesis", "method", "novelty_key"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "research ingestion args must use review=<id>, evidence_kind=<kind>, tags=<csv>, research_title=<text>, research_question=<text>, hypothesis=<text>, method=<text>, novelty_key=<text>, or recorded_by=<name>")
+    index = nextIndex
+    if (key === "review") effect.reviewId = value
+    else if (key === "evidence_kind") effect.evidenceKind = value
+    else if (key === "tags") effect.tags = commaList(value)
+    else if (key === "research_title") effect.researchTitle = value
+    else if (key === "research_question") effect.researchQuestion = value
+    else if (key === "hypothesis") effect.hypothesis = value
+    else if (key === "method") effect.method = value
+    else if (key === "novelty_key") effect.noveltyKey = value
+    else if (key === "recorded_by") {
+      // Accepted for forward compatibility; runtime records operator for this branch.
+    } else throw new Error("research ingestion arg is unsupported")
+  }
+  if (requireReview && !effect.reviewId) throw new Error("research ingestion requires review=<id>")
+  return effect
+}
+
+function researchIngestionListEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-research-ingestions" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-research-ingestions" }> = { type: "load-research-ingestions", limit: HANDOFF_LIMIT }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("research ingestions args must use review=<id>, report=<id>, session=<id>, launch=<id>, evidence_kind=<kind>, research_db_written=<bool>, or limit=<n>")
+    if (key === "review") effect.reviewId = value
+    else if (key === "report") effect.reportId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else if (key === "evidence_kind") effect.evidenceKind = value
+    else if (key === "research_db_written") effect.researchDbWritten = readBooleanText(value, "research_db_written")
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("research ingestions arg is unsupported")
+  }
+  return effect
+}
+
+function researchIngestionLatestEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-latest-research-ingestion" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-latest-research-ingestion" }> = { type: "load-latest-research-ingestion" }
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    const value = rest.join("=").trim()
+    if (!key || !value) throw new Error("research ingestion latest args must use review=<id>, report=<id>, session=<id>, or launch=<id>")
+    if (key === "review") effect.reviewId = value
+    else if (key === "report") effect.reportId = value
+    else if (key === "session") effect.sessionId = value
+    else if (key === "launch") effect.launchId = value
+    else throw new Error("research ingestion latest arg is unsupported")
+  }
+  if (!effect.reviewId && !effect.reportId && !effect.sessionId && !effect.launchId) throw new Error("research ingestion latest requires review=<id>, report=<id>, session=<id>, or launch=<id>")
   return effect
 }
 

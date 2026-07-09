@@ -133,6 +133,10 @@ const WRITE_COMMANDS = new Set([
   "result-report",
   "opencode-result-review",
   "result-review",
+  "research-ingestion",
+  "research-ingest",
+  "research-promote",
+  "research-memory-ingest",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

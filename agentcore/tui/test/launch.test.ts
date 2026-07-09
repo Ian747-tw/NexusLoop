@@ -275,6 +275,12 @@ class TestRuntimeClient implements RuntimeClient {
     if (name === "runtime.get_commander_guidance_delivery") return null
     if (name === "runtime.latest_commander_guidance_delivery") return null
     if (name === "runtime.commander_guidance_delivery_summary") return { total_deliveries: 0, requested_count: 0, delivered_count: 0, failed_count: 0, by_mode_counts: {}, latest_deliveries: [], generated_at: "2026-06-20T00:00:00.000Z" }
+    if (name === "runtime.preview_research_ingestion") return researchIngestionPreview(payload, "ready")
+    if (name === "runtime.record_research_ingestion") return researchIngestionResult(payload, payload?.dry_run === true || payload?.dryRun === true ? "dry_run" : "recorded")
+    if (name === "runtime.list_research_ingestions") return []
+    if (name === "runtime.get_research_ingestion") return null
+    if (name === "runtime.latest_research_ingestion") return null
+    if (name === "runtime.research_ingestion_summary") return { total_ingestions: 0, research_memory_count: 0, session_count: 0, positive_finding_count: 0, negative_result_count: 0, inconclusive_result_count: 0, partial_result_count: 0, blocked_result_count: 0, db_written_count: 0, failed_count: 0, latest_ingestions: [], generated_at: "2026-06-20T00:00:00.000Z" }
     if (name === "runtime.command_authority_get") {
       return {
         authority_id: "authority_opencode_smoke",
@@ -631,6 +637,76 @@ function commanderGuidanceDeliveryResult(payload: Record<string, unknown> | unde
     delivered_by: "operator",
     delivery_hash: "hash-guidance-delivery",
     recommended_commands: [],
+  }
+}
+
+function researchIngestionPreview(payload: Record<string, unknown> | undefined, status: "ready" | "blocked") {
+  const reviewId = String(payload?.review_id ?? payload?.reviewId ?? payload?.review ?? "review_test")
+  return {
+    preview_id: "research_ingestion_preview_test",
+    status,
+    can_ingest: status === "ready",
+    review_id: reviewId,
+    report_id: "report_test",
+    session_id: "session_test",
+    launch_id: "launch_test",
+    source_kind: "opencode_result_review",
+    evidence_kind: "positive_finding",
+    ingestion_decision: status === "ready" ? "ingest" : "block",
+    review_decision: "accepted",
+    review_disposition: "accepted_as_evidence",
+    review_projection_state: "reviewed_accepted",
+    report_kind: "completion_report",
+    report_disposition: "reported_done",
+    research_title_preview: "bounded research memory",
+    research_question_preview: "bounded question",
+    hypothesis_preview: "fix works",
+    method_preview: "bounded tests",
+    outcome_preview: "tests passed",
+    evidence_summary_preview: "bounded evidence summary",
+    claims_preview: ["fix-works"],
+    metrics_preview: [],
+    artifacts_preview: [],
+    tests_preview: ["bun-test"],
+    failures_preview: [],
+    followups_preview: ["research-ingestion"],
+    tags_preview: ["opencode", "reviewed"],
+    confidence: "high",
+    novelty_key_preview: "bounded-key",
+    provenance_refs: [
+      { source_kind: "result_review", source_id: reviewId, status: "accepted", summary_preview: "review", pointer_only: true },
+      { source_kind: "result_report", source_id: "report_test", status: "completion_report", summary_preview: "report", pointer_only: true },
+      { source_kind: "opencode_session", source_id: "session_test", status: "session", summary_preview: "session", pointer_only: true },
+      { source_kind: "opencode_launch", source_id: "launch_test", status: "launch", summary_preview: "launch", pointer_only: true },
+    ],
+    research_db_write_status: "not_written",
+    research_db_written: false,
+    mission_mutated: false,
+    checkpoint_created: false,
+    followup_mission_created: false,
+    provider_called: false,
+    mcp_called: false,
+    blockers: status === "ready" ? [] : ["review was not accepted as evidence"],
+    warnings: ["research ingestion writes bounded memory only"],
+    recommended_commands: [],
+    generated_at: "2026-06-20T00:00:00.000Z",
+    redacted_summary_preview: "research ingestion preview",
+    ingestion_hash: "hash-research-ingestion-preview",
+  }
+}
+
+function researchIngestionResult(payload: Record<string, unknown> | undefined, status: "dry_run" | "recorded") {
+  const preview = researchIngestionPreview(payload, "ready")
+  return {
+    ...preview,
+    ingestion_id: "research_ingestion_test",
+    status,
+    research_memory_id: "research_memory_test",
+    research_db_row_id: "research_memory_test",
+    research_db_write_status: status === "dry_run" ? "dry_run" : "written",
+    research_db_written: status === "recorded",
+    recorded_at: "2026-06-20T00:00:00.000Z",
+    recorded_by: "operator",
   }
 }
 
@@ -1708,6 +1784,49 @@ describe("TUI launch boundary", () => {
     expect(runtime.commandNames).toContain("runtime.latest_opencode_result_review")
     expect(runtime.commandNames).toContain("runtime.get_opencode_result_review")
     expect(runtime.commandNames).toContain("runtime.opencode_result_review_summary")
+    expect(runtime.commandNames).toContain("runtime.command_authority_get")
+    expect(runtime.commandNames).not.toContain("runtime.status")
+    expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")
+  })
+
+  test("headless research ingestion scripts skip broad startup refresh", async () => {
+    const runtime = new TestRuntimeClient()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/research-ingestion-preview review=review-1" },
+      { type: "submit" },
+      { type: "insert", text: "/research-ingestion-dry-run review=review-1" },
+      { type: "submit" },
+      { type: "insert", text: "/research-ingestion review=review-1 tags=opencode,reviewed" },
+      { type: "submit" },
+      { type: "insert", text: "/research-ingestions review=review-1" },
+      { type: "submit" },
+      { type: "insert", text: "/research-ingestion-latest review=review-1" },
+      { type: "submit" },
+      { type: "insert", text: "/research-ingestion-show research-ingestion-test" },
+      { type: "submit" },
+      { type: "insert", text: "/research-ingestion-summary" },
+      { type: "submit" },
+      { type: "insert", text: "/authority-show /research-ingestion" },
+      { type: "submit" },
+    ]
+
+    await runTuiEntrypoint({
+      projectDir: "/tmp/nxl-launch-research-ingestion-no-start",
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("Research ingestions")
+    expect(runtime.commandNames).toContain("runtime.preview_research_ingestion")
+    expect(runtime.commandNames).toContain("runtime.record_research_ingestion")
+    expect(runtime.commandNames).toContain("runtime.list_research_ingestions")
+    expect(runtime.commandNames).toContain("runtime.latest_research_ingestion")
+    expect(runtime.commandNames).toContain("runtime.get_research_ingestion")
+    expect(runtime.commandNames).toContain("runtime.research_ingestion_summary")
     expect(runtime.commandNames).toContain("runtime.command_authority_get")
     expect(runtime.commandNames).not.toContain("runtime.status")
     expect(runtime.commandNames).not.toContain("runtime.list_recent_missions")

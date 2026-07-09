@@ -6280,6 +6280,118 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
 
+  test("research ingestion slash commands promote accepted reviews into bounded memory only", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=research", "ingestion", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id
+    expect(sessionId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report", args: [`session=${sessionId}`, "kind=completion_report", "summary=implemented candidate fix token=abc123", "outcome=tests passed", "changed_files=fileA.ts", "tests_run=bun-test", "claims=fix-works", "followups=research-ingestion"] })
+    const reportId = state.opencodeResultReports?.latestResult?.report_id
+    expect(reportId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-review", args: [`report=${reportId}`, "decision=accepted", "rationale=bounded evidence is suitable for memory token=abc123", "accepted_claims=fix-works"] })
+    const reviewId = state.opencodeResultReviews?.latestResult?.review_id
+    expect(reviewId).toBeTruthy()
+
+    const commandCountBeforePreview = runtime.sentCommands.length
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestion-preview", args: [`review=${reviewId}`, "tags=opencode,reviewed"] })
+    expect(state.researchIngestions?.preview).toMatchObject({
+      status: "ready",
+      can_ingest: true,
+      review_id: reviewId,
+      report_id: reportId,
+      session_id: sessionId,
+      source_kind: "opencode_result_review",
+      evidence_kind: "positive_finding",
+      ingestion_decision: "ingest",
+      research_db_write_status: "not_written",
+      research_db_written: false,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    expect(state.researchIngestions?.preview?.provenance_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source_kind: "result_review", source_id: reviewId, pointer_only: true }),
+      expect.objectContaining({ source_kind: "result_report", source_id: reportId, pointer_only: true }),
+      expect.objectContaining({ source_kind: "opencode_session", source_id: sessionId, pointer_only: true }),
+    ]))
+    expect(runtime.sentCommands).toHaveLength(commandCountBeforePreview)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestion-dry-run", args: [`review=${reviewId}`] })
+    expect(state.researchIngestions?.latestResult).toMatchObject({ status: "dry_run", research_db_write_status: "dry_run", research_db_written: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestions", args: [`review=${reviewId}`] })
+    expect(state.researchIngestions?.records).toHaveLength(0)
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestion", args: [`review=${reviewId}`, "tags=opencode,reviewed,sk-test-SECRET123456"] })
+    expect(state.researchIngestions?.latestResult).toMatchObject({
+      status: "recorded",
+      evidence_kind: "positive_finding",
+      research_db_write_status: "written",
+      research_db_written: true,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+    })
+    const ingestionId = state.researchIngestions?.latestResult?.ingestion_id
+    const researchMemoryId = state.researchIngestions?.latestResult?.research_memory_id
+    expect(ingestionId).toBeTruthy()
+    expect(researchMemoryId).toBeTruthy()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestion", args: [`review=${reviewId}`] })
+    expect(state.researchIngestions?.latestResult).toMatchObject({ status: "blocked" })
+    expect(state.researchIngestions?.commandError).toContain("already exists")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report", args: [`session=${sessionId}`, "kind=failure_report", "summary=failed alternative", "known_failures=test still fails"] })
+    const rejectedReportId = state.opencodeResultReports?.latestResult?.report_id
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-review", args: [`report=${rejectedReportId}`, "decision=rejected", "rationale=claim unsupported"] })
+    const rejectedReviewId = state.opencodeResultReviews?.latestResult?.review_id
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestion-preview", args: [`review=${rejectedReviewId}`] })
+    expect(state.researchIngestions?.preview).toMatchObject({ status: "blocked", can_ingest: false, ingestion_decision: "block" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestions", args: [`review=${reviewId}`] })
+    expect(state.researchIngestions?.records).toEqual([expect.objectContaining({ ingestion_id: ingestionId, research_db_written: true })])
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestion-latest", args: [`review=${reviewId}`] })
+    expect(state.researchIngestions?.latest).toMatchObject({ ingestion_id: ingestionId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestion-show", args: [ingestionId!] })
+    expect(state.researchIngestions?.selected).toMatchObject({ ingestion_id: ingestionId })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestion-summary", args: [] })
+    expect(state.researchIngestions?.summary).toMatchObject({ total_ingestions: 1, research_memory_count: 1, positive_finding_count: 1, db_written_count: 1 })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-summary", args: [] })
+    expect(state.researchMemory?.summary?.total_candidates_available).toBeGreaterThan(4)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-search", args: ["query=tests"] })
+    expect(state.researchMemory?.retrievalPreview?.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ result_id: researchMemoryId })]))
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "stage-command", args: ["/research-ingestion", `review=${reviewId}`] })
+    expect(state.operatorActions?.staged?.command_type).toBe("write")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/research-ingestion"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/research-ingestion",
+      risk: "high_impact_write",
+      calls_provider: false,
+      creates_external_process: false,
+      mutates_events: true,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("research-memory")
+
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Research ingestions")
+    expect(snapshot).toContain("evidence=positive_finding")
+    expect(snapshot).toContain("research_db_written=true")
+    expect(snapshot).toContain("mission_mutated=false")
+    expect(snapshot).toContain("checkpoint_created=false")
+    expect(snapshot).toContain("followup_mission_created=false")
+    expect(snapshot).toContain("provider_called=false")
+    expect(snapshot).toContain("mcp_called=false")
+    expect(snapshot).toContain("ingestion writes bounded research memory only")
+    expect(snapshot).toContain("selected=/research-ingestion risk=high_impact_write")
+    expect(snapshot).not.toContain("abc123")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
+
   test("research memory and novelty slash commands render read-only previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

@@ -113,6 +113,8 @@ import type { ContextPacketPreview, ContextPacketSummary } from "./context/conte
 import { ResearchMemoryService, readResearchMemoryRetrievalInput, type ResearchMemoryReadAdapter } from "./research-memory/research-memory-service"
 import { ResearchNoveltyService, readResearchNoveltyInput } from "./research-memory/research-novelty-service"
 import type { ResearchMemoryRetrievalPreview, ResearchMemorySummary, ResearchNoveltyPreview } from "./research-memory/research-memory-types"
+import { ResearchIngestionService, readResearchIngestionPreviewInput, readResearchIngestionRecordInput, type ResearchIngestionDbWriter } from "./research/research-ingestion-service"
+import type { ResearchIngestionPreview, ResearchIngestionRecord, ResearchIngestionResult, ResearchIngestionSummary } from "./research/research-ingestion-types"
 import type { OpenCodeSpawn } from "./opencode/process-adapter"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
@@ -175,6 +177,8 @@ import {
   type SearchOptions,
   type Topic,
   type TopicSnapshot,
+  type ResearchResultInput,
+  type ResearchResult,
 } from "./research-db/research-db"
 
 const EXECUTOR_SHUTDOWN_DRAIN_TIMEOUT_MS = 50
@@ -262,6 +266,8 @@ export interface RuntimeResearchDbProjection extends RuntimeResearchDbReader {
   addSource(input: Parameters<ExternalApiResearchDbWriter["addSource"]>[0]): ReturnType<ExternalApiResearchDbWriter["addSource"]>
   addNote(input: Parameters<ExternalApiResearchDbWriter["addNote"]>[0]): ReturnType<ExternalApiResearchDbWriter["addNote"]>
   addArtifact(input: Parameters<ExternalApiResearchDbWriter["addArtifact"]>[0]): ReturnType<ExternalApiResearchDbWriter["addArtifact"]>
+  proposeResearchResult(input: ResearchResultInput): ResearchResult
+  acceptResearchResult(resultId: string): ResearchResult
 }
 
 export class RuntimeServer {
@@ -352,6 +358,7 @@ export class RuntimeServer {
   private opencodeWakeActionExecutionServiceInstance: OpenCodeWakeActionExecutionService | null = null
   private opencodeResultReportServiceInstance: OpenCodeResultReportService | null = null
   private opencodeResultReviewServiceInstance: OpenCodeResultReviewService | null = null
+  private researchIngestionServiceInstance: ResearchIngestionService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -1174,6 +1181,31 @@ export class RuntimeServer {
         })
       case "runtime.opencode_result_review_summary":
         return this.openCodeResultReviewGateSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
+      case "runtime.preview_research_ingestion":
+        return this.previewResearchIngestion(readResearchIngestionPreviewInput(payload))
+      case "runtime.record_research_ingestion":
+        return this.recordResearchIngestion(readResearchIngestionRecordInput(payload))
+      case "runtime.list_research_ingestions":
+        return this.listResearchIngestions({
+          limit: optionalPositiveInteger(payload.limit, "limit", 100),
+          review_id: optionalString(payload.reviewId ?? payload.review_id ?? payload.review, "reviewId"),
+          report_id: optionalString(payload.reportId ?? payload.report_id ?? payload.report, "reportId"),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+          evidence_kind: optionalString(payload.evidenceKind ?? payload.evidence_kind, "evidenceKind"),
+          research_db_written: optionalBoolean(payload.researchDbWritten ?? payload.research_db_written, "researchDbWritten"),
+        })
+      case "runtime.get_research_ingestion":
+        return this.getResearchIngestion(requiredString(payload.ingestionId ?? payload.ingestion_id, "ingestionId"))
+      case "runtime.latest_research_ingestion":
+        return this.latestResearchIngestion({
+          review_id: optionalString(payload.reviewId ?? payload.review_id ?? payload.review, "reviewId"),
+          report_id: optionalString(payload.reportId ?? payload.report_id ?? payload.report, "reportId"),
+          session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"),
+          launch_id: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch, "launchId"),
+        })
+      case "runtime.research_ingestion_summary":
+        return this.researchIngestionSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
       case "runtime.research_memory_summary":
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
@@ -2356,6 +2388,31 @@ export class RuntimeServer {
 
   async openCodeResultReviewGateSummary(input: Parameters<OpenCodeResultReviewService["summary"]>[0] = {}): Promise<OpenCodeResultReviewGateSummary> {
     return this.opencodeResultReviewService().summary(input)
+  }
+
+  async previewResearchIngestion(input: Parameters<ResearchIngestionService["preview"]>[0] = {}): Promise<ResearchIngestionPreview> {
+    return this.researchIngestionService().preview(input)
+  }
+
+  async recordResearchIngestion(input: Parameters<ResearchIngestionService["record"]>[0] = {}): Promise<ResearchIngestionResult> {
+    if (input.dry_run === true) return this.researchIngestionService().record(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.researchIngestionService().record(input))
+  }
+
+  async listResearchIngestions(input: Parameters<ResearchIngestionService["list"]>[0] = {}): Promise<ResearchIngestionRecord[]> {
+    return this.researchIngestionService().list(input)
+  }
+
+  async getResearchIngestion(ingestionId: string): Promise<ResearchIngestionResult | null> {
+    return this.researchIngestionService().get(ingestionId)
+  }
+
+  async latestResearchIngestion(input: Parameters<ResearchIngestionService["latest"]>[0] = {}): Promise<ResearchIngestionResult | null> {
+    return this.researchIngestionService().latest(input)
+  }
+
+  async researchIngestionSummary(input: Parameters<ResearchIngestionService["summary"]>[0] = {}): Promise<ResearchIngestionSummary> {
+    return this.researchIngestionService().summary(input)
   }
 
   researchMemorySummary(): ResearchMemorySummary {
@@ -4192,6 +4249,19 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
     })
     return this.researchNoveltyServiceInstance
+  }
+
+  private researchIngestionService(): ResearchIngestionService {
+    this.researchIngestionServiceInstance ??= new ResearchIngestionService({
+      eventStore: this.eventStore,
+      researchDb: this.getResearchDb() as ResearchIngestionDbWriter,
+      resultReviewService: this.opencodeResultReviewService(),
+      resultReportService: this.opencodeResultReportService(),
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.researchIngestionServiceInstance
   }
 
   private researchMemoryReadAdapter(): ResearchMemoryReadAdapter {
