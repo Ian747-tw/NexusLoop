@@ -290,7 +290,7 @@ export class ResearchIngestionService {
     const result = this.options.researchDb.proposeResearchResult({
       result_id: researchMemoryId,
       result_type: resultType,
-      label: preview.evidence_kind,
+      label: researchMemoryLabelForEvidenceKind(preview.evidence_kind),
       title: preview.research_title_preview,
       summary: preview.evidence_summary_preview,
       confidence: confidenceForDb(preview.confidence),
@@ -547,6 +547,12 @@ function resultTypeForEvidenceKind(kind: ResearchEvidenceKind): "implementation_
   if (kind === "negative_result" || kind === "blocked_result") return "negative_finding"
   if (kind === "status_note" || kind === "artifact_index" || kind === "metric_observation") return "reproduction_record"
   return "implementation_change"
+}
+
+function researchMemoryLabelForEvidenceKind(kind: ResearchEvidenceKind): string {
+  if (kind === "negative_result" || kind === "blocked_result") return "failure"
+  if (kind === "status_note" || kind === "artifact_index" || kind === "metric_observation") return "probe"
+  return "finding"
 }
 
 function isCompatibleEvidenceKind(input: ResearchEvidenceKind, derived: ResearchEvidenceKind): boolean {

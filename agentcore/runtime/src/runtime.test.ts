@@ -19549,10 +19549,12 @@ describe("OpenCode launch readiness", () => {
     await expect(server.command("runtime.get_research_ingestion", { ingestionId: result.ingestion_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id, research_memory_id: result.research_memory_id })
     await expect(server.command("runtime.latest_research_ingestion", { reviewId: accepted.review_id })).resolves.toMatchObject({ ingestion_id: result.ingestion_id })
     await expect(server.command("runtime.research_ingestion_summary")).resolves.toMatchObject({ total_ingestions: 1, research_memory_count: 1, positive_finding_count: 1, db_written_count: 1 })
-    await expect(server.command("runtime.research_memory_summary")).resolves.toMatchObject({ total_candidates_available: expect.any(Number), has_research_db_projection: true })
+    await expect(server.command("runtime.research_memory_summary")).resolves.toMatchObject({ total_candidates_available: expect.any(Number), has_research_db_projection: true, label_counts: expect.objectContaining({ finding: expect.any(Number) }) })
     const retrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter spectral curriculum", limit: 10 }) as { candidates: Array<{ result_id: string; source_refs: Array<{ pointer_only: boolean }> }> }
     expect(retrieval.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ result_id: result.research_memory_id })]))
     expect(retrieval.candidates.find((candidate) => candidate.result_id === result.research_memory_id)?.source_refs.every((ref) => ref.pointer_only)).toBe(true)
+    const findingRetrieval = await server.command("runtime.preview_research_memory_retrieval", { query: "adapter spectral curriculum", labels: ["finding"], limit: 10 }) as { candidates: Array<{ result_id: string; label: string }> }
+    expect(findingRetrieval.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ result_id: result.research_memory_id, label: "finding" })]))
 
     const eventKinds = events.map((event) => event.kind)
     expect(eventKinds).not.toContain("mission_progress_recorded")
