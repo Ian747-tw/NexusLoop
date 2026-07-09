@@ -173,8 +173,8 @@ def test_user_searches_inspects_and_profiles_research_memory_without_writes(sand
     assert f"selected={memory_id}" in stdout
     assert "selected_refs artifacts=" in stdout
     assert "provenance=" in stdout
-    assert "raw event log" not in stdout.lower()
-    assert "full research.db" not in stdout.lower() or "no full research.db dump" in stdout.lower()
+    assert "previews do not include raw research records" in stdout
+    assert "full research.db" in stdout
     assert "selected=/research-memory-near-duplicates risk=safe_read" in stdout
     assert "bounded lexical" in stdout
     assert "research-search-secret" not in stdout
