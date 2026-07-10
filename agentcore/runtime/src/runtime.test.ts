@@ -21663,6 +21663,17 @@ describe("OpenCode launch readiness", () => {
     expect(missionScopedProposal.open_loops.map((loop) => loop.loop_kind)).not.toContain("pending_commander_question")
     expect(missionScopedProposal.open_loops.map((loop) => loop.loop_kind)).not.toContain("human_correction")
     expect(missionScopedProposal.readiness).not.toBe("open_loops_pending")
+    await expect(server.command("runtime.list_commander_continuity_open_loops", { missionId: quietMission.missionId })).resolves.toEqual([])
+    const missionThread = await server.command("runtime.show_commander_continuity_thread", { missionId: quietMission.missionId }) as {
+      mission_id?: string
+      session_id?: string
+      open_loop_count: number
+      summary_preview: string
+    }
+    expect(missionThread.mission_id).toBe(quietMission.missionId)
+    expect(missionThread.session_id).toBeTruthy()
+    expect(missionThread.open_loop_count).toBe(0)
+    expect(missionThread.summary_preview).toContain("sessions=1")
 
     const mid = await server.command("runtime.preview_commander_midmission_continuity", { sessionId }) as {
       status: string
@@ -21712,6 +21723,7 @@ describe("OpenCode launch readiness", () => {
     await expect(client.command("runtime.commander_continuity_summary")).resolves.toMatchObject({ total_recent_sessions: 0 })
     await expect(client.command("runtime.list_commander_continuity_open_loops")).resolves.toEqual([])
     await expect(client.command("runtime.show_commander_continuity_thread", { sessionId: "missing" })).resolves.toBeNull()
+    expect(existsSync(join(noStartDir, ".nxl", "research.db"))).toBe(false)
     expect(adapter.startCalls).toBe(0)
     expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
     await client.shutdown?.()

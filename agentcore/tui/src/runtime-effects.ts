@@ -586,7 +586,7 @@ export type RuntimeUiEffect =
   | { type: "preview-commander-proposal-continuity"; objective: string; missionId?: string; sessionId?: string; includeResearchMemory?: boolean; includeNearDuplicates?: boolean; includeOpenLoops?: boolean; includeRecentSessions?: boolean; maxRecentSessions?: number; maxOpenLoops?: number; maxResearchCandidates?: number; maxInspectedMemory?: number; targetTokenBudget?: number; modelId?: string }
   | { type: "preview-commander-midmission-continuity"; sessionId?: string; launchId?: string; includeResearchMemory?: boolean; includeOpenLoops?: boolean; includeLocalWorkingMemory?: boolean; maxOpenLoops?: number; maxResearchCandidates?: number; targetTokenBudget?: number; modelId?: string }
   | { type: "load-commander-continuity-summary"; limit?: number; includeClosed?: boolean }
-  | { type: "load-commander-continuity-open-loops"; sessionId?: string; launchId?: string; severity?: string; kind?: string; limit?: number }
+  | { type: "load-commander-continuity-open-loops"; sessionId?: string; launchId?: string; missionId?: string; severity?: string; kind?: string; limit?: number }
   | { type: "load-commander-continuity-thread"; threadId?: string; sessionId?: string; launchId?: string; missionId?: string; objective?: string }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
   | { type: "preview-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string }
@@ -1672,7 +1672,7 @@ export async function applyRuntimeUiEffect(
       case "load-commander-continuity-summary":
         return applyCommanderContinuitySummary(state, await runtime.command("runtime.commander_continuity_summary", { limit: effect.limit, includeClosed: effect.includeClosed }))
       case "load-commander-continuity-open-loops":
-        return applyCommanderContinuityOpenLoops(state, await runtime.command("runtime.list_commander_continuity_open_loops", { sessionId: effect.sessionId, launchId: effect.launchId, severity: effect.severity, kind: effect.kind, limit: effect.limit }))
+        return applyCommanderContinuityOpenLoops(state, await runtime.command("runtime.list_commander_continuity_open_loops", { sessionId: effect.sessionId, launchId: effect.launchId, missionId: effect.missionId, severity: effect.severity, kind: effect.kind, limit: effect.limit }))
       case "load-commander-continuity-thread":
         return applyCommanderContinuityThread(state, await runtime.command("runtime.show_commander_continuity_thread", { threadId: effect.threadId, sessionId: effect.sessionId, launchId: effect.launchId, missionId: effect.missionId, objective: effect.objective }))
       case "preview-research-novelty-check":
@@ -18544,12 +18544,13 @@ function commanderContinuitySummaryEffect(args: string[]): Extract<RuntimeUiEffe
 
 function commanderContinuityOpenLoopsEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-commander-continuity-open-loops" }> {
   const effect: Extract<RuntimeUiEffect, { type: "load-commander-continuity-open-loops" }> = { type: "load-commander-continuity-open-loops", limit: HANDOFF_LIMIT }
-  const knownKeys = new Set(["session", "session_id", "launch", "launch_id", "severity", "kind", "limit"])
+  const knownKeys = new Set(["session", "session_id", "launch", "launch_id", "mission", "mission_id", "severity", "kind", "limit"])
   for (let index = 0; index < args.length; index += 1) {
     const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, new Set(), "commander open-loops args must use optional session=<id>, launch=<id>, severity=<severity>, kind=<kind>, limit=<n>")
     index = nextIndex
     if (key === "session" || key === "session_id") effect.sessionId = value
     else if (key === "launch" || key === "launch_id") effect.launchId = value
+    else if (key === "mission" || key === "mission_id") effect.missionId = value
     else if (key === "severity") effect.severity = value
     else if (key === "kind") effect.kind = value
     else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)

@@ -210,6 +210,7 @@ export type CommanderContinuitySummaryInput = {
 export type CommanderContinuityOpenLoopInput = {
   session_id?: string
   launch_id?: string
+  mission_id?: string
   severity?: string
   kind?: string
   limit?: number

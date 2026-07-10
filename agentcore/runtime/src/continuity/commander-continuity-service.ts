@@ -57,7 +57,7 @@ export type CommanderContinuityServiceOptions = {
   wakeActionExecutionService: OpenCodeWakeActionExecutionService
   resultReportService: OpenCodeResultReportService
   resultReviewService: OpenCodeResultReviewService
-  researchIngestionService: ResearchIngestionService
+  researchIngestionService: Pick<ResearchIngestionService, "list" | "latest">
   researchMemoryService: ResearchMemoryService
   now?: () => Date
 }
@@ -299,6 +299,8 @@ export class CommanderContinuityService {
     const limit = clamp(input.limit, 20, 1, 100)
     const sessionId = optional(input.session_id)
     const launchId = optional(input.launch_id)
+    const missionId = optional(input.mission_id)
+    if (!sessionId && !launchId && missionId) return this.proposalOpenLoops({ mission_id: missionId }, limit)
     const loops: CommanderContinuityOpenLoop[] = []
     const [questions, guidance, deliveries, humanControls, reports, reviews, ingestions, watchdogs, forcedReports, wakeActions] = await Promise.all([
       this.options.questionService.listAll({ session_id: sessionId, launch_id: launchId }),
@@ -344,6 +346,21 @@ export class CommanderContinuityService {
     const sid = sessionId ?? launch?.session_id
     const session = sid ? await this.options.opencodeSessionService.get(sid) : null
     if (session) return this.threadCardForSession(session, await this.options.launchGateService.listAll({ session_id: session.session_id }), await this.openLoops({ session_id: session.session_id, limit: 50 }))
+    const missionId = optional(input.mission_id)
+    if (missionId) {
+      const sessions = await this.options.opencodeSessionService.list({ limit: MAX_LIST, mission_id: missionId })
+      if (sessions.length > 0) {
+        const loops = await this.proposalOpenLoops({ mission_id: missionId }, 50)
+        const card = await this.threadCardForSession(sessions[0], await this.options.launchGateService.listAll({}), loops)
+        return redactValue({
+          ...card,
+          thread_id: `continuity_mission_thread_${hash(stableJson({ mission_id: missionId, sessions: sessions.map((item) => item.session_id) })).slice(0, 16)}`,
+          mission_id: missionId,
+          open_loop_count: loops.length,
+          summary_preview: `Best-effort continuity thread for mission ${missionId}; sessions=${sessions.length}; open_loops=${loops.length}.`,
+        })
+      }
+    }
     if (!objective && !input.thread_id && !input.mission_id) return null
     const hashValue = hash(stableJson({ thread_id: input.thread_id, mission_id: input.mission_id, objective }))
     return redactValue({
@@ -455,6 +472,7 @@ export function readCommanderContinuityOpenLoopInput(value: unknown): CommanderC
   return {
     session_id: optional(input.sessionId ?? input.session_id ?? input.session),
     launch_id: optional(input.launchId ?? input.launch_id ?? input.launch),
+    mission_id: optional(input.missionId ?? input.mission_id ?? input.mission),
     severity: optional(input.severity),
     kind: optional(input.kind ?? input.loopKind ?? input.loop_kind),
     limit: optionalNumber(input.limit),

@@ -184,6 +184,14 @@ import {
 } from "./research-db/research-db"
 
 const EXECUTOR_SHUTDOWN_DRAIN_TIMEOUT_MS = 50
+const READ_ONLY_RESEARCH_INGESTION_DB: ResearchIngestionDbWriter = {
+  proposeResearchResult() {
+    throw new Error("read-only research ingestion projection cannot write research memory")
+  },
+  acceptResearchResult() {
+    throw new Error("read-only research ingestion projection cannot accept research memory")
+  },
+}
 
 export interface RuntimeServerOptions {
   projectDir?: string
@@ -361,6 +369,7 @@ export class RuntimeServer {
   private opencodeResultReportServiceInstance: OpenCodeResultReportService | null = null
   private opencodeResultReviewServiceInstance: OpenCodeResultReviewService | null = null
   private researchIngestionServiceInstance: ResearchIngestionService | null = null
+  private researchIngestionReadServiceInstance: Pick<ResearchIngestionService, "list" | "latest"> | null = null
   private commanderContinuityServiceInstance: CommanderContinuityService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
@@ -4317,11 +4326,24 @@ export class RuntimeServer {
       wakeActionExecutionService: this.opencodeWakeActionExecutionService(),
       resultReportService: this.opencodeResultReportService(),
       resultReviewService: this.opencodeResultReviewService(),
-      researchIngestionService: this.researchIngestionService(),
+      researchIngestionService: this.researchIngestionReadService(),
       researchMemoryService: this.researchMemoryService(),
       now: this.researchSynthesisNow,
     })
     return this.commanderContinuityServiceInstance
+  }
+
+  private researchIngestionReadService(): Pick<ResearchIngestionService, "list" | "latest"> {
+    this.researchIngestionReadServiceInstance ??= new ResearchIngestionService({
+      eventStore: this.eventStore,
+      researchDb: READ_ONLY_RESEARCH_INGESTION_DB,
+      resultReviewService: this.opencodeResultReviewService(),
+      resultReportService: this.opencodeResultReportService(),
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.researchIngestionReadServiceInstance
   }
 
   private researchIngestionService(): ResearchIngestionService {
