@@ -94,6 +94,8 @@ export { OpenCodeWakeSupervisorExecutionService } from "./opencode-session/openc
 export * from "./opencode-session/opencode-wake-supervisor-execution-types"
 export { OpenCodeWakeActionExecutionService } from "./opencode-session/opencode-wake-action-execution-service"
 export * from "./opencode-session/opencode-wake-action-execution-types"
+export { CommanderContinuityService } from "./continuity/commander-continuity-service"
+export * from "./continuity/commander-continuity-types"
 export { OpenCodeResultReportService } from "./opencode-session/opencode-result-report-service"
 export * from "./opencode-session/opencode-result-report-types"
 export { OpenCodeResultReviewService } from "./opencode-session/opencode-result-review-service"

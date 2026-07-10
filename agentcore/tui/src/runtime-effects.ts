@@ -57,6 +57,16 @@ import type {
   ResearchMemoryState,
   ResearchMemorySummaryState,
   ResearchNoveltyPreviewSummary,
+  CommanderContinuityBudgetSummary,
+  CommanderContinuityCommandSummary,
+  CommanderContinuityOpenLoopSummary,
+  CommanderContinuitySectionSummary,
+  CommanderContinuitySourceRefSummary,
+  CommanderContinuityState,
+  CommanderContinuitySummaryState,
+  CommanderContinuityThreadCardSummary,
+  CommanderMidMissionContinuityPacketSummary,
+  CommanderProposalContinuityPacketSummary,
   CommanderExecutorReviewCommandSummary,
   CommanderExecutorReviewFindingSummary,
   CommanderExecutorReviewPreviewSummary,
@@ -573,6 +583,11 @@ export type RuntimeUiEffect =
   | { type: "load-research-memory-record"; memoryId: string; sourceKind?: string; includeArtifacts?: boolean; includeCitations?: boolean }
   | { type: "preview-research-memory-near-duplicates"; query?: string; objective?: string; labels?: string[]; limit?: number; duplicateThreshold?: number; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
   | { type: "load-research-memory-search-profile" }
+  | { type: "preview-commander-proposal-continuity"; objective: string; missionId?: string; sessionId?: string; includeResearchMemory?: boolean; includeNearDuplicates?: boolean; includeOpenLoops?: boolean; includeRecentSessions?: boolean; maxRecentSessions?: number; maxOpenLoops?: number; maxResearchCandidates?: number; maxInspectedMemory?: number; targetTokenBudget?: number; modelId?: string }
+  | { type: "preview-commander-midmission-continuity"; sessionId?: string; launchId?: string; includeResearchMemory?: boolean; includeOpenLoops?: boolean; includeLocalWorkingMemory?: boolean; maxOpenLoops?: number; maxResearchCandidates?: number; targetTokenBudget?: number; modelId?: string }
+  | { type: "load-commander-continuity-summary"; limit?: number; includeClosed?: boolean }
+  | { type: "load-commander-continuity-open-loops"; sessionId?: string; launchId?: string; missionId?: string; severity?: string; kind?: string; limit?: number }
+  | { type: "load-commander-continuity-thread"; threadId?: string; sessionId?: string; launchId?: string; missionId?: string; objective?: string }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
   | { type: "preview-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string }
   | { type: "execute-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; dryRun?: boolean }
@@ -1650,6 +1665,16 @@ export async function applyRuntimeUiEffect(
         return applyResearchMemoryNearDuplicates(state, await runtime.command("runtime.preview_research_memory_near_duplicates", { query: effect.query, objective: effect.objective, labels: effect.labels, limit: effect.limit, duplicateThreshold: effect.duplicateThreshold, missionId: effect.missionId, sessionId: effect.sessionId, includeFailures: effect.includeFailures, includeArtifacts: effect.includeArtifacts }))
       case "load-research-memory-search-profile":
         return applyResearchMemorySearchProfile(state, await runtime.command("runtime.research_memory_search_profile"))
+      case "preview-commander-proposal-continuity":
+        return applyCommanderProposalContinuity(state, await runtime.command("runtime.preview_commander_proposal_continuity", commanderProposalContinuityPayload(effect)))
+      case "preview-commander-midmission-continuity":
+        return applyCommanderMidMissionContinuity(state, await runtime.command("runtime.preview_commander_midmission_continuity", commanderMidMissionContinuityPayload(effect)))
+      case "load-commander-continuity-summary":
+        return applyCommanderContinuitySummary(state, await runtime.command("runtime.commander_continuity_summary", { limit: effect.limit, includeClosed: effect.includeClosed }))
+      case "load-commander-continuity-open-loops":
+        return applyCommanderContinuityOpenLoops(state, await runtime.command("runtime.list_commander_continuity_open_loops", { sessionId: effect.sessionId, launchId: effect.launchId, missionId: effect.missionId, severity: effect.severity, kind: effect.kind, limit: effect.limit }))
+      case "load-commander-continuity-thread":
+        return applyCommanderContinuityThread(state, await runtime.command("runtime.show_commander_continuity_thread", { threadId: effect.threadId, sessionId: effect.sessionId, launchId: effect.launchId, missionId: effect.missionId, objective: effect.objective }))
       case "preview-research-novelty-check":
         return applyResearchNoveltyPreview(state, await runtime.command("runtime.preview_research_novelty_check", {
           question: effect.question,
@@ -2285,6 +2310,7 @@ export async function applyRuntimeUiEffect(
     if (isContextPacketEffect(effect)) return recordContextPacketCommandError(state, error)
     if (isOpenCodeSessionInstructionPackEffect(effect)) return recordOpenCodeSessionInstructionPackCommandError(state, error)
     if (isResearchIngestionEffect(effect)) return recordResearchIngestionCommandError(state, error)
+    if (isCommanderContinuityEffect(effect)) return recordCommanderContinuityCommandError(state, error)
     if (isResearchMemoryEffect(effect)) return recordResearchMemoryCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
@@ -4637,6 +4663,73 @@ function applyResearchMemorySearchProfile(state: UiState, value: unknown): UiSta
   }
 }
 
+function applyCommanderProposalContinuity(state: UiState, value: unknown): UiState {
+  const proposalPacket = readCommanderProposalContinuityPacket(value)
+  const commandError = proposalPacket.status === "blocked" ? proposalPacket.blockers.join("; ") || "commander proposal continuity blocked" : undefined
+  return {
+    ...state,
+    commanderContinuity: {
+      ...commanderContinuityState(state),
+      proposalPacket,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "commander proposal continuity", detail: `readiness=${proposalPacket.readiness} loops=${proposalPacket.open_loops.length}`, status: proposalPacket.status }].slice(-12),
+  }
+}
+
+function applyCommanderMidMissionContinuity(state: UiState, value: unknown): UiState {
+  const midMissionPacket = readCommanderMidMissionContinuityPacket(value)
+  const commandError = midMissionPacket.status === "blocked" ? midMissionPacket.blockers.join("; ") || "commander mid-mission continuity blocked" : undefined
+  return {
+    ...state,
+    commanderContinuity: {
+      ...commanderContinuityState(state),
+      midMissionPacket,
+      commandError,
+    },
+    systemActions: [...state.systemActions, { title: "commander mid-mission continuity", detail: `session=${midMissionPacket.session_id} readiness=${midMissionPacket.readiness}`, status: midMissionPacket.status }].slice(-12),
+  }
+}
+
+function applyCommanderContinuitySummary(state: UiState, value: unknown): UiState {
+  const summary = readCommanderContinuitySummary(value)
+  return {
+    ...state,
+    commanderContinuity: {
+      ...commanderContinuityState(state),
+      summary,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander continuity summary", detail: `threads=${summary.latest_threads.length} open_loops=${summary.open_loop_count}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyCommanderContinuityOpenLoops(state: UiState, value: unknown): UiState {
+  const openLoops = readCommanderContinuityOpenLoops(value)
+  return {
+    ...state,
+    commanderContinuity: {
+      ...commanderContinuityState(state),
+      openLoops,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander open loops", detail: `loops=${openLoops.length}`, status: "loaded" }].slice(-12),
+  }
+}
+
+function applyCommanderContinuityThread(state: UiState, value: unknown): UiState {
+  const selectedThread = readCommanderContinuityThread(value)
+  return {
+    ...state,
+    commanderContinuity: {
+      ...commanderContinuityState(state),
+      selectedThread,
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, { title: "commander continuity thread", detail: `thread=${selectedThread.thread_id}`, status: "loaded" }].slice(-12),
+  }
+}
+
 function applyResearchNoveltyPreview(state: UiState, value: unknown): UiState {
   const noveltyPreview = readResearchNoveltyPreview(value)
   return {
@@ -5878,6 +5971,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeResultReportCommands.has(command)) return state.opencodeResultReports?.commandError
   if (opencodeResultReviewGateCommands.has(command)) return state.opencodeResultReviews?.commandError
   if (researchIngestionCommands.has(command)) return state.researchIngestions?.commandError
+  if (commanderContinuityCommands.has(command)) return state.commanderContinuity?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -5935,6 +6029,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeResultReportCommands.has(command)) return { ...state, opencodeResultReports: { ...opencodeResultReportState(state), commandError: undefined } }
   if (opencodeResultReviewGateCommands.has(command)) return { ...state, opencodeResultReviews: { ...opencodeResultReviewGateState(state), commandError: undefined } }
   if (researchIngestionCommands.has(command)) return { ...state, researchIngestions: { ...researchIngestionState(state), commandError: undefined } }
+  if (commanderContinuityCommands.has(command)) return { ...state, commanderContinuity: { ...commanderContinuityState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -6472,6 +6567,26 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "research-search-profile":
     case "memory-profile":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-search-profile" })
+    case "commander-continuity-preview":
+    case "continuity-preview":
+    case "commander-proposal-memory-packet":
+    case "proposal-memory-packet":
+    case "commander-proposal-continuity":
+    case "proposal-continuity":
+      return applyRuntimeUiEffect(commandState, runtime, commanderProposalContinuityEffect(args))
+    case "commander-midmission-packet":
+    case "midmission-packet":
+    case "mid-mission-packet":
+      return applyRuntimeUiEffect(commandState, runtime, commanderMidMissionContinuityEffect(args))
+    case "commander-continuity-summary":
+    case "continuity-summary":
+      return applyRuntimeUiEffect(commandState, runtime, commanderContinuitySummaryEffect(args))
+    case "commander-open-loops":
+    case "open-loops":
+      return applyRuntimeUiEffect(commandState, runtime, commanderContinuityOpenLoopsEffect(args))
+    case "commander-continuity-thread":
+    case "continuity-thread":
+      return applyRuntimeUiEffect(commandState, runtime, commanderContinuityThreadEffect(args))
     case "research-novelty-preview":
     case "novelty-preview":
     case "research-dup-check":
@@ -7396,6 +7511,11 @@ function isResearchMemoryEffect(effect: RuntimeUiEffect): boolean {
   return researchMemoryCommands.has(effect.command)
 }
 
+function isCommanderContinuityEffect(effect: RuntimeUiEffect): boolean {
+  if (effect.type !== "send-command") return commanderContinuityEffectTypes.has(effect.type)
+  return commanderContinuityCommands.has(effect.command)
+}
+
 function isCommanderExecutorReviewEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return commanderExecutorReviewEffectTypes.has(effect.type)
   return commanderExecutorReviewCommands.has(effect.command)
@@ -7951,6 +8071,24 @@ const researchMemoryCommands = new Set([
   "research-dup-check",
 ])
 
+const commanderContinuityCommands = new Set([
+  "commander-continuity-preview",
+  "commander-proposal-memory-packet",
+  "commander-proposal-continuity",
+  "commander-midmission-packet",
+  "commander-continuity-summary",
+  "commander-open-loops",
+  "commander-continuity-thread",
+  "continuity-preview",
+  "proposal-memory-packet",
+  "proposal-continuity",
+  "midmission-packet",
+  "mid-mission-packet",
+  "continuity-summary",
+  "open-loops",
+  "continuity-thread",
+])
+
 const researchMemoryEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-research-memory-summary",
   "preview-research-memory-retrieval",
@@ -7958,6 +8096,14 @@ const researchMemoryEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "preview-research-memory-near-duplicates",
   "load-research-memory-search-profile",
   "preview-research-novelty-check",
+])
+
+const commanderContinuityEffectTypes = new Set<RuntimeUiEffect["type"]>([
+  "preview-commander-proposal-continuity",
+  "preview-commander-midmission-continuity",
+  "load-commander-continuity-summary",
+  "load-commander-continuity-open-loops",
+  "load-commander-continuity-thread",
 ])
 
 const researchIngestionEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -9476,6 +9622,18 @@ function recordResearchMemoryCommandError(state: UiState, error: unknown): UiSta
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "research memory command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordCommanderContinuityCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderContinuity: {
+      ...commanderContinuityState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "commander continuity command error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
@@ -12580,6 +12738,192 @@ function readResearchMemoryCommands(value: unknown): ResearchMemoryRetrievalPrev
     requires_active_runtime: command.requires_active_runtime === true,
     notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
   }))
+}
+
+function readCommanderProposalContinuityPacket(value: unknown): CommanderProposalContinuityPacketSummary {
+  if (!isRecord(value) || typeof value.packet_id !== "string") throw new Error("runtime.preview_commander_proposal_continuity returned invalid packet")
+  return {
+    packet_id: redactText(value.packet_id),
+    packet_kind: readString(value.packet_kind, "proposal"),
+    status: readString(value.status, "blocked"),
+    objective_preview: preview(readString(value.objective_preview, "")),
+    normalized_objective_preview: preview(readString(value.normalized_objective_preview, "")),
+    readiness: readString(value.readiness, "unknown"),
+    authority_summary: preview(readString(value.authority_summary, "")),
+    project_direction_summary: preview(readString(value.project_direction_summary, "")),
+    proposal_lineage_summary: preview(readString(value.proposal_lineage_summary, "")),
+    recent_execution_summary: preview(readString(value.recent_execution_summary, "")),
+    research_memory_summary: preview(readString(value.research_memory_summary, "")),
+    research_search_profile_summary: preview(readString(value.research_search_profile_summary, "")),
+    research_queries_executed: readStringList(value.research_queries_executed, 8).map(preview),
+    research_candidates_summary: preview(readString(value.research_candidates_summary, "")),
+    near_duplicate_summary: preview(readString(value.near_duplicate_summary, "")),
+    inspected_memory_refs: readCommanderContinuitySourceRefs(value.inspected_memory_refs),
+    novelty_risk: typeof value.novelty_risk === "string" ? readString(value.novelty_risk, "unknown") : undefined,
+    missing_memory_warning: readBoolean(value.missing_memory_warning),
+    why_not_duplicate_required: readBoolean(value.why_not_duplicate_required),
+    open_loops: readCommanderContinuityOpenLoops(value.open_loops),
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 12).map(preview),
+    sections: readCommanderContinuitySections(value.sections),
+    source_refs: readCommanderContinuitySourceRefs(value.source_refs),
+    recommended_commands: readCommanderContinuityCommands(value.recommended_commands),
+    budget: readCommanderContinuityBudget(value.budget),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    packet_hash: readString(value.packet_hash, ""),
+  }
+}
+
+function readCommanderMidMissionContinuityPacket(value: unknown): CommanderMidMissionContinuityPacketSummary {
+  if (!isRecord(value) || typeof value.packet_id !== "string") throw new Error("runtime.preview_commander_midmission_continuity returned invalid packet")
+  return {
+    packet_id: redactText(value.packet_id),
+    packet_kind: readString(value.packet_kind, "mid_mission"),
+    status: readString(value.status, "blocked"),
+    session_id: redactText(readString(value.session_id, "")),
+    launch_id: typeof value.launch_id === "string" ? redactText(value.launch_id) : undefined,
+    objective_preview: preview(readString(value.objective_preview, "")),
+    readiness: readString(value.readiness, "unknown"),
+    active_session_summary: preview(readString(value.active_session_summary, "")),
+    latest_progress_summary: preview(readString(value.latest_progress_summary, "")),
+    watchdog_summary: preview(readString(value.watchdog_summary, "")),
+    commander_dialogue_summary: preview(readString(value.commander_dialogue_summary, "")),
+    guidance_delivery_summary: preview(readString(value.guidance_delivery_summary, "")),
+    human_control_summary: preview(readString(value.human_control_summary, "")),
+    wake_supervision_summary: preview(readString(value.wake_supervision_summary, "")),
+    result_state_summary: preview(readString(value.result_state_summary, "")),
+    local_session_working_memory_summary: preview(readString(value.local_session_working_memory_summary, "")),
+    research_memory_summary: typeof value.research_memory_summary === "string" ? preview(readString(value.research_memory_summary, "")) : undefined,
+    open_loops: readCommanderContinuityOpenLoops(value.open_loops),
+    blockers: readStringList(value.blockers, 12).map(preview),
+    warnings: readStringList(value.warnings, 12).map(preview),
+    sections: readCommanderContinuitySections(value.sections),
+    source_refs: readCommanderContinuitySourceRefs(value.source_refs),
+    recommended_commands: readCommanderContinuityCommands(value.recommended_commands),
+    budget: readCommanderContinuityBudget(value.budget),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    packet_hash: readString(value.packet_hash, ""),
+  }
+}
+
+function readCommanderContinuitySummary(value: unknown): CommanderContinuitySummaryState {
+  if (!isRecord(value)) throw new Error("runtime.commander_continuity_summary returned invalid summary")
+  return {
+    total_recent_sessions: readNumber(value.total_recent_sessions, 0),
+    active_session_count: readNumber(value.active_session_count, 0),
+    stale_or_timed_out_count: readNumber(value.stale_or_timed_out_count, 0),
+    pending_question_count: readNumber(value.pending_question_count, 0),
+    pending_guidance_delivery_count: readNumber(value.pending_guidance_delivery_count, 0),
+    human_attention_count: readNumber(value.human_attention_count, 0),
+    result_reports_needing_review_count: readNumber(value.result_reports_needing_review_count, 0),
+    accepted_reviews_not_ingested_count: readNumber(value.accepted_reviews_not_ingested_count, 0),
+    open_loop_count: readNumber(value.open_loop_count, 0),
+    latest_threads: readCommanderContinuityThreads(value.latest_threads),
+    generated_at: readString(value.generated_at, ""),
+  }
+}
+
+function readCommanderContinuityOpenLoops(value: unknown): CommanderContinuityOpenLoopSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, HANDOFF_LIMIT).map((loop) => ({
+    loop_id: redactText(readString(loop.loop_id, "")),
+    loop_kind: readString(loop.loop_kind, "unknown"),
+    severity: readString(loop.severity, "warning"),
+    blocking: readBoolean(loop.blocking),
+    session_id: typeof loop.session_id === "string" ? redactText(loop.session_id) : undefined,
+    launch_id: typeof loop.launch_id === "string" ? redactText(loop.launch_id) : undefined,
+    source_ref: readCommanderContinuitySourceRef(loop.source_ref),
+    summary_preview: preview(readString(loop.summary_preview, "")),
+    recommended_command: typeof loop.recommended_command === "string" ? preview(readString(loop.recommended_command, "")) : undefined,
+    created_at: typeof loop.created_at === "string" ? readString(loop.created_at, "") : undefined,
+  }))
+}
+
+function readCommanderContinuityThread(value: unknown): CommanderContinuityThreadCardSummary {
+  if (!isRecord(value) || typeof value.thread_id !== "string") throw new Error("runtime.show_commander_continuity_thread returned invalid thread")
+  return readCommanderContinuityThreads([value])[0] ?? {
+    thread_id: "unknown",
+    objective_preview: "",
+    latest_status: "unknown",
+    open_loop_count: 0,
+    summary_preview: "",
+  }
+}
+
+function readCommanderContinuityThreads(value: unknown): CommanderContinuityThreadCardSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, HANDOFF_LIMIT).map((thread) => ({
+    thread_id: redactText(readString(thread.thread_id, "")),
+    session_id: typeof thread.session_id === "string" ? redactText(thread.session_id) : undefined,
+    launch_id: typeof thread.launch_id === "string" ? redactText(thread.launch_id) : undefined,
+    mission_id: typeof thread.mission_id === "string" ? redactText(thread.mission_id) : undefined,
+    objective_preview: preview(readString(thread.objective_preview, "")),
+    latest_status: readString(thread.latest_status, "unknown"),
+    latest_result_report_id: typeof thread.latest_result_report_id === "string" ? redactText(thread.latest_result_report_id) : undefined,
+    latest_result_review_id: typeof thread.latest_result_review_id === "string" ? redactText(thread.latest_result_review_id) : undefined,
+    latest_research_ingestion_id: typeof thread.latest_research_ingestion_id === "string" ? redactText(thread.latest_research_ingestion_id) : undefined,
+    open_loop_count: readNumber(thread.open_loop_count, 0),
+    last_updated_at: typeof thread.last_updated_at === "string" ? readString(thread.last_updated_at, "") : undefined,
+    summary_preview: preview(readString(thread.summary_preview, "")),
+  }))
+}
+
+function readCommanderContinuitySections(value: unknown): CommanderContinuitySectionSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 20).map((section) => ({
+    section_id: redactText(readString(section.section_id, "")),
+    section_kind: readString(section.section_kind, "unknown"),
+    status: readString(section.status, "missing"),
+    title: preview(readString(section.title, "")),
+    summary_preview: preview(readString(section.summary_preview, "")),
+    source_refs: readCommanderContinuitySourceRefs(section.source_refs),
+    item_count: readNumber(section.item_count, 0),
+    omitted_count: readNumber(section.omitted_count, 0),
+    warnings: readStringList(section.warnings, 8).map(preview),
+  }))
+}
+
+function readCommanderContinuitySourceRefs(value: unknown): CommanderContinuitySourceRefSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 30).map(readCommanderContinuitySourceRef)
+}
+
+function readCommanderContinuitySourceRef(value: unknown): CommanderContinuitySourceRefSummary {
+  if (!isRecord(value)) return { source_kind: "unknown", source_id: "", pointer_only: true }
+  return {
+    source_kind: readString(value.source_kind, "unknown"),
+    source_id: redactText(readString(value.source_id, "")),
+    label: typeof value.label === "string" ? preview(readString(value.label, "")) : undefined,
+    summary_preview: typeof value.summary_preview === "string" ? preview(readString(value.summary_preview, "")) : undefined,
+    status: typeof value.status === "string" ? readString(value.status, "") : undefined,
+    pointer_only: true,
+  }
+}
+
+function readCommanderContinuityCommands(value: unknown): CommanderContinuityCommandSummary[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).slice(0, 16).map((command) => ({
+    label: preview(readString(command.label, "")),
+    command: preview(readString(command.command, "")),
+    command_type: command.command_type === "write" ? "write" : "read",
+    requires_active_runtime: command.requires_active_runtime === true,
+    notes: typeof command.notes === "string" ? preview(readString(command.notes, "")) : undefined,
+  }))
+}
+
+function readCommanderContinuityBudget(value: unknown): CommanderContinuityBudgetSummary {
+  if (!isRecord(value)) {
+    return { target_token_budget: 0, estimated_token_count: 0, section_budgets: {}, omitted_sections: [], truncation_warnings: [] }
+  }
+  return {
+    target_token_budget: readNumber(value.target_token_budget, 0),
+    estimated_token_count: readNumber(value.estimated_token_count, 0),
+    section_budgets: readNumberMap(value.section_budgets, 20),
+    omitted_sections: readStringList(value.omitted_sections, 20).map(preview),
+    truncation_warnings: readStringList(value.truncation_warnings, 20).map(preview),
+  }
 }
 
 function readTriState(value: unknown): boolean | "unknown" {
@@ -16294,8 +16638,44 @@ function researchIngestionPayload(effect: Extract<RuntimeUiEffect, { type: "prev
   }
 }
 
+function commanderProposalContinuityPayload(effect: Extract<RuntimeUiEffect, { type: "preview-commander-proposal-continuity" }>): Record<string, unknown> {
+  return {
+    objective: effect.objective,
+    missionId: effect.missionId,
+    sessionId: effect.sessionId,
+    includeResearchMemory: effect.includeResearchMemory,
+    includeNearDuplicates: effect.includeNearDuplicates,
+    includeOpenLoops: effect.includeOpenLoops,
+    includeRecentSessions: effect.includeRecentSessions,
+    maxRecentSessions: effect.maxRecentSessions,
+    maxOpenLoops: effect.maxOpenLoops,
+    maxResearchCandidates: effect.maxResearchCandidates,
+    maxInspectedMemory: effect.maxInspectedMemory,
+    targetTokenBudget: effect.targetTokenBudget,
+    modelId: effect.modelId,
+  }
+}
+
+function commanderMidMissionContinuityPayload(effect: Extract<RuntimeUiEffect, { type: "preview-commander-midmission-continuity" }>): Record<string, unknown> {
+  return {
+    sessionId: effect.sessionId,
+    launchId: effect.launchId,
+    includeResearchMemory: effect.includeResearchMemory,
+    includeOpenLoops: effect.includeOpenLoops,
+    includeLocalWorkingMemory: effect.includeLocalWorkingMemory,
+    maxOpenLoops: effect.maxOpenLoops,
+    maxResearchCandidates: effect.maxResearchCandidates,
+    targetTokenBudget: effect.targetTokenBudget,
+    modelId: effect.modelId,
+  }
+}
+
 function researchMemoryState(state: UiState): ResearchMemoryState {
   return state.researchMemory ?? { summary: null, retrievalPreview: null, noveltyPreview: null, selected: null, nearDuplicates: null, searchProfile: null }
+}
+
+function commanderContinuityState(state: UiState): CommanderContinuityState {
+  return state.commanderContinuity ?? { proposalPacket: null, midMissionPacket: null, summary: null, openLoops: [], selectedThread: null }
 }
 
 function commanderExecutorReviewState(state: UiState): CommanderExecutorReviewState {
@@ -18099,6 +18479,101 @@ function researchMemoryNearDuplicateEffect(args: string[]): Extract<RuntimeUiEff
     else throw new Error("research near-duplicates arg is unsupported")
   }
   if (!effect.query && !effect.objective) throw new Error("research memory near-duplicate preview requires query=<text> or objective=<objective>")
+  return effect
+}
+
+function commanderProposalContinuityEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-commander-proposal-continuity" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-commander-proposal-continuity" }> = { type: "preview-commander-proposal-continuity", objective: "" }
+  const freeTextKeys = new Set(["objective"])
+  const knownKeys = new Set(["objective", "mission", "mission_id", "session", "session_id", "include_research_memory", "include_near_duplicates", "include_open_loops", "include_recent_sessions", "max_recent_sessions", "max_open_loops", "max_research_candidates", "max_inspected_memory", "target_token_budget", "model", "model_id"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "commander continuity args must use objective=<text> and optional session=<id>, mission=<id>, or budget keys")
+    index = nextIndex
+    if (key === "objective") effect.objective = value
+    else if (key === "mission" || key === "mission_id") effect.missionId = value
+    else if (key === "session" || key === "session_id") effect.sessionId = value
+    else if (key === "include_research_memory") effect.includeResearchMemory = readBooleanArg(value)
+    else if (key === "include_near_duplicates") effect.includeNearDuplicates = readBooleanArg(value)
+    else if (key === "include_open_loops") effect.includeOpenLoops = readBooleanArg(value)
+    else if (key === "include_recent_sessions") effect.includeRecentSessions = readBooleanArg(value)
+    else if (key === "max_recent_sessions") effect.maxRecentSessions = readPositiveInteger(value, "max_recent_sessions", HANDOFF_LIMIT)
+    else if (key === "max_open_loops") effect.maxOpenLoops = readPositiveInteger(value, "max_open_loops", HANDOFF_LIMIT)
+    else if (key === "max_research_candidates") effect.maxResearchCandidates = readPositiveInteger(value, "max_research_candidates", HANDOFF_LIMIT)
+    else if (key === "max_inspected_memory") effect.maxInspectedMemory = readPositiveInteger(value, "max_inspected_memory", HANDOFF_LIMIT)
+    else if (key === "target_token_budget") effect.targetTokenBudget = readPositiveInteger(value, "target_token_budget", 100_000)
+    else if (key === "model" || key === "model_id") effect.modelId = value
+    else throw new Error("commander continuity arg is unsupported")
+  }
+  if (!effect.objective.trim()) throw new Error("commander continuity preview requires objective=<text>")
+  return effect
+}
+
+function commanderMidMissionContinuityEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-commander-midmission-continuity" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-commander-midmission-continuity" }> = { type: "preview-commander-midmission-continuity" }
+  const knownKeys = new Set(["session", "session_id", "launch", "launch_id", "include_research_memory", "include_open_loops", "include_local_working_memory", "max_open_loops", "max_research_candidates", "target_token_budget", "model", "model_id"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, new Set(), "commander mid-mission args must use session=<id> or launch=<id>")
+    index = nextIndex
+    if (key === "session" || key === "session_id") effect.sessionId = value
+    else if (key === "launch" || key === "launch_id") effect.launchId = value
+    else if (key === "include_research_memory") effect.includeResearchMemory = readBooleanArg(value)
+    else if (key === "include_open_loops") effect.includeOpenLoops = readBooleanArg(value)
+    else if (key === "include_local_working_memory") effect.includeLocalWorkingMemory = readBooleanArg(value)
+    else if (key === "max_open_loops") effect.maxOpenLoops = readPositiveInteger(value, "max_open_loops", HANDOFF_LIMIT)
+    else if (key === "max_research_candidates") effect.maxResearchCandidates = readPositiveInteger(value, "max_research_candidates", HANDOFF_LIMIT)
+    else if (key === "target_token_budget") effect.targetTokenBudget = readPositiveInteger(value, "target_token_budget", 100_000)
+    else if (key === "model" || key === "model_id") effect.modelId = value
+    else throw new Error("commander mid-mission arg is unsupported")
+  }
+  if (!effect.sessionId && !effect.launchId) throw new Error("commander mid-mission packet requires session=<id> or launch=<id>")
+  return effect
+}
+
+function commanderContinuitySummaryEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-commander-continuity-summary" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-commander-continuity-summary" }> = { type: "load-commander-continuity-summary", limit: HANDOFF_LIMIT }
+  const knownKeys = new Set(["limit", "include_closed"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, new Set(), "commander continuity summary args must use limit=<n> or include_closed=<bool>")
+    index = nextIndex
+    if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else if (key === "include_closed") effect.includeClosed = readBooleanArg(value)
+    else throw new Error("commander continuity summary arg is unsupported")
+  }
+  return effect
+}
+
+function commanderContinuityOpenLoopsEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-commander-continuity-open-loops" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-commander-continuity-open-loops" }> = { type: "load-commander-continuity-open-loops", limit: HANDOFF_LIMIT }
+  const knownKeys = new Set(["session", "session_id", "launch", "launch_id", "mission", "mission_id", "severity", "kind", "limit"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, new Set(), "commander open-loops args must use optional session=<id>, launch=<id>, severity=<severity>, kind=<kind>, limit=<n>")
+    index = nextIndex
+    if (key === "session" || key === "session_id") effect.sessionId = value
+    else if (key === "launch" || key === "launch_id") effect.launchId = value
+    else if (key === "mission" || key === "mission_id") effect.missionId = value
+    else if (key === "severity") effect.severity = value
+    else if (key === "kind") effect.kind = value
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else throw new Error("commander open-loops arg is unsupported")
+  }
+  return effect
+}
+
+function commanderContinuityThreadEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-commander-continuity-thread" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "load-commander-continuity-thread" }> = { type: "load-commander-continuity-thread" }
+  const freeTextKeys = new Set(["objective"])
+  const knownKeys = new Set(["thread", "thread_id", "session", "session_id", "launch", "launch_id", "mission", "mission_id", "objective"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "commander continuity thread args must use session=<id>, launch=<id>, mission=<id>, thread=<id>, or objective=<text>")
+    index = nextIndex
+    if (key === "thread" || key === "thread_id") effect.threadId = value
+    else if (key === "session" || key === "session_id") effect.sessionId = value
+    else if (key === "launch" || key === "launch_id") effect.launchId = value
+    else if (key === "mission" || key === "mission_id") effect.missionId = value
+    else if (key === "objective") effect.objective = value
+    else throw new Error("commander continuity thread arg is unsupported")
+  }
+  if (!effect.threadId && !effect.sessionId && !effect.launchId && !effect.missionId && !effect.objective) throw new Error("commander continuity thread requires session=<id>, launch=<id>, mission=<id>, thread=<id>, or objective=<text>")
   return effect
 }
 

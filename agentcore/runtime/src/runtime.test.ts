@@ -21613,6 +21613,177 @@ describe("OpenCode launch readiness", () => {
     await client.shutdown()
   })
 
+  test("commander continuity packets compile bounded read-only context and open loops", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "alive token=continuity-secret" })
+    const wakeExecution = await server.command("runtime.record_opencode_wake_supervisor_execution", { sessionId }) as { execution_id: string; action_execution_status: string }
+    const wakeAction = await server.command("runtime.record_opencode_wake_action_execution", { executionId: wakeExecution.execution_id }) as { action_execution_id: string; status: string }
+    await server.command("runtime.create_opencode_commander_question", { sessionId, question: "need commander continuity decision token=continuity-secret" })
+    await server.command("runtime.record_opencode_human_control", { sessionId, kind: "correction", correction: "preserve continuity token=continuity-secret" })
+    const report = await server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "continuity evidence token=continuity-secret", outcome: "tests passed", claims: ["continuity-works"] }) as { report_id: string }
+    const review = await server.command("runtime.record_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "bounded continuity evidence token=continuity-secret", acceptedClaims: ["continuity-works"] }) as { review_id: string }
+    await server.eventStore.append({
+      kind: "research_memory_ingestion_recorded",
+      ingestion_id: "research_ingestion_failed_then_resolved",
+      review_id: review.review_id,
+      report_id: report.report_id,
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      source_kind: "opencode_result_review",
+      evidence_kind: "positive_finding",
+      ingestion_decision: "ingest",
+      review_decision: "accepted",
+      review_disposition: "accepted_as_evidence",
+      review_projection_state: "reviewed_accepted",
+      report_kind: "completion_report",
+      report_disposition: "reported_done",
+      research_title_preview: "continuity failed ingestion",
+      evidence_summary_preview: "failed ingestion later resolved",
+      claims_preview: [],
+      metrics_preview: [],
+      artifacts_preview: [],
+      tests_preview: [],
+      failures_preview: [],
+      followups_preview: [],
+      tags_preview: [],
+      provenance_refs: [],
+      research_db_write_status: "write_failed",
+      research_db_written: false,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+      recorded_at: "2026-07-10T08:20:00.000Z",
+      recorded_by: "test",
+      ingestion_hash: "research_ingestion_failed_then_resolved_hash",
+    })
+    await server.command("runtime.record_research_ingestion", { reviewId: review.review_id, tags: ["continuity", "memory"] })
+    const extraSession = await server.command("runtime.create_opencode_session_plan", { objective: "extra active continuity session" }) as { session_id: string }
+    const extraPack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: extraSession.session_id }) as { pack_id: string }
+    await server.command("runtime.launch_opencode_session", { sessionId: extraSession.session_id, packId: extraPack.pack_id, providerKind: "local", modelId: "local-medium" })
+    const quietMission = await server.submitUserMessage("quiet target mission continuity")
+    await server.command("runtime.create_opencode_session_plan", { objective: "quiet target mission continuity", missionId: quietMission.missionId })
+    const eventsBefore = await server.eventStore.readAll()
+
+    const proposal = await server.command("runtime.preview_commander_proposal_continuity", { objective: "plan next continuity-safe research token=continuity-secret" }) as {
+      status: string
+      readiness: string
+      research_search_profile_summary: string
+      sections: Array<{ section_kind: string; status: string }>
+      open_loops: Array<{ loop_kind: string; source_ref: { pointer_only: boolean } }>
+      budget: { target_token_budget: number; estimated_token_count: number; omitted_sections: string[] }
+      source_refs: Array<{ pointer_only: boolean }>
+      warnings: string[]
+    }
+    expect(proposal.status).toBe("ready")
+    expect(["open_loops_pending", "blocked", "ready", "duplicate_risk_high"]).toContain(proposal.readiness)
+    expect(proposal.research_search_profile_summary).toContain("bounded_lexical")
+    expect(proposal.research_search_profile_summary).toContain("semantic_search_enabled=false")
+    expect(proposal.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ section_kind: "research_memory" }),
+      expect.objectContaining({ section_kind: "open_loops" }),
+      expect.objectContaining({ section_kind: "omitted_raw_logs", status: "excluded" }),
+    ]))
+    expect(proposal.open_loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
+    expect(proposal.open_loops.map((loop) => loop.loop_kind)).not.toContain("research_ingestion_failed")
+    expect(proposal.source_refs.every((ref) => ref.pointer_only)).toBe(true)
+    expect(proposal.budget.target_token_budget).toBe(6000)
+    expect(proposal.budget.estimated_token_count).toBeGreaterThan(0)
+    expect(JSON.stringify(proposal.budget)).toContain("estimated")
+    expect(JSON.stringify(proposal.budget)).toContain("omitted")
+    expect(JSON.stringify(proposal)).not.toContain("continuity-secret")
+    expect(proposal.warnings.join(" ")).toContain("read-only")
+
+    const missionScopedProposal = await server.command("runtime.preview_commander_proposal_continuity", { objective: "quiet mission packet", missionId: quietMission.missionId }) as {
+      readiness: string
+      open_loops: Array<{ loop_kind: string }>
+    }
+    expect(missionScopedProposal.open_loops.map((loop) => loop.loop_kind)).not.toContain("pending_commander_question")
+    expect(missionScopedProposal.open_loops.map((loop) => loop.loop_kind)).not.toContain("human_correction")
+    expect(missionScopedProposal.readiness).not.toBe("open_loops_pending")
+    await expect(server.command("runtime.list_commander_continuity_open_loops", { missionId: quietMission.missionId })).resolves.toEqual([])
+    const missionThread = await server.command("runtime.show_commander_continuity_thread", { missionId: quietMission.missionId }) as {
+      mission_id?: string
+      session_id?: string
+      open_loop_count: number
+      summary_preview: string
+    }
+    expect(missionThread.mission_id).toBe(quietMission.missionId)
+    expect(missionThread.session_id).toBeTruthy()
+    expect(missionThread.open_loop_count).toBe(0)
+    expect(missionThread.summary_preview).toContain("sessions=1")
+
+    const mid = await server.command("runtime.preview_commander_midmission_continuity", { sessionId }) as {
+      status: string
+      session_id: string
+      readiness: string
+      latest_progress_summary: string
+      commander_dialogue_summary: string
+      human_control_summary: string
+      wake_supervision_summary: string
+      sections: Array<{ section_kind: string }>
+      source_refs: Array<{ source_kind: string; source_id: string; pointer_only: boolean }>
+      open_loops: Array<{ loop_kind: string }>
+      warnings: string[]
+      budget: { target_token_budget: number; estimated_token_count: number }
+    }
+    expect(mid).toMatchObject({ status: "ready", session_id: sessionId })
+    expect(mid.latest_progress_summary).toContain("heartbeat")
+    expect(mid.commander_dialogue_summary).toContain("pending questions=1")
+    expect(mid.human_control_summary).toContain("correction")
+    expect(mid.wake_supervision_summary).toContain(wakeExecution.execution_id)
+    expect(mid.wake_supervision_summary).toContain(wakeAction.action_execution_id)
+    expect(mid.budget.target_token_budget).toBe(4000)
+    expect(mid.budget.estimated_token_count).toBeGreaterThan(0)
+    expect(mid.source_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source_kind: "wake_supervisor_execution", source_id: wakeExecution.execution_id, pointer_only: true }),
+      expect.objectContaining({ source_kind: "wake_action_execution", source_id: wakeAction.action_execution_id, pointer_only: true }),
+    ]))
+    expect(mid.open_loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
+    expect(mid.open_loops.map((loop) => loop.loop_kind)).not.toContain("research_ingestion_failed")
+    expect(mid.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ section_kind: "active_session" }),
+      expect.objectContaining({ section_kind: "dialogue_guidance" }),
+      expect.objectContaining({ section_kind: "human_controls" }),
+    ]))
+    expect(mid.warnings.join(" ")).toContain("read-only")
+
+    const loops = await server.command("runtime.list_commander_continuity_open_loops", { sessionId }) as Array<{ loop_kind: string; recommended_command?: string }>
+    expect(loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
+    expect(loops.map((loop) => loop.loop_kind)).not.toContain("research_ingestion_failed")
+    expect(loops.some((loop) => loop.recommended_command?.includes("/commander-guidance"))).toBe(true)
+    await expect(server.command("runtime.commander_continuity_summary")).resolves.toMatchObject({ open_loop_count: expect.any(Number), pending_question_count: 1 })
+    const limitedSummary = await server.command("runtime.commander_continuity_summary", { limit: 1 }) as {
+      total_recent_sessions: number
+      active_session_count: number
+      latest_threads: unknown[]
+    }
+    expect(limitedSummary.total_recent_sessions).toBe(1)
+    expect(limitedSummary.latest_threads.length).toBe(1)
+    expect(limitedSummary.active_session_count).toBeLessThanOrEqual(limitedSummary.total_recent_sessions)
+    await expect(server.command("runtime.show_commander_continuity_thread", { sessionId })).resolves.toMatchObject({ session_id: sessionId, open_loop_count: expect.any(Number) })
+    expect(await server.eventStore.readAll()).toEqual(eventsBefore)
+
+    const noStartDir = await tempProject()
+    await makeProject(noStartDir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const noStartServer = new RuntimeServer({ projectDir: noStartDir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server: noStartServer, autoStart: true, ownsServer: true })
+    await expect(client.command("runtime.preview_commander_proposal_continuity", { objective: "adapter timeout" })).resolves.toMatchObject({ packet_kind: "proposal" })
+    await expect(client.command("runtime.preview_commander_midmission_continuity", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.commander_continuity_summary")).resolves.toMatchObject({ total_recent_sessions: 0 })
+    await expect(client.command("runtime.list_commander_continuity_open_loops")).resolves.toEqual([])
+    await expect(client.command("runtime.show_commander_continuity_thread", { sessionId: "missing" })).resolves.toBeNull()
+    expect(existsSync(join(noStartDir, ".nxl", "research.db"))).toBe(false)
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
+    await client.shutdown?.()
+  })
+
   test("authority registry includes research memory and novelty safe-read commands", () => {
     for (const command of ["/research-memory-summary", "/research-memory-search", "/research-memory-preview", "/research-memory-show", "/research-memory-near-duplicates", "/research-memory-profile", "/research-novelty-preview"]) {
       const record = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === command)
@@ -21644,6 +21815,27 @@ describe("OpenCode launch readiness", () => {
     expect(novelty?.aliases).toEqual(expect.arrayContaining(["/novelty-preview", "/research-dup-check"]))
     expect(novelty?.notes.join(" ")).toContain("flagged, not forbidden")
     expect(novelty?.out_of_scope).toEqual(expect.arrayContaining(["topic allowlist/blocklist", "research.db writes", "OpenCode launch"]))
+  })
+
+  test("authority registry includes commander continuity safe-read commands", () => {
+    for (const command of ["/commander-continuity-preview", "/commander-midmission-packet", "/commander-continuity-summary", "/commander-open-loops", "/commander-continuity-thread"]) {
+      const record = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === command)
+      expect(record).toMatchObject({
+        risk: "safe_read",
+        owner: "commander_cycle",
+        mutates_events: false,
+        creates_external_process: false,
+        calls_provider: false,
+        requires_active_runtime: false,
+        requires_run_lock: false,
+      })
+      expect(record?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py")
+      expect(record?.notes.join(" ")).toMatch(/read-only|Read-only/)
+      expect(record?.out_of_scope).toEqual(expect.arrayContaining(["provider/MiniMax calls", "research.db writes", "mission/proposal/review/apply mutation"]))
+      expect(`${record?.notes.join(" ")} ${record?.out_of_scope.join(" ")}`).toMatch(/OpenCode (launch|prompt|prompts|prompt\/process)|process/)
+    }
+    expect(COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/commander-continuity-preview")?.aliases).toEqual(expect.arrayContaining(["/continuity-preview", "/proposal-memory-packet", "/proposal-continuity"]))
+    expect(COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/commander-open-loops")?.aliases).toEqual(expect.arrayContaining(["/open-loops"]))
   })
 })
 

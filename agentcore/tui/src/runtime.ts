@@ -5,6 +5,7 @@ import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeResultReportCommandSummary, OpenCodeResultReportPreviewSummary, OpenCodeResultReportRecordSummary, OpenCodeResultReportResultSummary, OpenCodeResultReportSummaryState, OpenCodeResultReviewGateCommandSummary, OpenCodeResultReviewGatePreviewSummary, OpenCodeResultReviewGateRecordSummary, OpenCodeResultReviewGateResultSummary, OpenCodeResultReviewGateSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchIngestionCommandSummary, ResearchIngestionPreviewSummary, ResearchIngestionProvenanceRefSummary, ResearchIngestionRecordSummary, ResearchIngestionResultSummary, ResearchIngestionSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryInspectionPreviewSummary, ResearchMemoryNearDuplicatePreviewSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySearchProfileState, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
+import type { CommanderContinuityCommandSummary, CommanderContinuityOpenLoopSummary, CommanderContinuitySectionSummary, CommanderContinuitySourceRefSummary, CommanderContinuitySummaryState, CommanderContinuityThreadCardSummary, CommanderMidMissionContinuityPacketSummary, CommanderProposalContinuityPacketSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -629,6 +630,16 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.researchMemorySearchProfile()
       case "runtime.preview_research_novelty_check":
         return this.previewResearchNoveltyCheck(payload)
+      case "runtime.preview_commander_proposal_continuity":
+        return this.previewCommanderProposalContinuity(payload)
+      case "runtime.preview_commander_midmission_continuity":
+        return this.previewCommanderMidMissionContinuity(payload)
+      case "runtime.commander_continuity_summary":
+        return this.commanderContinuitySummary(payload)
+      case "runtime.list_commander_continuity_open_loops":
+        return this.commanderContinuityOpenLoops(payload)
+      case "runtime.show_commander_continuity_thread":
+        return this.commanderContinuityThread(payload)
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(payload)
       case "runtime.execute_commander_executor_review":
@@ -4833,6 +4844,283 @@ export class FakeRuntimeClient implements RuntimeClient {
       ],
       generated_at: new Date(0).toISOString(),
       novelty_hash: hash,
+    }
+  }
+
+  private previewCommanderProposalContinuity(payload: Record<string, unknown>): CommanderProposalContinuityPacketSummary {
+    const objective = preview(redactText(String(payload.objective ?? "")))
+    const blockers = objective ? [] : ["commander continuity preview requires objective=<text>"]
+    const maxOpenLoops = readLimit(payload.maxOpenLoops ?? payload.max_open_loops, 12)
+    const maxResearchCandidates = readLimit(payload.maxResearchCandidates ?? payload.max_research_candidates, 8)
+    const maxInspectedMemory = readLimit(payload.maxInspectedMemory ?? payload.max_inspected_memory, 4)
+    const includeResearch = payload.includeResearchMemory !== false && payload.include_research_memory !== false
+    const includeNear = payload.includeNearDuplicates !== false && payload.include_near_duplicates !== false
+    const searchProfile = this.researchMemorySearchProfile()
+    const retrieval = includeResearch && !blockers.length ? this.previewResearchMemoryRetrieval({ query: objective, limit: maxResearchCandidates }) : undefined
+    const failureRetrieval = includeResearch && !blockers.length ? this.previewResearchMemoryRetrieval({ query: `${objective} failed blocked unstable regression`, labels: ["failure"], includeFailures: true, limit: Math.min(3, maxResearchCandidates) }) : undefined
+    const near = includeNear && !blockers.length ? this.previewResearchMemoryNearDuplicates({ objective, query: objective, limit: maxResearchCandidates }) : undefined
+    const candidates = [...(retrieval?.candidates ?? []), ...(failureRetrieval?.candidates ?? [])]
+    const inspected = candidates.slice(0, maxInspectedMemory).map((item) => fakeContinuityRef("research_memory", item.result_id, item.label, item.question_preview))
+    const loops = this.fakeCommanderContinuityOpenLoops({ limit: maxOpenLoops })
+    const blockingLoops = loops.filter((loop) => loop.blocking)
+    const warnings = [
+      "continuity packet is read-only; no Commander proposal was generated",
+      "research memory uses bounded lexical retrieval; semantic/vector/FTS/provider reasoning is disabled",
+      ...(retrieval && retrieval.candidates.length === 0 ? ["missing research-memory candidates for objective"] : []),
+    ]
+    const readiness = blockers.length
+      ? "blocked"
+      : blockingLoops.length > 0
+        ? "open_loops_pending"
+        : near?.novelty_risk === "high"
+          ? "duplicate_risk_high"
+          : "ready"
+    const sections = [
+      fakeContinuitySection("authority", "Authority capsule", "read-only continuity compiler; no provider/MCP/write/proposal side effects", [], "included"),
+      fakeContinuitySection("project_direction", "Project direction", `objective=${objective}`, [], "included"),
+      fakeContinuitySection("recent_execution", "Recent execution", `${this.opencodeSessions.length} sessions, ${this.opencodeResultReports.length} result reports, ${this.opencodeResultReviews.length} reviews`, this.opencodeSessions.slice(0, 5).map((session) => fakeContinuityRef("opencode_session", session.session_id, "session", session.objective)), "included"),
+      fakeContinuitySection("open_loops", "Open loops", `${loops.length} open loops detected`, loops.map((loop) => loop.source_ref), loops.length ? "included" : "missing"),
+      fakeContinuitySection("research_memory", "Research memory", retrieval?.redacted_summary_preview ?? "research memory omitted or unavailable", inspected, includeResearch ? "included" : "excluded"),
+      fakeContinuitySection("omitted_raw_sources", "Omitted raw sources", "raw logs, file contents, full diffs, full event log, full research.db, provider output, and prompt transcripts excluded", [], "excluded"),
+    ]
+    const hash = fakeStableHash(JSON.stringify({ objective, readiness, loops: loops.map((loop) => loop.loop_id), candidates: candidates.map((item) => item.result_id) }))
+    return {
+      packet_id: `fake-continuity-proposal-${hash.slice(0, 12)}`,
+      packet_kind: "proposal",
+      status: blockers.length ? "blocked" : "ready",
+      objective_preview: objective,
+      normalized_objective_preview: objective.toLowerCase(),
+      readiness,
+      authority_summary: "read-only continuity packet; no Commander proposal, provider, MCP, OpenCode prompt, research.db write, or mission mutation",
+      project_direction_summary: `proposal continuity for ${objective}`,
+      proposal_lineage_summary: "proposal lineage service is best-effort in fake runtime; using bounded recent execution/research lineage",
+      recent_execution_summary: `${this.opencodeSessions.length} planned sessions, ${this.opencodeLaunches.length} launches, ${this.opencodeResultReports.length} result reports, ${this.researchIngestions.length} research ingestions`,
+      research_memory_summary: includeResearch ? (retrieval?.redacted_summary_preview ?? "no research-memory candidates") : "research memory omitted by request",
+      research_search_profile_summary: `${searchProfile.search_engine}; semantic_search_enabled=${searchProfile.semantic_search_enabled}; vector_index_enabled=${searchProfile.vector_index_enabled}; fts_index_enabled=${searchProfile.fts_index_enabled}; scan_limit=${searchProfile.scan_limit}`,
+      research_queries_executed: includeResearch ? [objective, `${objective} failed blocked unstable regression`, `${objective} probe partial inconclusive`] : [],
+      research_candidates_summary: `${candidates.length} bounded candidates`,
+      near_duplicate_summary: near ? `risk=${near.novelty_risk} likely=${near.likely_duplicate_count} warnings=${near.warning_duplicate_count}` : "near-duplicate preview omitted",
+      inspected_memory_refs: inspected,
+      novelty_risk: near?.novelty_risk,
+      missing_memory_warning: includeResearch && (retrieval?.candidates.length ?? 0) === 0,
+      why_not_duplicate_required: near?.novelty_risk === "high",
+      open_loops: loops,
+      blockers,
+      warnings,
+      sections,
+      source_refs: [...sections.flatMap((section) => section.source_refs), fakeContinuityRef("research_memory_profile", searchProfile.profile_id, "bounded_lexical", searchProfile.redacted_summary_preview)],
+      recommended_commands: [
+        { label: "Research memory search", command: `/research-memory-search query=${objective}`, command_type: "read" },
+        { label: "Near duplicates", command: `/research-memory-near-duplicates query=${objective}`, command_type: "read" },
+        { label: "Open loops", command: "/commander-open-loops", command_type: "read" },
+      ],
+      budget: fakeContinuityBudget(payload.targetTokenBudget ?? payload.target_token_budget, sections),
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: `proposal continuity readiness=${readiness} loops=${loops.length} research_candidates=${candidates.length}`,
+      packet_hash: hash,
+    }
+  }
+
+  private previewCommanderMidMissionContinuity(payload: Record<string, unknown>): CommanderMidMissionContinuityPacketSummary {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchIdInput = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    const launch = launchIdInput
+      ? this.opencodeLaunches.find((item) => item.launch_id === launchIdInput)
+      : this.opencodeLaunches.find((item) => item.session_id === sessionId)
+    const resolvedSessionId = sessionId ?? launch?.session_id ?? ""
+    const session = this.opencodeSessions.find((item) => item.session_id === resolvedSessionId)
+    const blockers = resolvedSessionId ? [] : ["commander mid-mission packet requires session=<id> or launch=<id>"]
+    if (resolvedSessionId && !session) blockers.push(`opencode session was not found: ${resolvedSessionId}`)
+    const loops = this.fakeCommanderContinuityOpenLoops({ sessionId: resolvedSessionId, launchId: launch?.launch_id ?? launchIdInput, limit: payload.maxOpenLoops ?? payload.max_open_loops })
+    const progress = this.opencodeProgressRecords.find((item) => item.session_id === resolvedSessionId)
+    const watchdog = this.opencodeWatchdogRecords.find((item) => item.session_id === resolvedSessionId)
+    const questions = this.opencodeCommanderQuestions.filter((item) => item.session_id === resolvedSessionId)
+    const guidance = this.commanderGuidanceRecords.filter((item) => item.session_id === resolvedSessionId)
+    const deliveries = this.commanderGuidanceDeliveryRecords.filter((item) => item.session_id === resolvedSessionId)
+    const controls = this.opencodeHumanControlRecords.filter((item) => item.session_id === resolvedSessionId)
+    const reports = this.opencodeResultReports.filter((item) => item.session_id === resolvedSessionId)
+    const reviews = this.opencodeResultReviews.filter((item) => item.session_id === resolvedSessionId)
+    const includeResearch = payload.includeResearchMemory === true || payload.include_research_memory === true || questions.length > 0 || loops.some((loop) => loop.loop_kind === "watchdog_timed_out")
+    const retrieval = includeResearch && session ? this.previewResearchMemoryRetrieval({ query: session.objective, limit: readLimit(payload.maxResearchCandidates ?? payload.max_research_candidates, 3) }) : undefined
+    const readiness = blockers.length
+      ? "blocked"
+      : loops.some((loop) => loop.loop_kind === "human_stop" || loop.loop_kind === "human_pause")
+        ? "needs_human_review"
+        : loops.some((loop) => loop.blocking)
+          ? "open_loops_pending"
+          : "ready"
+    const sections = [
+      fakeContinuitySection("active_session", "Active session", session ? `${session.session_id}: ${session.objective}` : "missing session", session ? [fakeContinuityRef("opencode_session", session.session_id, "session", session.objective)] : [], session ? "included" : "missing"),
+      fakeContinuitySection("progress_watchdog", "Progress/watchdog", `progress=${progress?.progress_id ?? "none"} watchdog=${watchdog?.watchdog_id ?? "none"}`, [progress ? fakeContinuityRef("progress", progress.progress_id, progress.kind, progress.report_summary_preview) : undefined, watchdog ? fakeContinuityRef("watchdog", watchdog.watchdog_id, watchdog.watchdog_status, watchdog.recommended_action) : undefined].filter((item): item is CommanderContinuitySourceRefSummary => !!item), progress || watchdog ? "included" : "missing"),
+      fakeContinuitySection("dialogue_guidance", "Commander dialogue/guidance", `questions=${questions.length} guidance=${guidance.length} deliveries=${deliveries.length}`, [...questions.map((item) => fakeContinuityRef("commander_question", item.question_id, item.status, item.question_preview)), ...guidance.map((item) => fakeContinuityRef("commander_guidance", item.guidance_id, item.delivery_status, item.answer_preview)), ...deliveries.map((item) => fakeContinuityRef("guidance_delivery", item.delivery_id, item.status, item.target_summary_preview))], "included"),
+      fakeContinuitySection("human_controls", "Human controls", `controls=${controls.length}`, controls.map((item) => fakeContinuityRef("human_control", item.control_id, item.control_kind, item.human_note_preview)), controls.length ? "included" : "missing"),
+      fakeContinuitySection("result_state", "Result state", `reports=${reports.length} reviews=${reviews.length}`, [...reports.map((item) => fakeContinuityRef("result_report", item.report_id, item.review_state, item.summary_preview)), ...reviews.map((item) => fakeContinuityRef("result_review", item.review_id, item.decision, item.rationale_preview))], reports.length || reviews.length ? "included" : "missing"),
+      fakeContinuitySection("research_memory", "Research memory", retrieval?.redacted_summary_preview ?? "omitted to save tokens; no blocker/question required memory search", retrieval?.candidates.map((item) => fakeContinuityRef("research_memory", item.result_id, item.label, item.question_preview)) ?? [], includeResearch ? "included" : "excluded"),
+      fakeContinuitySection("omitted_raw_sources", "Omitted raw sources", "raw logs, file contents, full diffs, full event log, full research.db, provider output, and prompt transcripts excluded", [], "excluded"),
+    ]
+    const hash = fakeStableHash(JSON.stringify({ resolvedSessionId, launch: launch?.launch_id, readiness, loops: loops.map((loop) => loop.loop_id) }))
+    return {
+      packet_id: `fake-continuity-midmission-${hash.slice(0, 12)}`,
+      packet_kind: "mid_mission",
+      status: blockers.length ? "blocked" : "ready",
+      session_id: resolvedSessionId,
+      launch_id: launch?.launch_id ?? launchIdInput,
+      objective_preview: session?.objective ?? "",
+      readiness,
+      active_session_summary: session ? `session=${session.session_id} launch=${launch?.launch_id ?? "none"} status=${session.status}` : "missing session",
+      latest_progress_summary: progress ? `${progress.kind}/${progress.execution_state}: ${progress.report_summary_preview}` : "no progress evidence",
+      watchdog_summary: watchdog ? `${watchdog.watchdog_status}: ${watchdog.recommended_action}` : "no watchdog evidence",
+      commander_dialogue_summary: `pending_questions=${questions.filter((item) => item.status !== "answered").length} guidance=${guidance.length}`,
+      guidance_delivery_summary: deliveries.some((item) => item.delivery_mode === "operator_handoff") ? "operator_handoff delivery may not have reached OpenCode" : `deliveries=${deliveries.length}`,
+      human_control_summary: controls.length ? controls.map((item) => `${item.control_kind}/${item.projected_state_after}`).join(", ") : "no human controls",
+      wake_supervision_summary: "wake supervisor state is read-only in fake continuity packet",
+      result_state_summary: `reports=${reports.length} reviews=${reviews.length}`,
+      local_session_working_memory_summary: "bounded local working memory only; raw OpenCode output omitted",
+      research_memory_summary: retrieval?.redacted_summary_preview,
+      open_loops: loops,
+      blockers,
+      warnings: [
+        "continuity packet is read-only; no Commander proposal was generated",
+        "no provider/MCP/online research, research.db write, OpenCode prompt/process control, or mission mutation occurred",
+        ...(deliveries.some((item) => item.delivery_mode === "operator_handoff") ? ["pending operator_handoff delivery may not have reached OpenCode"] : []),
+      ],
+      sections,
+      source_refs: sections.flatMap((section) => section.source_refs),
+      recommended_commands: [
+        { label: "Latest progress", command: `/opencode-progress-latest session=${resolvedSessionId}`, command_type: "read" },
+        { label: "Open loops", command: `/commander-open-loops session=${resolvedSessionId}`, command_type: "read" },
+        { label: "Human controls", command: `/opencode-human-controls session=${resolvedSessionId}`, command_type: "read" },
+      ],
+      budget: fakeContinuityBudget(payload.targetTokenBudget ?? payload.target_token_budget ?? 4000, sections),
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: `mid-mission continuity readiness=${readiness} session=${resolvedSessionId} loops=${loops.length}`,
+      packet_hash: hash,
+    }
+  }
+
+  private commanderContinuitySummary(payload: Record<string, unknown>): CommanderContinuitySummaryState {
+    const limit = readLimit(payload.limit, 20)
+    const loops = this.fakeCommanderContinuityOpenLoops({ limit: 100 })
+    return {
+      total_recent_sessions: this.opencodeSessions.length,
+      active_session_count: this.opencodeLaunches.filter((item) => item.status === "launched" || item.status === "launch_started").length,
+      stale_or_timed_out_count: loops.filter((item) => item.loop_kind === "session_stale" || item.loop_kind === "watchdog_timed_out").length,
+      pending_question_count: loops.filter((item) => item.loop_kind === "pending_commander_question").length,
+      pending_guidance_delivery_count: loops.filter((item) => item.loop_kind === "pending_guidance_delivery").length,
+      human_attention_count: loops.filter((item) => item.loop_kind.startsWith("human_")).length,
+      result_reports_needing_review_count: loops.filter((item) => item.loop_kind === "result_report_needs_review").length,
+      accepted_reviews_not_ingested_count: loops.filter((item) => item.loop_kind === "accepted_review_not_ingested").length,
+      open_loop_count: loops.length,
+      latest_threads: this.opencodeSessions.slice(0, limit).map((session) => this.fakeCommanderContinuityThreadCard(session.session_id)),
+      generated_at: new Date(0).toISOString(),
+    }
+  }
+
+  private commanderContinuityOpenLoops(payload: Record<string, unknown>): CommanderContinuityOpenLoopSummary[] {
+    return this.fakeCommanderContinuityOpenLoops({
+      sessionId: optionalString(payload.sessionId ?? payload.session_id ?? payload.session),
+      launchId: optionalString(payload.launchId ?? payload.launch_id ?? payload.launch),
+      kind: optionalString(payload.kind),
+      severity: optionalString(payload.severity),
+      limit: payload.limit,
+    })
+  }
+
+  private commanderContinuityThread(payload: Record<string, unknown>): CommanderContinuityThreadCardSummary {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchId = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    const missionId = optionalString(payload.missionId ?? payload.mission_id ?? payload.mission)
+    const objective = optionalString(payload.objective)
+    const threadId = optionalString(payload.threadId ?? payload.thread_id ?? payload.thread)
+    const launch = launchId ? this.opencodeLaunches.find((item) => item.launch_id === launchId) : undefined
+    const session = this.opencodeSessions.find((item) => item.session_id === (sessionId ?? launch?.session_id) || (missionId && item.mission_id === missionId) || (objective && item.objective.includes(objective)))
+    if (session) return this.fakeCommanderContinuityThreadCard(session.session_id)
+    return {
+      thread_id: threadId ?? launchId ?? missionId ?? "fake-thread-missing",
+      session_id: sessionId,
+      launch_id: launchId,
+      mission_id: missionId,
+      objective_preview: objective ?? "unknown",
+      latest_status: "unknown",
+      open_loop_count: 0,
+      last_updated_at: new Date(0).toISOString(),
+      summary_preview: "continuity thread inference is best-effort; explicit proposal thread IDs are future work",
+    }
+  }
+
+  private fakeCommanderContinuityOpenLoops(input: { sessionId?: string; launchId?: string; kind?: string; severity?: string; limit?: unknown }): CommanderContinuityOpenLoopSummary[] {
+    const sessionFilter = input.sessionId
+    const launchFilter = input.launchId
+    const loops: CommanderContinuityOpenLoopSummary[] = []
+    const include = (sessionId?: string, launchId?: string) => (!sessionFilter || sessionId === sessionFilter) && (!launchFilter || launchId === launchFilter)
+    for (const question of this.opencodeCommanderQuestions) {
+      if (question.status === "answered" || !include(question.session_id, question.launch_id)) continue
+      loops.push(fakeContinuityLoop("pending_commander_question", "blocking", question.session_id, question.launch_id, fakeContinuityRef("commander_question", question.question_id, question.status, question.question_preview), `/commander-guidance question=${question.question_id} answer=<answer>`))
+    }
+    for (const guidance of this.commanderGuidanceRecords) {
+      if ((guidance.delivery_status === "delivered" || guidance.delivery_status === "delivery_failed") || !include(guidance.session_id, guidance.launch_id)) continue
+      loops.push(fakeContinuityLoop("pending_guidance_delivery", "warning", guidance.session_id, guidance.launch_id, fakeContinuityRef("commander_guidance", guidance.guidance_id, guidance.delivery_status, guidance.answer_preview), `/commander-guidance-deliver guidance=${guidance.guidance_id} mode=operator_handoff`))
+    }
+    for (const delivery of this.commanderGuidanceDeliveryRecords) {
+      if ((delivery.status !== "delivery_requested" && delivery.status !== "dry_run") || !include(delivery.session_id, delivery.launch_id)) continue
+      loops.push(fakeContinuityLoop("pending_guidance_delivery", "warning", delivery.session_id, delivery.launch_id, fakeContinuityRef("guidance_delivery", delivery.delivery_id, delivery.delivery_mode, delivery.target_summary_preview), `/commander-guidance-delivery-show ${delivery.delivery_id}`))
+    }
+    for (const control of this.opencodeHumanControlRecords) {
+      if (!include(control.session_id, control.launch_id)) continue
+      const kind = control.control_kind === "pause_request" ? "human_pause" : control.control_kind === "stop_request" ? "human_stop" : control.control_kind === "correction" ? "human_correction" : control.control_kind === "override" ? "human_override" : undefined
+      if (!kind) continue
+      loops.push(fakeContinuityLoop(kind, kind === "human_stop" ? "critical" : kind === "human_pause" ? "blocking" : "warning", control.session_id, control.launch_id, fakeContinuityRef("human_control", control.control_id, control.projected_state_after, control.human_note_preview), `/opencode-human-controls session=${control.session_id}`))
+    }
+    for (const report of this.opencodeResultReports) {
+      if (!include(report.session_id, report.launch_id)) continue
+      const reviewed = this.opencodeResultReviews.some((review) => review.report_id === report.report_id)
+      if (!reviewed && report.review_state === "needs_commander_review") loops.push(fakeContinuityLoop("result_report_needs_review", "blocking", report.session_id, report.launch_id, fakeContinuityRef("result_report", report.report_id, report.review_state, report.summary_preview), `/opencode-result-review report=${report.report_id} decision=<decision> rationale=<rationale>`))
+    }
+    for (const review of this.opencodeResultReviews) {
+      if (!include(review.session_id, review.launch_id)) continue
+      const ingested = this.researchIngestions.some((ingestion) => ingestion.review_id === review.review_id && ingestion.research_db_written)
+      if (review.decision === "accepted" && !ingested) loops.push(fakeContinuityLoop("accepted_review_not_ingested", "warning", review.session_id, review.launch_id, fakeContinuityRef("result_review", review.review_id, review.projection_state_after, review.rationale_preview), `/research-ingestion review=${review.review_id}`))
+    }
+    for (const ingestion of this.researchIngestions) {
+      if (!include(ingestion.session_id, ingestion.launch_id)) continue
+      if (!ingestion.research_db_written || ingestion.status === "failed") loops.push(fakeContinuityLoop("research_ingestion_failed", "warning", ingestion.session_id, ingestion.launch_id, fakeContinuityRef("research_ingestion", ingestion.ingestion_id, ingestion.status, ingestion.evidence_summary_preview), `/research-ingestion-show ${ingestion.ingestion_id}`))
+    }
+    for (const watchdog of this.opencodeWatchdogRecords) {
+      if (!include(watchdog.session_id, watchdog.launch_id)) continue
+      if (watchdog.watchdog_status === "timed_out") loops.push(fakeContinuityLoop("watchdog_timed_out", "blocking", watchdog.session_id, watchdog.launch_id, fakeContinuityRef("watchdog", watchdog.watchdog_id, watchdog.watchdog_status, watchdog.recommended_action), `/opencode-force-report session=${watchdog.session_id} reason=<reason>`))
+      else if (watchdog.watchdog_status === "needs_report") loops.push(fakeContinuityLoop("forced_report_requested", "warning", watchdog.session_id, watchdog.launch_id, fakeContinuityRef("watchdog", watchdog.watchdog_id, watchdog.watchdog_status, watchdog.recommended_action), `/opencode-force-report session=${watchdog.session_id} reason=<reason>`))
+    }
+    for (const action of this.opencodeWakeActionExecutionRecords) {
+      if (!include(action.session_id, action.launch_id)) continue
+      if (action.status === "blocked") loops.push(fakeContinuityLoop("wake_action_blocked", "warning", action.session_id, action.launch_id, fakeContinuityRef("wake_action", action.action_execution_id, action.action_kind, action.manual_action_preview ?? action.metadata_result_preview ?? ""), action.manual_action_preview))
+      else if (action.effect_kind === "manual_action_required") loops.push(fakeContinuityLoop("wake_action_manual_required", "warning", action.session_id, action.launch_id, fakeContinuityRef("wake_action", action.action_execution_id, action.action_kind, action.manual_action_preview ?? ""), action.manual_action_preview))
+    }
+    return loops
+      .filter((loop) => !input.kind || loop.loop_kind === input.kind)
+      .filter((loop) => !input.severity || loop.severity === input.severity)
+      .slice(0, readLimit(input.limit, 12))
+  }
+
+  private fakeCommanderContinuityThreadCard(sessionId: string): CommanderContinuityThreadCardSummary {
+    const session = this.opencodeSessions.find((item) => item.session_id === sessionId)
+    const launch = this.opencodeLaunches.find((item) => item.session_id === sessionId)
+    const latestReport = this.opencodeResultReports.find((item) => item.session_id === sessionId)
+    const latestReview = this.opencodeResultReviews.find((item) => item.session_id === sessionId)
+    const latestIngestion = this.researchIngestions.find((item) => item.session_id === sessionId)
+    const loops = this.fakeCommanderContinuityOpenLoops({ sessionId, limit: 100 })
+    return {
+      thread_id: `fake-thread-${sessionId}`,
+      session_id: sessionId,
+      launch_id: launch?.launch_id,
+      mission_id: session?.mission_id,
+      objective_preview: session?.objective ?? "unknown",
+      latest_status: loops.some((loop) => loop.blocking) ? "open_loops_pending" : latestReview?.projection_state_after ?? latestReport?.review_state ?? launch?.status ?? session?.status ?? "unknown",
+      latest_result_report_id: latestReport?.report_id,
+      latest_result_review_id: latestReview?.review_id,
+      latest_research_ingestion_id: latestIngestion?.ingestion_id,
+      open_loop_count: loops.length,
+      last_updated_at: new Date(0).toISOString(),
+      summary_preview: `best-effort continuity thread session=${sessionId} loops=${loops.length}`,
     }
   }
 
@@ -9128,6 +9416,75 @@ function fakeResearchMemorySourceRef(sourceKind: string, sourceId: string, label
   }
 }
 
+function fakeContinuityRef(sourceKind: string, sourceId: string, label?: string, summary?: string, status?: string): CommanderContinuitySourceRefSummary {
+  return {
+    source_kind: redactText(sourceKind),
+    source_id: redactText(sourceId),
+    label: label ? preview(redactText(label)) : undefined,
+    summary_preview: summary ? preview(redactText(summary)) : undefined,
+    status: status ? redactText(status) : undefined,
+    pointer_only: true,
+  }
+}
+
+function fakeContinuitySection(
+  sectionKind: string,
+  title: string,
+  summary: string,
+  sourceRefs: CommanderContinuitySourceRefSummary[],
+  status: string,
+): CommanderContinuitySectionSummary {
+  return {
+    section_id: `fake-section-${sectionKind}`,
+    section_kind: sectionKind,
+    status,
+    title,
+    summary_preview: preview(redactText(summary)),
+    source_refs: sourceRefs.slice(0, 12),
+    item_count: sourceRefs.length,
+    omitted_count: Math.max(0, sourceRefs.length - 12),
+    warnings: status === "excluded" ? ["section excluded by 9R bounded packet policy"] : [],
+  }
+}
+
+function fakeContinuityLoop(
+  kind: string,
+  severity: string,
+  sessionId: string | undefined,
+  launchId: string | undefined,
+  sourceRef: CommanderContinuitySourceRefSummary,
+  command?: string,
+): CommanderContinuityOpenLoopSummary {
+  const hash = fakeStableHash(JSON.stringify({ kind, sessionId, launchId, source: sourceRef.source_id, command }))
+  return {
+    loop_id: `fake-loop-${hash.slice(0, 12)}`,
+    loop_kind: kind,
+    severity,
+    blocking: severity === "blocking" || severity === "critical",
+    session_id: sessionId,
+    launch_id: launchId,
+    source_ref: sourceRef,
+    summary_preview: preview(`${kind} from ${sourceRef.source_kind}:${sourceRef.source_id}`),
+    recommended_command: command ? preview(redactText(command)) : undefined,
+    created_at: new Date(0).toISOString(),
+  }
+}
+
+function fakeContinuityBudget(target: unknown, sections: CommanderContinuitySectionSummary[]) {
+  const targetTokenBudget = readLimit(target, 6000)
+  const text = sections.map((section) => `${section.title} ${section.summary_preview}`).join("\n")
+  const estimatedTokenCount = Math.ceil(text.length / 4)
+  const sectionBudgets: Record<string, number> = {}
+  for (const section of sections) sectionBudgets[section.section_kind] = Math.max(64, Math.floor(targetTokenBudget / Math.max(1, sections.length)))
+  return {
+    target_token_budget: targetTokenBudget,
+    estimated_token_count: estimatedTokenCount,
+    section_budgets: sectionBudgets,
+    omitted_sections: sections.filter((section) => section.status === "excluded" || section.status === "missing").map((section) => section.section_kind),
+    truncation_warnings: estimatedTokenCount > targetTokenBudget ? ["packet estimate exceeds target token budget"] : [],
+  }
+}
+
 function fakeScoreResearchCandidate(candidate: ResearchMemoryCandidateSummary, queryTokens: string[]): ResearchMemoryCandidateSummary {
   const fields: Array<[string, string | undefined, number]> = [
     ["question/title", candidate.question_preview, 1],
@@ -11468,6 +11825,55 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       aliases: ["/novelty-preview", "/research-dup-check"],
       notes: ["Read-only novelty and duplicate-risk preview; repeated work is flagged, not forbidden. No provider calls, no MCP/online research, no research.db writes, no mission/proposal creation, no OpenCode launch, and no research direction decision."],
       out: ["provider calls", "MCP/online research", "research.db writes", "novelty authority gate", "topic allowlist/blocklist", "mission/proposal creation", "OpenCode launch"],
+    }),
+    fakeCommandAuthorityRecord("/commander-continuity-preview", "runtime.preview_commander_proposal_continuity", "safe_read", "none", "commander_cycle", {
+      reads: ["/research-memory-search", "/research-memory-near-duplicates", "/commander-open-loops"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py"],
+      aliases: ["/continuity-preview"],
+      notes: ["Read-only bounded Commander continuity packet compiler combining short-term session state, mid-term project/proposal/session continuity, and long-term research-memory refs. It generates no Commander proposal and calls no provider/MCP, writes no research.db, mutates no mission/proposal/review/apply records, launches/prompts/controls no OpenCode process, creates no checkpoint or follow-up mission."],
+      out: ["Commander proposal generation", "provider/MiniMax calls", "MCP/online research", "research.db writes", "mission/proposal/review/apply mutation", "OpenCode launch/prompt/process control", "checkpoint/follow-up mission"],
+    }),
+    fakeCommandAuthorityRecord("/commander-proposal-memory-packet", "runtime.preview_commander_proposal_continuity", "safe_read", "none", "commander_cycle", {
+      reads: ["/commander-continuity-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py"],
+      aliases: ["/proposal-memory-packet"],
+      notes: ["Read-only proposal continuity packet alias; required input for the future Commander proposal gate, not proposal generation."],
+      out: ["Commander proposal generation", "provider calls", "MCP/online research", "research.db writes", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/commander-proposal-continuity", "runtime.preview_commander_proposal_continuity", "safe_read", "none", "commander_cycle", {
+      reads: ["/commander-continuity-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py"],
+      aliases: ["/proposal-continuity"],
+      notes: ["Read-only Commander proposal continuity packet; no proposal, provider, MCP, research.db write, or mission mutation."],
+      out: ["Commander proposal generation", "provider calls", "MCP/online research", "research.db writes", "mission mutation"],
+    }),
+    fakeCommandAuthorityRecord("/commander-midmission-packet", "runtime.preview_commander_midmission_continuity", "safe_read", "none", "commander_cycle", {
+      reads: ["/opencode-progress-latest", "/opencode-watchdog-preview", "/opencode-human-controls", "/opencode-wake-supervisor-preview"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py"],
+      aliases: ["/midmission-packet", "/mid-mission-packet"],
+      notes: ["Read-only mid-mission Commander continuity packet over active OpenCode session evidence; no provider/MCP, no OpenCode prompt/process control, no wake execution, no research.db write, and no mission mutation."],
+      out: ["provider calls", "MCP/online research", "OpenCode prompt/process control", "wake action execution", "research.db writes", "mission/proposal/review/apply mutation"],
+    }),
+    fakeCommandAuthorityRecord("/commander-continuity-summary", "runtime.commander_continuity_summary", "safe_read", "none", "commander_cycle", {
+      reads: ["/commander-open-loops", "/commander-continuity-thread"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py"],
+      aliases: ["/continuity-summary"],
+      notes: ["Read-only bounded continuity summary over recent sessions and open loops; appends no events and writes no research.db."],
+      out: ["event append", "provider calls", "MCP/online research", "research.db writes", "mission/proposal/review/apply mutation"],
+    }),
+    fakeCommandAuthorityRecord("/commander-open-loops", "runtime.list_commander_continuity_open_loops", "safe_read", "none", "commander_cycle", {
+      reads: ["/commander-continuity-summary", "/commander-midmission-packet"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py"],
+      aliases: ["/open-loops"],
+      notes: ["Read-only open-loop inspection for pending questions, pending guidance delivery, human controls, result review/ingestion gaps, watchdogs, and wake action blocks; no writes or automated actions."],
+      out: ["event append", "provider calls", "MCP/online research", "research.db writes", "mission/proposal/review/apply mutation", "OpenCode prompt/process control"],
+    }),
+    fakeCommandAuthorityRecord("/commander-continuity-thread", "runtime.show_commander_continuity_thread", "safe_read", "none", "commander_cycle", {
+      reads: ["/commander-continuity-summary"],
+      targeted: ["tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py"],
+      aliases: ["/continuity-thread"],
+      notes: ["Read-only best-effort continuity thread/lineage inspection with pointer-only source refs; no provider/MCP, no writes, no proposal creation."],
+      out: ["provider calls", "MCP/online research", "research.db writes", "mission/proposal/review/apply mutation", "proposal creation"],
     }),
     fakeCommandAuthorityRecord("/executor-review-preview", "runtime.preview_commander_executor_review", "safe_read", "reasoning_provider_runtime", "commander_cycle", {
       reads: ["/result-review-packet", "/authority-show /executor-review"],

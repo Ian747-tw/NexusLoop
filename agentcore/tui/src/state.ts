@@ -3227,6 +3227,156 @@ export type ResearchMemoryState = {
   commandError?: string
 }
 
+export type CommanderContinuitySourceRefSummary = {
+  source_kind: string
+  source_id: string
+  label?: string
+  summary_preview?: string
+  status?: string
+  pointer_only: true
+}
+
+export type CommanderContinuityCommandSummary = {
+  label: string
+  command: string
+  command_type: "read" | "write"
+  requires_active_runtime?: boolean
+  notes?: string
+}
+
+export type CommanderContinuityOpenLoopSummary = {
+  loop_id: string
+  loop_kind: string
+  severity: string
+  blocking: boolean
+  session_id?: string
+  launch_id?: string
+  source_ref: CommanderContinuitySourceRefSummary
+  summary_preview: string
+  recommended_command?: string
+  created_at?: string
+}
+
+export type CommanderContinuitySectionSummary = {
+  section_id: string
+  section_kind: string
+  status: string
+  title: string
+  summary_preview: string
+  source_refs: CommanderContinuitySourceRefSummary[]
+  item_count: number
+  omitted_count: number
+  warnings: string[]
+}
+
+export type CommanderContinuityBudgetSummary = {
+  target_token_budget: number
+  estimated_token_count: number
+  section_budgets: Record<string, number>
+  omitted_sections: string[]
+  truncation_warnings: string[]
+}
+
+export type CommanderProposalContinuityPacketSummary = {
+  packet_id: string
+  packet_kind: "proposal" | string
+  status: string
+  objective_preview: string
+  normalized_objective_preview: string
+  readiness: string
+  authority_summary: string
+  project_direction_summary: string
+  proposal_lineage_summary: string
+  recent_execution_summary: string
+  research_memory_summary: string
+  research_search_profile_summary: string
+  research_queries_executed: string[]
+  research_candidates_summary: string
+  near_duplicate_summary: string
+  inspected_memory_refs: CommanderContinuitySourceRefSummary[]
+  novelty_risk?: string
+  missing_memory_warning: boolean
+  why_not_duplicate_required: boolean
+  open_loops: CommanderContinuityOpenLoopSummary[]
+  blockers: string[]
+  warnings: string[]
+  sections: CommanderContinuitySectionSummary[]
+  source_refs: CommanderContinuitySourceRefSummary[]
+  recommended_commands: CommanderContinuityCommandSummary[]
+  budget: CommanderContinuityBudgetSummary
+  generated_at: string
+  redacted_summary_preview: string
+  packet_hash: string
+}
+
+export type CommanderMidMissionContinuityPacketSummary = {
+  packet_id: string
+  packet_kind: "mid_mission" | string
+  status: string
+  session_id: string
+  launch_id?: string
+  objective_preview: string
+  readiness: string
+  active_session_summary: string
+  latest_progress_summary: string
+  watchdog_summary: string
+  commander_dialogue_summary: string
+  guidance_delivery_summary: string
+  human_control_summary: string
+  wake_supervision_summary: string
+  result_state_summary: string
+  local_session_working_memory_summary: string
+  research_memory_summary?: string
+  open_loops: CommanderContinuityOpenLoopSummary[]
+  blockers: string[]
+  warnings: string[]
+  sections: CommanderContinuitySectionSummary[]
+  source_refs: CommanderContinuitySourceRefSummary[]
+  recommended_commands: CommanderContinuityCommandSummary[]
+  budget: CommanderContinuityBudgetSummary
+  generated_at: string
+  redacted_summary_preview: string
+  packet_hash: string
+}
+
+export type CommanderContinuityThreadCardSummary = {
+  thread_id: string
+  session_id?: string
+  launch_id?: string
+  mission_id?: string
+  objective_preview: string
+  latest_status: string
+  latest_result_report_id?: string
+  latest_result_review_id?: string
+  latest_research_ingestion_id?: string
+  open_loop_count: number
+  last_updated_at?: string
+  summary_preview: string
+}
+
+export type CommanderContinuitySummaryState = {
+  total_recent_sessions: number
+  active_session_count: number
+  stale_or_timed_out_count: number
+  pending_question_count: number
+  pending_guidance_delivery_count: number
+  human_attention_count: number
+  result_reports_needing_review_count: number
+  accepted_reviews_not_ingested_count: number
+  open_loop_count: number
+  latest_threads: CommanderContinuityThreadCardSummary[]
+  generated_at: string
+}
+
+export type CommanderContinuityState = {
+  proposalPacket?: CommanderProposalContinuityPacketSummary | null
+  midMissionPacket?: CommanderMidMissionContinuityPacketSummary | null
+  summary?: CommanderContinuitySummaryState | null
+  openLoops: CommanderContinuityOpenLoopSummary[]
+  selectedThread?: CommanderContinuityThreadCardSummary | null
+  commandError?: string
+}
+
 export type CommanderExecutorReviewCommandSummary = {
   label: string
   command: string
@@ -5523,6 +5673,7 @@ export type UiState = {
   opencodeResultReviews?: OpenCodeResultReviewGateState
   researchIngestions?: ResearchIngestionState
   researchMemory?: ResearchMemoryState
+  commanderContinuity?: CommanderContinuityState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
   executorReviewProposalCreate?: ExecutorReviewProposalCreateState

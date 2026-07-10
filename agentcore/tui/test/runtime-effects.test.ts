@@ -6518,4 +6518,75 @@ describe("runtime UI effects", () => {
     expect(runtime.sentCommands).toEqual([])
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
+
+  test("Commander continuity slash commands render read-only packets and open loops", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = initialState("/tmp/demo")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-plan", args: ["objective=continuity", "packet", "test", "token=abc123"] })
+    const sessionId = state.opencodeSessions?.latestPlan?.session_id ?? "opencode_session_1"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-session-instruction-pack-write", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-launch", args: [`session=${sessionId}`] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-heartbeat", args: [`session=${sessionId}`, "summary=alive", "token=abc123"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-ask-commander", args: [`session=${sessionId}`, "question=need", "commander", "continuity", "decision", "token=abc123"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-human-correction", args: [`session=${sessionId}`, "correction=preserve", "continuity", "token=abc123"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-report", args: [`session=${sessionId}`, "kind=completion_report", "summary=continuity", "evidence", "token=abc123", "outcome=tests", "passed", "claims=continuity-works"] })
+    const reportId = state.opencodeResultReports?.latestResult?.report_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-result-review", args: [`report=${reportId}`, "decision=accepted", "rationale=bounded", "continuity", "evidence", "token=abc123", "accepted_claims=continuity-works"] })
+    const reviewId = state.opencodeResultReviews?.latestResult?.review_id ?? ""
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-ingestion", args: [`review=${reviewId}`, "tags=continuity,memory"] })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-continuity-preview", args: ["objective=plan", "next", "continuity-safe", "research", "token=abc123"] })
+    expect(state.commanderContinuity?.proposalPacket).toMatchObject({
+      packet_kind: "proposal",
+      research_search_profile_summary: expect.stringContaining("bounded_lexical"),
+    })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-proposal-memory-packet", args: ["objective=plan", "next", "continuity-safe", "research", "token=abc123"] })
+    expect(state.commanderContinuity?.proposalPacket?.packet_kind).toBe("proposal")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-midmission-packet", args: [`session=${sessionId}`] })
+    expect(state.commanderContinuity?.midMissionPacket).toMatchObject({
+      packet_kind: "mid_mission",
+      session_id: sessionId,
+    })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-open-loops", args: [`session=${sessionId}`] })
+    expect(state.commanderContinuity?.openLoops.some((loop) => loop.loop_kind === "pending_commander_question")).toBe(true)
+    expect(state.commanderContinuity?.openLoops.some((loop) => loop.loop_kind === "human_correction")).toBe(true)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-continuity-summary", args: [] })
+    expect(state.commanderContinuity?.summary?.open_loop_count).toBeGreaterThan(0)
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-continuity-thread", args: [`session=${sessionId}`] })
+    expect(state.commanderContinuity?.selectedThread).toMatchObject({ session_id: sessionId })
+
+    let snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Commander continuity")
+    expect(snapshot).toContain("proposal_packet=fake-continuity-proposal")
+    expect(snapshot).toContain("mid_mission_packet=fake-continuity-midmission")
+    expect(snapshot).toContain("search_profile=bounded_lexical")
+    expect(snapshot).toContain("semantic_search_enabled=false")
+    expect(snapshot).toContain("proposal_open_loops")
+    expect(snapshot).toContain("human_correction")
+    expect(snapshot).toContain("proposal_budget target=")
+    expect(snapshot).toContain("proposal_source_refs")
+    expect(snapshot).toContain("continuity packet is read-only")
+    expect(snapshot).toContain("no Commander proposal was generated")
+    expect(snapshot).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-continuity-preview", args: [] })
+    expect(state.commanderContinuity?.commandError).toContain("requires objective")
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-midmission-packet", args: [] })
+    expect(state.commanderContinuity?.commandError).toContain("requires session")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/commander-continuity-preview"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/commander-continuity-preview",
+      risk: "safe_read",
+      calls_provider: false,
+      mutates_events: false,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("Read-only bounded Commander continuity packet compiler")
+    expect(state.commandAuthority?.selected?.out_of_scope.join(" ")).toContain("research.db writes")
+    expect(state.commandAuthority?.selected?.out_of_scope.join(" ")).toContain("mission/proposal/review/apply mutation")
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("selected=/commander-continuity-preview risk=safe_read")
+    expect(JSON.stringify(state)).not.toContain("abc123")
+  })
 })
