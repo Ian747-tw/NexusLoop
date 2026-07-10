@@ -21108,7 +21108,7 @@ describe("OpenCode launch readiness", () => {
     const damagedRows = beforeRowsDb.query("SELECT rowid, result_id FROM research_results_fts ORDER BY result_id").all()
     beforeRowsDb.close()
 
-    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
     const search = await server.command("runtime.preview_research_memory_retrieval", { query: "readonly fts runtime fallback", limit: 10 }) as { status: string; candidates: Array<{ result_id: string }>; warnings: string[] }
     expect(search.status).toBe("ready")
     expect(search.candidates.map((candidate) => candidate.result_id)).toContain("readonly_fts_runtime_result")
@@ -21119,15 +21119,21 @@ describe("OpenCode launch readiness", () => {
     expect(profile.search_engine).toBe("bounded_lexical")
     expect(profile.warnings.join(" ")).toContain("bounded lexical fallback")
     expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+
+    await server.start()
+    const startedProfile = await server.command("runtime.research_memory_search_profile") as { fts_index_enabled: boolean; search_engine: string }
+    expect(startedProfile.fts_index_enabled).toBe(true)
+    expect(startedProfile.search_engine).toBe("hybrid_fts_lexical")
     await server.shutdown()
 
     const after = new Database(join(dir, ".nxl", "research.db"))
     try {
-      expect(after.query("SELECT rowid, result_id FROM research_results_fts ORDER BY result_id").all()).toEqual(damagedRows)
+      expect(after.query("SELECT rowid, result_id FROM research_results_fts ORDER BY result_id").all()).not.toEqual(damagedRows)
+      expect(after.query("SELECT result_id FROM research_results_fts ORDER BY result_id").all()).toEqual([{ result_id: "readonly_fts_runtime_result" }])
       const projection = after
         .query("SELECT rebuilt_at FROM research_projection WHERE projection_name = ?")
         .get("research_results_fts") as { rebuilt_at: string | null } | null
-      expect(projection?.rebuilt_at ?? null).toBe(beforeMarker)
+      expect(projection?.rebuilt_at ?? null).not.toBe(beforeMarker)
     } finally {
       after.close()
     }

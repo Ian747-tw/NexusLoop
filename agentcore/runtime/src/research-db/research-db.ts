@@ -1213,6 +1213,12 @@ export class ResearchDb {
     }
   }
 
+  repairResearchResultsFtsProjectionIfNeeded(): void {
+    if (!this.isResearchResultsFtsAvailable()) return
+    if (this.inspectResearchResultsFtsReadiness(false).ready) return
+    this.repairResearchResultsFts()
+  }
+
   recordCitation(input: CitationInput): Citation {
     const citationId = cleanId(input.citation_id ?? this.idFactory())
     assertAllowed(CITATION_SOURCE_TYPES, input.source_type, "citation source type")

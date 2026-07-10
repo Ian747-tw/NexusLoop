@@ -272,6 +272,7 @@ export interface RuntimeResearchDbProjection extends RuntimeResearchDbReader {
   checkProjectionIntegrity(eventsPath?: string): ResearchProjectionIntegrity
   rebuildFromEvents(eventsPath?: string): void
   getProjectionStatus(): ResearchProjectionStatus
+  repairResearchResultsFtsProjectionIfNeeded?(): void
   getTopic(id: string): Topic | null
   addSource(input: Parameters<ExternalApiResearchDbWriter["addSource"]>[0]): ReturnType<ExternalApiResearchDbWriter["addSource"]>
   addNote(input: Parameters<ExternalApiResearchDbWriter["addNote"]>[0]): ReturnType<ExternalApiResearchDbWriter["addNote"]>
@@ -3171,18 +3172,32 @@ export class RuntimeServer {
     }
 
     const integrity = this.checkResearchProjectionForStatus({ emit: true })
-    if (integrity.ok && !integrity.stale) return
+    if (integrity.ok && !integrity.stale) {
+      this.ensureResearchFtsProjectionWritable(operation)
+      return
+    }
     if (integrity.stale && this.researchProjectionMode === "auto_rebuild") {
       this.requireProjectionWriteLock(`research projection auto-rebuild during ${operation}`)
       this.rebuildProjection(operation)
       const rebuilt = this.checkResearchProjectionForStatus({ emit: true })
-      if (rebuilt.ok && !rebuilt.stale) return
+      if (rebuilt.ok && !rebuilt.stale) {
+        this.ensureResearchFtsProjectionWritable(operation)
+        return
+      }
       throw new Error(`research projection rebuild did not produce a usable projection: ${rebuilt.reason ?? "unknown"}`)
     }
 
     const reason = integrity.reason ?? (integrity.stale ? "stale" : "unknown")
     if (integrity.stale) throw new Error(`research projection stale: ${reason}`)
     throw new Error(`research projection corrupt: ${reason}`)
+  }
+
+  private ensureResearchFtsProjectionWritable(operation: "startup" | "read"): void {
+    if (operation !== "startup") return
+    const db = this.getResearchDb()
+    if (typeof db.repairResearchResultsFtsProjectionIfNeeded !== "function") return
+    this.requireProjectionWriteLock("research FTS projection repair during startup")
+    db.repairResearchResultsFtsProjectionIfNeeded()
   }
 
   private checkResearchProjectionForStatus(options: { emit?: boolean } = {}): ResearchProjectionIntegrity {
