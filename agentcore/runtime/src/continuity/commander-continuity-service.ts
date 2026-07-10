@@ -91,7 +91,7 @@ export class CommanderContinuityService {
     const includeNearDuplicates = input.include_near_duplicates !== false
 
     const recentSessions = includeRecent ? await this.options.opencodeSessionService.list({ limit: maxRecent, mission_id: optional(input.mission_id) }) : []
-    const openLoops = includeOpenLoops ? await this.openLoops({ session_id: optional(input.session_id), limit: maxOpenLoops }) : []
+    const openLoops = includeOpenLoops ? await this.proposalOpenLoops(input, maxOpenLoops) : []
     const research = includeResearch && objective ? await this.researchSection(objective, {
       maxCandidates,
       maxInspected,
@@ -356,6 +356,16 @@ export class CommanderContinuityService {
     })
   }
 
+  private async proposalOpenLoops(input: CommanderProposalContinuityInput, limit: number): Promise<CommanderContinuityOpenLoop[]> {
+    const sessionId = optional(input.session_id)
+    if (sessionId) return this.openLoops({ session_id: sessionId, limit })
+    const missionId = optional(input.mission_id)
+    if (!missionId) return this.openLoops({ limit })
+    const sessions = await this.options.opencodeSessionService.list({ limit: MAX_LIST, mission_id: missionId })
+    const loops = (await Promise.all(sessions.map((session) => this.openLoops({ session_id: session.session_id, limit: MAX_LIST })))).flat()
+    return uniqueLoops(loops).slice(0, limit)
+  }
+
   private async researchSection(objective: string, input: { maxCandidates: number; maxInspected: number; includeNearDuplicates: boolean; sessionId?: string; missionId?: string }) {
     const [profile, main, failures, probes, near] = await Promise.all([
       this.options.researchMemoryService.searchProfile(),
@@ -585,6 +595,17 @@ function uniqueRefs(refs: Array<CommanderContinuitySourceRef | undefined>): Comm
     out.push(item)
   }
   return out
+}
+
+function uniqueLoops(loops: CommanderContinuityOpenLoop[]): CommanderContinuityOpenLoop[] {
+  const seen = new Set<string>()
+  const out: CommanderContinuityOpenLoop[] = []
+  for (const item of loops) {
+    if (seen.has(item.loop_id)) continue
+    seen.add(item.loop_id)
+    out.push(item)
+  }
+  return out.sort((left, right) => (right.created_at ?? "").localeCompare(left.created_at ?? ""))
 }
 
 function normalizeObjective(value: string): string {

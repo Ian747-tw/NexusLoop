@@ -21626,6 +21626,8 @@ describe("OpenCode launch readiness", () => {
     const report = await server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "continuity evidence token=continuity-secret", outcome: "tests passed", claims: ["continuity-works"] }) as { report_id: string }
     const review = await server.command("runtime.record_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "bounded continuity evidence token=continuity-secret", acceptedClaims: ["continuity-works"] }) as { review_id: string }
     await server.command("runtime.record_research_ingestion", { reviewId: review.review_id, tags: ["continuity", "memory"] })
+    const quietMission = await server.submitUserMessage("quiet target mission continuity")
+    await server.command("runtime.create_opencode_session_plan", { objective: "quiet target mission continuity", missionId: quietMission.missionId })
     const eventsBefore = await server.eventStore.readAll()
 
     const proposal = await server.command("runtime.preview_commander_proposal_continuity", { objective: "plan next continuity-safe research token=continuity-secret" }) as {
@@ -21653,6 +21655,14 @@ describe("OpenCode launch readiness", () => {
     expect(JSON.stringify(proposal.budget)).toContain("omitted")
     expect(JSON.stringify(proposal)).not.toContain("continuity-secret")
     expect(proposal.warnings.join(" ")).toContain("read-only")
+
+    const missionScopedProposal = await server.command("runtime.preview_commander_proposal_continuity", { objective: "quiet mission packet", missionId: quietMission.missionId }) as {
+      readiness: string
+      open_loops: Array<{ loop_kind: string }>
+    }
+    expect(missionScopedProposal.open_loops.map((loop) => loop.loop_kind)).not.toContain("pending_commander_question")
+    expect(missionScopedProposal.open_loops.map((loop) => loop.loop_kind)).not.toContain("human_correction")
+    expect(missionScopedProposal.readiness).not.toBe("open_loops_pending")
 
     const mid = await server.command("runtime.preview_commander_midmission_continuity", { sessionId }) as {
       status: string
