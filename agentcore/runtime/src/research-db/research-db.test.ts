@@ -365,6 +365,42 @@ describe("ResearchDb", () => {
     repairOpen.close()
   })
 
+  test("explicit rebuildFromEvents recreates missing FTS table from a read-only opened handle", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "result_rebuild_missing_fts",
+      result_type: "implementation_change",
+      title: "rebuild missing fts",
+      summary: "explicit rebuild should recreate the missing FTS projection",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("result_rebuild_missing_fts")
+    db.close()
+
+    withSqlite(dir, (sqlite) => {
+      sqlite.exec("DROP TABLE research_results_fts")
+      sqlite.query("DELETE FROM research_projection WHERE projection_name = ?").run("research_results_fts")
+    })
+    expect(ftsTableExists(dir)).toBe(false)
+
+    const readOnlyOpen = openSequencedTestDb(dir, { allowFtsProjectionRepair: false })
+    expect(readOnlyOpen.researchResultsFtsStatus().available).toBe(false)
+
+    readOnlyOpen.rebuildFromEvents()
+    expect(readOnlyOpen.researchResultsFtsStatus()).toMatchObject({
+      available: true,
+      indexed_result_count: 1,
+      expected_indexed_result_count: 1,
+      projection_version: 1,
+    })
+    expect(readOnlyOpen.searchResearchResultsFts({ query: "rebuild missing", limit: 10 }).map((result) => result.result_id)).toEqual([
+      "result_rebuild_missing_fts",
+    ])
+    readOnlyOpen.close()
+  })
+
   test("normalizes FTS bm25 scores without reversing match strength", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)

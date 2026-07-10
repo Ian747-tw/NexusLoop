@@ -2174,6 +2174,7 @@ export class ResearchDb {
     if (!existsSync(eventsPath)) throw new Error(`event log missing: ${eventsPath}`)
     const parsed = readJsonlEvents(eventsPath)
     this.inTransaction(() => {
+      this.ensureResearchResultsFts()
       this.resetProjectionTables()
       this.upsertProjectionStatus(null, null, 0, this.timestamp())
       let appliedCount = 0
