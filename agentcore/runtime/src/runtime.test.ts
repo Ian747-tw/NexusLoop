@@ -21218,6 +21218,13 @@ describe("OpenCode launch readiness", () => {
       title: "hybridfailurecap valid finding",
       summary: "hybridfailurecap older valid finding should survive pre-limit failure filtering",
     })
+    const ftsOnlyStatus = result({
+      result_id: "hybrid_status_note_target",
+      result_type: "implementation_change",
+      label: "status update",
+      title: "hybridstatusnote status update",
+      summary: "derived status note should survive pre-limit evidence filtering",
+    })
     const derivedFailures = [
       result({ result_id: "hybrid_failure_label_failed", result_type: "implementation_change", label: "failed experiment", title: "hybridderivedfailure failed experiment", summary: "derived failure label" }),
       result({ result_id: "hybrid_failure_label_bug", result_type: "implementation_change", label: "bug regression", title: "hybridderivedfailure bug regression", summary: "derived failure label" }),
@@ -21236,6 +21243,7 @@ describe("OpenCode launch readiness", () => {
         searchResearchResultsFts: (options) => {
           ftsCalls.push(options)
           if (options.query === "hybridfailurecap" && options.include_failures === false) return [{ ...ftsOnlyFinding, fts_score: 1 }]
+          if (options.query === "hybridstatusnote" && options.evidence_kind === "status_note") return [{ ...ftsOnlyStatus, fts_score: 1 }]
           if (options.query === "hybridderivedfailure" && options.labels?.includes("failure") && options.include_failures === false) return []
           if (options.query === "hybridderivedfailure" && options.labels?.includes("failure")) return derivedFailures.map((item, index) => ({ ...item, fts_score: 1 - index / 10 }))
           return []
@@ -21259,6 +21267,22 @@ describe("OpenCode launch readiness", () => {
     expect(nonFailure.candidates[0]?.pointer_only).toBe(true)
     expect(ftsCalls[0]).toMatchObject({ query: "hybridfailurecap", include_failures: false })
 
+    const statusNote = service.preview({
+      query: "hybridstatusnote",
+      evidence_kind: "status_note",
+      limit: 5,
+    })
+    expect(statusNote.status).toBe("ready")
+    expect(statusNote.candidates).toEqual([expect.objectContaining({
+      result_id: "hybrid_status_note_target",
+      evidence_kind_preview: "status_note",
+      rank_source: expect.stringMatching(/fts|hybrid/),
+      pointer_only: true,
+    })])
+    expect(statusNote.candidates[0]?.fts_score).toEqual(expect.any(Number))
+    expect(statusNote.candidates[0]?.matched_terms).toContain("hybridstatusnote")
+    expect(ftsCalls[1]).toMatchObject({ query: "hybridstatusnote", evidence_kind: "status_note" })
+
     const failures = service.preview({
       query: "hybridderivedfailure",
       labels: ["failure"],
@@ -21279,7 +21303,7 @@ describe("OpenCode launch readiness", () => {
     expect(failures.candidates.every((candidate) => candidate.matched_terms.includes("hybridderivedfailure"))).toBe(true)
     expect(failures.candidates.every((candidate) => candidate.matched_fields.length > 0)).toBe(true)
     expect(failures.candidates.every((candidate) => candidate.scoring_explanation_preview.includes("score"))).toBe(true)
-    expect(ftsCalls[1]).toMatchObject({ query: "hybridderivedfailure", labels: ["failure"] })
+    expect(ftsCalls[2]).toMatchObject({ query: "hybridderivedfailure", labels: ["failure"] })
 
     const contradictory = service.preview({
       query: "hybridderivedfailure",
@@ -21288,7 +21312,7 @@ describe("OpenCode launch readiness", () => {
       limit: 10,
     })
     expect(contradictory.candidates).toEqual([])
-    expect(ftsCalls[2]).toMatchObject({ query: "hybridderivedfailure", labels: ["failure"], include_failures: false })
+    expect(ftsCalls[3]).toMatchObject({ query: "hybridderivedfailure", labels: ["failure"], include_failures: false })
 
     const near = service.nearDuplicates({ query: "hybridderivedfailure", labels: ["failure"], include_failures: true })
     expect(near.status).toBe("ready")

@@ -1238,14 +1238,9 @@ export class ResearchDb {
     }
     const evidenceKind = cleanOptional(options.evidence_kind)
     if (evidenceKind) {
-      const resultTypes = researchResultTypesForEvidenceKind(evidenceKind)
-      if (resultTypes.length > 0) {
-        filters.push(`r.result_type IN (${resultTypes.map(() => "?").join(", ")})`)
-        params.push(...resultTypes)
-      } else {
-        filters.push("r.label = ?")
-        params.push(evidenceKind)
-      }
+      const evidencePredicate = researchResultEvidenceKindSqlPredicate("r", evidenceKind)
+      filters.push(evidencePredicate.clause)
+      params.push(...evidencePredicate.params)
     }
     if (options.has_artifacts !== undefined) {
       filters.push(options.has_artifacts
@@ -4154,6 +4149,50 @@ function researchResultFailureSqlPredicate(alias: string): { clause: string; par
       ...RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map((term) => `%${term}%`),
       ...RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map((term) => `%${term}%`),
     ],
+  }
+}
+
+function researchResultEvidenceKindSqlPredicate(alias: string, evidenceKind: string): { clause: string; params: SQLQueryBindings[] } {
+  switch (evidenceKind.toLowerCase()) {
+    case "positive_finding": {
+      const failurePredicate = researchResultFailureSqlPredicate(alias)
+      const inconclusivePredicate = researchResultTermSqlPredicate(alias, "inconclusive")
+      const partialPredicate = researchResultTermSqlPredicate(alias, "partial")
+      const blockedPredicate = researchResultTermSqlPredicate(alias, "blocked")
+      const statusPredicate = researchResultTermSqlPredicate(alias, "status")
+      const excluded = [failurePredicate, inconclusivePredicate, partialPredicate, blockedPredicate, statusPredicate]
+      return {
+        clause: excluded.map((predicate) => `NOT (${predicate.clause})`).join(" AND "),
+        params: excluded.flatMap((predicate) => predicate.params),
+      }
+    }
+    case "negative_result":
+      return researchResultFailureSqlPredicate(alias)
+    case "inconclusive_result":
+      return researchResultTermSqlPredicate(alias, "inconclusive")
+    case "partial_result":
+      return researchResultTermSqlPredicate(alias, "partial")
+    case "blocked_result":
+      return researchResultTermSqlPredicate(alias, "blocked")
+    case "status_note":
+      return researchResultTermSqlPredicate(alias, "status")
+    case "artifact_index":
+    case "metric_observation": {
+      const resultTypes = researchResultTypesForEvidenceKind(evidenceKind)
+      return {
+        clause: `${alias}.result_type IN (${resultTypes.map(() => "?").join(", ")})`,
+        params: resultTypes,
+      }
+    }
+    default:
+      return { clause: `${alias}.label = ?`, params: [evidenceKind] }
+  }
+}
+
+function researchResultTermSqlPredicate(alias: string, term: string): { clause: string; params: SQLQueryBindings[] } {
+  return {
+    clause: `(LOWER(COALESCE(${alias}.label, '')) LIKE ? OR LOWER(COALESCE(${alias}.result_type, '')) LIKE ?)`,
+    params: [`%${term}%`, `%${term}%`],
   }
 }
 

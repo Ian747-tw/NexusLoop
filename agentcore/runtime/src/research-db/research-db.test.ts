@@ -655,6 +655,31 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("evidence_kind=status_note includes derived status labels before FTS cap", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    addAcceptedResearchResult(db, {
+      result_id: "result_status_note_target",
+      label: "status update",
+      title: "statuspushdown archive target",
+      summary: "statuspushdown old status note survives pre-limit evidence filtering",
+    })
+    for (let index = 0; index < 505; index += 1) {
+      addAcceptedResearchResult(db, {
+        result_id: `result_status_note_filler_${index}`,
+        label: "finding",
+        title: `statuspushdown statuspushdown statuspushdown finding filler ${index}`,
+        summary: "positive finding row that must be removed before FTS capping for status_note",
+      })
+    }
+
+    const unfiltered = db.searchResearchResultsFts({ query: "statuspushdown", limit: 500 }).map((result) => result.result_id)
+    expect(unfiltered).not.toContain("result_status_note_target")
+    const filtered = db.searchResearchResultsFts({ query: "statuspushdown", evidence_kind: "status_note", limit: 10 })
+    expect(filtered.map((result) => result.result_id)).toEqual(["result_status_note_target"])
+    db.close()
+  })
+
   test("opens with FTS unavailable and falls back without partial projection state", async () => {
     const dir = await tempProject()
     const proto = ResearchDb.prototype as unknown as { ensureResearchResultsFts?: () => boolean }
