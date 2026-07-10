@@ -21619,6 +21619,8 @@ describe("OpenCode launch readiness", () => {
     const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
     expect(launched.status).toBe("launched")
     await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "alive token=continuity-secret" })
+    const wakeExecution = await server.command("runtime.record_opencode_wake_supervisor_execution", { sessionId }) as { execution_id: string; action_execution_status: string }
+    const wakeAction = await server.command("runtime.record_opencode_wake_action_execution", { executionId: wakeExecution.execution_id }) as { action_execution_id: string; status: string }
     await server.command("runtime.create_opencode_commander_question", { sessionId, question: "need commander continuity decision token=continuity-secret" })
     await server.command("runtime.record_opencode_human_control", { sessionId, kind: "correction", correction: "preserve continuity token=continuity-secret" })
     const report = await server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "continuity evidence token=continuity-secret", outcome: "tests passed", claims: ["continuity-works"] }) as { report_id: string }
@@ -21659,7 +21661,9 @@ describe("OpenCode launch readiness", () => {
       latest_progress_summary: string
       commander_dialogue_summary: string
       human_control_summary: string
+      wake_supervision_summary: string
       sections: Array<{ section_kind: string }>
+      source_refs: Array<{ source_kind: string; source_id: string; pointer_only: boolean }>
       open_loops: Array<{ loop_kind: string }>
       warnings: string[]
     }
@@ -21667,6 +21671,12 @@ describe("OpenCode launch readiness", () => {
     expect(mid.latest_progress_summary).toContain("heartbeat")
     expect(mid.commander_dialogue_summary).toContain("pending questions=1")
     expect(mid.human_control_summary).toContain("correction")
+    expect(mid.wake_supervision_summary).toContain(wakeExecution.execution_id)
+    expect(mid.wake_supervision_summary).toContain(wakeAction.action_execution_id)
+    expect(mid.source_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source_kind: "wake_supervisor_execution", source_id: wakeExecution.execution_id, pointer_only: true }),
+      expect.objectContaining({ source_kind: "wake_action_execution", source_id: wakeAction.action_execution_id, pointer_only: true }),
+    ]))
     expect(mid.open_loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
     expect(mid.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({ section_kind: "active_session" }),
