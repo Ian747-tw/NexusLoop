@@ -15,18 +15,20 @@ async function tempProject(): Promise<string> {
   return dir
 }
 
-function openTestDb(projectDir: string): ResearchDb {
+function openTestDb(projectDir: string, options: { allowFtsProjectionRepair?: boolean } = {}): ResearchDb {
   let next = 1
   return ResearchDb.open(projectDir, {
+    allowFtsProjectionRepair: options.allowFtsProjectionRepair ?? true,
     now: () => new Date("2026-05-10T12:00:00Z"),
     idFactory: () => `id_${next++}`,
   })
 }
 
-function openSequencedTestDb(projectDir: string): ResearchDb {
+function openSequencedTestDb(projectDir: string, options: { allowFtsProjectionRepair?: boolean } = {}): ResearchDb {
   let nextId = 1
   let nextMs = 0
   return ResearchDb.open(projectDir, {
+    allowFtsProjectionRepair: options.allowFtsProjectionRepair ?? true,
     now: () => new Date(Date.UTC(2026, 4, 10, 12, 0, 0, nextMs++)),
     idFactory: () => `id_${nextId++}`,
   })
@@ -242,6 +244,7 @@ describe("ResearchDb", () => {
     })
 
     const reopened = ResearchDb.open(dir, {
+      allowFtsProjectionRepair: true,
       now: () => new Date("2026-05-10T13:00:00.000Z"),
       idFactory: () => "unused",
     })
@@ -254,6 +257,59 @@ describe("ResearchDb", () => {
     expect(reopened.searchResearchResultsFts({ query: "orphan", limit: 10 })).toEqual([])
     reopened.close()
     expect(readFtsRows(dir).map((row) => row.result_id).sort()).toEqual(["result_repair_a", "result_repair_b"])
+  })
+
+  test("read-only reopen does not repair inconsistent FTS without projection write authority", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    for (const id of ["result_readonly_repair_a", "result_readonly_repair_b"]) {
+      db.proposeResearchResult({
+        result_id: id,
+        result_type: "implementation_change",
+        title: `readonly repair ${id}`,
+        summary: "repair requires projection write authority",
+        confidence: "high",
+        created_by: "commander",
+      })
+      db.acceptResearchResult(id)
+    }
+    const beforeMarker = db.researchResultsFtsStatus().rebuild_marker
+    db.close()
+
+    withSqlite(dir, (sqlite) => {
+      sqlite.query("DELETE FROM research_results_fts WHERE result_id = ?").run("result_readonly_repair_a")
+    })
+    const damagedRows = readFtsRows(dir)
+
+    const readOnlyOpen = openSequencedTestDb(dir, { allowFtsProjectionRepair: false })
+    expect(readOnlyOpen.researchResultsFtsStatus()).toMatchObject({
+      available: false,
+      indexed_result_count: 1,
+      expected_indexed_result_count: 2,
+    })
+    expect(readOnlyOpen.researchResultsFtsStatus().fallback_reason).toContain("projection count does not match indexed rows")
+    expect(readOnlyOpen.researchResultsFtsStatus().rebuild_marker).toBe(beforeMarker)
+    expect(readOnlyOpen.searchResearchResultsFts({ query: "readonly repair", limit: 10 })).toEqual([])
+    readOnlyOpen.close()
+    expect(readFtsRows(dir)).toEqual(damagedRows)
+
+    const repairOpen = ResearchDb.open(dir, {
+      allowFtsProjectionRepair: true,
+      now: () => new Date("2026-05-10T14:00:00.000Z"),
+      idFactory: () => "unused",
+    })
+    expect(repairOpen.researchResultsFtsStatus()).toMatchObject({
+      available: true,
+      indexed_result_count: 2,
+      expected_indexed_result_count: 2,
+      projection_version: 1,
+    })
+    expect(repairOpen.researchResultsFtsStatus().rebuild_marker).not.toBe(beforeMarker)
+    expect(repairOpen.searchResearchResultsFts({ query: "readonly repair", limit: 10 }).map((result) => result.result_id).sort()).toEqual([
+      "result_readonly_repair_a",
+      "result_readonly_repair_b",
+    ])
+    repairOpen.close()
   })
 
   test("normalizes FTS bm25 scores without reversing match strength", async () => {

@@ -482,7 +482,7 @@ export class RuntimeServer {
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
-    this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir))
+    this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir, { allowFtsProjectionRepair: this.runLock.isHeld() }))
     this.commanderQueueNow = options.commanderQueueNow
     this.researchProjectionHealth = {
       mode: this.researchProjectionMode,

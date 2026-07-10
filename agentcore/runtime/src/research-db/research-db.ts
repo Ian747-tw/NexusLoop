@@ -116,6 +116,7 @@ export interface ResearchDbOptions {
   dbPath?: string
   eventsPath?: string
   appendEvents?: boolean
+  allowFtsProjectionRepair?: boolean
   now?: () => Date
   idFactory?: () => string
 }
@@ -721,17 +722,20 @@ export class ResearchDb {
   private readonly db: Database
   private readonly eventsPath: string
   private readonly appendEvents: boolean
+  private readonly allowFtsProjectionRepair: boolean
   private readonly now: () => Date
   private readonly idFactory: () => string
   private pendingJsonlEvents: ResearchJsonlEvent[] | null = null
+  private researchResultsFtsFallbackReason: string | null = null
 
   private constructor(
     db: Database,
-    options: Required<Pick<ResearchDbOptions, "eventsPath" | "appendEvents" | "now" | "idFactory">>,
+    options: Required<Pick<ResearchDbOptions, "eventsPath" | "appendEvents" | "allowFtsProjectionRepair" | "now" | "idFactory">>,
   ) {
     this.db = db
     this.eventsPath = options.eventsPath
     this.appendEvents = options.appendEvents
+    this.allowFtsProjectionRepair = options.allowFtsProjectionRepair
     this.now = options.now
     this.idFactory = options.idFactory
   }
@@ -745,6 +749,7 @@ export class ResearchDb {
     const researchDb = new ResearchDb(db, {
       eventsPath,
       appendEvents: options.appendEvents ?? true,
+      allowFtsProjectionRepair: options.allowFtsProjectionRepair ?? false,
       now: options.now ?? (() => new Date()),
       idFactory: options.idFactory ?? (() => randomUUID()),
     })
@@ -762,6 +767,7 @@ export class ResearchDb {
       ...options,
       eventsPath: eventsPath ?? options.eventsPath,
       appendEvents: true,
+      allowFtsProjectionRepair: true,
     })
     try {
       db.rebuildFromEvents(eventsPath ?? options.eventsPath ?? join(projectDir, ".nxl", "events.jsonl"))
@@ -1134,7 +1140,7 @@ export class ResearchDb {
   searchResearchResultsFts(options: SearchResearchResultsFtsOptions): ResearchResultFtsMatch[] {
     const ftsQuery = sanitizeFtsQuery(options.query)
     if (!ftsQuery) return []
-    if (!this.isResearchResultsFtsAvailable()) return []
+    if (!this.isResearchResultsFtsUsable()) return []
     const filters = ["research_results_fts MATCH ?"]
     const params: SQLQueryBindings[] = [ftsQuery]
     if (options.result_type !== undefined) {
@@ -1183,6 +1189,18 @@ export class ResearchDb {
   researchResultsFtsStatus(): { available: boolean; indexed_result_count: number; indexed_field_count: number; fallback_reason?: string; projection_version?: number; rebuild_marker?: string | null; expected_indexed_result_count?: number } {
     if (!this.isResearchResultsFtsAvailable()) {
       return { available: false, indexed_result_count: 0, indexed_field_count: 0, fallback_reason: "SQLite FTS5 research_results_fts index is unavailable" }
+    }
+    const readiness = this.inspectResearchResultsFtsReadiness(false)
+    if (!readiness.ready) {
+      return {
+        available: false,
+        indexed_result_count: this.countResearchResultsFtsRows(),
+        indexed_field_count: 8,
+        fallback_reason: `${this.researchResultsFtsFallbackReason ?? readiness.reason ?? "SQLite FTS5 research_results_fts projection is not ready"}; using bounded lexical fallback`,
+        projection_version: readiness.projection?.last_event_id === RESEARCH_RESULTS_FTS_VERSION_MARKER ? RESEARCH_RESULTS_FTS_SCHEMA_VERSION : undefined,
+        rebuild_marker: readiness.projection?.rebuilt_at ?? null,
+        expected_indexed_result_count: readiness.projection?.applied_count,
+      }
     }
     const projection = this.getResearchResultsFtsProjection()
     return {
@@ -2080,6 +2098,7 @@ export class ResearchDb {
       for (const item of parsed) {
         if (this.applyParsedEvent(item, appliedCount + 1)) appliedCount += 1
       }
+      if (this.isResearchResultsFtsAvailable()) this.markResearchResultsFtsProjectionReady(this.countResearchResultsFtsRows(), this.timestamp())
     })
   }
 
@@ -3002,16 +3021,43 @@ export class ResearchDb {
 
   private ensureResearchResultsFtsProjection(tableCreated: boolean): void {
     if (!this.isResearchResultsFtsAvailable()) return
-    const projection = this.getResearchResultsFtsProjection()
-    if (tableCreated || !projection || projection.last_event_id !== RESEARCH_RESULTS_FTS_VERSION_MARKER) {
-      this.repairResearchResultsFts()
+    const readiness = this.inspectResearchResultsFtsReadiness(tableCreated)
+    if (readiness.ready) {
+      this.researchResultsFtsFallbackReason = null
       return
+    }
+    if (!this.allowFtsProjectionRepair) {
+      this.researchResultsFtsFallbackReason = readiness.reason ?? "SQLite FTS5 research_results_fts projection requires repair; using bounded lexical fallback"
+      return
+    }
+    this.repairResearchResultsFts()
+  }
+
+  private isResearchResultsFtsUsable(): boolean {
+    if (!this.isResearchResultsFtsAvailable()) return false
+    return this.inspectResearchResultsFtsReadiness(false).ready
+  }
+
+  private inspectResearchResultsFtsReadiness(tableCreated: boolean): { ready: boolean; reason?: string; projection?: ResearchProjectionRow | null } {
+    if (!this.isResearchResultsFtsAvailable()) return { ready: false, reason: "SQLite FTS5 research_results_fts index is unavailable", projection: null }
+    const projection = this.getResearchResultsFtsProjection()
+    if (tableCreated) return { ready: false, reason: "SQLite FTS5 research_results_fts table was newly created and requires transactional backfill", projection }
+    if (!projection) return { ready: false, reason: "SQLite FTS5 research_results_fts projection metadata is missing", projection }
+    if (projection.last_event_id !== RESEARCH_RESULTS_FTS_VERSION_MARKER) {
+      return { ready: false, reason: "SQLite FTS5 research_results_fts projection schema version is outdated", projection }
     }
     const indexedCount = this.countResearchResultsFtsRows()
     const acceptedCount = this.countAcceptedResearchResults()
-    if (projection.applied_count !== indexedCount || indexedCount !== acceptedCount || this.hasResearchResultsFtsMembershipMismatch()) {
-      this.repairResearchResultsFts()
+    if (projection.applied_count !== indexedCount) {
+      return { ready: false, reason: "SQLite FTS5 research_results_fts projection count does not match indexed rows", projection }
     }
+    if (indexedCount !== acceptedCount) {
+      return { ready: false, reason: "SQLite FTS5 research_results_fts indexed count does not match accepted result count", projection }
+    }
+    if (this.hasResearchResultsFtsMembershipMismatch()) {
+      return { ready: false, reason: "SQLite FTS5 research_results_fts membership is inconsistent with accepted results", projection }
+    }
+    return { ready: true, projection }
   }
 
   private getResearchResultsFtsProjection(): ResearchProjectionRow | null {
@@ -3061,12 +3107,14 @@ export class ResearchDb {
     try {
       this.rebuildResearchResultsFts()
       this.db.exec("COMMIT")
+      this.researchResultsFtsFallbackReason = null
     } catch (error) {
       try {
         this.db.exec("ROLLBACK")
       } catch {
         // Preserve the original rebuild failure.
       }
+      this.researchResultsFtsFallbackReason = error instanceof Error ? `SQLite FTS5 research_results_fts repair failed: ${error.message}` : "SQLite FTS5 research_results_fts repair failed"
       throw error
     }
   }
@@ -3094,9 +3142,12 @@ export class ResearchDb {
           ftsBound(result.summary),
           ftsPreview(result.metrics),
           ftsPreview(result.reproduction),
-        )
+      )
     }
-    if (updateProjection) this.markResearchResultsFtsProjectionReady(this.countResearchResultsFtsRows(), null)
+    if (updateProjection) {
+      this.markResearchResultsFtsProjectionReady(this.countResearchResultsFtsRows(), null)
+      this.researchResultsFtsFallbackReason = null
+    }
   }
 
   private markResearchResultsFtsProjectionReady(indexedCount: number, rebuiltAt: string | null): void {

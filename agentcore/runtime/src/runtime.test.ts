@@ -4,6 +4,7 @@ import { existsSync } from "node:fs"
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { Database } from "bun:sqlite"
 import { RuntimeServer } from "./server"
 import type { RuntimeResearchDbProjection } from "./server"
 import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv, readWakeSchedulerBootstrapConfigFromEnv } from "./launch-config"
@@ -21079,6 +21080,57 @@ describe("OpenCode launch readiness", () => {
     expect(sessionScoped.warnings.join(" ")).toContain("session-scoped research memory is not available yet")
     expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
     await server.shutdown()
+  })
+
+  test("read-only research memory commands do not repair inconsistent FTS without run lock", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, { appendEvents: true, allowFtsProjectionRepair: true, idFactory: () => "unused" })
+    db.proposeResearchResult({
+      result_id: "readonly_fts_runtime_result",
+      result_type: "implementation_change",
+      title: "readonly fts runtime fallback",
+      summary: "lexical fallback should still find this accepted result",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("readonly_fts_runtime_result")
+    const beforeMarker = db.researchResultsFtsStatus().rebuild_marker ?? null
+    db.close()
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.query("DELETE FROM research_results_fts WHERE result_id = ?").run("readonly_fts_runtime_result")
+    } finally {
+      sqlite.close()
+    }
+    const beforeEvents = await readJsonlEvents(dir)
+    const beforeRowsDb = new Database(join(dir, ".nxl", "research.db"))
+    const damagedRows = beforeRowsDb.query("SELECT rowid, result_id FROM research_results_fts ORDER BY result_id").all()
+    beforeRowsDb.close()
+
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+    const search = await server.command("runtime.preview_research_memory_retrieval", { query: "readonly fts runtime fallback", limit: 10 }) as { status: string; candidates: Array<{ result_id: string }>; warnings: string[] }
+    expect(search.status).toBe("ready")
+    expect(search.candidates.map((candidate) => candidate.result_id)).toContain("readonly_fts_runtime_result")
+    expect(search.warnings.join(" ")).toContain("FTS")
+    expect(search.warnings.join(" ")).toContain("bounded lexical fallback")
+    const profile = await server.command("runtime.research_memory_search_profile") as { fts_index_enabled: boolean; search_engine: string; warnings: string[] }
+    expect(profile.fts_index_enabled).toBe(false)
+    expect(profile.search_engine).toBe("bounded_lexical")
+    expect(profile.warnings.join(" ")).toContain("bounded lexical fallback")
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+    await server.shutdown()
+
+    const after = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      expect(after.query("SELECT rowid, result_id FROM research_results_fts ORDER BY result_id").all()).toEqual(damagedRows)
+      const projection = after
+        .query("SELECT rebuilt_at FROM research_projection WHERE projection_name = ?")
+        .get("research_results_fts") as { rebuilt_at: string | null } | null
+      expect(projection?.rebuilt_at ?? null).toBe(beforeMarker)
+    } finally {
+      after.close()
+    }
   })
 
   test("research memory search inspection near-duplicates and profile remain bounded read-only", async () => {
