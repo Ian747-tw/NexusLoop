@@ -102,6 +102,7 @@ const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>([
 ])
 export const RESEARCH_MEMORY_FAILURE_LABEL_TERMS = ["negative", "failure", "failed", "bug", "rejected"] as const
 export const RESEARCH_MEMORY_FAILURE_RESULT_TYPES = ["negative_finding", "bug_diagnosis"] as const satisfies readonly ResearchResultType[]
+export const RESEARCH_MEMORY_TYPED_EVIDENCE_RESULT_TYPES = ["reproduction_record", "evaluation_result", "full_training_result"] as const satisfies readonly ResearchResultType[]
 const EVIDENCE_REQUIRED_RESULT_TYPES = new Set<ResearchResultType>([
   "finding",
   "literature_finding",
@@ -4209,7 +4210,7 @@ function researchResultTypesForEvidenceKind(evidenceKind: string): ResearchResul
       return []
     case "artifact_index":
     case "metric_observation":
-      return ["reproduction_record", "evaluation_result", "full_training_result"]
+      return [...RESEARCH_MEMORY_TYPED_EVIDENCE_RESULT_TYPES]
     default:
       return []
   }

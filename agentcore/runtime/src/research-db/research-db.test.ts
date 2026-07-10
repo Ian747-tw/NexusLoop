@@ -63,7 +63,7 @@ function addAcceptedResearchResult(
   db: ResearchDb,
   input: {
     result_id: string
-    result_type?: "implementation_change" | "negative_finding" | "bug_diagnosis" | "finding"
+    result_type?: "implementation_change" | "negative_finding" | "bug_diagnosis" | "finding" | "evaluation_result"
     label?: string
     title: string
     summary: string
@@ -677,6 +677,35 @@ describe("ResearchDb", () => {
     expect(unfiltered).not.toContain("result_status_note_target")
     const filtered = db.searchResearchResultsFts({ query: "statuspushdown", evidence_kind: "status_note", limit: 10 })
     expect(filtered.map((result) => result.result_id)).toEqual(["result_status_note_target"])
+    db.close()
+  })
+
+  test("evidence_kind=metric_observation includes typed results before FTS cap", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_metric_observation", title: "Metric observation" })
+    db.addArtifact({ id: "artifact_metric_observation", topic_id: "topic_metric_observation", kind: "report", content: "bounded metric evidence", description: "metric observation evidence" })
+    addAcceptedResearchResult(db, {
+      result_id: "result_metric_observation_target",
+      result_type: "evaluation_result",
+      label: "trial",
+      title: "metricpushdown archive target",
+      summary: "metricpushdown old evaluation result survives pre-limit evidence filtering",
+      evidence_artifact_id: "artifact_metric_observation",
+    })
+    for (let index = 0; index < 505; index += 1) {
+      addAcceptedResearchResult(db, {
+        result_id: `result_metric_observation_filler_${index}`,
+        label: "finding",
+        title: `metricpushdown metricpushdown metricpushdown finding filler ${index}`,
+        summary: "positive finding row that must be removed before FTS capping for metric_observation",
+      })
+    }
+
+    const unfiltered = db.searchResearchResultsFts({ query: "metricpushdown", limit: 500 }).map((result) => result.result_id)
+    expect(unfiltered).not.toContain("result_metric_observation_target")
+    const filtered = db.searchResearchResultsFts({ query: "metricpushdown", evidence_kind: "metric_observation", limit: 10 })
+    expect(filtered.map((result) => result.result_id)).toEqual(["result_metric_observation_target"])
     db.close()
   })
 

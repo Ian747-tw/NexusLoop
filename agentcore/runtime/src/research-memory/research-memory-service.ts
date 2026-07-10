@@ -18,7 +18,7 @@ import type {
   TrainingRun,
   Trial,
 } from "../research-db/research-db"
-import { RESEARCH_MEMORY_FAILURE_LABEL_TERMS, RESEARCH_MEMORY_FAILURE_RESULT_TYPES } from "../research-db/research-db"
+import { RESEARCH_MEMORY_FAILURE_LABEL_TERMS, RESEARCH_MEMORY_FAILURE_RESULT_TYPES, RESEARCH_MEMORY_TYPED_EVIDENCE_RESULT_TYPES } from "../research-db/research-db"
 import type {
   ResearchMemoryCandidate,
   ResearchMemoryInspectionInput,
@@ -552,12 +552,22 @@ function applyCandidateFilters(candidates: RawCandidate[], input: { include_fail
     .filter((candidate) => !input.result_type || candidate.method_preview === input.result_type)
     .filter((candidate) => !input.result_status || candidate.status === input.result_status)
     .filter((candidate) => !input.confidence || candidate.confidence === input.confidence)
-    .filter((candidate) => !input.evidence_kind || candidate.evidence_kind_preview === input.evidence_kind || candidate.label === input.evidence_kind)
+    .filter((candidate) => !input.evidence_kind || candidateMatchesEvidenceKind(candidate, input.evidence_kind))
     .filter((candidate) => input.has_artifacts === undefined || (input.has_artifacts ? candidate.artifact_ids.length > 0 : candidate.artifact_ids.length === 0))
     .filter((candidate) => input.has_citations === undefined || (input.has_citations ? candidate.citation_ids.length > 0 : candidate.citation_ids.length === 0))
     .filter((candidate) => input.has_metrics === undefined || (input.has_metrics ? !!candidate.metric_preview : !candidate.metric_preview))
     .filter((candidate) => !input.since || !candidate.created_at_preview || candidate.created_at_preview >= input.since)
     .filter((candidate) => !input.until || !candidate.created_at_preview || candidate.created_at_preview <= input.until)
+}
+
+function candidateMatchesEvidenceKind(candidate: RawCandidate, evidenceKind: string): boolean {
+  const normalized = evidenceKind.toLowerCase()
+  if (candidate.evidence_kind_preview === evidenceKind || candidate.label === evidenceKind) return true
+  if ((normalized === "artifact_index" || normalized === "metric_observation")
+    && RESEARCH_MEMORY_TYPED_EVIDENCE_RESULT_TYPES.includes(candidate.method_preview as (typeof RESEARCH_MEMORY_TYPED_EVIDENCE_RESULT_TYPES)[number])) {
+    return true
+  }
+  return false
 }
 
 function citationPointerFromFullRow(citation: Citation): ResultCitationPointer {
