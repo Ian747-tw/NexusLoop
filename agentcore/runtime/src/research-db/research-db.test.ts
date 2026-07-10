@@ -59,6 +59,31 @@ function ftsTableExists(projectDir: string): boolean {
   }
 }
 
+function addAcceptedResearchResult(
+  db: ResearchDb,
+  input: {
+    result_id: string
+    result_type?: "implementation_change" | "negative_finding" | "bug_diagnosis" | "finding"
+    label?: string
+    title: string
+    summary: string
+    confidence?: "low" | "medium" | "high"
+    evidence_artifact_id?: string
+  },
+): void {
+  db.proposeResearchResult({
+    result_id: input.result_id,
+    result_type: input.result_type ?? "implementation_change",
+    label: input.label,
+    title: input.title,
+    summary: input.summary,
+    confidence: input.confidence ?? "high",
+    created_by: "commander",
+  })
+  if (input.evidence_artifact_id) db.linkResultArtifact(input.result_id, input.evidence_artifact_id)
+  db.acceptResearchResult(input.result_id)
+}
+
 function withSqlite(projectDir: string, fn: (sqlite: Database) => void): void {
   const sqlite = new Database(researchDbPath(projectDir))
   try {
@@ -496,6 +521,137 @@ describe("ResearchDb", () => {
     expect(unfiltered).not.toContain("result_fts_nonfailure_target")
     const filtered = db.searchResearchResultsFts({ query: "failurepushdown", include_failures: false, limit: 10 })
     expect(filtered.map((result) => result.result_id)).toEqual(["result_fts_nonfailure_target"])
+    db.close()
+  })
+
+  test("include_failures=false excludes failed labels before FTS cap", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    addAcceptedResearchResult(db, {
+      result_id: "result_failed_label_nonfailure_target",
+      label: "finding",
+      title: "failed label archive target",
+      summary: "failuretermpushdown old valid finding survives pre-limit filtering",
+    })
+    for (let index = 0; index < 505; index += 1) {
+      addAcceptedResearchResult(db, {
+        result_id: `result_failed_label_filler_${index}`,
+        label: "failed experiment",
+        title: `failuretermpushdown failuretermpushdown failuretermpushdown failed filler ${index}`,
+        summary: "failure-classified row that must be removed before FTS capping",
+      })
+    }
+
+    const unfiltered = db.searchResearchResultsFts({ query: "failuretermpushdown", limit: 500 }).map((result) => result.result_id)
+    expect(unfiltered).not.toContain("result_failed_label_nonfailure_target")
+    const filtered = db.searchResearchResultsFts({ query: "failuretermpushdown", include_failures: false, limit: 10 })
+    expect(filtered.map((result) => result.result_id)).toEqual(["result_failed_label_nonfailure_target"])
+    db.close()
+  })
+
+  test("include_failures=false excludes bug labels before FTS cap", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    addAcceptedResearchResult(db, {
+      result_id: "result_bug_label_nonfailure_target",
+      label: "finding",
+      title: "bug label archive target",
+      summary: "bugtermpushdown old valid finding survives pre-limit filtering",
+    })
+    for (let index = 0; index < 505; index += 1) {
+      addAcceptedResearchResult(db, {
+        result_id: `result_bug_label_filler_${index}`,
+        label: "bug regression",
+        title: `bugtermpushdown bugtermpushdown bugtermpushdown bug filler ${index}`,
+        summary: "bug-classified row that must be removed before FTS capping",
+      })
+    }
+
+    const unfiltered = db.searchResearchResultsFts({ query: "bugtermpushdown", limit: 500 }).map((result) => result.result_id)
+    expect(unfiltered).not.toContain("result_bug_label_nonfailure_target")
+    const filtered = db.searchResearchResultsFts({ query: "bugtermpushdown", include_failures: false, limit: 10 })
+    expect(filtered.map((result) => result.result_id)).toEqual(["result_bug_label_nonfailure_target"])
+    db.close()
+  })
+
+  test("include_failures=false excludes rejected labels before FTS cap", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    addAcceptedResearchResult(db, {
+      result_id: "result_rejected_label_nonfailure_target",
+      label: "finding",
+      title: "rejected label archive target",
+      summary: "rejectedtermpushdown old valid finding survives pre-limit filtering",
+    })
+    for (let index = 0; index < 505; index += 1) {
+      addAcceptedResearchResult(db, {
+        result_id: `result_rejected_label_filler_${index}`,
+        label: "rejected approach",
+        title: `rejectedtermpushdown rejectedtermpushdown rejectedtermpushdown rejected filler ${index}`,
+        summary: "rejected-classified row that must be removed before FTS capping",
+      })
+    }
+
+    const unfiltered = db.searchResearchResultsFts({ query: "rejectedtermpushdown", limit: 500 }).map((result) => result.result_id)
+    expect(unfiltered).not.toContain("result_rejected_label_nonfailure_target")
+    const filtered = db.searchResearchResultsFts({ query: "rejectedtermpushdown", include_failures: false, limit: 10 })
+    expect(filtered.map((result) => result.result_id)).toEqual(["result_rejected_label_nonfailure_target"])
+    db.close()
+  })
+
+  test("labels=failure includes derived failure-classified FTS rows", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.createTopic({ id: "topic_failure_labels", title: "Failure labels" })
+    db.addArtifact({ id: "artifact_bug_diagnosis", topic_id: "topic_failure_labels", kind: "report", content: "bounded bug diagnosis evidence", description: "bug diagnosis evidence" })
+    addAcceptedResearchResult(db, {
+      result_id: "result_failure_label_failed",
+      label: "failed experiment",
+      title: "derivedfailure failed experiment",
+      summary: "derived failure label row",
+    })
+    addAcceptedResearchResult(db, {
+      result_id: "result_failure_label_bug",
+      label: "bug regression",
+      title: "derivedfailure bug regression",
+      summary: "derived failure label row",
+    })
+    addAcceptedResearchResult(db, {
+      result_id: "result_failure_label_rejected",
+      label: "rejected approach",
+      title: "derivedfailure rejected approach",
+      summary: "derived failure label row",
+    })
+    addAcceptedResearchResult(db, {
+      result_id: "result_failure_type_negative",
+      result_type: "negative_finding",
+      title: "derivedfailure negative finding",
+      summary: "derived failure type row",
+    })
+    addAcceptedResearchResult(db, {
+      result_id: "result_failure_type_bug",
+      result_type: "bug_diagnosis",
+      title: "derivedfailure bug diagnosis",
+      summary: "derived failure type row",
+      evidence_artifact_id: "artifact_bug_diagnosis",
+    })
+    addAcceptedResearchResult(db, {
+      result_id: "result_failure_filter_valid_finding",
+      label: "finding",
+      title: "derivedfailure valid finding",
+      summary: "valid finding row must not be returned by labels failure",
+    })
+
+    const matches = db.searchResearchResultsFts({ query: "derivedfailure", labels: ["failure"], limit: 10 }).map((result) => result.result_id).sort()
+    expect(matches).toEqual([
+      "result_failure_label_bug",
+      "result_failure_label_failed",
+      "result_failure_label_rejected",
+      "result_failure_type_bug",
+      "result_failure_type_negative",
+    ])
+    const contradictory = db.searchResearchResultsFts({ query: "derivedfailure", labels: ["failure"], include_failures: false, limit: 10 })
+    expect(contradictory).toEqual([])
     db.close()
   })
 

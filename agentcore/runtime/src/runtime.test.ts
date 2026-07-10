@@ -21194,6 +21194,111 @@ describe("OpenCode launch readiness", () => {
     }
   })
 
+  test("hybrid research memory retrieval aligns failure filters on FTS-only candidates", () => {
+    const result = (input: Partial<ResearchResult> & Pick<ResearchResult, "result_id" | "result_type" | "title" | "summary">): ResearchResult => ({
+      label: null,
+      status: "accepted",
+      confidence: "high",
+      mission_id: null,
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      training_run_id: null,
+      metrics: null,
+      reproduction: null,
+      created_by: "commander",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+      ...input,
+    })
+    const ftsOnlyFinding = result({
+      result_id: "hybrid_failure_filter_valid_finding",
+      result_type: "implementation_change",
+      label: "finding",
+      title: "hybridfailurecap valid finding",
+      summary: "hybridfailurecap older valid finding should survive pre-limit failure filtering",
+    })
+    const derivedFailures = [
+      result({ result_id: "hybrid_failure_label_failed", result_type: "implementation_change", label: "failed experiment", title: "hybridderivedfailure failed experiment", summary: "derived failure label" }),
+      result({ result_id: "hybrid_failure_label_bug", result_type: "implementation_change", label: "bug regression", title: "hybridderivedfailure bug regression", summary: "derived failure label" }),
+      result({ result_id: "hybrid_failure_label_rejected", result_type: "implementation_change", label: "rejected approach", title: "hybridderivedfailure rejected approach", summary: "derived failure label" }),
+      result({ result_id: "hybrid_failure_type_negative", result_type: "negative_finding", title: "hybridderivedfailure negative finding", summary: "derived failure type" }),
+      result({ result_id: "hybrid_failure_type_bug", result_type: "bug_diagnosis", title: "hybridderivedfailure bug diagnosis", summary: "derived failure type" }),
+    ]
+    const ftsCalls: SearchResearchResultsFtsOptions[] = []
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        researchResultsFtsStatus: () => ({ available: true, indexed_result_count: 6, indexed_field_count: 6 }),
+        searchResearchResults: () => [],
+        searchResearchResultsFts: (options) => {
+          ftsCalls.push(options)
+          if (options.query === "hybridfailurecap" && options.include_failures === false) return [{ ...ftsOnlyFinding, fts_score: 1 }]
+          if (options.query === "hybridderivedfailure" && options.labels?.includes("failure") && options.include_failures === false) return []
+          if (options.query === "hybridderivedfailure" && options.labels?.includes("failure")) return derivedFailures.map((item, index) => ({ ...item, fts_score: 1 - index / 10 }))
+          return []
+        },
+      }),
+    })
+
+    const nonFailure = service.preview({
+      query: "hybridfailurecap",
+      include_failures: false,
+      limit: 5,
+    })
+    expect(nonFailure.status).toBe("ready")
+    expect(nonFailure.candidates.map((candidate) => candidate.result_id)).toEqual(["hybrid_failure_filter_valid_finding"])
+    expect(nonFailure.candidates[0]?.rank_source).toMatch(/fts|hybrid/)
+    expect(nonFailure.candidates[0]?.fts_score).toEqual(expect.any(Number))
+    expect(nonFailure.candidates[0]?.lexical_score).toEqual(expect.any(Number))
+    expect(nonFailure.candidates[0]?.matched_terms).toContain("hybridfailurecap")
+    expect(nonFailure.candidates[0]?.matched_fields.length).toBeGreaterThan(0)
+    expect(nonFailure.candidates[0]?.scoring_explanation_preview).toContain("score")
+    expect(nonFailure.candidates[0]?.pointer_only).toBe(true)
+    expect(ftsCalls[0]).toMatchObject({ query: "hybridfailurecap", include_failures: false })
+
+    const failures = service.preview({
+      query: "hybridderivedfailure",
+      labels: ["failure"],
+      limit: 10,
+    })
+    expect(failures.status).toBe("ready")
+    expect(failures.candidates.map((candidate) => candidate.result_id).sort()).toEqual([
+      "hybrid_failure_label_bug",
+      "hybrid_failure_label_failed",
+      "hybrid_failure_label_rejected",
+      "hybrid_failure_type_bug",
+      "hybrid_failure_type_negative",
+    ])
+    expect(failures.candidates.every((candidate) => candidate.label === "failure")).toBe(true)
+    expect(failures.candidates.every((candidate) => candidate.pointer_only)).toBe(true)
+    expect(failures.candidates.every((candidate) => typeof candidate.fts_score === "number")).toBe(true)
+    expect(failures.candidates.every((candidate) => typeof candidate.lexical_score === "number")).toBe(true)
+    expect(failures.candidates.every((candidate) => candidate.matched_terms.includes("hybridderivedfailure"))).toBe(true)
+    expect(failures.candidates.every((candidate) => candidate.matched_fields.length > 0)).toBe(true)
+    expect(failures.candidates.every((candidate) => candidate.scoring_explanation_preview.includes("score"))).toBe(true)
+    expect(ftsCalls[1]).toMatchObject({ query: "hybridderivedfailure", labels: ["failure"] })
+
+    const contradictory = service.preview({
+      query: "hybridderivedfailure",
+      labels: ["failure"],
+      include_failures: false,
+      limit: 10,
+    })
+    expect(contradictory.candidates).toEqual([])
+    expect(ftsCalls[2]).toMatchObject({ query: "hybridderivedfailure", labels: ["failure"], include_failures: false })
+
+    const near = service.nearDuplicates({ query: "hybridderivedfailure", labels: ["failure"], include_failures: true })
+    expect(near.status).toBe("ready")
+    expect(["medium", "high"]).toContain(near.novelty_risk)
+    expect(near.candidates.map((candidate) => candidate.result_id)).toContain("hybrid_failure_label_failed")
+    const profile = service.searchProfile()
+    expect(profile.search_engine).toBe("hybrid_fts_lexical")
+    expect(profile.fts_index_enabled).toBe(true)
+  })
+
   test("research memory search inspection near-duplicates and profile remain bounded read-only", async () => {
     const dir = await tempProject()
     const db = ResearchDb.open(dir, { appendEvents: true, allowFtsProjectionRepair: true, idFactory: () => "unused" })

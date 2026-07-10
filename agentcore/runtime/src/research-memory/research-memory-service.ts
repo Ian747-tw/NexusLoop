@@ -18,6 +18,7 @@ import type {
   TrainingRun,
   Trial,
 } from "../research-db/research-db"
+import { RESEARCH_MEMORY_FAILURE_LABEL_TERMS, RESEARCH_MEMORY_FAILURE_RESULT_TYPES } from "../research-db/research-db"
 import type {
   ResearchMemoryCandidate,
   ResearchMemoryInspectionInput,
@@ -650,7 +651,8 @@ function candidateWithoutArtifacts(candidate: RawCandidate): RawCandidate {
 
 function labelForResearchResult(result: ResearchResult): string {
   const raw = `${result.label ?? ""} ${result.result_type} ${result.status}`.toLowerCase()
-  if (raw.includes("negative") || raw.includes("bug") || raw.includes("failed") || raw.includes("rejected")) return "failure"
+  if (RESEARCH_MEMORY_FAILURE_RESULT_TYPES.includes(result.result_type as (typeof RESEARCH_MEMORY_FAILURE_RESULT_TYPES)[number])) return "failure"
+  if (RESEARCH_MEMORY_FAILURE_LABEL_TERMS.some((term) => raw.includes(term))) return "failure"
   if (result.result_type === "full_training_result" || raw.includes("full_training")) return "full_training"
   if (result.result_type === "probe_result" || raw.includes("probe")) return "probe"
   if (result.result_type === "smoke_test_result" || result.result_type === "evaluation_result" || result.result_type === "ablation_result") return "trial"

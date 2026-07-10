@@ -100,6 +100,8 @@ const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>([
   "training_checkpoint",
   "reproduction_record",
 ])
+export const RESEARCH_MEMORY_FAILURE_LABEL_TERMS = ["negative", "failure", "failed", "bug", "rejected"] as const
+export const RESEARCH_MEMORY_FAILURE_RESULT_TYPES = ["negative_finding", "bug_diagnosis"] as const satisfies readonly ResearchResultType[]
 const EVIDENCE_REQUIRED_RESULT_TYPES = new Set<ResearchResultType>([
   "finding",
   "literature_finding",
@@ -1203,23 +1205,34 @@ export class ResearchDb {
       params.push(options.confidence)
     }
     if (options.include_failures === false) {
-      filters.push("(LOWER(COALESCE(r.label, '')) NOT LIKE '%failure%' AND LOWER(COALESCE(r.label, '')) NOT LIKE '%negative%' AND r.result_type NOT IN ('negative_finding', 'bug_diagnosis'))")
+      const failurePredicate = researchResultFailureSqlPredicate("r")
+      filters.push(`NOT (${failurePredicate.clause})`)
+      params.push(...failurePredicate.params)
     }
     const labelFilters = (options.labels ?? []).map((label) => cleanOptional(label)).filter((label): label is string => !!label)
     if (labelFilters.length > 0) {
       const clauses: string[] = []
       const labelValues = Array.from(new Set(labelFilters)).slice(0, 20)
-      const explicitPlaceholders = labelValues.map(() => "?").join(", ")
-      clauses.push(`r.label IN (${explicitPlaceholders})`)
-      params.push(...labelValues)
+      const exactLabelValues = labelValues.filter((label) => label.toLowerCase() !== "failure")
+      if (exactLabelValues.length > 0) {
+        const explicitPlaceholders = exactLabelValues.map(() => "?").join(", ")
+        clauses.push(`r.label IN (${explicitPlaceholders})`)
+        params.push(...exactLabelValues)
+      }
       const resultTypes = new Set<ResearchResultType>()
       for (const label of labelValues) {
+        if (label.toLowerCase() === "failure") continue
         for (const resultType of researchResultTypesForMemoryLabel(label)) resultTypes.add(resultType)
       }
       if (resultTypes.size > 0) {
         const typeValues = Array.from(resultTypes)
         clauses.push(`r.result_type IN (${typeValues.map(() => "?").join(", ")})`)
         params.push(...typeValues)
+      }
+      if (labelValues.some((label) => label.toLowerCase() === "failure")) {
+        const failurePredicate = researchResultFailureSqlPredicate("r")
+        clauses.push(failurePredicate.clause)
+        params.push(...failurePredicate.params)
       }
       filters.push(`(${clauses.join(" OR ")})`)
     }
@@ -4127,6 +4140,20 @@ function researchResultTypesForMemoryLabel(label: string): ResearchResultType[] 
       return ["full_training_result"]
     default:
       return []
+  }
+}
+
+function researchResultFailureSqlPredicate(alias: string): { clause: string; params: SQLQueryBindings[] } {
+  const resultTypePlaceholders = RESEARCH_MEMORY_FAILURE_RESULT_TYPES.map(() => "?").join(", ")
+  const labelClauses = RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map(() => `LOWER(COALESCE(${alias}.label, '')) LIKE ?`)
+  const statusClauses = RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map(() => `LOWER(COALESCE(${alias}.status, '')) LIKE ?`)
+  return {
+    clause: `(${alias}.result_type IN (${resultTypePlaceholders}) OR ${[...labelClauses, ...statusClauses].join(" OR ")})`,
+    params: [
+      ...RESEARCH_MEMORY_FAILURE_RESULT_TYPES,
+      ...RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map((term) => `%${term}%`),
+      ...RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map((term) => `%${term}%`),
+    ],
   }
 }
 
