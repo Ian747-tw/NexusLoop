@@ -17785,7 +17785,7 @@ describe("OpenCode launch readiness", () => {
     db.createTopic({ id: "topic_launch_gate", title: "Launch gate" })
     db.proposeResearchResult({
       result_id: "result_unrelated_launch_gate",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "adapter timeout watchdog",
       summary: "prior timeout watchdog result",
       confidence: "medium",
@@ -20799,7 +20799,7 @@ describe("OpenCode launch readiness", () => {
     db.createTopic({ id: "topic_launch_config", title: "Launch config" })
     db.proposeResearchResult({
       result_id: "result_launch_config",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "launch config env",
       summary: "prior launch config finding",
       confidence: "medium",
@@ -21529,6 +21529,46 @@ describe("OpenCode launch readiness", () => {
     expect(serialized).toContain("secretmeta")
     expect(serialized).not.toContain("sk-secretmeta-123")
     expect(serialized).not.toContain("api_key")
+  })
+
+  test("research memory hybrid retrieval materializes FTS-only matches outside the lexical scan", () => {
+    const ftsOnlyResult: ResearchResult & { fts_score: number } = {
+      result_id: "result_deep_archive_match",
+      result_type: "finding",
+      status: "accepted",
+      title: "deeparchive hybrid memory finding",
+      summary: "older bounded evidence that should be found through FTS",
+      confidence: "high",
+      label: "finding",
+      metrics: {},
+      reproduction: {},
+      created_at: "2026-06-01T00:00:00.000Z",
+      updated_at: "2026-06-01T00:00:00.000Z",
+      created_by: "commander",
+      mission_id: null,
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      training_run_id: null,
+      fts_score: 0.91,
+    }
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchResearchResults: () => [],
+        searchResearchResultsFts: () => [ftsOnlyResult],
+        researchResultsFtsStatus: () => ({ available: true, indexed_result_count: 1, indexed_field_count: 8 }),
+      }),
+    })
+
+    const preview = service.preview({ query: "deeparchive hybrid", limit: 3 })
+    expect(preview.status).toBe("ready")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["result_deep_archive_match"])
+    expect(preview.candidates[0]?.rank_source).toBe("hybrid")
+    expect(preview.candidates[0]?.fts_score).toBe(0.91)
+    expect(preview.candidates[0]?.search_engine_used).toBe("hybrid_fts_lexical")
   })
 
   test("research novelty flags duplicate risk without blocking repeated work", async () => {

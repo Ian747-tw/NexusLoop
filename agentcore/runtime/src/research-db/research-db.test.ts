@@ -93,6 +93,38 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("normalizes FTS bm25 scores without reversing match strength", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "result_fts_weak",
+      result_type: "implementation_change",
+      title: "rankterm weak",
+      summary: "one bounded rankterm mention",
+      confidence: "medium",
+      metrics: {},
+      reproduction: {},
+      created_by: "commander",
+    })
+    db.proposeResearchResult({
+      result_id: "result_fts_strong",
+      result_type: "implementation_change",
+      title: "rankterm rankterm rankterm strong",
+      summary: "rankterm appears in bounded summary rankterm",
+      confidence: "high",
+      metrics: { signal: "rankterm metric" },
+      reproduction: { method: "rankterm reproduction" },
+      created_by: "commander",
+    })
+    db.acceptResearchResult("result_fts_weak")
+    db.acceptResearchResult("result_fts_strong")
+
+    const matches = db.searchResearchResultsFts({ query: "rankterm", limit: 10 })
+    expect(matches.map((match) => match.result_id)).toEqual(["result_fts_strong", "result_fts_weak"])
+    expect(matches[0]?.fts_score).toBeGreaterThan(matches[1]?.fts_score ?? 0)
+    db.close()
+  })
+
   test("open closes sqlite handle when migration fails", async () => {
     const dir = await tempProject()
     await mkdir(join(dir, ".nxl"), { recursive: true })

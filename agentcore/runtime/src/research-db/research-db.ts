@@ -1174,7 +1174,7 @@ export class ResearchDb {
          LIMIT ?`,
       )
       .all(...params) as Array<ResearchResultRow & { fts_score: number }>
-    return rows.map((row) => ({ ...this.researchResultFromRow(row)!, fts_score: normalizeFtsScore(row.fts_score) }))
+    return rows.map((row, index) => ({ ...this.researchResultFromRow(row)!, fts_score: normalizeFtsRank(index, rows.length) }))
   }
 
   researchResultsFtsStatus(): { available: boolean; indexed_result_count: number; indexed_field_count: number; fallback_reason?: string } {
@@ -3869,11 +3869,9 @@ function sanitizeFtsQuery(value: string): string | null {
   return tokens.map((token) => `"${token}"`).join(" OR ")
 }
 
-function normalizeFtsScore(value: number): number {
-  if (!Number.isFinite(value)) return 0
-  const positive = Math.abs(value)
-  if (positive <= 0.000001) return 1
-  return Math.round(Math.max(0, Math.min(1, 1 / (1 + positive))) * 100) / 100
+function normalizeFtsRank(index: number, total: number): number {
+  if (total <= 0) return 0
+  return Math.round(((total - index) / total) * 1_000_000) / 1_000_000
 }
 
 function ftsPreview(value: unknown): string {

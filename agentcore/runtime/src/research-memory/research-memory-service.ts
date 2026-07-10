@@ -160,7 +160,8 @@ export class ResearchMemoryService {
         }) ?? []
       : []
     const ftsScores = new Map(ftsMatches.map((match) => [match.result_id, match.fts_score]))
-    const scored = rawCandidates
+    const mergedCandidates = mergeFtsCandidates(rawCandidates, ftsMatches, adapter, input.include_artifacts !== false, input.mission_id)
+    const scored = mergedCandidates
       .map((candidate) => scoreCandidate(candidate, queryTokens, ftsScores.get(candidate.result_id), ftsEnabled))
       .filter((candidate) => queryTokens.length > 0 && (candidate.matched_terms.length > 0 || candidate.rank_source === "fts" || candidate.rank_source === "hybrid"))
       .filter((candidate) => labels.length === 0 || labels.includes(candidate.label))
@@ -527,6 +528,18 @@ function candidateFromResearchResult(result: ResearchResult, adapter: ResearchMe
   })
 }
 
+function mergeFtsCandidates(candidates: RawCandidate[], ftsMatches: ResearchResultFtsMatch[], adapter: ResearchMemoryReadAdapter, includeArtifacts: boolean, missionId?: string): RawCandidate[] {
+  if (ftsMatches.length === 0) return candidates
+  const seen = new Set(candidates.map((candidate) => candidate.result_id))
+  const merged = [...candidates]
+  for (const match of ftsMatches) {
+    if (seen.has(match.result_id)) continue
+    seen.add(match.result_id)
+    merged.push(candidateFromResearchResult(match, adapter, includeArtifacts, missionId ?? match.mission_id ?? undefined))
+  }
+  return merged
+}
+
 function citationPointerFromFullRow(citation: Citation): ResultCitationPointer {
   return {
     citation_id: citation.citation_id,
@@ -689,8 +702,9 @@ function scoreCandidate(candidate: RawCandidate, queryTokens: string[], ftsScore
   const weighted = Array.from(matched.values()).reduce((sum, item) => sum + item, 0)
   const baseScore = queryTokens.length === 0 ? 0 : weighted / queryTokens.length
   const labelBoost = candidate.label === "failure" ? 0.05 : candidate.label === "finding" ? 0.04 : 0.02
+  const acceptedResultBoost = candidate.status === "accepted" ? 0.08 : 0
   const titleBoost = matchedFields.has("question/title") ? 0.08 : 0
-  const lexicalScore = clampScore(baseScore + labelBoost)
+  const lexicalScore = clampScore(baseScore + labelBoost + acceptedResultBoost)
   const hybridScore = typeof ftsScore === "number"
     ? clampScore((0.55 * ftsScore) + (0.35 * lexicalScore) + (0.05 * confidenceWeight(candidate.confidence)) + (0.05 * labelWeight(candidate.label)))
     : lexicalScore
