@@ -147,8 +147,6 @@ export class ResearchMemoryService {
           until: input.until,
         })
       : []
-    const sessionScopeUnsupported = !!input.session_id && rawCandidates.length > 0 && rawCandidates.every((candidate) => !candidate.source_session_id)
-    if (sessionScopeUnsupported) warnings.add("session-scoped research memory is not available yet; using global internal memory preview")
     const queryTokens = tokenize([query].join(" "))
     const ftsMatches = ftsEnabled && blockers.length === 0
       ? adapter.searchResearchResultsFts?.({
@@ -161,6 +159,8 @@ export class ResearchMemoryService {
       : []
     const ftsScores = new Map(ftsMatches.map((match) => [match.result_id, match.fts_score]))
     const mergedCandidates = mergeFtsCandidates(rawCandidates, ftsMatches, adapter, input)
+    const sessionScopeUnsupported = !!input.session_id && mergedCandidates.length > 0 && mergedCandidates.every((candidate) => !candidate.source_session_id)
+    if (sessionScopeUnsupported) warnings.add("session-scoped research memory is not available yet; using global internal memory preview")
     const scored = mergedCandidates
       .map((candidate) => scoreCandidate(candidate, queryTokens, ftsScores.get(candidate.result_id), ftsEnabled))
       .filter((candidate) => queryTokens.length > 0 && (candidate.matched_terms.length > 0 || candidate.rank_source === "fts" || candidate.rank_source === "hybrid"))

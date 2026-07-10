@@ -21570,6 +21570,11 @@ describe("OpenCode launch readiness", () => {
     expect(preview.candidates[0]?.fts_score).toBe(0.91)
     expect(preview.candidates[0]?.search_engine_used).toBe("hybrid_fts_lexical")
 
+    const sessionFallback = service.preview({ query: "deeparchive hybrid", session_id: "session_missing", limit: 3 })
+    expect(sessionFallback.status).toBe("ready")
+    expect(sessionFallback.candidates.map((candidate) => candidate.result_id)).toEqual(["result_deep_archive_match"])
+    expect(sessionFallback.warnings.join(" ")).toContain("session-scoped research memory is not available yet; using global internal memory preview")
+
     const requiresCitation = service.preview({ query: "deeparchive hybrid", has_citations: true, limit: 3 })
     expect(requiresCitation.status).toBe("empty")
     expect(requiresCitation.candidates).toEqual([])

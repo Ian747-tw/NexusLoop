@@ -32,6 +32,30 @@ function openSequencedTestDb(projectDir: string): ResearchDb {
   })
 }
 
+function researchDbPath(projectDir: string): string {
+  return join(projectDir, ".nxl", "research.db")
+}
+
+function readFtsRows(projectDir: string): Array<{ rowid: number; result_id: string }> {
+  const sqlite = new Database(researchDbPath(projectDir))
+  try {
+    return sqlite
+      .query("SELECT rowid, result_id FROM research_results_fts ORDER BY result_id")
+      .all() as Array<{ rowid: number; result_id: string }>
+  } finally {
+    sqlite.close()
+  }
+}
+
+function withSqlite(projectDir: string, fn: (sqlite: Database) => void): void {
+  const sqlite = new Database(researchDbPath(projectDir))
+  try {
+    fn(sqlite)
+  } finally {
+    sqlite.close()
+  }
+}
+
 afterEach(async () => {
   while (cleanup.length) await rm(cleanup.pop()!, { recursive: true, force: true })
 })
@@ -93,6 +117,145 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("backfills legacy missing FTS projection once and finds accepted results", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "result_legacy_fts",
+      result_type: "implementation_change",
+      title: "legacy fts backfill needle",
+      summary: "accepted result survives legacy index creation",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("result_legacy_fts")
+    db.close()
+
+    withSqlite(dir, (sqlite) => {
+      sqlite.exec("DROP TABLE research_results_fts")
+      sqlite.query("DELETE FROM research_projection WHERE projection_name = ?").run("research_results_fts")
+    })
+
+    const reopened = openSequencedTestDb(dir)
+    expect(reopened.researchResultsFtsStatus()).toMatchObject({
+      available: true,
+      indexed_result_count: 1,
+      expected_indexed_result_count: 1,
+      projection_version: 1,
+    })
+    expect(reopened.searchResearchResultsFts({ query: "legacy backfill", limit: 10 }).map((result) => result.result_id)).toEqual(["result_legacy_fts"])
+    const marker = reopened.researchResultsFtsStatus().rebuild_marker
+    reopened.close()
+
+    const consistent = openSequencedTestDb(dir)
+    expect(consistent.researchResultsFtsStatus().rebuild_marker).toBe(marker)
+    expect(consistent.searchResearchResultsFts({ query: "legacy backfill", limit: 10 }).map((result) => result.result_id)).toEqual(["result_legacy_fts"])
+    consistent.close()
+  })
+
+  test("consistent reopen performs no full FTS rebuild or row rewrite", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    for (const id of ["result_reopen_a", "result_reopen_b"]) {
+      db.proposeResearchResult({
+        result_id: id,
+        result_type: "implementation_change",
+        title: `consistent reopen ${id}`,
+        summary: "stable FTS row identity",
+        confidence: "high",
+        created_by: "commander",
+      })
+      db.acceptResearchResult(id)
+    }
+    const beforeStatus = db.researchResultsFtsStatus()
+    db.close()
+    const beforeRows = readFtsRows(dir)
+
+    const reopened = openSequencedTestDb(dir)
+    const afterStatus = reopened.researchResultsFtsStatus()
+    reopened.close()
+    const afterRows = readFtsRows(dir)
+
+    expect(afterStatus.rebuild_marker).toBe(beforeStatus.rebuild_marker)
+    expect(afterStatus.indexed_result_count).toBe(2)
+    expect(afterStatus.expected_indexed_result_count).toBe(2)
+    expect(afterRows).toEqual(beforeRows)
+  })
+
+  test("incremental accept and reject synchronize FTS without full rebuild", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    const initialMarker = db.researchResultsFtsStatus().rebuild_marker
+    db.proposeResearchResult({
+      result_id: "result_incremental_a",
+      result_type: "implementation_change",
+      title: "retiredtoken first result",
+      summary: "accepted incrementally",
+      confidence: "high",
+      created_by: "commander",
+    })
+    expect(db.searchResearchResultsFts({ query: "incremental accept", limit: 10 })).toEqual([])
+    db.acceptResearchResult("result_incremental_a")
+    expect(db.researchResultsFtsStatus().rebuild_marker).toBe(initialMarker)
+    expect(db.searchResearchResultsFts({ query: "retiredtoken", limit: 10 }).map((result) => result.result_id)).toEqual(["result_incremental_a"])
+
+    db.proposeResearchResult({
+      result_id: "result_incremental_b",
+      result_type: "implementation_change",
+      title: "incremental keeper needle",
+      summary: "second indexed result remains",
+      confidence: "medium",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("result_incremental_b")
+    const rowsBeforeReject = readFtsRows(dir)
+    db.rejectResearchResult("result_incremental_a", "superseded")
+    expect(db.researchResultsFtsStatus().rebuild_marker).toBe(initialMarker)
+    expect(db.searchResearchResultsFts({ query: "retiredtoken", limit: 10 })).toEqual([])
+    expect(db.searchResearchResultsFts({ query: "incremental keeper", limit: 10 }).map((result) => result.result_id)).toEqual(["result_incremental_b"])
+    expect(readFtsRows(dir)).toEqual(rowsBeforeReject.filter((row) => row.result_id !== "result_incremental_a"))
+    db.close()
+  })
+
+  test("repairs missing and stale FTS membership transactionally on reopen", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    for (const id of ["result_repair_a", "result_repair_b"]) {
+      db.proposeResearchResult({
+        result_id: id,
+        result_type: "implementation_change",
+        title: `repair membership ${id}`,
+        summary: "repairable FTS membership",
+        confidence: "high",
+        created_by: "commander",
+      })
+      db.acceptResearchResult(id)
+    }
+    const beforeMarker = db.researchResultsFtsStatus().rebuild_marker
+    db.close()
+
+    withSqlite(dir, (sqlite) => {
+      sqlite.query("DELETE FROM research_results_fts WHERE result_id = ?").run("result_repair_a")
+      sqlite
+        .query("INSERT INTO research_results_fts (result_id, status, result_type, label, title, summary, metrics_preview, reproduction_preview) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run("result_stale_fts", "accepted", "implementation_change", "finding", "stale repair needle", "stale orphan", "", "")
+    })
+
+    const reopened = ResearchDb.open(dir, {
+      now: () => new Date("2026-05-10T13:00:00.000Z"),
+      idFactory: () => "unused",
+    })
+    expect(reopened.researchResultsFtsStatus().rebuild_marker).not.toBe(beforeMarker)
+    expect(reopened.researchResultsFtsStatus()).toMatchObject({ indexed_result_count: 2, expected_indexed_result_count: 2, projection_version: 1 })
+    expect(reopened.searchResearchResultsFts({ query: "repair membership", limit: 10 }).map((result) => result.result_id).sort()).toEqual([
+      "result_repair_a",
+      "result_repair_b",
+    ])
+    expect(reopened.searchResearchResultsFts({ query: "orphan", limit: 10 })).toEqual([])
+    reopened.close()
+    expect(readFtsRows(dir).map((row) => row.result_id).sort()).toEqual(["result_repair_a", "result_repair_b"])
+  })
+
   test("normalizes FTS bm25 scores without reversing match strength", async () => {
     const dir = await tempProject()
     const db = openTestDb(dir)
@@ -123,6 +286,35 @@ describe("ResearchDb", () => {
     expect(matches.map((match) => match.result_id)).toEqual(["result_fts_strong", "result_fts_weak"])
     expect(matches[0]?.fts_score).toBeGreaterThan(matches[1]?.fts_score ?? 0)
     db.close()
+  })
+
+  test("opens with FTS unavailable and falls back without partial projection state", async () => {
+    const dir = await tempProject()
+    const proto = ResearchDb.prototype as unknown as { ensureResearchResultsFts?: () => boolean }
+    const originalEnsure = proto.ensureResearchResultsFts
+    proto.ensureResearchResultsFts = () => false
+    try {
+      const db = openTestDb(dir)
+      expect(db.researchResultsFtsStatus()).toMatchObject({
+        available: false,
+        indexed_result_count: 0,
+        indexed_field_count: 0,
+      })
+      db.proposeResearchResult({
+        result_id: "result_no_fts",
+        result_type: "implementation_change",
+        title: "no fts fallback",
+        summary: "accepted result can exist without FTS projection",
+        confidence: "medium",
+        created_by: "commander",
+      })
+      db.acceptResearchResult("result_no_fts")
+      expect(db.searchResearchResults({ status: "accepted", limit: 10 }).map((result) => result.result_id)).toEqual(["result_no_fts"])
+      expect(db.searchResearchResultsFts({ query: "fallback", limit: 10 })).toEqual([])
+      db.close()
+    } finally {
+      proto.ensureResearchResultsFts = originalEnsure
+    }
   })
 
   test("open closes sqlite handle when migration fails", async () => {
@@ -2624,6 +2816,9 @@ describe("ResearchDb", () => {
     expect(rebuilt.listResultCitations("result_accept").map((row) => row.citation_id)).toEqual(["citation_1"])
     expect(rebuilt.listResultArtifacts("result_accept").map((row) => row.id)).toEqual(["artifact_1"])
     expect(rebuilt.getResearchResult("result_accept")?.title).toContain("[REDACTED")
+    expect(rebuilt.researchResultsFtsStatus()).toMatchObject({ available: true, indexed_result_count: 1, expected_indexed_result_count: 1, projection_version: 1 })
+    expect(rebuilt.searchResearchResultsFts({ query: "Accepted summary", limit: 10 }).map((result) => result.result_id)).toEqual(["result_accept"])
+    expect(rebuilt.searchResearchResultsFts({ query: "Rejected", limit: 10 })).toEqual([])
     expect(await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")).not.toContain("sk-test-SECRET123")
     rebuilt.close()
   })

@@ -643,6 +643,9 @@ interface ParsedJsonlEvent {
 }
 
 const RESEARCH_PROJECTION_NAME = "research_db_v1"
+const RESEARCH_RESULTS_FTS_PROJECTION_NAME = "research_results_fts"
+const RESEARCH_RESULTS_FTS_SCHEMA_VERSION = 1
+const RESEARCH_RESULTS_FTS_VERSION_MARKER = `schema:${RESEARCH_RESULTS_FTS_SCHEMA_VERSION}`
 const SUPPORTED_RESEARCH_EVENT_TYPES = new Set([
   "topic_created",
   "source_added",
@@ -1177,12 +1180,19 @@ export class ResearchDb {
     return rows.map((row, index) => ({ ...this.researchResultFromRow(row)!, fts_score: normalizeFtsRank(index, rows.length) }))
   }
 
-  researchResultsFtsStatus(): { available: boolean; indexed_result_count: number; indexed_field_count: number; fallback_reason?: string } {
+  researchResultsFtsStatus(): { available: boolean; indexed_result_count: number; indexed_field_count: number; fallback_reason?: string; projection_version?: number; rebuild_marker?: string | null; expected_indexed_result_count?: number } {
     if (!this.isResearchResultsFtsAvailable()) {
       return { available: false, indexed_result_count: 0, indexed_field_count: 0, fallback_reason: "SQLite FTS5 research_results_fts index is unavailable" }
     }
-    const row = this.db.query("SELECT COUNT(*) AS count FROM research_results_fts").get() as { count: number }
-    return { available: true, indexed_result_count: row.count, indexed_field_count: 8 }
+    const projection = this.getResearchResultsFtsProjection()
+    return {
+      available: true,
+      indexed_result_count: this.countResearchResultsFtsRows(),
+      indexed_field_count: 8,
+      projection_version: projection?.last_event_id === RESEARCH_RESULTS_FTS_VERSION_MARKER ? RESEARCH_RESULTS_FTS_SCHEMA_VERSION : undefined,
+      rebuild_marker: projection?.rebuilt_at ?? null,
+      expected_indexed_result_count: projection?.applied_count,
+    }
   }
 
   recordCitation(input: CitationInput): Citation {
@@ -2413,7 +2423,6 @@ export class ResearchDb {
         updated_at TEXT
       );
     `)
-    this.ensureResearchResultsFts()
     this.ensureColumn("topics", "input_hash", "TEXT")
     this.ensureColumn("sources", "input_hash", "TEXT")
     this.ensureColumn("notes", "input_hash", "TEXT")
@@ -2441,7 +2450,8 @@ export class ResearchDb {
     this.ensureColumn("training_runs", "input_hash", "TEXT")
     this.backfillLinkEventIds()
     this.backfillInputHashes()
-    this.rebuildResearchResultsFts()
+    const ftsTableCreated = this.ensureResearchResultsFts()
+    this.ensureResearchResultsFtsProjection(ftsTableCreated)
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
   }
 
@@ -2462,7 +2472,7 @@ export class ResearchDb {
     this.db.query("DELETE FROM sources").run()
     this.db.query("DELETE FROM topics").run()
     this.db.query("DELETE FROM research_events").run()
-    this.db.query("DELETE FROM research_projection WHERE projection_name = ?").run(RESEARCH_PROJECTION_NAME)
+    this.db.query("DELETE FROM research_projection WHERE projection_name IN (?, ?)").run(RESEARCH_PROJECTION_NAME, RESEARCH_RESULTS_FTS_PROJECTION_NAME)
   }
 
   private applyParsedEvent(item: ParsedJsonlEvent, appliedCount?: number): boolean {
@@ -2950,7 +2960,8 @@ export class ResearchDb {
     }
   }
 
-  private ensureResearchResultsFts(): void {
+  private ensureResearchResultsFts(): boolean {
+    const existed = this.isResearchResultsFtsAvailable()
     try {
       this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS research_results_fts USING fts5(
@@ -2964,8 +2975,10 @@ export class ResearchDb {
           reproduction_preview
         );
       `)
+      return !existed && this.isResearchResultsFtsAvailable()
     } catch {
       // FTS5 is optional projection infrastructure. Search falls back to bounded lexical retrieval.
+      return false
     }
   }
 
@@ -2978,29 +2991,112 @@ export class ResearchDb {
     }
   }
 
+  private ensureResearchResultsFtsProjection(tableCreated: boolean): void {
+    if (!this.isResearchResultsFtsAvailable()) return
+    const projection = this.getResearchResultsFtsProjection()
+    if (tableCreated || !projection || projection.last_event_id !== RESEARCH_RESULTS_FTS_VERSION_MARKER) {
+      this.repairResearchResultsFts()
+      return
+    }
+    const indexedCount = this.countResearchResultsFtsRows()
+    const acceptedCount = this.countAcceptedResearchResults()
+    if (projection.applied_count !== indexedCount || indexedCount !== acceptedCount || this.hasResearchResultsFtsMembershipMismatch()) {
+      this.repairResearchResultsFts()
+    }
+  }
+
+  private getResearchResultsFtsProjection(): ResearchProjectionRow | null {
+    return this.db
+      .query("SELECT projection_name, last_event_id, last_event_timestamp, applied_count, rebuilt_at, updated_at FROM research_projection WHERE projection_name = ?")
+      .get(RESEARCH_RESULTS_FTS_PROJECTION_NAME) as ResearchProjectionRow | null
+  }
+
+  private countResearchResultsFtsRows(): number {
+    if (!this.isResearchResultsFtsAvailable()) return 0
+    const row = this.db.query("SELECT COUNT(*) AS count FROM research_results_fts").get() as { count: number }
+    return row.count
+  }
+
+  private countAcceptedResearchResults(): number {
+    const row = this.db.query("SELECT COUNT(*) AS count FROM research_results WHERE status = 'accepted'").get() as { count: number }
+    return row.count
+  }
+
+  private hasResearchResultsFtsMembershipMismatch(): boolean {
+    if (!this.isResearchResultsFtsAvailable()) return false
+    const missingAccepted = this.db
+      .query(
+        `SELECT r.result_id
+         FROM research_results r
+         WHERE r.status = 'accepted'
+           AND NOT EXISTS (SELECT 1 FROM research_results_fts f WHERE f.result_id = r.result_id)
+         LIMIT 1`,
+      )
+      .get() as { result_id: string } | null
+    if (missingAccepted) return true
+    const staleIndexed = this.db
+      .query(
+        `SELECT f.result_id
+         FROM research_results_fts f
+         LEFT JOIN research_results r ON r.result_id = f.result_id
+         WHERE r.result_id IS NULL OR r.status != 'accepted'
+         LIMIT 1`,
+      )
+      .get() as { result_id: string } | null
+    return !!staleIndexed
+  }
+
+  private repairResearchResultsFts(): void {
+    if (!this.isResearchResultsFtsAvailable()) return
+    this.db.exec("BEGIN IMMEDIATE")
+    try {
+      this.rebuildResearchResultsFts()
+      this.db.exec("COMMIT")
+    } catch (error) {
+      try {
+        this.db.exec("ROLLBACK")
+      } catch {
+        // Preserve the original rebuild failure.
+      }
+      throw error
+    }
+  }
+
   private rebuildResearchResultsFts(): void {
     if (!this.isResearchResultsFtsAvailable()) return
     this.db.query("DELETE FROM research_results_fts").run()
     const rows = this.db.query("SELECT * FROM research_results WHERE status = 'accepted' ORDER BY updated_at, result_id").all() as ResearchResultRow[]
-    for (const row of rows) this.syncResearchResultFts(this.researchResultFromRow(row)!)
+    for (const row of rows) this.syncResearchResultFts(this.researchResultFromRow(row)!, false)
+    this.markResearchResultsFtsProjectionReady(rows.length, this.timestamp())
   }
 
-  private syncResearchResultFts(result: ResearchResult): void {
+  private syncResearchResultFts(result: ResearchResult, updateProjection = true): void {
     if (!this.isResearchResultsFtsAvailable()) return
     this.db.query("DELETE FROM research_results_fts WHERE result_id = ?").run(result.result_id)
-    if (result.status !== "accepted") return
+    if (result.status === "accepted") {
+      this.db
+        .query("INSERT INTO research_results_fts (result_id, status, result_type, label, title, summary, metrics_preview, reproduction_preview) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(
+          result.result_id,
+          result.status,
+          result.result_type,
+          result.label ?? "",
+          ftsBound(result.title),
+          ftsBound(result.summary),
+          ftsPreview(result.metrics),
+          ftsPreview(result.reproduction),
+        )
+    }
+    if (updateProjection) this.markResearchResultsFtsProjectionReady(this.countResearchResultsFtsRows(), null)
+  }
+
+  private markResearchResultsFtsProjectionReady(indexedCount: number, rebuiltAt: string | null): void {
+    const updatedAt = this.timestamp()
     this.db
-      .query("INSERT INTO research_results_fts (result_id, status, result_type, label, title, summary, metrics_preview, reproduction_preview) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(
-        result.result_id,
-        result.status,
-        result.result_type,
-        result.label ?? "",
-        ftsBound(result.title),
-        ftsBound(result.summary),
-        ftsPreview(result.metrics),
-        ftsPreview(result.reproduction),
+      .query(
+        "INSERT INTO research_projection (projection_name, last_event_id, last_event_timestamp, applied_count, rebuilt_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(projection_name) DO UPDATE SET last_event_id = excluded.last_event_id, last_event_timestamp = excluded.last_event_timestamp, applied_count = excluded.applied_count, rebuilt_at = COALESCE(excluded.rebuilt_at, research_projection.rebuilt_at), updated_at = excluded.updated_at",
       )
+      .run(RESEARCH_RESULTS_FTS_PROJECTION_NAME, RESEARCH_RESULTS_FTS_VERSION_MARKER, null, indexedCount, rebuiltAt, updatedAt)
   }
 
   private getSource(id: string): Source | null {
