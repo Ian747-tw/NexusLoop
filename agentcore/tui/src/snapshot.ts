@@ -1,4 +1,4 @@
-import type { UiState, StreamLine } from "./state"
+import type { CommanderContinuityBudgetSummary, CommanderContinuityCommandSummary, CommanderContinuityOpenLoopSummary, CommanderContinuitySectionSummary, CommanderContinuitySourceRefSummary, UiState, StreamLine } from "./state"
 import { redactText } from "./redaction"
 
 function lines(items: StreamLine[]): string[] {
@@ -102,6 +102,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...opencodeResultReviewGateLines(state))
   out.push(...researchIngestionLines(state))
   out.push(...researchMemoryLines(state))
+  out.push(...commanderContinuityLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
   out.push(...executorReviewProposalCreateLines(state))
@@ -1741,6 +1742,135 @@ function researchMemoryLines(state: UiState): string[] {
   out.push("  note=retrieval/novelty previews do not call providers, call MCPs, launch OpenCode, write research.db, or decide research direction")
   out.push("  note=retrieval/inspection/near-duplicate/profile previews do not call providers, call MCPs, launch OpenCode, write research.db, mutate missions/proposals/reviews/apply, create proposals, or decide research direction")
   return out
+}
+
+function commanderContinuityLines(state: UiState): string[] {
+  const continuity = state.commanderContinuity
+  const out = ["Commander continuity"]
+  if (!continuity) {
+    out.push("  proposal_packet=none")
+    out.push("  mid_mission_packet=none")
+    out.push("  note=continuity packet is read-only; no Commander proposal, provider/MCP/online research, research.db write, OpenCode prompt/process control, or mission mutation")
+    return out
+  }
+  if (continuity.proposalPacket) {
+    const item = continuity.proposalPacket
+    out.push(`  proposal_packet=${item.packet_id} status=${item.status} readiness=${item.readiness} novelty_risk=${item.novelty_risk ?? "unknown"} missing_memory=${item.missing_memory_warning} why_not_duplicate_required=${item.why_not_duplicate_required}`)
+    out.push(`  objective=${preview(redactText(item.objective_preview))}`)
+    out.push(`  authority=${preview(redactText(item.authority_summary))}`)
+    out.push(`  project_direction=${preview(redactText(item.project_direction_summary))}`)
+    out.push(`  proposal_lineage=${preview(redactText(item.proposal_lineage_summary))}`)
+    out.push(`  recent_execution=${preview(redactText(item.recent_execution_summary))}`)
+    out.push(`  research_memory=${preview(redactText(item.research_memory_summary))}`)
+    out.push(`  search_profile=${preview(redactText(item.research_search_profile_summary))}`)
+    out.push(`  research_queries=${item.research_queries_executed.map((query) => preview(redactText(query))).join(" | ") || "none"}`)
+    out.push(`  research_candidates=${preview(redactText(item.research_candidates_summary))}`)
+    out.push(`  near_duplicate=${preview(redactText(item.near_duplicate_summary))}`)
+    out.push(...continuityOpenLoopLines(item.open_loops, "  proposal_open_loops"))
+    out.push(...continuitySectionLines(item.sections, "  proposal_sections"))
+    out.push(...continuitySourceRefLines(item.source_refs, "  proposal_source_refs"))
+    out.push(...continuityCommandLines(item.recommended_commands, "  proposal_recommended_commands"))
+    out.push(...continuityBudgetLines(item.budget, "  proposal_budget"))
+    if (item.blockers.length > 0) out.push(`  proposal_blockers=${item.blockers.map((blocker) => preview(redactText(blocker))).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  proposal_warnings=${item.warnings.map((warning) => preview(redactText(warning))).join("; ")}`)
+  } else {
+    out.push("  proposal_packet=none")
+  }
+  if (continuity.midMissionPacket) {
+    const item = continuity.midMissionPacket
+    out.push(`  mid_mission_packet=${item.packet_id} status=${item.status} readiness=${item.readiness} session=${item.session_id} launch=${item.launch_id ?? "none"}`)
+    out.push(`  mid_objective=${preview(redactText(item.objective_preview))}`)
+    out.push(`  active_session=${preview(redactText(item.active_session_summary))}`)
+    out.push(`  latest_progress=${preview(redactText(item.latest_progress_summary))}`)
+    out.push(`  watchdog=${preview(redactText(item.watchdog_summary))}`)
+    out.push(`  dialogue=${preview(redactText(item.commander_dialogue_summary))}`)
+    out.push(`  guidance_delivery=${preview(redactText(item.guidance_delivery_summary))}`)
+    out.push(`  human_controls=${preview(redactText(item.human_control_summary))}`)
+    out.push(`  wake_supervision=${preview(redactText(item.wake_supervision_summary))}`)
+    out.push(`  result_state=${preview(redactText(item.result_state_summary))}`)
+    out.push(`  local_working_memory=${preview(redactText(item.local_session_working_memory_summary))}`)
+    out.push(`  mid_research_memory=${preview(redactText(item.research_memory_summary ?? "omitted"))}`)
+    out.push(...continuityOpenLoopLines(item.open_loops, "  mid_open_loops"))
+    out.push(...continuitySectionLines(item.sections, "  mid_sections"))
+    out.push(...continuitySourceRefLines(item.source_refs, "  mid_source_refs"))
+    out.push(...continuityCommandLines(item.recommended_commands, "  mid_recommended_commands"))
+    out.push(...continuityBudgetLines(item.budget, "  mid_budget"))
+    if (item.blockers.length > 0) out.push(`  mid_blockers=${item.blockers.map((blocker) => preview(redactText(blocker))).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  mid_warnings=${item.warnings.map((warning) => preview(redactText(warning))).join("; ")}`)
+  } else {
+    out.push("  mid_mission_packet=none")
+  }
+  if (continuity.summary) {
+    const summary = continuity.summary
+    out.push(`  summary sessions=${summary.total_recent_sessions} active=${summary.active_session_count} stale_or_timed_out=${summary.stale_or_timed_out_count} pending_questions=${summary.pending_question_count} pending_guidance=${summary.pending_guidance_delivery_count} human_attention=${summary.human_attention_count} reports_need_review=${summary.result_reports_needing_review_count} accepted_not_ingested=${summary.accepted_reviews_not_ingested_count} open_loops=${summary.open_loop_count}`)
+    if (summary.latest_threads.length > 0) {
+      out.push("  summary_threads")
+      out.push(...summary.latest_threads.slice(0, 8).map((thread) => `    - ${thread.thread_id} session=${thread.session_id ?? "none"} launch=${thread.launch_id ?? "none"} status=${thread.latest_status} loops=${thread.open_loop_count}: ${preview(redactText(thread.summary_preview))}`))
+    }
+  } else {
+    out.push("  summary=none")
+  }
+  out.push(...continuityOpenLoopLines(continuity.openLoops, "  open_loops"))
+  if (continuity.selectedThread) {
+    const thread = continuity.selectedThread
+    out.push(`  selected_thread=${thread.thread_id} session=${thread.session_id ?? "none"} launch=${thread.launch_id ?? "none"} mission=${thread.mission_id ?? "none"} status=${thread.latest_status} loops=${thread.open_loop_count}`)
+    out.push(`  thread_summary=${preview(redactText(thread.summary_preview))}`)
+  } else {
+    out.push("  selected_thread=none")
+  }
+  if (continuity.commandError) out.push(`  command_error=${redactText(continuity.commandError)}`)
+  out.push("  note=continuity packet is read-only")
+  out.push("  note=no Commander proposal was generated")
+  out.push("  note=no provider/MCP/online research, research.db write, OpenCode prompt/process control, checkpoint, follow-up mission, or mission/proposal/review/apply mutation")
+  return out
+}
+
+function continuityOpenLoopLines(loops: CommanderContinuityOpenLoopSummary[], title: string): string[] {
+  const out = [title]
+  if (!Array.isArray(loops) || loops.length === 0) {
+    out.push("    - empty")
+    return out
+  }
+  out.push(...loops.slice(0, 12).map((loop) => `    - ${loop.loop_id} kind=${loop.loop_kind} severity=${loop.severity} blocking=${loop.blocking} session=${loop.session_id ?? "none"} launch=${loop.launch_id ?? "none"} source=${loop.source_ref.source_kind}:${loop.source_ref.source_id}: ${preview(redactText(loop.summary_preview))}`))
+  return out
+}
+
+function continuitySectionLines(sections: CommanderContinuitySectionSummary[], title: string): string[] {
+  const out = [title]
+  if (!Array.isArray(sections) || sections.length === 0) {
+    out.push("    - empty")
+    return out
+  }
+  out.push(...sections.slice(0, 12).map((section) => `    - ${section.section_id} kind=${section.section_kind} status=${section.status} items=${section.item_count} omitted=${section.omitted_count}: ${preview(redactText(section.summary_preview))}`))
+  return out
+}
+
+function continuitySourceRefLines(refs: CommanderContinuitySourceRefSummary[], title: string): string[] {
+  const out = [title]
+  if (!Array.isArray(refs) || refs.length === 0) {
+    out.push("    - empty")
+    return out
+  }
+  out.push(...refs.slice(0, 12).map((ref) => `    - ${ref.source_kind}:${ref.source_id} label=${ref.label ?? "none"} status=${ref.status ?? "none"} pointer_only=${ref.pointer_only}`))
+  return out
+}
+
+function continuityCommandLines(commands: CommanderContinuityCommandSummary[], title: string): string[] {
+  const out = [title]
+  if (!Array.isArray(commands) || commands.length === 0) {
+    out.push("    - empty")
+    return out
+  }
+  out.push(...commands.slice(0, 10).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
+  return out
+}
+
+function continuityBudgetLines(budget: CommanderContinuityBudgetSummary, title: string): string[] {
+  return [
+    `${title} target=${budget.target_token_budget} estimated=${budget.estimated_token_count}`,
+    `  omitted_sections=${budget.omitted_sections.join(",") || "none"}`,
+    `  truncation_warnings=${budget.truncation_warnings.map((warning) => preview(redactText(warning))).join("; ") || "none"}`,
+  ]
 }
 
 function commanderExecutorReviewLines(state: UiState): string[] {

@@ -21613,6 +21613,90 @@ describe("OpenCode launch readiness", () => {
     await client.shutdown()
   })
 
+  test("commander continuity packets compile bounded read-only context and open loops", async () => {
+    const dir = await tempProject()
+    const { server, sessionId, packId } = await readyLaunchFixture(dir)
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { status: string; launch_id: string }
+    expect(launched.status).toBe("launched")
+    await server.command("runtime.record_opencode_progress", { sessionId, kind: "heartbeat", summary: "alive token=continuity-secret" })
+    await server.command("runtime.create_opencode_commander_question", { sessionId, question: "need commander continuity decision token=continuity-secret" })
+    await server.command("runtime.record_opencode_human_control", { sessionId, kind: "correction", correction: "preserve continuity token=continuity-secret" })
+    const report = await server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "continuity evidence token=continuity-secret", outcome: "tests passed", claims: ["continuity-works"] }) as { report_id: string }
+    const review = await server.command("runtime.record_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "bounded continuity evidence token=continuity-secret", acceptedClaims: ["continuity-works"] }) as { review_id: string }
+    await server.command("runtime.record_research_ingestion", { reviewId: review.review_id, tags: ["continuity", "memory"] })
+    const eventsBefore = await server.eventStore.readAll()
+
+    const proposal = await server.command("runtime.preview_commander_proposal_continuity", { objective: "plan next continuity-safe research token=continuity-secret" }) as {
+      status: string
+      readiness: string
+      research_search_profile_summary: string
+      sections: Array<{ section_kind: string; status: string }>
+      open_loops: Array<{ loop_kind: string; source_ref: { pointer_only: boolean } }>
+      budget: { estimated_token_count: number; omitted_sections: string[] }
+      source_refs: Array<{ pointer_only: boolean }>
+      warnings: string[]
+    }
+    expect(proposal.status).toBe("ready")
+    expect(["open_loops_pending", "blocked", "ready", "duplicate_risk_high"]).toContain(proposal.readiness)
+    expect(proposal.research_search_profile_summary).toContain("bounded_lexical")
+    expect(proposal.research_search_profile_summary).toContain("semantic_search_enabled=false")
+    expect(proposal.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ section_kind: "research_memory" }),
+      expect.objectContaining({ section_kind: "open_loops" }),
+      expect.objectContaining({ section_kind: "omitted_raw_logs", status: "excluded" }),
+    ]))
+    expect(proposal.open_loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
+    expect(proposal.source_refs.every((ref) => ref.pointer_only)).toBe(true)
+    expect(JSON.stringify(proposal.budget)).toContain("estimated")
+    expect(JSON.stringify(proposal.budget)).toContain("omitted")
+    expect(JSON.stringify(proposal)).not.toContain("continuity-secret")
+    expect(proposal.warnings.join(" ")).toContain("read-only")
+
+    const mid = await server.command("runtime.preview_commander_midmission_continuity", { sessionId }) as {
+      status: string
+      session_id: string
+      readiness: string
+      latest_progress_summary: string
+      commander_dialogue_summary: string
+      human_control_summary: string
+      sections: Array<{ section_kind: string }>
+      open_loops: Array<{ loop_kind: string }>
+      warnings: string[]
+    }
+    expect(mid).toMatchObject({ status: "ready", session_id: sessionId })
+    expect(mid.latest_progress_summary).toContain("heartbeat")
+    expect(mid.commander_dialogue_summary).toContain("pending questions=1")
+    expect(mid.human_control_summary).toContain("correction")
+    expect(mid.open_loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
+    expect(mid.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ section_kind: "active_session" }),
+      expect.objectContaining({ section_kind: "dialogue_guidance" }),
+      expect.objectContaining({ section_kind: "human_controls" }),
+    ]))
+    expect(mid.warnings.join(" ")).toContain("read-only")
+
+    const loops = await server.command("runtime.list_commander_continuity_open_loops", { sessionId }) as Array<{ loop_kind: string; recommended_command?: string }>
+    expect(loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
+    expect(loops.some((loop) => loop.recommended_command?.includes("/commander-guidance"))).toBe(true)
+    await expect(server.command("runtime.commander_continuity_summary")).resolves.toMatchObject({ open_loop_count: expect.any(Number), pending_question_count: 1 })
+    await expect(server.command("runtime.show_commander_continuity_thread", { sessionId })).resolves.toMatchObject({ session_id: sessionId, open_loop_count: expect.any(Number) })
+    expect(await server.eventStore.readAll()).toEqual(eventsBefore)
+
+    const noStartDir = await tempProject()
+    await makeProject(noStartDir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const noStartServer = new RuntimeServer({ projectDir: noStartDir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server: noStartServer, autoStart: true, ownsServer: true })
+    await expect(client.command("runtime.preview_commander_proposal_continuity", { objective: "adapter timeout" })).resolves.toMatchObject({ packet_kind: "proposal" })
+    await expect(client.command("runtime.preview_commander_midmission_continuity", { sessionId: "missing" })).resolves.toMatchObject({ status: "blocked" })
+    await expect(client.command("runtime.commander_continuity_summary")).resolves.toMatchObject({ total_recent_sessions: 0 })
+    await expect(client.command("runtime.list_commander_continuity_open_loops")).resolves.toEqual([])
+    await expect(client.command("runtime.show_commander_continuity_thread", { sessionId: "missing" })).resolves.toBeNull()
+    expect(adapter.startCalls).toBe(0)
+    expect(await readEventKinds(noStartDir)).not.toContain("runtime_started")
+    await client.shutdown?.()
+  })
+
   test("authority registry includes research memory and novelty safe-read commands", () => {
     for (const command of ["/research-memory-summary", "/research-memory-search", "/research-memory-preview", "/research-memory-show", "/research-memory-near-duplicates", "/research-memory-profile", "/research-novelty-preview"]) {
       const record = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === command)
@@ -21644,6 +21728,27 @@ describe("OpenCode launch readiness", () => {
     expect(novelty?.aliases).toEqual(expect.arrayContaining(["/novelty-preview", "/research-dup-check"]))
     expect(novelty?.notes.join(" ")).toContain("flagged, not forbidden")
     expect(novelty?.out_of_scope).toEqual(expect.arrayContaining(["topic allowlist/blocklist", "research.db writes", "OpenCode launch"]))
+  })
+
+  test("authority registry includes commander continuity safe-read commands", () => {
+    for (const command of ["/commander-continuity-preview", "/commander-midmission-packet", "/commander-continuity-summary", "/commander-open-loops", "/commander-continuity-thread"]) {
+      const record = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === command)
+      expect(record).toMatchObject({
+        risk: "safe_read",
+        owner: "commander_cycle",
+        mutates_events: false,
+        creates_external_process: false,
+        calls_provider: false,
+        requires_active_runtime: false,
+        requires_run_lock: false,
+      })
+      expect(record?.validation_profile.targeted_e2e).toContain("tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py")
+      expect(record?.notes.join(" ")).toMatch(/read-only|Read-only/)
+      expect(record?.out_of_scope).toEqual(expect.arrayContaining(["provider/MiniMax calls", "research.db writes", "mission/proposal/review/apply mutation"]))
+      expect(`${record?.notes.join(" ")} ${record?.out_of_scope.join(" ")}`).toMatch(/OpenCode (launch|prompt|prompts|prompt\/process)|process/)
+    }
+    expect(COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/commander-continuity-preview")?.aliases).toEqual(expect.arrayContaining(["/continuity-preview", "/proposal-memory-packet", "/proposal-continuity"]))
+    expect(COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/commander-open-loops")?.aliases).toEqual(expect.arrayContaining(["/open-loops"]))
   })
 })
 

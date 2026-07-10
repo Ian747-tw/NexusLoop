@@ -115,6 +115,8 @@ import { ResearchNoveltyService, readResearchNoveltyInput } from "./research-mem
 import type { ResearchMemoryInspectionPreview, ResearchMemoryNearDuplicatePreview, ResearchMemoryRetrievalPreview, ResearchMemorySearchProfile, ResearchMemorySummary, ResearchNoveltyPreview } from "./research-memory/research-memory-types"
 import { ResearchIngestionService, readResearchIngestionPreviewInput, readResearchIngestionRecordInput, type ResearchIngestionDbWriter } from "./research/research-ingestion-service"
 import type { ResearchIngestionPreview, ResearchIngestionRecord, ResearchIngestionResult, ResearchIngestionSummary } from "./research/research-ingestion-types"
+import { CommanderContinuityService, readCommanderContinuityOpenLoopInput, readCommanderContinuitySummaryInput, readCommanderContinuityThreadInput, readCommanderMidMissionContinuityInput, readCommanderProposalContinuityInput } from "./continuity/commander-continuity-service"
+import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityPacket, CommanderProposalContinuityPacket } from "./continuity/commander-continuity-types"
 import type { OpenCodeSpawn } from "./opencode/process-adapter"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
@@ -359,6 +361,7 @@ export class RuntimeServer {
   private opencodeResultReportServiceInstance: OpenCodeResultReportService | null = null
   private opencodeResultReviewServiceInstance: OpenCodeResultReviewService | null = null
   private researchIngestionServiceInstance: ResearchIngestionService | null = null
+  private commanderContinuityServiceInstance: CommanderContinuityService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -1216,6 +1219,16 @@ export class RuntimeServer {
         return this.previewResearchMemoryNearDuplicates(readResearchMemoryNearDuplicateInput(payload))
       case "runtime.research_memory_search_profile":
         return this.researchMemorySearchProfile()
+      case "runtime.preview_commander_proposal_continuity":
+        return this.previewCommanderProposalContinuity(readCommanderProposalContinuityInput(payload))
+      case "runtime.preview_commander_midmission_continuity":
+        return this.previewCommanderMidMissionContinuity(readCommanderMidMissionContinuityInput(payload))
+      case "runtime.commander_continuity_summary":
+        return this.commanderContinuitySummary(readCommanderContinuitySummaryInput(payload))
+      case "runtime.list_commander_continuity_open_loops":
+        return this.listCommanderContinuityOpenLoops(readCommanderContinuityOpenLoopInput(payload))
+      case "runtime.show_commander_continuity_thread":
+        return this.showCommanderContinuityThread(readCommanderContinuityThreadInput(payload))
       case "runtime.preview_research_novelty_check":
         return this.previewResearchNoveltyCheck(readResearchNoveltyInput(payload))
       case "runtime.preview_commander_executor_review":
@@ -2439,6 +2452,26 @@ export class RuntimeServer {
 
   researchMemorySearchProfile(): ResearchMemorySearchProfile {
     return this.researchMemoryService().searchProfile()
+  }
+
+  previewCommanderProposalContinuity(input: Parameters<CommanderContinuityService["proposal"]>[0] = {}): Promise<CommanderProposalContinuityPacket> {
+    return this.commanderContinuityService().proposal(input)
+  }
+
+  previewCommanderMidMissionContinuity(input: Parameters<CommanderContinuityService["midMission"]>[0] = {}): Promise<CommanderMidMissionContinuityPacket> {
+    return this.commanderContinuityService().midMission(input)
+  }
+
+  commanderContinuitySummary(input: Parameters<CommanderContinuityService["summary"]>[0] = {}): Promise<CommanderContinuitySummary> {
+    return this.commanderContinuityService().summary(input)
+  }
+
+  listCommanderContinuityOpenLoops(input: Parameters<CommanderContinuityService["openLoops"]>[0] = {}): Promise<CommanderContinuityOpenLoop[]> {
+    return this.commanderContinuityService().openLoops(input)
+  }
+
+  showCommanderContinuityThread(input: Parameters<CommanderContinuityService["thread"]>[0] = {}): Promise<CommanderContinuityThreadCard | null> {
+    return this.commanderContinuityService().thread(input)
   }
 
   previewResearchNoveltyCheck(input: Parameters<ResearchNoveltyService["preview"]>[0] = {}): ResearchNoveltyPreview {
@@ -4267,6 +4300,28 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
     })
     return this.researchNoveltyServiceInstance
+  }
+
+  private commanderContinuityService(): CommanderContinuityService {
+    this.commanderContinuityServiceInstance ??= new CommanderContinuityService({
+      opencodeSessionService: this.opencodeSessionService(),
+      launchGateService: this.opencodeLaunchGateService(),
+      progressService: this.opencodeProgressService(),
+      watchdogService: this.opencodeTimeoutWatchdogService(),
+      questionService: this.opencodeCommanderQuestionService(),
+      guidanceService: this.commanderGuidanceService(),
+      guidanceDeliveryService: this.commanderGuidanceDeliveryService(),
+      humanControlService: this.opencodeHumanControlService(),
+      wakeSupervisorService: this.opencodeWakeSupervisorService(),
+      wakeExecutionService: this.opencodeWakeSupervisorExecutionService(),
+      wakeActionExecutionService: this.opencodeWakeActionExecutionService(),
+      resultReportService: this.opencodeResultReportService(),
+      resultReviewService: this.opencodeResultReviewService(),
+      researchIngestionService: this.researchIngestionService(),
+      researchMemoryService: this.researchMemoryService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderContinuityServiceInstance
   }
 
   private researchIngestionService(): ResearchIngestionService {
