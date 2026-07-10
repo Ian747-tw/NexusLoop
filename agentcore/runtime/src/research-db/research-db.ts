@@ -458,6 +458,7 @@ export interface SearchResearchResultsFtsOptions extends SearchResearchResultsOp
   labels?: string[]
   confidence?: ResearchResultConfidence
   evidence_kind?: string
+  include_failures?: boolean
   has_artifacts?: boolean
   has_citations?: boolean
   has_metrics?: boolean
@@ -1200,6 +1201,9 @@ export class ResearchDb {
       assertAllowed(RESEARCH_RESULT_CONFIDENCES, options.confidence, "research result confidence")
       filters.push("r.confidence = ?")
       params.push(options.confidence)
+    }
+    if (options.include_failures === false) {
+      filters.push("(LOWER(COALESCE(r.label, '')) NOT LIKE '%failure%' AND LOWER(COALESCE(r.label, '')) NOT LIKE '%negative%' AND r.result_type NOT IN ('negative_finding', 'bug_diagnosis'))")
     }
     const labelFilters = (options.labels ?? []).map((label) => cleanOptional(label)).filter((label): label is string => !!label)
     if (labelFilters.length > 0) {

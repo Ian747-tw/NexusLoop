@@ -158,6 +158,7 @@ export class ResearchMemoryService {
           labels,
           confidence: isResearchResultConfidence(input.confidence) ? input.confidence : undefined,
           evidence_kind: input.evidence_kind,
+          include_failures: input.include_failures,
           has_artifacts: input.has_artifacts,
           has_citations: input.has_citations,
           has_metrics: input.has_metrics,

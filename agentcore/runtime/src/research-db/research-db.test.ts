@@ -377,6 +377,39 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("applies include_failures FTS filter before capping matches", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "result_fts_nonfailure_target",
+      result_type: "implementation_change",
+      label: "finding",
+      title: "nonfailure archive target",
+      summary: "failurepushdown old non-failure row must survive FTS prefiltering",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("result_fts_nonfailure_target")
+    for (let index = 0; index < 505; index += 1) {
+      const id = `result_fts_failure_filler_${index}`
+      db.proposeResearchResult({
+        result_id: id,
+        result_type: "negative_finding",
+        title: `failurepushdown failurepushdown failurepushdown filler ${index}`,
+        summary: "newer failure row that ranks before the non-failure target without filters",
+        confidence: "high",
+        created_by: "commander",
+      })
+      db.acceptResearchResult(id)
+    }
+
+    const unfiltered = db.searchResearchResultsFts({ query: "failurepushdown", limit: 500 }).map((result) => result.result_id)
+    expect(unfiltered).not.toContain("result_fts_nonfailure_target")
+    const filtered = db.searchResearchResultsFts({ query: "failurepushdown", include_failures: false, limit: 10 })
+    expect(filtered.map((result) => result.result_id)).toEqual(["result_fts_nonfailure_target"])
+    db.close()
+  })
+
   test("opens with FTS unavailable and falls back without partial projection state", async () => {
     const dir = await tempProject()
     const proto = ResearchDb.prototype as unknown as { ensureResearchResultsFts?: () => boolean }

@@ -21652,6 +21652,7 @@ describe("OpenCode launch readiness", () => {
       query: "deeparchive hybrid",
       labels: ["finding"],
       confidence: "high",
+      include_failures: false,
       has_artifacts: false,
       has_metrics: true,
       since: "2026-01-01T00:00:00.000Z",
@@ -21662,6 +21663,7 @@ describe("OpenCode launch readiness", () => {
     expect(ftsOptions.at(-1)).toMatchObject({
       labels: ["finding"],
       confidence: "high",
+      include_failures: false,
       has_artifacts: false,
       has_metrics: true,
       since: "2026-01-01T00:00:00.000Z",
