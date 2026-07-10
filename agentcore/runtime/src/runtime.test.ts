@@ -56,6 +56,7 @@ import {
   type ResearchProjectionIntegrity,
   type ResearchProjectionStatus,
   type ResearchResult,
+  type SearchResearchResultsFtsOptions,
   type SearchOptions,
   type Topic,
   type TopicSnapshot,
@@ -21610,13 +21611,17 @@ describe("OpenCode launch readiness", () => {
       training_run_id: null,
       fts_score: 0.91,
     }
+    const ftsOptions: SearchResearchResultsFtsOptions[] = []
     const service = new ResearchMemoryService({
       now: () => new Date("2026-06-29T00:00:00.000Z"),
       readAdapter: () => ({
         available: true,
         policy: "projection_read",
         searchResearchResults: () => [],
-        searchResearchResultsFts: () => [ftsOnlyResult],
+        searchResearchResultsFts: (options) => {
+          ftsOptions.push(options)
+          return [ftsOnlyResult]
+        },
         researchResultsFtsStatus: () => ({ available: true, indexed_result_count: 1, indexed_field_count: 8 }),
       }),
     })
@@ -21636,10 +21641,32 @@ describe("OpenCode launch readiness", () => {
     const requiresCitation = service.preview({ query: "deeparchive hybrid", has_citations: true, limit: 3 })
     expect(requiresCitation.status).toBe("empty")
     expect(requiresCitation.candidates).toEqual([])
+    expect(ftsOptions.at(-1)).toMatchObject({ has_citations: true })
 
     const requiresNoCitation = service.preview({ query: "deeparchive hybrid", has_citations: false, limit: 3 })
     expect(requiresNoCitation.status).toBe("ready")
     expect(requiresNoCitation.candidates.map((candidate) => candidate.result_id)).toEqual(["result_deep_archive_match"])
+    expect(ftsOptions.at(-1)).toMatchObject({ has_citations: false })
+
+    const labelFiltered = service.preview({
+      query: "deeparchive hybrid",
+      labels: ["finding"],
+      confidence: "high",
+      has_artifacts: false,
+      has_metrics: true,
+      since: "2026-01-01T00:00:00.000Z",
+      until: "2026-12-31T00:00:00.000Z",
+      limit: 3,
+    })
+    expect(labelFiltered.status).toBe("ready")
+    expect(ftsOptions.at(-1)).toMatchObject({
+      labels: ["finding"],
+      confidence: "high",
+      has_artifacts: false,
+      has_metrics: true,
+      since: "2026-01-01T00:00:00.000Z",
+      until: "2026-12-31T00:00:00.000Z",
+    })
   })
 
   test("research novelty flags duplicate risk without blocking repeated work", async () => {

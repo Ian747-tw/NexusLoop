@@ -155,6 +155,14 @@ export class ResearchMemoryService {
           limit: SCAN_LIMIT,
           status: isResearchResultStatus(input.result_status) ? input.result_status : "accepted",
           mission_id: input.mission_id,
+          labels,
+          confidence: isResearchResultConfidence(input.confidence) ? input.confidence : undefined,
+          evidence_kind: input.evidence_kind,
+          has_artifacts: input.has_artifacts,
+          has_citations: input.has_citations,
+          has_metrics: input.has_metrics,
+          since: input.since,
+          until: input.until,
         }) ?? []
       : []
     const ftsScores = new Map(ftsMatches.map((match) => [match.result_id, match.fts_score]))
@@ -802,6 +810,10 @@ function isResearchResultType(value: unknown): value is ResearchResultType {
 
 function isResearchResultStatus(value: unknown): value is ResearchResultStatus {
   return typeof value === "string" && ["proposed", "accepted", "rejected", "superseded"].includes(value)
+}
+
+function isResearchResultConfidence(value: unknown): value is "low" | "medium" | "high" {
+  return typeof value === "string" && ["low", "medium", "high"].includes(value)
 }
 
 function uniqueRawCandidates(candidates: RawCandidate[]): RawCandidate[] {

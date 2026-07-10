@@ -344,6 +344,39 @@ describe("ResearchDb", () => {
     db.close()
   })
 
+  test("applies structured FTS filters before capping matches", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "result_fts_filter_target",
+      result_type: "implementation_change",
+      label: "finding",
+      title: "archive target",
+      summary: "filterpushdown old high confidence row must survive FTS prefiltering",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("result_fts_filter_target")
+    for (let index = 0; index < 505; index += 1) {
+      const id = `result_fts_filter_filler_${index}`
+      db.proposeResearchResult({
+        result_id: id,
+        result_type: "implementation_change",
+        title: `filterpushdown filterpushdown filterpushdown filler ${index}`,
+        summary: "newer low confidence row that ranks before the target without filters",
+        confidence: "low",
+        created_by: "commander",
+      })
+      db.acceptResearchResult(id)
+    }
+
+    const unfiltered = db.searchResearchResultsFts({ query: "filterpushdown", limit: 500 }).map((result) => result.result_id)
+    expect(unfiltered).not.toContain("result_fts_filter_target")
+    const filtered = db.searchResearchResultsFts({ query: "filterpushdown", confidence: "high", labels: ["finding"], limit: 10 })
+    expect(filtered.map((result) => result.result_id)).toEqual(["result_fts_filter_target"])
+    db.close()
+  })
+
   test("opens with FTS unavailable and falls back without partial projection state", async () => {
     const dir = await tempProject()
     const proto = ResearchDb.prototype as unknown as { ensureResearchResultsFts?: () => boolean }

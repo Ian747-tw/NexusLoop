@@ -455,6 +455,14 @@ export interface SearchResearchResultsOptions extends SearchOptions {
 
 export interface SearchResearchResultsFtsOptions extends SearchResearchResultsOptions {
   query: string
+  labels?: string[]
+  confidence?: ResearchResultConfidence
+  evidence_kind?: string
+  has_artifacts?: boolean
+  has_citations?: boolean
+  has_metrics?: boolean
+  since?: string
+  until?: string
 }
 
 export interface ResearchResultFtsMatch extends ResearchResult {
@@ -1143,6 +1151,7 @@ export class ResearchDb {
     if (!this.isResearchResultsFtsUsable()) return []
     const filters = ["research_results_fts MATCH ?"]
     const params: SQLQueryBindings[] = [ftsQuery]
+    this.pushResearchResultMemoryFilters(filters, params, options)
     if (options.result_type !== undefined) {
       assertAllowed(RESEARCH_RESULT_TYPES, options.result_type, "research result type")
       filters.push("r.result_type = ?")
@@ -1184,6 +1193,68 @@ export class ResearchDb {
       )
       .all(...params) as Array<ResearchResultRow & { fts_score: number }>
     return rows.map((row, index) => ({ ...this.researchResultFromRow(row)!, fts_score: normalizeFtsRank(index, rows.length) }))
+  }
+
+  private pushResearchResultMemoryFilters(filters: string[], params: SQLQueryBindings[], options: SearchResearchResultsFtsOptions): void {
+    if (options.confidence !== undefined) {
+      assertAllowed(RESEARCH_RESULT_CONFIDENCES, options.confidence, "research result confidence")
+      filters.push("r.confidence = ?")
+      params.push(options.confidence)
+    }
+    const labelFilters = (options.labels ?? []).map((label) => cleanOptional(label)).filter((label): label is string => !!label)
+    if (labelFilters.length > 0) {
+      const clauses: string[] = []
+      const labelValues = Array.from(new Set(labelFilters)).slice(0, 20)
+      const explicitPlaceholders = labelValues.map(() => "?").join(", ")
+      clauses.push(`r.label IN (${explicitPlaceholders})`)
+      params.push(...labelValues)
+      const resultTypes = new Set<ResearchResultType>()
+      for (const label of labelValues) {
+        for (const resultType of researchResultTypesForMemoryLabel(label)) resultTypes.add(resultType)
+      }
+      if (resultTypes.size > 0) {
+        const typeValues = Array.from(resultTypes)
+        clauses.push(`r.result_type IN (${typeValues.map(() => "?").join(", ")})`)
+        params.push(...typeValues)
+      }
+      filters.push(`(${clauses.join(" OR ")})`)
+    }
+    const evidenceKind = cleanOptional(options.evidence_kind)
+    if (evidenceKind) {
+      const resultTypes = researchResultTypesForEvidenceKind(evidenceKind)
+      if (resultTypes.length > 0) {
+        filters.push(`r.result_type IN (${resultTypes.map(() => "?").join(", ")})`)
+        params.push(...resultTypes)
+      } else {
+        filters.push("r.label = ?")
+        params.push(evidenceKind)
+      }
+    }
+    if (options.has_artifacts !== undefined) {
+      filters.push(options.has_artifacts
+        ? "EXISTS (SELECT 1 FROM result_artifacts ra WHERE ra.result_id = r.result_id)"
+        : "NOT EXISTS (SELECT 1 FROM result_artifacts ra WHERE ra.result_id = r.result_id)")
+    }
+    if (options.has_citations !== undefined) {
+      filters.push(options.has_citations
+        ? "EXISTS (SELECT 1 FROM result_citations rc WHERE rc.result_id = r.result_id)"
+        : "NOT EXISTS (SELECT 1 FROM result_citations rc WHERE rc.result_id = r.result_id)")
+    }
+    if (options.has_metrics !== undefined) {
+      filters.push(options.has_metrics
+        ? "(r.metrics_json IS NOT NULL AND r.metrics_json NOT IN ('null', '{}', '[]'))"
+        : "(r.metrics_json IS NULL OR r.metrics_json IN ('null', '{}', '[]'))")
+    }
+    const since = cleanOptional(options.since)
+    if (since) {
+      filters.push("r.created_at >= ?")
+      params.push(since)
+    }
+    const until = cleanOptional(options.until)
+    if (until) {
+      filters.push("r.created_at <= ?")
+      params.push(until)
+    }
   }
 
   researchResultsFtsStatus(): { available: boolean; indexed_result_count: number; indexed_field_count: number; fallback_reason?: string; projection_version?: number; rebuild_marker?: string | null; expected_indexed_result_count?: number } {
@@ -4034,6 +4105,42 @@ function sanitizeFtsQuery(value: string): string | null {
 function normalizeFtsRank(index: number, total: number): number {
   if (total <= 0) return 0
   return Math.round(((total - index) / total) * 1_000_000) / 1_000_000
+}
+
+function researchResultTypesForMemoryLabel(label: string): ResearchResultType[] {
+  switch (label.toLowerCase()) {
+    case "finding":
+      return ["finding", "literature_finding"]
+    case "failure":
+      return ["negative_finding", "bug_diagnosis"]
+    case "probe":
+      return ["probe_result"]
+    case "trial":
+      return ["smoke_test_result", "evaluation_result", "ablation_result"]
+    case "full_training":
+      return ["full_training_result"]
+    default:
+      return []
+  }
+}
+
+function researchResultTypesForEvidenceKind(evidenceKind: string): ResearchResultType[] {
+  switch (evidenceKind.toLowerCase()) {
+    case "positive_finding":
+      return ["finding", "literature_finding", "implementation_change"]
+    case "negative_result":
+      return ["negative_finding", "bug_diagnosis"]
+    case "partial_result":
+    case "inconclusive_result":
+    case "blocked_result":
+    case "status_note":
+      return []
+    case "artifact_index":
+    case "metric_observation":
+      return ["reproduction_record", "evaluation_result", "full_training_result"]
+    default:
+      return []
+  }
 }
 
 function ftsPreview(value: unknown): string {
