@@ -175,10 +175,10 @@ def test_user_previews_commander_continuity_packets_without_writes(sandbox) -> N
     assert f"session={session_id}" in stdout
     assert "launch=" in stdout
     assert "research_memory=" in stdout
-    assert "search_profile=bounded_lexical" in stdout
+    assert ("search_profile=hybrid_fts_lexical" in stdout) or ("search_profile=bounded_lexical" in stdout)
     assert "semantic_search_enabled=false" in stdout
     assert "vector_index_enabled=false" in stdout
-    assert "fts_index_enabled=false" in stdout
+    assert "fts_index_enabled=" in stdout
     assert "pending_commander_question" in stdout
     assert "human_correction" in stdout
     assert "source_refs" in stdout

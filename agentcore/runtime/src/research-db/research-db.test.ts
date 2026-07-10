@@ -57,9 +57,40 @@ describe("ResearchDb", () => {
       expect(tables).toContain("notes")
       expect(tables).toContain("artifacts")
       expect(tables).toContain("research_events")
+      expect(tables).toContain("research_results_fts")
     } finally {
       sqlite.close()
     }
+  })
+
+  test("maintains bounded FTS index for accepted research results only", async () => {
+    const dir = await tempProject()
+    const db = openTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "result_fts_title",
+      result_type: "implementation_change",
+      title: "hybrid title needle",
+      summary: "summary text",
+      confidence: "high",
+      metrics: { exact_metric: "metric needle" },
+      reproduction: { method: "bounded reproduction needle" },
+      created_by: "commander",
+    })
+    expect(db.searchResearchResultsFts({ query: "hybrid title", limit: 10 }).map((result) => result.result_id)).toEqual([])
+    db.acceptResearchResult("result_fts_title")
+
+    const status = db.researchResultsFtsStatus()
+    expect(status.available).toBe(true)
+    expect(status.indexed_result_count).toBe(1)
+    expect(status.indexed_field_count).toBeGreaterThan(0)
+    expect(db.searchResearchResultsFts({ query: "hybrid title", limit: 10 }).map((result) => result.result_id)).toEqual(["result_fts_title"])
+    expect(db.searchResearchResultsFts({ query: "metric needle", limit: 10 }).map((result) => result.result_id)).toEqual(["result_fts_title"])
+    expect(db.searchResearchResultsFts({ query: "' OR 1=1 --", limit: 10 })).toEqual([])
+
+    db.rejectResearchResult("result_fts_title", "superseded by later evidence")
+    expect(db.searchResearchResultsFts({ query: "hybrid title", limit: 10 })).toEqual([])
+    expect(db.researchResultsFtsStatus().indexed_result_count).toBe(0)
+    db.close()
   })
 
   test("open closes sqlite handle when migration fails", async () => {

@@ -4380,6 +4380,8 @@ export class RuntimeServer {
       policy: "projection_read",
       getResearchResult: typeof db.getResearchResult === "function" ? db.getResearchResult.bind(db) : undefined,
       searchResearchResults: typeof db.searchResearchResults === "function" ? db.searchResearchResults.bind(db) : undefined,
+      searchResearchResultsFts: typeof db.searchResearchResultsFts === "function" ? db.searchResearchResultsFts.bind(db) : undefined,
+      researchResultsFtsStatus: typeof db.researchResultsFtsStatus === "function" ? db.researchResultsFtsStatus.bind(db) : undefined,
       listResultCitationPointers: typeof db.listResultCitationPointers === "function" ? db.listResultCitationPointers.bind(db) : undefined,
       listResultArtifactPointers: typeof db.listResultArtifactPointers === "function" ? db.listResultArtifactPointers.bind(db) : undefined,
       listResultCitations: typeof db.listResultCitations === "function" ? db.listResultCitations.bind(db) : undefined,

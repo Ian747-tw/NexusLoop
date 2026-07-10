@@ -17,7 +17,7 @@ import type { ResearchMemoryService } from "../research-memory/research-memory-s
 import type { ResearchIngestionService } from "../research/research-ingestion-service"
 import type { OpenCodeLaunchRecord, OpenCodeLaunchResult } from "../opencode-session/opencode-launch-gate-types"
 import type { OpenCodeSessionPlan, OpenCodeSessionRecord } from "../opencode-session/opencode-session-types"
-import type { ResearchMemoryCandidate } from "../research-memory/research-memory-types"
+import type { ResearchMemoryCandidate, ResearchMemorySearchProfile } from "../research-memory/research-memory-types"
 import type {
   CommanderContinuityCommand,
   CommanderContinuityOpenLoop,
@@ -591,11 +591,11 @@ function researchQueries(objective: string): string[] {
   return [objective, `${objective} failed blocked unstable regression`, `${objective} probe partial inconclusive`].map((item) => bound(item))
 }
 
-function researchSummary(research: { profile: { search_engine: string; semantic_search_enabled: false; vector_index_enabled: false; fts_index_enabled: false; has_research_db_projection: boolean }; main: unknown[]; failures: unknown[]; probes: unknown[]; near_duplicates?: { novelty_risk: string } }): string {
+function researchSummary(research: { profile: Pick<ResearchMemorySearchProfile, "search_engine" | "semantic_search_enabled" | "vector_index_enabled" | "fts_index_enabled" | "has_research_db_projection">; main: unknown[]; failures: unknown[]; probes: unknown[]; near_duplicates?: { novelty_risk: string } }): string {
   return `search=${research.profile.search_engine}; semantic=${research.profile.semantic_search_enabled}; vector=${research.profile.vector_index_enabled}; fts=${research.profile.fts_index_enabled}; candidates=${research.main.length + research.failures.length + research.probes.length}; novelty=${research.near_duplicates?.novelty_risk ?? "unknown"}; projection=${research.profile.has_research_db_projection}`
 }
 
-function profileSummary(profile: { search_engine: string; semantic_search_enabled: false; vector_index_enabled: false; fts_index_enabled: false; scan_limit: number; max_limit: number }): string {
+function profileSummary(profile: Pick<ResearchMemorySearchProfile, "search_engine" | "semantic_search_enabled" | "vector_index_enabled" | "fts_index_enabled" | "scan_limit" | "max_limit">): string {
   return `${profile.search_engine}; semantic_search_enabled=${profile.semantic_search_enabled}; vector_index_enabled=${profile.vector_index_enabled}; fts_index_enabled=${profile.fts_index_enabled}; scan_limit=${profile.scan_limit}; max_limit=${profile.max_limit}`
 }
 

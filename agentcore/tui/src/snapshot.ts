@@ -1654,8 +1654,8 @@ function researchMemoryLines(state: UiState): string[] {
     if (item.candidates.length > 0) {
       out.push("  retrieval_candidates")
       out.push(...item.candidates.slice(0, 10).flatMap((candidate) => [
-        `    - ${candidate.result_id} label=${candidate.label} source=${candidate.source_kind} relevance=${candidate.relevance_score} duplicate=${candidate.duplicate_similarity_score} terms=${arraySummary(candidate.matched_terms)} unmatched=${arraySummary(candidate.unmatched_query_terms)} fields=${arraySummary(candidate.matched_fields)}: ${preview(redactText(candidate.question_preview))}`,
-        `      scoring=${preview(redactText(String(candidate.scoring_explanation_preview ?? "none")))} difference=${preview(redactText(String(candidate.difference_preview ?? "none")))}`,
+        `    - ${candidate.result_id} label=${candidate.label} source=${candidate.source_kind} rank_source=${candidate.rank_source ?? "lexical"} engine=${candidate.search_engine_used ?? "bounded_lexical"} relevance=${candidate.relevance_score} duplicate=${candidate.duplicate_similarity_score} fts=${candidate.fts_score ?? "none"} lexical=${candidate.lexical_score ?? "none"} terms=${arraySummary(candidate.matched_terms)} unmatched=${arraySummary(candidate.unmatched_query_terms)} fields=${arraySummary(candidate.matched_fields)}: ${preview(redactText(candidate.question_preview))}`,
+        `      scoring=${preview(redactText(String(candidate.scoring_explanation_preview ?? "none")))} filter=${preview(redactText(String(candidate.filter_explanation_preview ?? "none")))} difference=${preview(redactText(String(candidate.difference_preview ?? "none")))}`,
         `      refs=${candidate.source_refs.length ? candidate.source_refs.slice(0, 4).map((ref) => `${ref.source_kind}:${preview(redactText(ref.source_id))}`).join(",") : "none"} artifacts=${candidate.artifact_ids.slice(0, 4).map((item) => preview(redactText(item))).join(",") || "none"} citations=${candidate.citation_ids.slice(0, 4).map((item) => preview(redactText(item))).join(",") || "none"}`,
       ]))
     }
@@ -1700,7 +1700,8 @@ function researchMemoryLines(state: UiState): string[] {
   if (memory.searchProfile) {
     const profile = memory.searchProfile
     out.push(`  search_profile=${profile.profile_id} status=${profile.status} engine=${profile.search_engine} policy=${profile.retrieval_policy} scan_limit=${profile.scan_limit} default_limit=${profile.default_limit} max_limit=${profile.max_limit}`)
-    out.push(`  search_indexes semantic_search_enabled=${profile.semantic_search_enabled} vector_index_enabled=${profile.vector_index_enabled} fts_index_enabled=${profile.fts_index_enabled}`)
+    out.push(`  search_indexes semantic_search_enabled=${profile.semantic_search_enabled} vector_index_enabled=${profile.vector_index_enabled} embedding_search_enabled=${profile.embedding_search_enabled ?? false} provider_rerank_enabled=${profile.provider_rerank_enabled ?? false} fts_index_enabled=${profile.fts_index_enabled} fts_available=${profile.fts_available ?? profile.fts_index_enabled} indexed_fields=${profile.indexed_field_count ?? 0} indexed_results=${profile.indexed_result_count ?? 0}`)
+    if (profile.fts_fallback_reason) out.push(`  fts_fallback_reason=${preview(redactText(profile.fts_fallback_reason))}`)
     out.push(`  profile_counts accepted_results=${profile.accepted_result_count ?? "unknown"} candidates=${profile.candidate_count ?? "unknown"} trials=${profile.trial_count ?? "unknown"} training_runs=${profile.training_run_count ?? "unknown"}`)
     out.push(`  supported_filters=${profile.supported_filters.slice(0, 20).join(",") || "none"}`)
     out.push(`  unsupported_filters=${profile.unsupported_filters.slice(0, 20).join(",") || "none"}`)
@@ -1738,7 +1739,7 @@ function researchMemoryLines(state: UiState): string[] {
   }
   if (memory.commandError) out.push(`  command_error=${redactText(memory.commandError)}`)
   out.push("  note=previews do not include raw research records, full research.db, raw artifacts, provider output, OpenCode output, raw event log, or online research")
-  out.push("  note=search is bounded lexical retrieval; semantic_search_enabled=false vector_index_enabled=false fts_index_enabled=false")
+  out.push("  note=search is bounded hybrid FTS+lexical when FTS is available, with bounded lexical fallback; semantic_search_enabled=false vector_index_enabled=false embedding_search_enabled=false")
   out.push("  note=retrieval/novelty previews do not call providers, call MCPs, launch OpenCode, write research.db, or decide research direction")
   out.push("  note=retrieval/inspection/near-duplicate/profile previews do not call providers, call MCPs, launch OpenCode, write research.db, mutate missions/proposals/reviews/apply, create proposals, or decide research direction")
   return out

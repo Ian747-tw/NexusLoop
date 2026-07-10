@@ -3079,6 +3079,11 @@ export type ResearchMemoryCandidateSummary = {
   related_event_ids: string[]
   relevance_score: number
   duplicate_similarity_score: number
+  rank_source?: string
+  fts_score?: number
+  lexical_score?: number
+  filter_explanation_preview?: string
+  search_engine_used?: string
   matched_terms: string[]
   unmatched_query_terms: string[]
   matched_fields: string[]
@@ -3201,9 +3206,15 @@ export type ResearchMemorySearchProfileState = {
   semantic_search_enabled: boolean
   vector_index_enabled: boolean
   fts_index_enabled: boolean
+  fts_available?: boolean
+  fts_fallback_reason?: string
+  embedding_search_enabled?: boolean
+  provider_rerank_enabled?: boolean
   scan_limit: number
   default_limit: number
   max_limit: number
+  indexed_field_count?: number
+  indexed_result_count?: number
   supported_filters: string[]
   unsupported_filters: string[]
   source_counts: Record<string, number>

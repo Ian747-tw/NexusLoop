@@ -7,9 +7,11 @@ import type {
   ResultArtifactPointer,
   ResultCitationPointer,
   ResearchResult,
+  ResearchResultFtsMatch,
   ResearchResultStatus,
   ResearchResultType,
   SearchCandidatesOptions,
+  SearchResearchResultsFtsOptions,
   SearchResearchResultsOptions,
   SearchTrainingRunsOptions,
   SearchTrialsOptions,
@@ -60,6 +62,8 @@ export type ResearchMemoryReadAdapter = {
   policy?: ResearchMemoryRetrievalPolicy
   getResearchResult?: (resultId: string) => ResearchResult | null
   searchResearchResults?: (options?: SearchResearchResultsOptions) => ResearchResult[]
+  searchResearchResultsFts?: (options: SearchResearchResultsFtsOptions) => ResearchResultFtsMatch[]
+  researchResultsFtsStatus?: () => { available: boolean; indexed_result_count: number; indexed_field_count: number; fallback_reason?: string }
   listResultCitationPointers?: (resultId: string, limit?: number) => ResultCitationPointer[]
   listResultArtifactPointers?: (resultId: string, limit?: number) => ResultArtifactPointer[]
   listResultCitations?: (resultId: string) => Citation[]
@@ -113,12 +117,17 @@ export class ResearchMemoryService {
     const limit = clampLimit(input.limit)
     const labels = (input.labels ?? []).map((item) => bound(item, 80)).filter(Boolean)
     const blockers: string[] = []
-    const warnings = new Set<string>([
-      "research-memory retrieval is a read-only lexical preview; it does not call providers, MCPs, online sources, OpenCode, or write research.db",
-    ])
     if (!query) blockers.push("research memory retrieval requires query=<query>")
     const adapter = this.options.readAdapter()
+    const ftsStatus = adapter.available ? adapter.researchResultsFtsStatus?.() : undefined
+    const ftsEnabled = !!ftsStatus?.available && typeof adapter.searchResearchResultsFts === "function"
+    const warnings = new Set<string>([
+      ftsEnabled
+        ? "research-memory retrieval is a read-only hybrid FTS+lexical preview; it does not call providers, MCPs, online sources, OpenCode, or write research.db"
+        : "research-memory retrieval is a read-only bounded lexical preview; it does not call providers, MCPs, online sources, OpenCode, or write research.db",
+    ])
     if (!adapter.available) warnings.add(adapter.unavailableReason ?? "research memory projection is unavailable; no internal memory was inspected")
+    if (adapter.available && !ftsEnabled) warnings.add(ftsStatus?.fallback_reason ?? "FTS unavailable; using bounded lexical fallback")
     const rawCandidates = adapter.available
       ? this.collectCandidates(adapter, {
           include_failures: input.include_failures !== false,
@@ -141,9 +150,19 @@ export class ResearchMemoryService {
     const sessionScopeUnsupported = !!input.session_id && rawCandidates.length > 0 && rawCandidates.every((candidate) => !candidate.source_session_id)
     if (sessionScopeUnsupported) warnings.add("session-scoped research memory is not available yet; using global internal memory preview")
     const queryTokens = tokenize([query].join(" "))
+    const ftsMatches = ftsEnabled && blockers.length === 0
+      ? adapter.searchResearchResultsFts?.({
+          ...researchResultSearchOptions(input),
+          query,
+          limit: SCAN_LIMIT,
+          status: isResearchResultStatus(input.result_status) ? input.result_status : "accepted",
+          mission_id: input.mission_id,
+        }) ?? []
+      : []
+    const ftsScores = new Map(ftsMatches.map((match) => [match.result_id, match.fts_score]))
     const scored = rawCandidates
-      .map((candidate) => scoreCandidate(candidate, queryTokens))
-      .filter((candidate) => queryTokens.length > 0 && candidate.matched_terms.length > 0)
+      .map((candidate) => scoreCandidate(candidate, queryTokens, ftsScores.get(candidate.result_id), ftsEnabled))
+      .filter((candidate) => queryTokens.length > 0 && (candidate.matched_terms.length > 0 || candidate.rank_source === "fts" || candidate.rank_source === "hybrid"))
       .filter((candidate) => labels.length === 0 || labels.includes(candidate.label))
       .sort(candidateSort(input.sort))
     const candidates = blockers.length === 0 ? scored.slice(0, limit) : []
@@ -151,7 +170,7 @@ export class ResearchMemoryService {
     if (adapter.available && blockers.length === 0 && candidates.length === 0) warnings.add("no internal research memory candidates matched the query")
     if (adapter.available && blockers.length === 0 && input.session_id && !sessionScopeUnsupported && candidates.length === 0) warnings.add("no internal research memory candidates matched the requested session scope")
     if (!adapter.available && blockers.length === 0) warnings.add("empty memory does not block Commander; it only means no internal prior work was found")
-    const retrievalHash = hash(stableJson({ query, labels, limit, candidates: candidates.map((candidate) => candidate.result_id), policy: adapter.policy }))
+    const retrievalHash = hash(stableJson({ query, labels, limit, candidates: candidates.map((candidate) => candidate.result_id), policy: adapter.policy, fts: ftsEnabled }))
     const status = blockers.length > 0 ? "blocked" : candidates.length > 0 ? "ready" : adapter.available ? "empty" : "empty"
     return redactValue({
       preview_id: `research_memory_retrieval_${retrievalHash.slice(0, 16)}`,
@@ -318,24 +337,35 @@ export class ResearchMemoryService {
     const candidateCount = adapter.available ? adapter.searchCandidates?.({ limit: SCAN_LIMIT, order: "newest" }).length : undefined
     const trialCount = adapter.available ? adapter.searchTrials?.({ limit: SCAN_LIMIT, order: "newest" }).length : undefined
     const trainingRunCount = adapter.available ? adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, order: "newest" }).length : undefined
+    const ftsStatus = adapter.available ? adapter.researchResultsFtsStatus?.() : undefined
+    const ftsEnabled = !!ftsStatus?.available
     const warnings = [
-      "search is bounded lexical retrieval; semantic, vector, FTS, provider, MCP, and online research are not enabled",
+      ftsEnabled
+        ? "search is bounded hybrid FTS+lexical retrieval; semantic, vector, embedding, provider, MCP, and online research are not enabled"
+        : "search is bounded lexical retrieval; FTS is unavailable or disabled; semantic, vector, embedding, provider, MCP, and online research are not enabled",
       ...(!adapter.available ? [adapter.unavailableReason ?? "research memory projection is unavailable"] : []),
+      ...(adapter.available && !ftsEnabled ? [ftsStatus?.fallback_reason ?? "SQLite FTS5 index is unavailable; bounded lexical fallback is active"] : []),
     ]
     return redactValue({
       profile_id: `research_memory_profile_${hash(stableJson({ generatedAt, policy: adapter.policy, available: adapter.available, total: candidates.length })).slice(0, 16)}`,
       status: adapter.available ? "ready" : "degraded",
       retrieval_policy: adapter.available ? adapter.policy ?? "projection_read" : "empty_projection",
       has_research_db_projection: adapter.available,
-      search_engine: "bounded_lexical",
+      search_engine: ftsEnabled ? "hybrid_fts_lexical" : "bounded_lexical",
       semantic_search_enabled: false,
       vector_index_enabled: false,
-      fts_index_enabled: false,
+      fts_index_enabled: ftsEnabled,
+      fts_available: ftsEnabled,
+      fts_fallback_reason: ftsEnabled ? undefined : ftsStatus?.fallback_reason ?? "SQLite FTS5 index is unavailable; bounded lexical fallback is active",
+      embedding_search_enabled: false,
+      provider_rerank_enabled: false,
       scan_limit: SCAN_LIMIT,
       default_limit: DEFAULT_LIMIT,
       max_limit: MAX_LIMIT,
+      indexed_field_count: ftsStatus?.indexed_field_count ?? 0,
+      indexed_result_count: ftsStatus?.indexed_result_count ?? 0,
       supported_filters: ["query", "labels", "source_kind", "mission_id", "session_id", "include_failures", "include_artifacts", "result_type", "result_status", "confidence", "evidence_kind", "has_artifacts", "has_citations", "has_metrics", "since", "until", "sort", "explain"],
-      unsupported_filters: ["semantic_search", "vector_index", "fts_query", "raw_sql", "artifact_contents", "file_contents"],
+      unsupported_filters: ["semantic_search", "vector_index", "embedding_search", "provider_rerank", "raw_sql", "artifact_contents", "file_contents"],
       source_counts: countBy(candidates.map((candidate) => candidate.source_kind)),
       label_counts: countBy(candidates.map((candidate) => candidate.label)),
       accepted_result_count: acceptedResultCount,
@@ -344,7 +374,7 @@ export class ResearchMemoryService {
       training_run_count: trainingRunCount,
       warnings: warnings.map((item) => bound(item)).slice(0, 12),
       generated_at: generatedAt,
-      redacted_summary_preview: adapter.available ? `bounded_lexical scan_limit=${SCAN_LIMIT} max_limit=${MAX_LIMIT}` : "research memory projection unavailable; bounded lexical search is degraded",
+      redacted_summary_preview: adapter.available ? `${ftsEnabled ? "hybrid_fts_lexical" : "bounded_lexical"} scan_limit=${SCAN_LIMIT} max_limit=${MAX_LIMIT}` : "research memory projection unavailable; bounded lexical search is degraded",
     })
   }
 
@@ -633,7 +663,7 @@ function baseCandidate(input: Omit<RawCandidate, "source_kind"> & { source_kind?
   }
 }
 
-function scoreCandidate(candidate: RawCandidate, queryTokens: string[]): ResearchMemoryCandidate {
+function scoreCandidate(candidate: RawCandidate, queryTokens: string[], ftsScore?: number, ftsEnabled = false): ResearchMemoryCandidate {
   const fieldTexts: Array<[string, string | undefined, number]> = [
     ["question/title", candidate.question_preview, 1],
     ["hypothesis", candidate.hypothesis_preview, 0.75],
@@ -660,15 +690,29 @@ function scoreCandidate(candidate: RawCandidate, queryTokens: string[]): Researc
   const baseScore = queryTokens.length === 0 ? 0 : weighted / queryTokens.length
   const labelBoost = candidate.label === "failure" ? 0.05 : candidate.label === "finding" ? 0.04 : 0.02
   const titleBoost = matchedFields.has("question/title") ? 0.08 : 0
+  const lexicalScore = clampScore(baseScore + labelBoost)
+  const hybridScore = typeof ftsScore === "number"
+    ? clampScore((0.55 * ftsScore) + (0.35 * lexicalScore) + (0.05 * confidenceWeight(candidate.confidence)) + (0.05 * labelWeight(candidate.label)))
+    : lexicalScore
+  const rankSource = typeof ftsScore === "number" && matchedTerms.length > 0 ? "hybrid" : typeof ftsScore === "number" ? "fts" : "lexical"
   const duplicateSimilarityScore = clampScore(baseScore + (matchedTerms.length >= 3 ? 0.15 : 0) + titleBoost)
   return {
     ...candidate,
-    relevance_score: clampScore(baseScore + labelBoost),
+    relevance_score: hybridScore,
     duplicate_similarity_score: duplicateSimilarityScore,
+    rank_source: rankSource,
+    fts_score: typeof ftsScore === "number" ? ftsScore : undefined,
+    lexical_score: lexicalScore,
+    filter_explanation_preview: "structured filters applied before bounded FTS/lexical scoring",
+    search_engine_used: ftsEnabled ? "hybrid_fts_lexical" : "bounded_lexical",
     matched_terms: matchedTerms.slice(0, 12),
     unmatched_query_terms: unmatchedTerms.slice(0, 12),
     matched_fields: Array.from(matchedFields).slice(0, 12),
-    scoring_explanation_preview: bound(`bounded lexical score matched ${matchedTerms.length}/${queryTokens.length} query terms across ${Array.from(matchedFields).join(", ") || "no fields"}`),
+    scoring_explanation_preview: bound(
+      typeof ftsScore === "number"
+        ? `hybrid FTS+lexical score rank_source=${rankSource} fts=${ftsScore} lexical=${lexicalScore} matched ${matchedTerms.length}/${queryTokens.length} query terms across ${Array.from(matchedFields).join(", ") || "no lexical fields"}`
+        : `bounded lexical score matched ${matchedTerms.length}/${queryTokens.length} query terms across ${Array.from(matchedFields).join(", ") || "no fields"}`,
+    ),
     difference_preview: matchedTerms.length
       ? bound(`matched terms: ${matchedTerms.slice(0, 8).join(", ")}`)
       : "no strong lexical overlap with this prior record",
@@ -706,6 +750,17 @@ function confidenceRank(value?: string): number {
   if (value === "medium") return 2
   if (value === "low") return 1
   return 0
+}
+
+function confidenceWeight(value?: string): number {
+  return confidenceRank(value) / 3
+}
+
+function labelWeight(value?: string): number {
+  if (value === "finding") return 1
+  if (value === "failure") return 0.9
+  if (value === "trial" || value === "probe") return 0.7
+  return 0.5
 }
 
 function researchResultSearchOptions(input: { result_type?: string; result_status?: string }): Partial<SearchResearchResultsOptions> {

@@ -21134,14 +21134,17 @@ describe("OpenCode launch readiness", () => {
       limit: 5,
     }) as {
       status: string
-      candidates: Array<{ result_id: string; label: string; matched_terms: string[]; unmatched_query_terms: string[]; matched_fields: string[]; scoring_explanation_preview: string; pointer_only: boolean; source_refs: Array<{ pointer_only: boolean }> }>
+      candidates: Array<{ result_id: string; label: string; matched_terms: string[]; unmatched_query_terms: string[]; matched_fields: string[]; scoring_explanation_preview: string; rank_source?: string; fts_score?: number; lexical_score?: number; search_engine_used?: string; pointer_only: boolean; source_refs: Array<{ pointer_only: boolean }> }>
     }
     expect(search.status).toBe("ready")
     expect(search.candidates).toEqual([expect.objectContaining({ result_id: "finding_memory_search", label: "finding", pointer_only: true })])
     expect(search.candidates[0]?.matched_terms).toEqual(expect.arrayContaining(["memory", "search", "expansion"]))
     expect(search.candidates[0]?.unmatched_query_terms).toEqual(expect.any(Array))
     expect(search.candidates[0]?.matched_fields).toContain("question/title")
-    expect(search.candidates[0]?.scoring_explanation_preview).toContain("bounded lexical score")
+    expect(search.candidates[0]?.scoring_explanation_preview).toMatch(/hybrid FTS\+lexical score|bounded lexical score/)
+    expect(search.candidates[0]?.rank_source).toMatch(/hybrid|lexical/)
+    expect(search.candidates[0]?.lexical_score).toEqual(expect.any(Number))
+    expect(search.candidates[0]?.search_engine_used).toMatch(/hybrid_fts_lexical|bounded_lexical/)
     expect(search.candidates[0]?.source_refs.every((ref) => ref.pointer_only)).toBe(true)
     expect(JSON.stringify(search)).not.toContain("abc123")
 
@@ -21213,11 +21216,18 @@ describe("OpenCode launch readiness", () => {
     expect(near.likely_duplicate_count).toBeGreaterThanOrEqual(1)
     expect(near.candidates.map((candidate) => candidate.result_id)).toContain("failure_memory_search")
 
-    const profile = await server.command("runtime.research_memory_search_profile") as { search_engine: string; semantic_search_enabled: boolean; vector_index_enabled: boolean; fts_index_enabled: boolean; max_limit: number; supported_filters: string[]; label_counts: Record<string, number> }
-    expect(profile).toMatchObject({ search_engine: "bounded_lexical", semantic_search_enabled: false, vector_index_enabled: false, fts_index_enabled: false, max_limit: 20 })
+    const profile = await server.command("runtime.research_memory_search_profile") as { search_engine: string; semantic_search_enabled: boolean; vector_index_enabled: boolean; embedding_search_enabled?: boolean; fts_index_enabled: boolean; fts_available?: boolean; max_limit: number; indexed_field_count?: number; indexed_result_count?: number; supported_filters: string[]; label_counts: Record<string, number>; warnings: string[] }
+    expect(profile).toMatchObject({ search_engine: "hybrid_fts_lexical", semantic_search_enabled: false, vector_index_enabled: false, embedding_search_enabled: false, fts_index_enabled: true, fts_available: true, max_limit: 20 })
+    expect(profile.indexed_field_count).toBeGreaterThan(0)
+    expect(profile.indexed_result_count).toBeGreaterThanOrEqual(2)
+    expect(profile.warnings.join(" ")).toContain("hybrid FTS+lexical")
     expect(profile.supported_filters).toEqual(expect.arrayContaining(["labels", "result_type", "confidence", "has_artifacts"]))
     expect(profile.label_counts.finding).toBeGreaterThanOrEqual(1)
     expect(profile.label_counts.failure).toBeGreaterThanOrEqual(1)
+
+    const unsafeQuery = await server.command("runtime.preview_research_memory_retrieval", { query: "\" OR 1=1 -- memory search", limit: 5 }) as { status: string; warnings: string[]; candidates: Array<{ result_id: string }> }
+    expect(unsafeQuery.status).toMatch(/ready|empty/)
+    expect(unsafeQuery.candidates.map((candidate) => candidate.result_id)).not.toContain("proposed_memory_search")
 
     await expect(server.command("runtime.get_research_memory_record", {})).resolves.toMatchObject({ status: "blocked" })
     await expect(server.command("runtime.preview_research_memory_near_duplicates", {})).resolves.toMatchObject({ status: "blocked" })
@@ -21681,7 +21691,7 @@ describe("OpenCode launch readiness", () => {
     }
     expect(proposal.status).toBe("ready")
     expect(["open_loops_pending", "blocked", "ready", "duplicate_risk_high"]).toContain(proposal.readiness)
-    expect(proposal.research_search_profile_summary).toContain("bounded_lexical")
+    expect(proposal.research_search_profile_summary).toMatch(/hybrid_fts_lexical|bounded_lexical/)
     expect(proposal.research_search_profile_summary).toContain("semantic_search_enabled=false")
     expect(proposal.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({ section_kind: "research_memory" }),
@@ -21801,8 +21811,8 @@ describe("OpenCode launch readiness", () => {
     }
     const search = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-search")
     expect(search?.aliases).toEqual(expect.arrayContaining(["/research-search", "/memory-search"]))
-    expect(search?.notes.join(" ")).toContain("bounded lexical")
-    expect(search?.notes.join(" ")).toContain("Semantic/vector search is not enabled")
+    expect(search?.notes.join(" ")).toContain("hybrid FTS+lexical")
+    expect(search?.notes.join(" ")).toContain("Semantic/vector/provider/MCP/online search is not enabled")
     const show = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-show")
     expect(show?.aliases).toEqual(expect.arrayContaining(["/memory-show", "/research-memory-inspect", "/memory-inspect", "/research-inspect"]))
     const duplicates = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-near-duplicates")
@@ -21810,7 +21820,7 @@ describe("OpenCode launch readiness", () => {
     expect(duplicates?.notes.join(" ")).toContain("advisory")
     const profile = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-profile")
     expect(profile?.aliases).toEqual(expect.arrayContaining(["/research-search-profile", "/memory-profile"]))
-    expect(profile?.notes.join(" ")).toContain("semantic/vector/FTS/provider search is disabled")
+    expect(profile?.notes.join(" ")).toContain("semantic/vector/embedding/provider search is disabled")
     const novelty = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-novelty-preview")
     expect(novelty?.aliases).toEqual(expect.arrayContaining(["/novelty-preview", "/research-dup-check"]))
     expect(novelty?.notes.join(" ")).toContain("flagged, not forbidden")
