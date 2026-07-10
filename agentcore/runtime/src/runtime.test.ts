@@ -21140,9 +21140,63 @@ describe("OpenCode launch readiness", () => {
     }
   })
 
+  test("read-only research memory commands do not create missing FTS table without run lock", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, { appendEvents: true, allowFtsProjectionRepair: true, idFactory: () => "unused" })
+    db.proposeResearchResult({
+      result_id: "readonly_missing_fts_runtime_result",
+      result_type: "implementation_change",
+      title: "readonly missing fts runtime fallback",
+      summary: "lexical fallback should find this accepted result before FTS creation",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("readonly_missing_fts_runtime_result")
+    db.close()
+
+    const dbPath = join(dir, ".nxl", "research.db")
+    const sqlite = new Database(dbPath)
+    try {
+      sqlite.exec("DROP TABLE research_results_fts")
+      sqlite.query("DELETE FROM research_projection WHERE projection_name = ?").run("research_results_fts")
+    } finally {
+      sqlite.close()
+    }
+    const beforeEvents = await readJsonlEvents(dir)
+
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+    const search = await server.command("runtime.preview_research_memory_retrieval", { query: "readonly missing fts runtime fallback", limit: 10 }) as { status: string; candidates: Array<{ result_id: string }>; warnings: string[] }
+    expect(search.status).toBe("ready")
+    expect(search.candidates.map((candidate) => candidate.result_id)).toContain("readonly_missing_fts_runtime_result")
+    expect(search.warnings.join(" ")).toContain("FTS")
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+
+    const readOnlyDb = new Database(dbPath)
+    try {
+      expect(readOnlyDb.query("SELECT name FROM sqlite_master WHERE name = 'research_results_fts'").get()).toBeNull()
+    } finally {
+      readOnlyDb.close()
+    }
+
+    await server.start()
+    const startedProfile = await server.command("runtime.research_memory_search_profile") as { fts_index_enabled: boolean; search_engine: string }
+    expect(startedProfile.fts_index_enabled).toBe(true)
+    expect(startedProfile.search_engine).toBe("hybrid_fts_lexical")
+    await server.shutdown()
+
+    const repaired = new Database(dbPath)
+    try {
+      expect(repaired.query("SELECT result_id FROM research_results_fts ORDER BY result_id").all()).toEqual([
+        { result_id: "readonly_missing_fts_runtime_result" },
+      ])
+    } finally {
+      repaired.close()
+    }
+  })
+
   test("research memory search inspection near-duplicates and profile remain bounded read-only", async () => {
     const dir = await tempProject()
-    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    const db = ResearchDb.open(dir, { appendEvents: true, allowFtsProjectionRepair: true, idFactory: () => "unused" })
     db.createTopic({ id: "topic_search_inspection", title: "Search inspection" })
     db.addArtifact({ id: "artifact_search", topic_id: "topic_search_inspection", kind: "report", content: "raw artifact token=abc123 must not leak", description: "memory search artifact pointer" })
     db.recordCitation({ citation_id: "citation_search", source_type: "event", source_uri: "event://search", quoted_text_or_summary: "citation body token=abc123 must not leak", title: "memory search citation pointer" })

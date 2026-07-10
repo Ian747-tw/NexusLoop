@@ -49,6 +49,16 @@ function readFtsRows(projectDir: string): Array<{ rowid: number; result_id: stri
   }
 }
 
+function ftsTableExists(projectDir: string): boolean {
+  const sqlite = new Database(researchDbPath(projectDir))
+  try {
+    const row = sqlite.query("SELECT name FROM sqlite_master WHERE name = 'research_results_fts'").get() as { name: string } | null
+    return row?.name === "research_results_fts"
+  } finally {
+    sqlite.close()
+  }
+}
+
 function withSqlite(projectDir: string, fn: (sqlite: Database) => void): void {
   const sqlite = new Database(researchDbPath(projectDir))
   try {
@@ -308,6 +318,49 @@ describe("ResearchDb", () => {
     expect(repairOpen.searchResearchResultsFts({ query: "readonly repair", limit: 10 }).map((result) => result.result_id).sort()).toEqual([
       "result_readonly_repair_a",
       "result_readonly_repair_b",
+    ])
+    repairOpen.close()
+  })
+
+  test("read-only reopen does not create missing FTS table without projection write authority", async () => {
+    const dir = await tempProject()
+    const db = openSequencedTestDb(dir)
+    db.proposeResearchResult({
+      result_id: "result_readonly_missing_fts",
+      result_type: "implementation_change",
+      title: "readonly missing fts",
+      summary: "missing FTS creation requires projection write authority",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("result_readonly_missing_fts")
+    db.close()
+
+    withSqlite(dir, (sqlite) => {
+      sqlite.exec("DROP TABLE research_results_fts")
+      sqlite.query("DELETE FROM research_projection WHERE projection_name = ?").run("research_results_fts")
+    })
+    expect(ftsTableExists(dir)).toBe(false)
+
+    const readOnlyOpen = openSequencedTestDb(dir, { allowFtsProjectionRepair: false })
+    expect(readOnlyOpen.researchResultsFtsStatus()).toMatchObject({
+      available: false,
+      indexed_result_count: 0,
+      indexed_field_count: 0,
+    })
+    readOnlyOpen.close()
+    expect(ftsTableExists(dir)).toBe(false)
+
+    const repairOpen = openSequencedTestDb(dir, { allowFtsProjectionRepair: false })
+    repairOpen.repairResearchResultsFtsProjectionIfNeeded()
+    expect(repairOpen.researchResultsFtsStatus()).toMatchObject({
+      available: true,
+      indexed_result_count: 1,
+      expected_indexed_result_count: 1,
+      projection_version: 1,
+    })
+    expect(repairOpen.searchResearchResultsFts({ query: "readonly missing", limit: 10 }).map((result) => result.result_id)).toEqual([
+      "result_readonly_missing_fts",
     ])
     repairOpen.close()
   })

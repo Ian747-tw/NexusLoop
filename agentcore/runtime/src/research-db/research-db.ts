@@ -1289,8 +1289,9 @@ export class ResearchDb {
   }
 
   repairResearchResultsFtsProjectionIfNeeded(): void {
+    const tableCreated = this.ensureResearchResultsFts()
     if (!this.isResearchResultsFtsAvailable()) return
-    if (this.inspectResearchResultsFtsReadiness(false).ready) return
+    if (!tableCreated && this.inspectResearchResultsFtsReadiness(false).ready) return
     this.repairResearchResultsFts()
   }
 
@@ -2550,7 +2551,7 @@ export class ResearchDb {
     this.ensureColumn("training_runs", "input_hash", "TEXT")
     this.backfillLinkEventIds()
     this.backfillInputHashes()
-    const ftsTableCreated = this.ensureResearchResultsFts()
+    const ftsTableCreated = this.allowFtsProjectionRepair ? this.ensureResearchResultsFts() : false
     this.ensureResearchResultsFtsProjection(ftsTableCreated)
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
   }
