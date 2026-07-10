@@ -132,7 +132,7 @@ export class CommanderContinuityService {
     ])
     const budget = budgetFor("proposal", input.target_token_budget, sections)
     const packetHash = hash(stableJson({ objective, readiness, openLoops: openLoops.map((loop) => loop.loop_id), research: research?.near_duplicates?.near_duplicate_hash, sourceRefs: sourceRefs.map((source) => source.source_id) }))
-    return redactValue({
+    return redactContinuityPacket<CommanderProposalContinuityPacket>({
       packet_id: `commander_continuity_proposal_${packetHash.slice(0, 16)}`,
       packet_kind: "proposal",
       status: blockers.length ? "blocked" : sourceRefs.length ? "ready" : "partial",
@@ -236,7 +236,7 @@ export class CommanderContinuityService {
     ])
     const budget = budgetFor("mid_mission", input.target_token_budget, sections)
     const packetHash = hash(stableJson({ sid, lid, readiness, progress: progress?.progress_id, loops: openLoops.map((loop) => loop.loop_id), wake: wakePreview?.supervisor_hash }))
-    return redactValue({
+    return redactContinuityPacket<CommanderMidMissionContinuityPacket>({
       packet_id: `commander_continuity_midmission_${packetHash.slice(0, 16)}`,
       packet_kind: "mid_mission",
       status: blockers.length ? "blocked" : sourceRefs.length ? "ready" : "partial",
@@ -571,6 +571,12 @@ function budgetFor(kind: "proposal" | "mid_mission", requested: number | undefin
     omitted_sections: omitted,
     truncation_warnings: truncation,
   }
+}
+
+function redactContinuityPacket<T extends { budget: CommanderContinuityPacketBudget }>(packet: T): T {
+  const redacted = redactValue(packet) as T
+  redacted.budget = packet.budget
+  return redacted
 }
 
 function sessionObjective(session: OpenCodeSessionRecord | OpenCodeSessionPlan): string {

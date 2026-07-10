@@ -21636,7 +21636,7 @@ describe("OpenCode launch readiness", () => {
       research_search_profile_summary: string
       sections: Array<{ section_kind: string; status: string }>
       open_loops: Array<{ loop_kind: string; source_ref: { pointer_only: boolean } }>
-      budget: { estimated_token_count: number; omitted_sections: string[] }
+      budget: { target_token_budget: number; estimated_token_count: number; omitted_sections: string[] }
       source_refs: Array<{ pointer_only: boolean }>
       warnings: string[]
     }
@@ -21651,6 +21651,8 @@ describe("OpenCode launch readiness", () => {
     ]))
     expect(proposal.open_loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
     expect(proposal.source_refs.every((ref) => ref.pointer_only)).toBe(true)
+    expect(proposal.budget.target_token_budget).toBe(6000)
+    expect(proposal.budget.estimated_token_count).toBeGreaterThan(0)
     expect(JSON.stringify(proposal.budget)).toContain("estimated")
     expect(JSON.stringify(proposal.budget)).toContain("omitted")
     expect(JSON.stringify(proposal)).not.toContain("continuity-secret")
@@ -21687,6 +21689,7 @@ describe("OpenCode launch readiness", () => {
       source_refs: Array<{ source_kind: string; source_id: string; pointer_only: boolean }>
       open_loops: Array<{ loop_kind: string }>
       warnings: string[]
+      budget: { target_token_budget: number; estimated_token_count: number }
     }
     expect(mid).toMatchObject({ status: "ready", session_id: sessionId })
     expect(mid.latest_progress_summary).toContain("heartbeat")
@@ -21694,6 +21697,8 @@ describe("OpenCode launch readiness", () => {
     expect(mid.human_control_summary).toContain("correction")
     expect(mid.wake_supervision_summary).toContain(wakeExecution.execution_id)
     expect(mid.wake_supervision_summary).toContain(wakeAction.action_execution_id)
+    expect(mid.budget.target_token_budget).toBe(4000)
+    expect(mid.budget.estimated_token_count).toBeGreaterThan(0)
     expect(mid.source_refs).toEqual(expect.arrayContaining([
       expect.objectContaining({ source_kind: "wake_supervisor_execution", source_id: wakeExecution.execution_id, pointer_only: true }),
       expect.objectContaining({ source_kind: "wake_action_execution", source_id: wakeAction.action_execution_id, pointer_only: true }),
