@@ -128,7 +128,7 @@ function riskFor(top: ResearchMemoryCandidate | undefined, method: string | unde
   if (methodOverlap >= 0.75 && configOverlap >= 0.75) return "high"
   if (score >= 0.75) return "high"
   if (methodOverlap >= 0.5 || configOverlap >= 0.5) return "medium"
-  if (score >= 0.35) return "medium"
+  if (score >= 0.5) return "medium"
   return "low"
 }
 

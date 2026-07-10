@@ -6409,15 +6409,54 @@ describe("runtime UI effects", () => {
       retrieval_policy: "fake",
     })
     expect(state.researchMemory?.retrievalPreview?.candidates.map((candidate) => candidate.label)).toContain("failure")
+    expect(state.researchMemory?.retrievalPreview?.candidates[0]).toMatchObject({
+      pointer_only: true,
+      matched_fields: expect.any(Array),
+      scoring_explanation_preview: expect.stringContaining("bounded lexical score"),
+    })
     let snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("Research memory and novelty")
     expect(snapshot).toContain("retrieval=fake-research-memory")
     expect(snapshot).toContain("retrieval_candidates")
+    expect(snapshot).toContain("scoring=bounded lexical score")
+    expect(snapshot).toContain("fields=")
     expect(snapshot).toContain("refs=research_db:fake-finding-timeout")
     expect(snapshot).toContain("artifacts=fake-artifact-timeout")
     expect(snapshot).toContain("citations=fake-citation-timeout")
     expect(snapshot).toContain("note=previews do not include raw research records, full research.db")
     expect(snapshot).not.toContain("abc123")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-search", args: ["query=adapter", "timeout", "labels=finding"] })
+    expect(state.researchMemory?.retrievalPreview?.candidates.every((candidate) => candidate.label === "finding")).toBe(true)
+
+    const memoryId = state.researchMemory?.retrievalPreview?.candidates[0]?.result_id ?? "fake-finding-timeout"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-show", args: [memoryId] })
+    expect(state.researchMemory?.selected).toMatchObject({ status: "ready", memory_id: memoryId })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain(`selected=${memoryId}`)
+    expect(snapshot).toContain("selected_refs artifacts=")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-inspect", args: [`id=${memoryId}`] })
+    expect(state.researchMemory?.selected).toMatchObject({ memory_id: memoryId })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-near-duplicates", args: ["query=adapter", "timeout", "watchdog"] })
+    expect(state.researchMemory?.nearDuplicates?.novelty_risk).toBe("high")
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("near_duplicates=fake-research-memory-duplicates")
+    expect(snapshot).toContain("risk=high")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-profile", args: [] })
+    expect(state.researchMemory?.searchProfile).toMatchObject({
+      search_engine: "bounded_lexical",
+      semantic_search_enabled: false,
+      vector_index_enabled: false,
+      fts_index_enabled: false,
+    })
+    snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("engine=bounded_lexical")
+    expect(snapshot).toContain("semantic_search_enabled=false")
+    expect(snapshot).toContain("vector_index_enabled=false")
+    expect(snapshot).toContain("fts_index_enabled=false")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-novelty-preview", args: ["question=adapter", "timeout", "method=watchdog", "config=short-interval"] })
     expect(state.researchMemory?.noveltyPreview?.duplicate_risk).toBe("high")
@@ -6445,6 +6484,12 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-search", args: [] })
     expect(state.researchMemory?.commandError).toContain("requires query")
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-inspect", args: [] })
+    expect(state.researchMemory?.commandError).toContain("requires id")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-near-duplicates", args: [] })
+    expect(state.researchMemory?.commandError).toContain("requires query")
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-novelty-preview", args: [] })
     expect(state.researchMemory?.commandError).toContain("requires question")
 
@@ -6457,6 +6502,15 @@ describe("runtime UI effects", () => {
       mutates_events: false,
     })
     expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("flagged, not forbidden")
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/research-memory-near-duplicates"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      slash_command: "/research-memory-near-duplicates",
+      risk: "safe_read",
+      calls_provider: false,
+      mutates_events: false,
+    })
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("bounded lexical")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: ["purpose=commander_research_decision"] })
     expect(state.contextPackets?.preview?.purpose).toBe("commander_research_decision")

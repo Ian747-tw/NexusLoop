@@ -3080,9 +3080,16 @@ export type ResearchMemoryCandidateSummary = {
   relevance_score: number
   duplicate_similarity_score: number
   matched_terms: string[]
+  unmatched_query_terms: string[]
+  matched_fields: string[]
+  scoring_explanation_preview: string
   difference_preview?: string
+  evidence_kind_preview?: string
+  created_at_preview?: string
+  updated_at_preview?: string
   warning_flags: string[]
   source_refs: ResearchMemorySourceRefSummary[]
+  pointer_only: true
 }
 
 export type ResearchMemoryRetrievalPreviewSummary = {
@@ -3133,10 +3140,90 @@ export type ResearchMemorySummaryState = {
   generated_at: string
 }
 
+export type ResearchMemoryInspectionPreviewSummary = {
+  inspection_id: string
+  status: "ready" | "blocked" | string
+  memory_id: string
+  source_kind: string
+  label: string
+  title_preview?: string
+  summary_preview?: string
+  question_preview?: string
+  hypothesis_preview?: string
+  method_preview?: string
+  outcome_preview?: string
+  metric_preview?: string
+  config_preview?: string
+  confidence?: string
+  status_preview?: string
+  source_mission_id?: string
+  source_session_id?: string
+  artifact_refs: ResearchMemorySourceRefSummary[]
+  citation_refs: ResearchMemorySourceRefSummary[]
+  provenance_refs: ResearchMemorySourceRefSummary[]
+  related_event_ids: string[]
+  warning_flags: string[]
+  recommended_commands: ResearchMemoryCommandSummary[]
+  blockers: string[]
+  warnings: string[]
+  generated_at: string
+  redacted_summary_preview: string
+  inspection_hash: string
+}
+
+export type ResearchMemoryNearDuplicatePreviewSummary = {
+  preview_id: string
+  status: "ready" | "empty" | "blocked" | string
+  query_preview: string
+  objective_preview?: string
+  labels: string[]
+  limit: number
+  duplicate_threshold: number
+  candidates: ResearchMemoryCandidateSummary[]
+  likely_duplicate_count: number
+  warning_duplicate_count: number
+  strongest_duplicate_score?: number
+  novelty_risk: "low" | "medium" | "high" | "unknown" | string
+  blockers: string[]
+  warnings: string[]
+  recommended_commands: ResearchMemoryCommandSummary[]
+  generated_at: string
+  redacted_summary_preview: string
+  near_duplicate_hash: string
+}
+
+export type ResearchMemorySearchProfileState = {
+  profile_id: string
+  status: "ready" | "degraded" | "blocked" | string
+  retrieval_policy: string
+  has_research_db_projection: boolean
+  search_engine: string
+  semantic_search_enabled: boolean
+  vector_index_enabled: boolean
+  fts_index_enabled: boolean
+  scan_limit: number
+  default_limit: number
+  max_limit: number
+  supported_filters: string[]
+  unsupported_filters: string[]
+  source_counts: Record<string, number>
+  label_counts: Record<string, number>
+  accepted_result_count?: number
+  candidate_count?: number
+  trial_count?: number
+  training_run_count?: number
+  warnings: string[]
+  generated_at: string
+  redacted_summary_preview: string
+}
+
 export type ResearchMemoryState = {
   summary?: ResearchMemorySummaryState | null
   retrievalPreview?: ResearchMemoryRetrievalPreviewSummary | null
   noveltyPreview?: ResearchNoveltyPreviewSummary | null
+  selected?: ResearchMemoryInspectionPreviewSummary | null
+  nearDuplicates?: ResearchMemoryNearDuplicatePreviewSummary | null
+  searchProfile?: ResearchMemorySearchProfileState | null
   commandError?: string
 }
 

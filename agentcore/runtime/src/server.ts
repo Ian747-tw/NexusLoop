@@ -110,9 +110,9 @@ import { ModelCapabilityRegistry } from "./context/model-capability-registry"
 import type { ModelCapability } from "./context/model-capability-types"
 import { ContextPacketCompilerService, readContextPacketPreviewInput } from "./context/context-packet-compiler-service"
 import type { ContextPacketPreview, ContextPacketSummary } from "./context/context-packet-types"
-import { ResearchMemoryService, readResearchMemoryRetrievalInput, type ResearchMemoryReadAdapter } from "./research-memory/research-memory-service"
+import { ResearchMemoryService, readResearchMemoryInspectionInput, readResearchMemoryNearDuplicateInput, readResearchMemoryRetrievalInput, type ResearchMemoryReadAdapter } from "./research-memory/research-memory-service"
 import { ResearchNoveltyService, readResearchNoveltyInput } from "./research-memory/research-novelty-service"
-import type { ResearchMemoryRetrievalPreview, ResearchMemorySummary, ResearchNoveltyPreview } from "./research-memory/research-memory-types"
+import type { ResearchMemoryInspectionPreview, ResearchMemoryNearDuplicatePreview, ResearchMemoryRetrievalPreview, ResearchMemorySearchProfile, ResearchMemorySummary, ResearchNoveltyPreview } from "./research-memory/research-memory-types"
 import { ResearchIngestionService, readResearchIngestionPreviewInput, readResearchIngestionRecordInput, type ResearchIngestionDbWriter } from "./research/research-ingestion-service"
 import type { ResearchIngestionPreview, ResearchIngestionRecord, ResearchIngestionResult, ResearchIngestionSummary } from "./research/research-ingestion-types"
 import type { OpenCodeSpawn } from "./opencode/process-adapter"
@@ -1210,6 +1210,12 @@ export class RuntimeServer {
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
         return this.previewResearchMemoryRetrieval(readResearchMemoryRetrievalInput(payload))
+      case "runtime.get_research_memory_record":
+        return this.getResearchMemoryRecord(readResearchMemoryInspectionInput(payload))
+      case "runtime.preview_research_memory_near_duplicates":
+        return this.previewResearchMemoryNearDuplicates(readResearchMemoryNearDuplicateInput(payload))
+      case "runtime.research_memory_search_profile":
+        return this.researchMemorySearchProfile()
       case "runtime.preview_research_novelty_check":
         return this.previewResearchNoveltyCheck(readResearchNoveltyInput(payload))
       case "runtime.preview_commander_executor_review":
@@ -2421,6 +2427,18 @@ export class RuntimeServer {
 
   previewResearchMemoryRetrieval(input: Parameters<ResearchMemoryService["preview"]>[0] = {}): ResearchMemoryRetrievalPreview {
     return this.researchMemoryService().preview(input)
+  }
+
+  getResearchMemoryRecord(input: Parameters<ResearchMemoryService["inspect"]>[0] = {}): ResearchMemoryInspectionPreview {
+    return this.researchMemoryService().inspect(input)
+  }
+
+  previewResearchMemoryNearDuplicates(input: Parameters<ResearchMemoryService["nearDuplicates"]>[0] = {}): ResearchMemoryNearDuplicatePreview {
+    return this.researchMemoryService().nearDuplicates(input)
+  }
+
+  researchMemorySearchProfile(): ResearchMemorySearchProfile {
+    return this.researchMemoryService().searchProfile()
   }
 
   previewResearchNoveltyCheck(input: Parameters<ResearchNoveltyService["preview"]>[0] = {}): ResearchNoveltyPreview {
@@ -4283,6 +4301,7 @@ export class RuntimeServer {
     return {
       available: true,
       policy: "projection_read",
+      getResearchResult: typeof db.getResearchResult === "function" ? db.getResearchResult.bind(db) : undefined,
       searchResearchResults: typeof db.searchResearchResults === "function" ? db.searchResearchResults.bind(db) : undefined,
       listResultCitationPointers: typeof db.listResultCitationPointers === "function" ? db.listResultCitationPointers.bind(db) : undefined,
       listResultArtifactPointers: typeof db.listResultArtifactPointers === "function" ? db.listResultArtifactPointers.bind(db) : undefined,

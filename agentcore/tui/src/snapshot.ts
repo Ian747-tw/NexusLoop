@@ -1653,7 +1653,8 @@ function researchMemoryLines(state: UiState): string[] {
     if (item.candidates.length > 0) {
       out.push("  retrieval_candidates")
       out.push(...item.candidates.slice(0, 10).flatMap((candidate) => [
-        `    - ${candidate.result_id} label=${candidate.label} source=${candidate.source_kind} relevance=${candidate.relevance_score} duplicate=${candidate.duplicate_similarity_score} terms=${candidate.matched_terms.join(",") || "none"}: ${preview(redactText(candidate.question_preview))}`,
+        `    - ${candidate.result_id} label=${candidate.label} source=${candidate.source_kind} relevance=${candidate.relevance_score} duplicate=${candidate.duplicate_similarity_score} terms=${arraySummary(candidate.matched_terms)} unmatched=${arraySummary(candidate.unmatched_query_terms)} fields=${arraySummary(candidate.matched_fields)}: ${preview(redactText(candidate.question_preview))}`,
+        `      scoring=${preview(redactText(String(candidate.scoring_explanation_preview ?? "none")))} difference=${preview(redactText(String(candidate.difference_preview ?? "none")))}`,
         `      refs=${candidate.source_refs.length ? candidate.source_refs.slice(0, 4).map((ref) => `${ref.source_kind}:${preview(redactText(ref.source_id))}`).join(",") : "none"} artifacts=${candidate.artifact_ids.slice(0, 4).map((item) => preview(redactText(item))).join(",") || "none"} citations=${candidate.citation_ids.slice(0, 4).map((item) => preview(redactText(item))).join(",") || "none"}`,
       ]))
     }
@@ -1670,6 +1671,41 @@ function researchMemoryLines(state: UiState): string[] {
     else out.push(...item.recommended_commands.slice(0, 8).map((command) => `    - ${preview(redactText(command.label))}: ${preview(redactText(command.command))} [${command.command_type}]`))
   } else {
     out.push("  retrieval=none")
+  }
+  if (memory.selected) {
+    const item = memory.selected
+    out.push(`  selected=${item.memory_id} status=${item.status} label=${item.label} source=${item.source_kind} confidence=${item.confidence ?? "unknown"} record_status=${item.status_preview ?? "unknown"}`)
+    out.push(`  selected_title=${preview(redactText(item.title_preview ?? item.question_preview ?? "none"))}`)
+    out.push(`  selected_summary=${preview(redactText(item.summary_preview ?? item.outcome_preview ?? "none"))}`)
+    out.push(`  selected_refs artifacts=${item.artifact_refs.slice(0, 6).map((ref) => `${ref.source_kind}:${preview(redactText(ref.source_id))}`).join(",") || "none"} citations=${item.citation_refs.slice(0, 6).map((ref) => `${ref.source_kind}:${preview(redactText(ref.source_id))}`).join(",") || "none"} provenance=${item.provenance_refs.slice(0, 6).map((ref) => `${ref.source_kind}:${preview(redactText(ref.source_id))}`).join(",") || "none"}`)
+    if (item.blockers.length > 0) out.push(`  selected_blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  selected_warnings=${item.warnings.map(redactText).join("; ")}`)
+  } else {
+    out.push("  selected=none")
+  }
+  if (memory.nearDuplicates) {
+    const item = memory.nearDuplicates
+    out.push(`  near_duplicates=${item.preview_id} status=${item.status} risk=${item.novelty_risk} threshold=${item.duplicate_threshold} likely=${item.likely_duplicate_count} warnings=${item.warning_duplicate_count} strongest=${item.strongest_duplicate_score ?? "none"}`)
+    out.push(`  near_query=${preview(redactText(item.query_preview))}`)
+    if (item.candidates.length > 0) {
+      out.push("  near_duplicate_candidates")
+      out.push(...item.candidates.slice(0, 8).map((candidate) => `    - ${candidate.result_id} label=${candidate.label} relevance=${candidate.relevance_score} duplicate=${candidate.duplicate_similarity_score} fields=${arraySummary(candidate.matched_fields)}: ${preview(redactText(candidate.question_preview))}`))
+    }
+    if (item.blockers.length > 0) out.push(`  near_duplicate_blockers=${item.blockers.map(redactText).join("; ")}`)
+    if (item.warnings.length > 0) out.push(`  near_duplicate_warnings=${item.warnings.map(redactText).join("; ")}`)
+  } else {
+    out.push("  near_duplicates=none")
+  }
+  if (memory.searchProfile) {
+    const profile = memory.searchProfile
+    out.push(`  search_profile=${profile.profile_id} status=${profile.status} engine=${profile.search_engine} policy=${profile.retrieval_policy} scan_limit=${profile.scan_limit} default_limit=${profile.default_limit} max_limit=${profile.max_limit}`)
+    out.push(`  search_indexes semantic_search_enabled=${profile.semantic_search_enabled} vector_index_enabled=${profile.vector_index_enabled} fts_index_enabled=${profile.fts_index_enabled}`)
+    out.push(`  profile_counts accepted_results=${profile.accepted_result_count ?? "unknown"} candidates=${profile.candidate_count ?? "unknown"} trials=${profile.trial_count ?? "unknown"} training_runs=${profile.training_run_count ?? "unknown"}`)
+    out.push(`  supported_filters=${profile.supported_filters.slice(0, 20).join(",") || "none"}`)
+    out.push(`  unsupported_filters=${profile.unsupported_filters.slice(0, 20).join(",") || "none"}`)
+    if (profile.warnings.length > 0) out.push(`  profile_warnings=${profile.warnings.map(redactText).join("; ")}`)
+  } else {
+    out.push("  search_profile=none")
   }
   if (memory.noveltyPreview) {
     const item = memory.noveltyPreview
@@ -1701,7 +1737,9 @@ function researchMemoryLines(state: UiState): string[] {
   }
   if (memory.commandError) out.push(`  command_error=${redactText(memory.commandError)}`)
   out.push("  note=previews do not include raw research records, full research.db, raw artifacts, provider output, OpenCode output, raw event log, or online research")
-  out.push("  note=retrieval/novelty previews do not call providers, call MCPs, launch OpenCode, write research.db, mutate missions/proposals/reviews/apply, or decide research direction")
+  out.push("  note=search is bounded lexical retrieval; semantic_search_enabled=false vector_index_enabled=false fts_index_enabled=false")
+  out.push("  note=retrieval/novelty previews do not call providers, call MCPs, launch OpenCode, write research.db, or decide research direction")
+  out.push("  note=retrieval/inspection/near-duplicate/profile previews do not call providers, call MCPs, launch OpenCode, write research.db, mutate missions/proposals/reviews/apply, create proposals, or decide research direction")
   return out
 }
 
@@ -3236,6 +3274,10 @@ function countMapSummary(value: Record<string, number>): string {
     .slice(0, 8)
     .map(([key, count]) => `${redactText(key)}=${count}`)
   return entries.join(",") || "none"
+}
+
+function arraySummary(value: unknown): string {
+  return Array.isArray(value) ? value.map((item) => redactText(String(item))).join(",") || "none" : "none"
 }
 
 function preview(value: string): string {

@@ -4,7 +4,7 @@ import { join } from "path"
 import type { RuntimeEvent } from "./events"
 import { redactText, redactUnknown } from "./redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
-import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeResultReportCommandSummary, OpenCodeResultReportPreviewSummary, OpenCodeResultReportRecordSummary, OpenCodeResultReportResultSummary, OpenCodeResultReportSummaryState, OpenCodeResultReviewGateCommandSummary, OpenCodeResultReviewGatePreviewSummary, OpenCodeResultReviewGateRecordSummary, OpenCodeResultReviewGateResultSummary, OpenCodeResultReviewGateSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchIngestionCommandSummary, ResearchIngestionPreviewSummary, ResearchIngestionProvenanceRefSummary, ResearchIngestionRecordSummary, ResearchIngestionResultSummary, ResearchIngestionSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
+import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeResultReportCommandSummary, OpenCodeResultReportPreviewSummary, OpenCodeResultReportRecordSummary, OpenCodeResultReportResultSummary, OpenCodeResultReportSummaryState, OpenCodeResultReviewGateCommandSummary, OpenCodeResultReviewGatePreviewSummary, OpenCodeResultReviewGateRecordSummary, OpenCodeResultReviewGateResultSummary, OpenCodeResultReviewGateSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchIngestionCommandSummary, ResearchIngestionPreviewSummary, ResearchIngestionProvenanceRefSummary, ResearchIngestionRecordSummary, ResearchIngestionResultSummary, ResearchIngestionSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryInspectionPreviewSummary, ResearchMemoryNearDuplicatePreviewSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySearchProfileState, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 
 export interface SubmitUserMessageResult {
   accepted: true
@@ -621,6 +621,12 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.researchMemorySummary()
       case "runtime.preview_research_memory_retrieval":
         return this.previewResearchMemoryRetrieval(payload)
+      case "runtime.get_research_memory_record":
+        return this.getResearchMemoryRecord(payload)
+      case "runtime.preview_research_memory_near_duplicates":
+        return this.previewResearchMemoryNearDuplicates(payload)
+      case "runtime.research_memory_search_profile":
+        return this.researchMemorySearchProfile()
       case "runtime.preview_research_novelty_check":
         return this.previewResearchNoveltyCheck(payload)
       case "runtime.preview_commander_executor_review":
@@ -4675,6 +4681,114 @@ export class FakeRuntimeClient implements RuntimeClient {
       generated_at: new Date(0).toISOString(),
       redacted_summary_preview: blockers[0] ?? (selected.length ? `found ${selected.length} fake prior research records` : "no fake prior research records matched"),
       retrieval_hash: hash,
+    }
+  }
+
+  private getResearchMemoryRecord(payload: Record<string, unknown>): ResearchMemoryInspectionPreviewSummary {
+    const memoryId = preview(redactText(String(payload.memoryId ?? payload.memory_id ?? payload.id ?? "")))
+    const blockers = memoryId ? [] : ["research memory inspection requires id=<memoryId>"]
+    const candidate = blockers.length ? undefined : this.researchMemoryCandidates("").find((item) => item.result_id === memoryId)
+    if (!candidate) blockers.push(`research memory record was not found: ${memoryId || "<missing>"}`)
+    const hash = fakeStableHash(JSON.stringify({ memoryId, candidate: candidate?.result_id }))
+    return {
+      inspection_id: `fake-research-memory-inspection-${hash.slice(0, 12)}`,
+      status: blockers.length ? "blocked" : "ready",
+      memory_id: memoryId,
+      source_kind: candidate?.source_kind ?? "research_db",
+      label: candidate?.label ?? "unknown",
+      title_preview: candidate?.question_preview,
+      summary_preview: candidate?.outcome_preview,
+      question_preview: candidate?.question_preview,
+      hypothesis_preview: candidate?.hypothesis_preview,
+      method_preview: candidate?.method_preview,
+      outcome_preview: candidate?.outcome_preview,
+      metric_preview: candidate?.metric_preview,
+      config_preview: candidate?.config_preview,
+      confidence: candidate?.confidence === undefined ? undefined : String(candidate.confidence),
+      status_preview: candidate?.status,
+      source_mission_id: candidate?.source_mission_id,
+      source_session_id: candidate?.source_session_id,
+      artifact_refs: (candidate?.artifact_ids ?? []).map((id) => fakeResearchMemorySourceRef("artifact", id, "artifact pointer", id)),
+      citation_refs: (candidate?.citation_ids ?? []).map((id) => fakeResearchMemorySourceRef("research_db", id, "citation pointer", id)),
+      provenance_refs: candidate?.source_refs ?? [],
+      related_event_ids: candidate?.related_event_ids ?? [],
+      warning_flags: candidate?.warning_flags ?? [],
+      recommended_commands: [
+        { label: "Search related memory", command: candidate ? `/research-memory-search query=${candidate.question_preview}` : "/research-memory-search query=<query>", command_type: "read" },
+        { label: "Show authority", command: "/authority-show /research-memory-inspect", command_type: "read" },
+      ],
+      blockers,
+      warnings: ["research-memory inspection is bounded and read-only; no raw artifacts, full research.db, provider output, MCP, online research, OpenCode prompt, or DB write"],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `inspected fake research memory ${memoryId}`,
+      inspection_hash: hash,
+    }
+  }
+
+  private previewResearchMemoryNearDuplicates(payload: Record<string, unknown>): ResearchMemoryNearDuplicatePreviewSummary {
+    const query = preview(redactText(String(payload.query ?? payload.objective ?? "")))
+    const objective = typeof payload.objective === "string" ? preview(redactText(payload.objective)) : undefined
+    const limit = readLimit(payload.limit, 8)
+    const threshold = typeof payload.duplicateThreshold === "number" ? payload.duplicateThreshold : typeof payload.duplicate_threshold === "number" ? payload.duplicate_threshold : 0.55
+    const labels = Array.isArray(payload.labels) ? payload.labels.filter((item): item is string => typeof item === "string").map(redactText) : []
+    const blockers = query ? [] : ["research memory near-duplicate preview requires query=<query> or objective=<objective>"]
+    const retrieval = blockers.length ? undefined : this.previewResearchMemoryRetrieval({ query, labels, limit, includeFailures: payload.includeFailures ?? payload.include_failures, includeArtifacts: payload.includeArtifacts ?? payload.include_artifacts })
+    const candidates = retrieval?.candidates ?? []
+    const likely = candidates.filter((item) => item.duplicate_similarity_score >= threshold && item.matched_terms.length >= 3).length
+    const warnings = candidates.filter((item) => item.duplicate_similarity_score >= threshold * 0.75 || item.matched_terms.length >= 2).length
+    const strongest = candidates[0]?.duplicate_similarity_score
+    const risk = blockers.length ? "unknown" : likely > 0 ? "high" : warnings > 0 ? "medium" : candidates.length ? "low" : "unknown"
+    const hash = fakeStableHash(JSON.stringify({ query, labels, candidates: candidates.map((item) => item.result_id), threshold }))
+    return {
+      preview_id: `fake-research-memory-duplicates-${hash.slice(0, 12)}`,
+      status: blockers.length ? "blocked" : candidates.length ? "ready" : "empty",
+      query_preview: query,
+      objective_preview: objective,
+      labels,
+      limit,
+      duplicate_threshold: threshold,
+      candidates,
+      likely_duplicate_count: likely,
+      warning_duplicate_count: warnings,
+      strongest_duplicate_score: strongest,
+      novelty_risk: risk,
+      blockers,
+      warnings: ["near-duplicate preview is advisory read-only lexical retrieval; it does not block proposals, call providers/MCPs, or write research.db"],
+      recommended_commands: [
+        { label: "Research memory search", command: query ? `/research-memory-search query=${query}` : "/research-memory-search query=<query>", command_type: "read" },
+        { label: "Search profile", command: "/research-memory-profile", command_type: "read" },
+      ],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: blockers[0] ?? `fake near-duplicate risk ${risk}`,
+      near_duplicate_hash: hash,
+    }
+  }
+
+  private researchMemorySearchProfile(): ResearchMemorySearchProfileState {
+    const candidates = this.researchMemoryCandidates("")
+    return {
+      profile_id: "fake-research-memory-profile",
+      status: "ready",
+      retrieval_policy: "fake",
+      has_research_db_projection: true,
+      search_engine: "bounded_lexical",
+      semantic_search_enabled: false,
+      vector_index_enabled: false,
+      fts_index_enabled: false,
+      scan_limit: 500,
+      default_limit: 8,
+      max_limit: 20,
+      supported_filters: ["query", "labels", "source_kind", "mission_id", "session_id", "include_failures", "include_artifacts", "result_type", "result_status", "confidence", "evidence_kind", "has_artifacts", "has_citations", "has_metrics", "since", "until", "sort", "explain"],
+      unsupported_filters: ["semantic_search", "vector_index", "fts_query", "raw_sql", "artifact_contents", "file_contents"],
+      source_counts: fakeResearchCountBy(candidates, "source_kind"),
+      label_counts: fakeResearchCountBy(candidates, "label"),
+      accepted_result_count: candidates.filter((item) => item.source_kind === "research_db").length,
+      candidate_count: 0,
+      trial_count: candidates.filter((item) => item.label === "trial").length,
+      training_run_count: candidates.filter((item) => item.label === "probe" || item.label === "full_training").length,
+      warnings: ["search is bounded lexical retrieval; semantic/vector/FTS/provider/MCP/online research are not enabled"],
+      generated_at: new Date(0).toISOString(),
+      redacted_summary_preview: "bounded_lexical scan_limit=500 max_limit=20",
     }
   }
 
@@ -8991,9 +9105,16 @@ function fakeResearchCandidate(input: Partial<ResearchMemoryCandidateSummary> & 
     relevance_score: input.relevance_score ?? 0,
     duplicate_similarity_score: input.duplicate_similarity_score ?? 0,
     matched_terms: input.matched_terms ?? [],
+    unmatched_query_terms: input.unmatched_query_terms ?? [],
+    matched_fields: input.matched_fields ?? [],
+    scoring_explanation_preview: input.scoring_explanation_preview ?? "bounded lexical score has not been computed",
     difference_preview: input.difference_preview,
+    evidence_kind_preview: input.evidence_kind_preview,
+    created_at_preview: input.created_at_preview ?? new Date(0).toISOString(),
+    updated_at_preview: input.updated_at_preview ?? new Date(0).toISOString(),
     warning_flags: input.warning_flags ?? [],
     source_refs: input.source_refs ?? [fakeResearchMemorySourceRef("research_db", input.result_id, "research pointer", input.question_preview)],
+    pointer_only: true,
   }
 }
 
@@ -9008,16 +9129,37 @@ function fakeResearchMemorySourceRef(sourceKind: string, sourceId: string, label
 }
 
 function fakeScoreResearchCandidate(candidate: ResearchMemoryCandidateSummary, queryTokens: string[]): ResearchMemoryCandidateSummary {
-  const candidateTokens = new Set(fakeResearchTokens([candidate.question_preview, candidate.method_preview, candidate.config_preview, candidate.outcome_preview, candidate.metric_preview].join(" ")))
-  const matched = queryTokens.filter((token) => candidateTokens.has(token))
-  const base = queryTokens.length ? matched.length / queryTokens.length : 0
+  const fields: Array<[string, string | undefined, number]> = [
+    ["question/title", candidate.question_preview, 1],
+    ["method", candidate.method_preview, 0.7],
+    ["config", candidate.config_preview, 0.55],
+    ["outcome/summary", candidate.outcome_preview, 0.85],
+    ["metric", candidate.metric_preview, 0.55],
+    ["label", candidate.label, 0.25],
+  ]
+  const matchedFields = new Set<string>()
+  const weights = new Map<string, number>()
+  for (const [field, text, weight] of fields) {
+    const tokens = new Set(fakeResearchTokens(text ?? ""))
+    for (const token of queryTokens) {
+      if (!tokens.has(token)) continue
+      matchedFields.add(field)
+      weights.set(token, Math.max(weights.get(token) ?? 0, weight))
+    }
+  }
+  const matched = queryTokens.filter((token) => weights.has(token))
+  const unmatched = queryTokens.filter((token) => !weights.has(token))
+  const base = queryTokens.length ? Array.from(weights.values()).reduce((sum, item) => sum + item, 0) / queryTokens.length : 0
   const relevance = Math.round(Math.min(1, base + (candidate.label === "failure" ? 0.05 : 0.02)) * 100) / 100
-  const duplicate = Math.round(Math.min(1, base + (matched.length >= 3 ? 0.15 : 0)) * 100) / 100
+  const duplicate = Math.round(Math.min(1, base + (matched.length >= 3 ? 0.15 : 0) + (matchedFields.has("question/title") ? 0.08 : 0)) * 100) / 100
   return {
     ...candidate,
     relevance_score: relevance,
     duplicate_similarity_score: duplicate,
     matched_terms: matched.slice(0, 12),
+    unmatched_query_terms: unmatched.slice(0, 12),
+    matched_fields: Array.from(matchedFields).slice(0, 12),
+    scoring_explanation_preview: `bounded lexical score matched ${matched.length}/${queryTokens.length} query terms across ${Array.from(matchedFields).join(", ") || "no fields"}`,
     difference_preview: matched.length ? `matched terms: ${matched.slice(0, 8).join(", ")}` : "no strong lexical overlap with this prior record",
   }
 }
@@ -11288,11 +11430,32 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       out: ["provider calls", "MCP/online research", "research.db writes", "mission/proposal creation", "OpenCode launch"],
     }),
     fakeCommandAuthorityRecord("/research-memory-search", "runtime.preview_research_memory_retrieval", "safe_read", "none", "research", {
-      reads: ["/research-memory-summary", "/research-novelty-preview"],
+      reads: ["/research-memory-summary", "/research-memory-profile", "/research-novelty-preview"],
       targeted: ["tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"],
       aliases: ["/research-search", "/memory-search"],
-      notes: ["Read-only bounded research memory retrieval preview; no provider calls, no MCP/online research, no research.db writes, no mission/proposal creation, no OpenCode launch, and no research direction decision."],
-      out: ["provider calls", "MCP/online research", "research.db writes", "mission/proposal creation", "OpenCode launch", "topic allowlist/blocklist"],
+      notes: ["Read-only bounded lexical research-memory retrieval/inspection. Semantic/vector search is not enabled; no provider calls, no MCP/online research, no research.db writes, no mission/proposal creation, no OpenCode launch, no raw DB dump, and no research direction decision."],
+      out: ["provider calls", "MCP/online research", "research.db writes", "mission/proposal creation", "OpenCode launch", "topic allowlist/blocklist", "semantic/vector search"],
+    }),
+    fakeCommandAuthorityRecord("/research-memory-show", "runtime.get_research_memory_record", "safe_read", "none", "research", {
+      reads: ["/research-memory-search"],
+      targeted: ["tests/e2e_user/scenarios/test_research_memory_search_inspection_tui.py"],
+      aliases: ["/memory-show", "/research-memory-inspect", "/memory-inspect", "/research-inspect"],
+      notes: ["Read-only bounded research-memory inspection by ID; no raw artifacts, no full research.db dump, no provider/MCP/online research, no writes, no proposals, and no OpenCode side effects."],
+      out: ["provider calls", "MCP/online research", "research.db writes", "raw DB dump", "mission/proposal creation", "OpenCode launch"],
+    }),
+    fakeCommandAuthorityRecord("/research-memory-near-duplicates", "runtime.preview_research_memory_near_duplicates", "safe_read", "none", "research", {
+      reads: ["/research-memory-search", "/research-memory-profile"],
+      targeted: ["tests/e2e_user/scenarios/test_research_memory_search_inspection_tui.py"],
+      aliases: ["/research-duplicates", "/memory-duplicates", "/research-near-duplicates"],
+      notes: ["Read-only near-duplicate preview using bounded lexical search only; advisory, no provider/MCP/online research, no research.db write, no proposal creation, and no Commander novelty decision."],
+      out: ["provider calls", "MCP/online research", "research.db writes", "proposal creation", "automatic novelty decisions", "semantic/vector search"],
+    }),
+    fakeCommandAuthorityRecord("/research-memory-profile", "runtime.research_memory_search_profile", "safe_read", "none", "research", {
+      reads: ["/research-memory-search"],
+      targeted: ["tests/e2e_user/scenarios/test_research_memory_search_inspection_tui.py"],
+      aliases: ["/research-search-profile", "/memory-profile"],
+      notes: ["Read-only research-memory search profile; reports bounded lexical limits and that semantic/vector/FTS/provider search is disabled."],
+      out: ["provider calls", "MCP/online research", "research.db writes", "mission/proposal creation", "OpenCode launch", "raw DB dump"],
     }),
     fakeCommandAuthorityRecord("/research-memory-preview", "runtime.preview_research_memory_retrieval", "safe_read", "none", "research", {
       targeted: ["tests/e2e_user/scenarios/test_research_memory_novelty_tui.py"],

@@ -50,7 +50,10 @@ import type {
   OpenCodeSessionInstructionPackResultSummary,
   OpenCodeSessionInstructionPacksState,
   ResearchMemoryCandidateSummary,
+  ResearchMemoryInspectionPreviewSummary,
+  ResearchMemoryNearDuplicatePreviewSummary,
   ResearchMemoryRetrievalPreviewSummary,
+  ResearchMemorySearchProfileState,
   ResearchMemoryState,
   ResearchMemorySummaryState,
   ResearchNoveltyPreviewSummary,
@@ -566,7 +569,10 @@ export type RuntimeUiEffect =
   | { type: "load-latest-research-ingestion"; reviewId?: string; reportId?: string; sessionId?: string; launchId?: string }
   | { type: "load-research-ingestion-summary"; limit?: number }
   | { type: "load-research-memory-summary" }
-  | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
+  | { type: "preview-research-memory-retrieval"; query?: string; labels?: string[]; limit?: number; sourceKind?: string; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean; resultType?: string; resultStatus?: string; confidence?: string; evidenceKind?: string; hasArtifacts?: boolean; hasCitations?: boolean; hasMetrics?: boolean; since?: string; until?: string; sort?: string; explain?: boolean }
+  | { type: "load-research-memory-record"; memoryId: string; sourceKind?: string; includeArtifacts?: boolean; includeCitations?: boolean }
+  | { type: "preview-research-memory-near-duplicates"; query?: string; objective?: string; labels?: string[]; limit?: number; duplicateThreshold?: number; missionId?: string; sessionId?: string; includeFailures?: boolean; includeArtifacts?: boolean }
+  | { type: "load-research-memory-search-profile" }
   | { type: "preview-research-novelty-check"; question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; sessionId?: string; repetitionReason?: string; includeFailures?: boolean }
   | { type: "preview-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string }
   | { type: "execute-commander-executor-review"; handoffId?: string; followupId?: string; missionId?: string; resultId?: string; proposalId?: string; dryRun?: boolean }
@@ -1626,7 +1632,24 @@ export async function applyRuntimeUiEffect(
           sessionId: effect.sessionId,
           includeFailures: effect.includeFailures,
           includeArtifacts: effect.includeArtifacts,
+          resultType: effect.resultType,
+          resultStatus: effect.resultStatus,
+          confidence: effect.confidence,
+          evidenceKind: effect.evidenceKind,
+          hasArtifacts: effect.hasArtifacts,
+          hasCitations: effect.hasCitations,
+          hasMetrics: effect.hasMetrics,
+          since: effect.since,
+          until: effect.until,
+          sort: effect.sort,
+          explain: effect.explain,
         }))
+      case "load-research-memory-record":
+        return applyResearchMemoryInspection(state, await runtime.command("runtime.get_research_memory_record", { memoryId: effect.memoryId, sourceKind: effect.sourceKind, includeArtifacts: effect.includeArtifacts, includeCitations: effect.includeCitations }))
+      case "preview-research-memory-near-duplicates":
+        return applyResearchMemoryNearDuplicates(state, await runtime.command("runtime.preview_research_memory_near_duplicates", { query: effect.query, objective: effect.objective, labels: effect.labels, limit: effect.limit, duplicateThreshold: effect.duplicateThreshold, missionId: effect.missionId, sessionId: effect.sessionId, includeFailures: effect.includeFailures, includeArtifacts: effect.includeArtifacts }))
+      case "load-research-memory-search-profile":
+        return applyResearchMemorySearchProfile(state, await runtime.command("runtime.research_memory_search_profile"))
       case "preview-research-novelty-check":
         return applyResearchNoveltyPreview(state, await runtime.command("runtime.preview_research_novelty_check", {
           question: effect.question,
@@ -4578,6 +4601,42 @@ function applyResearchMemoryRetrievalPreview(state: UiState, value: unknown): Ui
   }
 }
 
+function applyResearchMemoryInspection(state: UiState, value: unknown): UiState {
+  const selected = readResearchMemoryInspection(value)
+  return {
+    ...state,
+    researchMemory: {
+      ...researchMemoryState(state),
+      selected,
+      commandError: selected.status === "blocked" ? selected.blockers.join("; ") || "research memory inspection blocked" : undefined,
+    },
+  }
+}
+
+function applyResearchMemoryNearDuplicates(state: UiState, value: unknown): UiState {
+  const nearDuplicates = readResearchMemoryNearDuplicates(value)
+  return {
+    ...state,
+    researchMemory: {
+      ...researchMemoryState(state),
+      nearDuplicates,
+      commandError: nearDuplicates.status === "blocked" ? nearDuplicates.blockers.join("; ") || "research memory near-duplicate preview blocked" : undefined,
+    },
+  }
+}
+
+function applyResearchMemorySearchProfile(state: UiState, value: unknown): UiState {
+  const searchProfile = readResearchMemorySearchProfile(value)
+  return {
+    ...state,
+    researchMemory: {
+      ...researchMemoryState(state),
+      searchProfile,
+      commandError: undefined,
+    },
+  }
+}
+
 function applyResearchNoveltyPreview(state: UiState, value: unknown): UiState {
   const noveltyPreview = readResearchNoveltyPreview(value)
   return {
@@ -6397,6 +6456,22 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "research-search":
     case "memory-search":
       return applyRuntimeUiEffect(commandState, runtime, researchMemoryRetrievalEffect(args))
+    case "research-memory-show":
+    case "memory-show":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-record", memoryId: requiredArg(args, 0, "memoryId") })
+    case "research-memory-inspect":
+    case "memory-inspect":
+    case "research-inspect":
+      return applyRuntimeUiEffect(commandState, runtime, researchMemoryInspectionEffect(args))
+    case "research-memory-near-duplicates":
+    case "research-duplicates":
+    case "memory-duplicates":
+    case "research-near-duplicates":
+      return applyRuntimeUiEffect(commandState, runtime, researchMemoryNearDuplicateEffect(args))
+    case "research-memory-profile":
+    case "research-search-profile":
+    case "memory-profile":
+      return applyRuntimeUiEffect(commandState, runtime, { type: "load-research-memory-search-profile" })
     case "research-novelty-preview":
     case "novelty-preview":
     case "research-dup-check":
@@ -7859,6 +7934,18 @@ const researchMemoryCommands = new Set([
   "research-memory-preview",
   "research-search",
   "memory-search",
+  "research-memory-show",
+  "research-memory-inspect",
+  "research-memory-near-duplicates",
+  "research-memory-profile",
+  "research-search-profile",
+  "memory-show",
+  "memory-inspect",
+  "memory-duplicates",
+  "memory-profile",
+  "research-inspect",
+  "research-duplicates",
+  "research-near-duplicates",
   "research-novelty-preview",
   "novelty-preview",
   "research-dup-check",
@@ -7867,6 +7954,9 @@ const researchMemoryCommands = new Set([
 const researchMemoryEffectTypes = new Set<RuntimeUiEffect["type"]>([
   "load-research-memory-summary",
   "preview-research-memory-retrieval",
+  "load-research-memory-record",
+  "preview-research-memory-near-duplicates",
+  "load-research-memory-search-profile",
   "preview-research-novelty-check",
 ])
 
@@ -12349,6 +12439,92 @@ function readResearchNoveltyPreview(value: unknown): ResearchNoveltyPreviewSumma
   }
 }
 
+function readResearchMemoryInspection(value: unknown): ResearchMemoryInspectionPreviewSummary {
+  if (!isRecord(value) || typeof value.inspection_id !== "string") throw new Error("runtime.get_research_memory_record returned invalid inspection")
+  return {
+    inspection_id: redactText(value.inspection_id),
+    status: readString(value.status, "blocked"),
+    memory_id: redactText(readString(value.memory_id, "")),
+    source_kind: readString(value.source_kind, "unknown"),
+    label: readString(value.label, "unknown"),
+    title_preview: typeof value.title_preview === "string" ? preview(readString(value.title_preview, "")) : undefined,
+    summary_preview: typeof value.summary_preview === "string" ? preview(readString(value.summary_preview, "")) : undefined,
+    question_preview: typeof value.question_preview === "string" ? preview(readString(value.question_preview, "")) : undefined,
+    hypothesis_preview: typeof value.hypothesis_preview === "string" ? preview(readString(value.hypothesis_preview, "")) : undefined,
+    method_preview: typeof value.method_preview === "string" ? preview(readString(value.method_preview, "")) : undefined,
+    outcome_preview: typeof value.outcome_preview === "string" ? preview(readString(value.outcome_preview, "")) : undefined,
+    metric_preview: typeof value.metric_preview === "string" ? preview(readString(value.metric_preview, "")) : undefined,
+    config_preview: typeof value.config_preview === "string" ? preview(readString(value.config_preview, "")) : undefined,
+    confidence: typeof value.confidence === "string" ? readString(value.confidence, "") : undefined,
+    status_preview: typeof value.status_preview === "string" ? readString(value.status_preview, "") : undefined,
+    source_mission_id: typeof value.source_mission_id === "string" ? redactText(value.source_mission_id) : undefined,
+    source_session_id: typeof value.source_session_id === "string" ? redactText(value.source_session_id) : undefined,
+    artifact_refs: readResearchMemorySourceRefs(value.artifact_refs),
+    citation_refs: readResearchMemorySourceRefs(value.citation_refs),
+    provenance_refs: readResearchMemorySourceRefs(value.provenance_refs),
+    related_event_ids: readStringList(value.related_event_ids, 8).map(redactText),
+    warning_flags: readStringList(value.warning_flags, 8).map(preview),
+    recommended_commands: readResearchMemoryCommands(value.recommended_commands),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 12).map(preview),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    inspection_hash: readString(value.inspection_hash, ""),
+  }
+}
+
+function readResearchMemoryNearDuplicates(value: unknown): ResearchMemoryNearDuplicatePreviewSummary {
+  if (!isRecord(value) || typeof value.preview_id !== "string") throw new Error("runtime.preview_research_memory_near_duplicates returned invalid preview")
+  return {
+    preview_id: redactText(value.preview_id),
+    status: readString(value.status, "blocked"),
+    query_preview: preview(readString(value.query_preview, "")),
+    objective_preview: typeof value.objective_preview === "string" ? preview(readString(value.objective_preview, "")) : undefined,
+    labels: readStringList(value.labels, 12),
+    limit: readNumber(value.limit, 0),
+    duplicate_threshold: readNumber(value.duplicate_threshold, 0),
+    candidates: readResearchMemoryCandidates(value.candidates),
+    likely_duplicate_count: readNumber(value.likely_duplicate_count, 0),
+    warning_duplicate_count: readNumber(value.warning_duplicate_count, 0),
+    strongest_duplicate_score: typeof value.strongest_duplicate_score === "number" ? readNumber(value.strongest_duplicate_score, 0) : undefined,
+    novelty_risk: readString(value.novelty_risk, "unknown"),
+    blockers: readStringList(value.blockers, 10).map(preview),
+    warnings: readStringList(value.warnings, 12).map(preview),
+    recommended_commands: readResearchMemoryCommands(value.recommended_commands),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+    near_duplicate_hash: readString(value.near_duplicate_hash, ""),
+  }
+}
+
+function readResearchMemorySearchProfile(value: unknown): ResearchMemorySearchProfileState {
+  if (!isRecord(value) || typeof value.profile_id !== "string") throw new Error("runtime.research_memory_search_profile returned invalid profile")
+  return {
+    profile_id: redactText(value.profile_id),
+    status: readString(value.status, "blocked"),
+    retrieval_policy: readString(value.retrieval_policy, "empty_projection"),
+    has_research_db_projection: readBoolean(value.has_research_db_projection),
+    search_engine: readString(value.search_engine, "bounded_lexical"),
+    semantic_search_enabled: readBoolean(value.semantic_search_enabled),
+    vector_index_enabled: readBoolean(value.vector_index_enabled),
+    fts_index_enabled: readBoolean(value.fts_index_enabled),
+    scan_limit: readNumber(value.scan_limit, 0),
+    default_limit: readNumber(value.default_limit, 0),
+    max_limit: readNumber(value.max_limit, 0),
+    supported_filters: readStringList(value.supported_filters, 30),
+    unsupported_filters: readStringList(value.unsupported_filters, 30),
+    source_counts: readNumberMap(value.source_counts, 12),
+    label_counts: readNumberMap(value.label_counts, 12),
+    accepted_result_count: typeof value.accepted_result_count === "number" ? readNumber(value.accepted_result_count, 0) : undefined,
+    candidate_count: typeof value.candidate_count === "number" ? readNumber(value.candidate_count, 0) : undefined,
+    trial_count: typeof value.trial_count === "number" ? readNumber(value.trial_count, 0) : undefined,
+    training_run_count: typeof value.training_run_count === "number" ? readNumber(value.training_run_count, 0) : undefined,
+    warnings: readStringList(value.warnings, 12).map(preview),
+    generated_at: readString(value.generated_at, ""),
+    redacted_summary_preview: preview(readString(value.redacted_summary_preview, "")),
+  }
+}
+
 function readResearchMemoryCandidates(value: unknown): ResearchMemoryCandidateSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, HANDOFF_LIMIT).map((candidate) => ({
@@ -12371,9 +12547,16 @@ function readResearchMemoryCandidates(value: unknown): ResearchMemoryCandidateSu
     relevance_score: readNumber(candidate.relevance_score, 0),
     duplicate_similarity_score: readNumber(candidate.duplicate_similarity_score, 0),
     matched_terms: readStringList(candidate.matched_terms, 12),
+    unmatched_query_terms: readStringList(candidate.unmatched_query_terms, 12),
+    matched_fields: readStringList(candidate.matched_fields, 12),
+    scoring_explanation_preview: preview(readString(candidate.scoring_explanation_preview, "")),
     difference_preview: typeof candidate.difference_preview === "string" ? preview(readString(candidate.difference_preview, "")) : undefined,
+    evidence_kind_preview: typeof candidate.evidence_kind_preview === "string" ? preview(readString(candidate.evidence_kind_preview, "")) : undefined,
+    created_at_preview: typeof candidate.created_at_preview === "string" ? preview(readString(candidate.created_at_preview, "")) : undefined,
+    updated_at_preview: typeof candidate.updated_at_preview === "string" ? preview(readString(candidate.updated_at_preview, "")) : undefined,
     warning_flags: readStringList(candidate.warning_flags, 8).map(preview),
     source_refs: readResearchMemorySourceRefs(candidate.source_refs),
+    pointer_only: true,
   }))
 }
 
@@ -16112,7 +16295,7 @@ function researchIngestionPayload(effect: Extract<RuntimeUiEffect, { type: "prev
 }
 
 function researchMemoryState(state: UiState): ResearchMemoryState {
-  return state.researchMemory ?? { summary: null, retrievalPreview: null, noveltyPreview: null }
+  return state.researchMemory ?? { summary: null, retrievalPreview: null, noveltyPreview: null, selected: null, nearDuplicates: null, searchProfile: null }
 }
 
 function commanderExecutorReviewState(state: UiState): CommanderExecutorReviewState {
@@ -17852,21 +18035,70 @@ function researchIngestionLatestEffect(args: string[]): Extract<RuntimeUiEffect,
 function researchMemoryRetrievalEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-research-memory-retrieval" }> {
   const effect: Extract<RuntimeUiEffect, { type: "preview-research-memory-retrieval" }> = { type: "preview-research-memory-retrieval", limit: HANDOFF_LIMIT }
   const freeTextKeys = new Set(["query"])
-  const knownKeys = new Set(["query", "labels", "limit", "source", "mission", "session", "include_failures", "include_artifacts"])
+  const knownKeys = new Set(["query", "labels", "label", "limit", "source", "source_kind", "mission", "mission_id", "session", "session_id", "include_failures", "include_artifacts", "result_type", "result_status", "confidence", "evidence_kind", "has_artifacts", "has_citations", "has_metrics", "since", "until", "sort", "explain"])
   for (let index = 0; index < args.length; index += 1) {
-    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "research memory search args must use query=<text>, labels=<csv>, limit=<n>, source=<kind>, mission=<id>, or session=<id>")
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "research memory search args must use query=<text>, labels=<csv>, limit=<n>, source=<kind>, mission=<id>, session=<id>, or supported filter keys")
     index = nextIndex
     if (key === "query") effect.query = value
-    else if (key === "labels") effect.labels = commaList(value)
+    else if (key === "labels" || key === "label") effect.labels = commaList(value)
     else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
-    else if (key === "source") effect.sourceKind = value
-    else if (key === "mission") effect.missionId = value
-    else if (key === "session") effect.sessionId = value
+    else if (key === "source" || key === "source_kind") effect.sourceKind = value
+    else if (key === "mission" || key === "mission_id") effect.missionId = value
+    else if (key === "session" || key === "session_id") effect.sessionId = value
     else if (key === "include_failures") effect.includeFailures = readBooleanArg(value)
     else if (key === "include_artifacts") effect.includeArtifacts = readBooleanArg(value)
+    else if (key === "result_type") effect.resultType = value
+    else if (key === "result_status") effect.resultStatus = value
+    else if (key === "confidence") effect.confidence = value
+    else if (key === "evidence_kind") effect.evidenceKind = value
+    else if (key === "has_artifacts") effect.hasArtifacts = readBooleanArg(value)
+    else if (key === "has_citations") effect.hasCitations = readBooleanArg(value)
+    else if (key === "has_metrics") effect.hasMetrics = readBooleanArg(value)
+    else if (key === "since") effect.since = value
+    else if (key === "until") effect.until = value
+    else if (key === "sort") effect.sort = value
+    else if (key === "explain") effect.explain = readBooleanArg(value)
     else throw new Error("research memory search arg is unsupported")
   }
   if (!effect.query) throw new Error("research memory search requires query=<text>")
+  return effect
+}
+
+function researchMemoryInspectionEffect(args: string[]): Extract<RuntimeUiEffect, { type: "load-research-memory-record" }> {
+  const effect: Partial<Extract<RuntimeUiEffect, { type: "load-research-memory-record" }>> = { type: "load-research-memory-record" }
+  const knownKeys = new Set(["id", "memory_id", "source", "source_kind", "include_artifacts", "include_citations"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, new Set(), "research memory inspect args must use id=<memoryId>")
+    index = nextIndex
+    if (key === "id" || key === "memory_id") effect.memoryId = value
+    else if (key === "source" || key === "source_kind") effect.sourceKind = value
+    else if (key === "include_artifacts") effect.includeArtifacts = readBooleanArg(value)
+    else if (key === "include_citations") effect.includeCitations = readBooleanArg(value)
+    else throw new Error("research memory inspect arg is unsupported")
+  }
+  if (!effect.memoryId) throw new Error("research memory inspection requires id=<memoryId>")
+  return effect as Extract<RuntimeUiEffect, { type: "load-research-memory-record" }>
+}
+
+function researchMemoryNearDuplicateEffect(args: string[]): Extract<RuntimeUiEffect, { type: "preview-research-memory-near-duplicates" }> {
+  const effect: Extract<RuntimeUiEffect, { type: "preview-research-memory-near-duplicates" }> = { type: "preview-research-memory-near-duplicates", limit: HANDOFF_LIMIT }
+  const freeTextKeys = new Set(["query", "objective"])
+  const knownKeys = new Set(["query", "objective", "labels", "label", "limit", "duplicate_threshold", "mission", "mission_id", "session", "session_id", "include_failures", "include_artifacts"])
+  for (let index = 0; index < args.length; index += 1) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "research near-duplicates args must use query=<text> or objective=<text>")
+    index = nextIndex
+    if (key === "query") effect.query = value
+    else if (key === "objective") effect.objective = value
+    else if (key === "labels" || key === "label") effect.labels = commaList(value)
+    else if (key === "limit") effect.limit = readPositiveInteger(value, "limit", HANDOFF_LIMIT)
+    else if (key === "duplicate_threshold") effect.duplicateThreshold = readNumberArg(value, "duplicate_threshold")
+    else if (key === "mission" || key === "mission_id") effect.missionId = value
+    else if (key === "session" || key === "session_id") effect.sessionId = value
+    else if (key === "include_failures") effect.includeFailures = readBooleanArg(value)
+    else if (key === "include_artifacts") effect.includeArtifacts = readBooleanArg(value)
+    else throw new Error("research near-duplicates arg is unsupported")
+  }
+  if (!effect.query && !effect.objective) throw new Error("research memory near-duplicate preview requires query=<text> or objective=<objective>")
   return effect
 }
 
@@ -18024,6 +18256,12 @@ function readPositiveInteger(value: string, field: string, max: number): number 
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${field} must be a positive integer`)
   return Math.min(parsed, max)
+}
+
+function readNumberArg(value: string, field: string): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) throw new Error(`${field} must be a number`)
+  return parsed
 }
 
 function readBooleanText(value: string, field: string): boolean {
