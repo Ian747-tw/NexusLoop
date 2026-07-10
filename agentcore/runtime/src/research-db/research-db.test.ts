@@ -317,6 +317,36 @@ describe("ResearchDb", () => {
     }
   })
 
+  test("treats stale non-FTS table named research_results_fts as unavailable fallback", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl"), { recursive: true })
+    const sqlite = new Database(researchDbPath(dir))
+    try {
+      sqlite.exec("CREATE TABLE research_results_fts (result_id TEXT PRIMARY KEY)")
+    } finally {
+      sqlite.close()
+    }
+
+    const db = openTestDb(dir)
+    expect(db.researchResultsFtsStatus()).toMatchObject({
+      available: false,
+      indexed_result_count: 0,
+      indexed_field_count: 0,
+    })
+    db.proposeResearchResult({
+      result_id: "result_stale_non_fts",
+      result_type: "implementation_change",
+      title: "stale non fts fallback",
+      summary: "regular table should not be queried as FTS",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("result_stale_non_fts")
+    expect(db.searchResearchResults({ status: "accepted", limit: 10 }).map((result) => result.result_id)).toEqual(["result_stale_non_fts"])
+    expect(db.searchResearchResultsFts({ query: "stale fallback", limit: 10 })).toEqual([])
+    db.close()
+  })
+
   test("open closes sqlite handle when migration fails", async () => {
     const dir = await tempProject()
     await mkdir(join(dir, ".nxl"), { recursive: true })

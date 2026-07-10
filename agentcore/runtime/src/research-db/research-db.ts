@@ -2984,8 +2984,17 @@ export class ResearchDb {
 
   private isResearchResultsFtsAvailable(): boolean {
     try {
-      const row = this.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'research_results_fts'").get() as { name: string } | null
-      return row?.name === "research_results_fts"
+      const row = this.db.query("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name = 'research_results_fts'").get() as {
+        name: string
+        sql: string | null
+      } | null
+      if (row?.name !== "research_results_fts" || !row.sql || !/\bUSING\s+fts5\b/i.test(row.sql)) return false
+      const columns = new Set((this.db.query("PRAGMA table_info(research_results_fts)").all() as { name: string }[]).map((column) => column.name))
+      for (const column of ["result_id", "status", "result_type", "label", "title", "summary", "metrics_preview", "reproduction_preview"]) {
+        if (!columns.has(column)) return false
+      }
+      this.db.query("SELECT rowid FROM research_results_fts WHERE research_results_fts MATCH ? LIMIT 1").all("__nxl_no_match__")
+      return true
     } catch {
       return false
     }
