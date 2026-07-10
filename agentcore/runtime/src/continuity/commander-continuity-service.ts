@@ -278,7 +278,11 @@ export class CommanderContinuityService {
       this.options.launchGateService.listAll({}),
       this.openLoops({ limit: 100 }),
     ])
-    const activeSessions = new Set(launches.filter((launch) => ACTIVE_LAUNCH_STATUSES.has(launch.status)).map((launch) => launch.session_id))
+    const summarizedSessionIds = new Set(sessions.slice(0, limit).map((session) => session.session_id))
+    const activeSessions = new Set(launches
+      .filter((launch) => summarizedSessionIds.has(launch.session_id))
+      .filter((launch) => ACTIVE_LAUNCH_STATUSES.has(launch.status))
+      .map((launch) => launch.session_id))
     const threadCards = await Promise.all(sessions.slice(0, limit).map((session) => this.threadCardForSession(session, launches, loops)))
     return redactValue({
       total_recent_sessions: sessions.length,
@@ -325,7 +329,7 @@ export class CommanderContinuityService {
     for (const report of reports.filter((item) => (item.review_state === "needs_commander_review" || item.review_state === "needs_human_review") && !reviewedReportIds.has(item.report_id))) loops.push(loop("result_report_needs_review", "blocking", report.session_id, report.launch_id, ref("result_report", report.report_id, report.result_kind, report.summary_preview, report.review_state), `/opencode-result-review report=${report.report_id} decision=<decision> rationale=<rationale>`, report.recorded_at))
     const ingestedReviewIds = new Set(ingestions.filter((item) => item.research_db_written).map((item) => item.review_id))
     for (const review of reviews.filter((item) => item.projection_state_after === "reviewed_accepted" && !ingestedReviewIds.has(item.review_id))) loops.push(loop("accepted_review_not_ingested", "warning", review.session_id, review.launch_id, ref("result_review", review.review_id, itemLabel(review.decision), review.rationale_preview, review.projection_state_after), `/research-ingestion review=${review.review_id}`, review.recorded_at))
-    for (const ingestion of ingestions.filter((item) => !item.research_db_written)) loops.push(loop("research_ingestion_failed", "warning", ingestion.session_id, ingestion.launch_id, ref("research_ingestion", ingestion.ingestion_id, ingestion.evidence_kind, ingestion.evidence_summary_preview, "not_written"), `/research-ingestion-latest review=${ingestion.review_id}`, ingestion.recorded_at))
+    for (const ingestion of ingestions.filter((item) => !item.research_db_written && !ingestedReviewIds.has(item.review_id))) loops.push(loop("research_ingestion_failed", "warning", ingestion.session_id, ingestion.launch_id, ref("research_ingestion", ingestion.ingestion_id, ingestion.evidence_kind, ingestion.evidence_summary_preview, "not_written"), `/research-ingestion-latest review=${ingestion.review_id}`, ingestion.recorded_at))
     for (const watchdog of watchdogs.filter((item) => item.watchdog_status === "timed_out" || item.watchdog_status === "stale")) loops.push(loop(watchdog.watchdog_status === "timed_out" ? "watchdog_timed_out" : "session_stale", "blocking", watchdog.session_id, watchdog.launch_id, ref("watchdog", watchdog.watchdog_id, "watchdog", watchdog.recommended_action, watchdog.watchdog_status), `/opencode-force-report session=${watchdog.session_id} reason=<reason>`, watchdog.recorded_at))
     for (const request of forcedReports) loops.push(loop("forced_report_requested", "info", request.session_id, request.launch_id, ref("forced_report", request.request_id, "forced report requested", request.reason, "requested"), `/opencode-progress-latest session=${request.session_id}`, request.requested_at))
     for (const action of wakeActions.filter((item) => item.status === "blocked" || item.effect_kind === "manual_action_required")) loops.push(loop(action.status === "blocked" ? "wake_action_blocked" : "wake_action_manual_required", "warning", action.session_id, action.launch_id, ref("wake_action_execution", action.action_execution_id, action.action_kind, action.summary_preview, action.status), `/opencode-wake-action-show ${action.action_execution_id}`, action.recorded_at))

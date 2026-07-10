@@ -21625,7 +21625,46 @@ describe("OpenCode launch readiness", () => {
     await server.command("runtime.record_opencode_human_control", { sessionId, kind: "correction", correction: "preserve continuity token=continuity-secret" })
     const report = await server.command("runtime.record_opencode_result_report", { sessionId, kind: "completion_report", summary: "continuity evidence token=continuity-secret", outcome: "tests passed", claims: ["continuity-works"] }) as { report_id: string }
     const review = await server.command("runtime.record_opencode_result_review", { reportId: report.report_id, decision: "accepted", rationale: "bounded continuity evidence token=continuity-secret", acceptedClaims: ["continuity-works"] }) as { review_id: string }
+    await server.eventStore.append({
+      kind: "research_memory_ingestion_recorded",
+      ingestion_id: "research_ingestion_failed_then_resolved",
+      review_id: review.review_id,
+      report_id: report.report_id,
+      session_id: sessionId,
+      launch_id: launched.launch_id,
+      source_kind: "opencode_result_review",
+      evidence_kind: "positive_finding",
+      ingestion_decision: "ingest",
+      review_decision: "accepted",
+      review_disposition: "accepted_as_evidence",
+      review_projection_state: "reviewed_accepted",
+      report_kind: "completion_report",
+      report_disposition: "reported_done",
+      research_title_preview: "continuity failed ingestion",
+      evidence_summary_preview: "failed ingestion later resolved",
+      claims_preview: [],
+      metrics_preview: [],
+      artifacts_preview: [],
+      tests_preview: [],
+      failures_preview: [],
+      followups_preview: [],
+      tags_preview: [],
+      provenance_refs: [],
+      research_db_write_status: "write_failed",
+      research_db_written: false,
+      mission_mutated: false,
+      checkpoint_created: false,
+      followup_mission_created: false,
+      provider_called: false,
+      mcp_called: false,
+      recorded_at: "2026-07-10T08:20:00.000Z",
+      recorded_by: "test",
+      ingestion_hash: "research_ingestion_failed_then_resolved_hash",
+    })
     await server.command("runtime.record_research_ingestion", { reviewId: review.review_id, tags: ["continuity", "memory"] })
+    const extraSession = await server.command("runtime.create_opencode_session_plan", { objective: "extra active continuity session" }) as { session_id: string }
+    const extraPack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: extraSession.session_id }) as { pack_id: string }
+    await server.command("runtime.launch_opencode_session", { sessionId: extraSession.session_id, packId: extraPack.pack_id, providerKind: "local", modelId: "local-medium" })
     const quietMission = await server.submitUserMessage("quiet target mission continuity")
     await server.command("runtime.create_opencode_session_plan", { objective: "quiet target mission continuity", missionId: quietMission.missionId })
     const eventsBefore = await server.eventStore.readAll()
@@ -21650,6 +21689,7 @@ describe("OpenCode launch readiness", () => {
       expect.objectContaining({ section_kind: "omitted_raw_logs", status: "excluded" }),
     ]))
     expect(proposal.open_loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
+    expect(proposal.open_loops.map((loop) => loop.loop_kind)).not.toContain("research_ingestion_failed")
     expect(proposal.source_refs.every((ref) => ref.pointer_only)).toBe(true)
     expect(proposal.budget.target_token_budget).toBe(6000)
     expect(proposal.budget.estimated_token_count).toBeGreaterThan(0)
@@ -21704,6 +21744,7 @@ describe("OpenCode launch readiness", () => {
       expect.objectContaining({ source_kind: "wake_action_execution", source_id: wakeAction.action_execution_id, pointer_only: true }),
     ]))
     expect(mid.open_loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
+    expect(mid.open_loops.map((loop) => loop.loop_kind)).not.toContain("research_ingestion_failed")
     expect(mid.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({ section_kind: "active_session" }),
       expect.objectContaining({ section_kind: "dialogue_guidance" }),
@@ -21713,8 +21754,17 @@ describe("OpenCode launch readiness", () => {
 
     const loops = await server.command("runtime.list_commander_continuity_open_loops", { sessionId }) as Array<{ loop_kind: string; recommended_command?: string }>
     expect(loops.map((loop) => loop.loop_kind)).toEqual(expect.arrayContaining(["pending_commander_question", "human_correction"]))
+    expect(loops.map((loop) => loop.loop_kind)).not.toContain("research_ingestion_failed")
     expect(loops.some((loop) => loop.recommended_command?.includes("/commander-guidance"))).toBe(true)
     await expect(server.command("runtime.commander_continuity_summary")).resolves.toMatchObject({ open_loop_count: expect.any(Number), pending_question_count: 1 })
+    const limitedSummary = await server.command("runtime.commander_continuity_summary", { limit: 1 }) as {
+      total_recent_sessions: number
+      active_session_count: number
+      latest_threads: unknown[]
+    }
+    expect(limitedSummary.total_recent_sessions).toBe(1)
+    expect(limitedSummary.latest_threads.length).toBe(1)
+    expect(limitedSummary.active_session_count).toBeLessThanOrEqual(limitedSummary.total_recent_sessions)
     await expect(server.command("runtime.show_commander_continuity_thread", { sessionId })).resolves.toMatchObject({ session_id: sessionId, open_loop_count: expect.any(Number) })
     expect(await server.eventStore.readAll()).toEqual(eventsBefore)
 
