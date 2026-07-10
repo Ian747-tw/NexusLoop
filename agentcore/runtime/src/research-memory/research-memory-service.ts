@@ -160,7 +160,7 @@ export class ResearchMemoryService {
         }) ?? []
       : []
     const ftsScores = new Map(ftsMatches.map((match) => [match.result_id, match.fts_score]))
-    const mergedCandidates = mergeFtsCandidates(rawCandidates, ftsMatches, adapter, input.include_artifacts !== false, input.mission_id)
+    const mergedCandidates = mergeFtsCandidates(rawCandidates, ftsMatches, adapter, input)
     const scored = mergedCandidates
       .map((candidate) => scoreCandidate(candidate, queryTokens, ftsScores.get(candidate.result_id), ftsEnabled))
       .filter((candidate) => queryTokens.length > 0 && (candidate.matched_terms.length > 0 || candidate.rank_source === "fts" || candidate.rank_source === "hybrid"))
@@ -427,18 +427,7 @@ export class ResearchMemoryService {
       const runs = input.mission_id ? missionRuns : adapter.searchTrainingRuns?.({ limit: SCAN_LIMIT, order: "newest" }) ?? []
       for (const run of runs) out.push(candidateFromTrainingRun(run))
     }
-    const filtered = out
-      .filter((candidate) => input.include_failures !== false || candidate.label !== "failure")
-      .filter((candidate) => !input.mission_id || candidate.source_mission_id === input.mission_id)
-      .filter((candidate, _index, candidates) => !input.session_id || !candidates.some((item) => !!item.source_session_id) || candidate.source_session_id === input.session_id)
-      .filter((candidate) => !input.labels?.length || input.labels.includes(candidate.label))
-      .filter((candidate) => !input.confidence || candidate.confidence === input.confidence)
-      .filter((candidate) => !input.evidence_kind || candidate.evidence_kind_preview === input.evidence_kind || candidate.label === input.evidence_kind)
-      .filter((candidate) => input.has_artifacts === undefined || (input.has_artifacts ? candidate.artifact_ids.length > 0 : candidate.artifact_ids.length === 0))
-      .filter((candidate) => input.has_citations === undefined || (input.has_citations ? candidate.citation_ids.length > 0 : candidate.citation_ids.length === 0))
-      .filter((candidate) => input.has_metrics === undefined || (input.has_metrics ? !!candidate.metric_preview : !candidate.metric_preview))
-      .filter((candidate) => !input.since || !candidate.created_at_preview || candidate.created_at_preview >= input.since)
-      .filter((candidate) => !input.until || !candidate.created_at_preview || candidate.created_at_preview <= input.until)
+    const filtered = applyCandidateFilters(out, input)
     const visible = input.include_artifacts === false ? filtered.map(candidateWithoutArtifacts) : filtered
     return uniqueRawCandidates(visible)
   }
@@ -528,16 +517,37 @@ function candidateFromResearchResult(result: ResearchResult, adapter: ResearchMe
   })
 }
 
-function mergeFtsCandidates(candidates: RawCandidate[], ftsMatches: ResearchResultFtsMatch[], adapter: ResearchMemoryReadAdapter, includeArtifacts: boolean, missionId?: string): RawCandidate[] {
+function mergeFtsCandidates(candidates: RawCandidate[], ftsMatches: ResearchResultFtsMatch[], adapter: ResearchMemoryReadAdapter, input: { include_failures?: boolean; include_artifacts?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[]; result_type?: string; result_status?: string; confidence?: string; evidence_kind?: string; has_artifacts?: boolean; has_citations?: boolean; has_metrics?: boolean; since?: string; until?: string }): RawCandidate[] {
   if (ftsMatches.length === 0) return candidates
   const seen = new Set(candidates.map((candidate) => candidate.result_id))
   const merged = [...candidates]
   for (const match of ftsMatches) {
     if (seen.has(match.result_id)) continue
+    const ftsCandidate = candidateFromResearchResult(match, adapter, true, input.mission_id ?? match.mission_id ?? undefined)
+    const filtered = applyCandidateFilters([ftsCandidate], input)[0]
+    if (!filtered) continue
     seen.add(match.result_id)
-    merged.push(candidateFromResearchResult(match, adapter, includeArtifacts, missionId ?? match.mission_id ?? undefined))
+    merged.push(input.include_artifacts === false ? candidateWithoutArtifacts(filtered) : filtered)
   }
   return merged
+}
+
+function applyCandidateFilters(candidates: RawCandidate[], input: { include_failures?: boolean; mission_id?: string; session_id?: string; source_kind?: string; labels?: string[]; result_type?: string; result_status?: string; confidence?: string; evidence_kind?: string; has_artifacts?: boolean; has_citations?: boolean; has_metrics?: boolean; since?: string; until?: string }): RawCandidate[] {
+  return candidates
+    .filter((candidate) => !input.source_kind || candidate.source_kind === input.source_kind)
+    .filter((candidate) => input.include_failures !== false || candidate.label !== "failure")
+    .filter((candidate) => !input.mission_id || candidate.source_mission_id === input.mission_id)
+    .filter((candidate, _index, candidates) => !input.session_id || !candidates.some((item) => !!item.source_session_id) || candidate.source_session_id === input.session_id)
+    .filter((candidate) => !input.labels?.length || input.labels.includes(candidate.label))
+    .filter((candidate) => !input.result_type || candidate.method_preview === input.result_type)
+    .filter((candidate) => !input.result_status || candidate.status === input.result_status)
+    .filter((candidate) => !input.confidence || candidate.confidence === input.confidence)
+    .filter((candidate) => !input.evidence_kind || candidate.evidence_kind_preview === input.evidence_kind || candidate.label === input.evidence_kind)
+    .filter((candidate) => input.has_artifacts === undefined || (input.has_artifacts ? candidate.artifact_ids.length > 0 : candidate.artifact_ids.length === 0))
+    .filter((candidate) => input.has_citations === undefined || (input.has_citations ? candidate.citation_ids.length > 0 : candidate.citation_ids.length === 0))
+    .filter((candidate) => input.has_metrics === undefined || (input.has_metrics ? !!candidate.metric_preview : !candidate.metric_preview))
+    .filter((candidate) => !input.since || !candidate.created_at_preview || candidate.created_at_preview >= input.since)
+    .filter((candidate) => !input.until || !candidate.created_at_preview || candidate.created_at_preview <= input.until)
 }
 
 function citationPointerFromFullRow(citation: Citation): ResultCitationPointer {

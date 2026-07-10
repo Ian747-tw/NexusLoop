@@ -21569,6 +21569,14 @@ describe("OpenCode launch readiness", () => {
     expect(preview.candidates[0]?.rank_source).toBe("hybrid")
     expect(preview.candidates[0]?.fts_score).toBe(0.91)
     expect(preview.candidates[0]?.search_engine_used).toBe("hybrid_fts_lexical")
+
+    const requiresCitation = service.preview({ query: "deeparchive hybrid", has_citations: true, limit: 3 })
+    expect(requiresCitation.status).toBe("empty")
+    expect(requiresCitation.candidates).toEqual([])
+
+    const requiresNoCitation = service.preview({ query: "deeparchive hybrid", has_citations: false, limit: 3 })
+    expect(requiresNoCitation.status).toBe("ready")
+    expect(requiresNoCitation.candidates.map((candidate) => candidate.result_id)).toEqual(["result_deep_archive_match"])
   })
 
   test("research novelty flags duplicate risk without blocking repeated work", async () => {
