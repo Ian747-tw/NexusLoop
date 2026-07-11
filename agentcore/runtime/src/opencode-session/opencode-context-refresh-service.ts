@@ -96,6 +96,7 @@ export class OpenCodeContextRefreshService {
         target_session_id: rebuilt.preview.target_session_id,
         target_launch_id: packet.packet_kind === "continuation" ? packet.target_launch_id : packet.launch_id,
         checkpoint_id: packet.packet_kind === "continuation" ? packet.checkpoint_id : undefined,
+        objective_delta_preview: packet.packet_kind === "continuation" ? packet.objective_delta_preview : undefined,
         base_pack_id: rebuilt.preview.base_pack_id,
         base_pack_hash: rebuilt.preview.base_pack_hash,
         base_context_packet_id: packet.packet_kind === "session_refresh" ? packet.base_context_packet_id : undefined,
@@ -270,14 +271,16 @@ export function readOpenCodeContextRefreshWriteInput(value: unknown): OpenCodeCo
 function buildContents(packet: OpenCodeSessionContinuityPacket | OpenCodeContinuationPacket, refreshId: string) {
   const target = packet.packet_kind === "session_refresh" ? packet.target_session_id : packet.target_session_id ?? packet.source_session_id
   const basePack = packet.packet_kind === "session_refresh" ? packet.base_pack_id : packet.target_base_pack_id ?? packet.base_pack_id
+  const objectiveDelta = packet.packet_kind === "continuation" ? packet.objective_delta_preview : undefined
   const context = [
     "# OpenCode Context Refresh", "", `Refresh: ${refreshId}`, `Packet: ${packet.packet_id}`, `Target session: ${target}`, `Mode: ${packet.continuity_mode}`, `Base pack: ${basePack ?? "missing"}`, `Context strategy: immutable_base_plus_latest_snapshot_and_delta`, `Consumption status: not_delivered`, "",
+    ...(objectiveDelta ? ["## Continuation Objective Delta", "", objectiveDelta, ""] : []),
     "This immutable artifact is executor-safe context only. OpenCode has not consumed it; no prompt, native session action, process control, provider/MCP call, research.db write, or mission mutation occurred.", "",
     ...packet.sections.filter((item) => item.status === "included" || item.status === "pointer_only").flatMap((item) => [`## ${item.section_kind}`, "", item.summary_preview, "", ...item.source_refs.map((ref) => `- ${ref.source_kind}:${ref.source_id} (${ref.status ?? "unknown"})`), ""]),
     "## Explicit Omissions", "", "Raw transcripts, logs, file contents, diffs, event history, Commander chat, provider output, credentials, and full research.db are excluded.", "",
   ].join("\n")
-  const delta = ["# Context Refresh Delta", "", `Previous refresh: ${packet.delta.previous_refresh_id ?? "none"}`, `Delta kind: ${packet.delta.delta_kind}`, `Delta hash: ${packet.delta.delta_hash}`, "", `Summary: ${packet.delta.summary_preview}`, "", "## Changed sections", ...packet.delta.changed_section_kinds.map((item) => `- ${item}`), "", "## New durable source IDs", ...deltaLines(packet.delta), ""].join("\n")
-  const manifest = JSON.stringify({ refresh_id: refreshId, packet_id: packet.packet_id, packet_hash: packet.packet_hash, packet_kind: packet.packet_kind, continuity_mode: packet.continuity_mode, source_session_id: packet.source_session_id, target_session_id: target, base_pack_id: basePack, previous_refresh_id: packet.delta.previous_refresh_id, budget: packet.budget, source_refs: packet.source_refs.slice(0, 48), omitted_sections: packet.budget.omitted_sections, consumption_status: "not_delivered", ...safetyFlags(), redaction_policy: "bounded executor-safe snapshot and delta; raw content excluded" }, null, 2) + "\n"
+  const delta = ["# Context Refresh Delta", "", `Previous refresh: ${packet.delta.previous_refresh_id ?? "none"}`, `Delta kind: ${packet.delta.delta_kind}`, `Delta hash: ${packet.delta.delta_hash}`, "", `Summary: ${packet.delta.summary_preview}`, "", ...(objectiveDelta ? ["## Continuation objective delta", objectiveDelta, ""] : []), "## Changed sections", ...packet.delta.changed_section_kinds.map((item) => `- ${item}`), "", "## New durable source IDs", ...deltaLines(packet.delta), ""].join("\n")
+  const manifest = JSON.stringify({ refresh_id: refreshId, packet_id: packet.packet_id, packet_hash: packet.packet_hash, packet_kind: packet.packet_kind, continuity_mode: packet.continuity_mode, source_session_id: packet.source_session_id, target_session_id: target, objective_delta_preview: objectiveDelta, base_pack_id: basePack, previous_refresh_id: packet.delta.previous_refresh_id, budget: packet.budget, source_refs: packet.source_refs.slice(0, 48), omitted_sections: packet.budget.omitted_sections, consumption_status: "not_delivered", ...safetyFlags(), redaction_policy: "bounded executor-safe snapshot and delta; raw content excluded" }, null, 2) + "\n"
   return [{ kind: "context_refresh" as const, name: "CONTEXT_REFRESH.md", content: context }, { kind: "delta" as const, name: "DELTA.md", content: delta }, { kind: "manifest" as const, name: "REFRESH_MANIFEST.json", content: manifest }]
 }
 function deltaLines(delta: any): string[] { return Object.entries(delta).filter(([key]) => key.startsWith("new_") && key.endsWith("_ids")).flatMap(([key, value]) => (value as string[]).map((id) => `- ${key}: ${id}`)) }

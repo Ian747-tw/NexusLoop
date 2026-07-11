@@ -6,6 +6,12 @@ import { redactText, redactValue } from "../security/redaction"
 import type { OpenCodeLaunchGateService } from "./opencode-launch-gate-service"
 import type { OpenCodeLaunchReadinessService } from "./opencode-launch-readiness-service"
 import type { OpenCodeLaunchRecord, OpenCodeLaunchResult } from "./opencode-launch-gate-types"
+import type { OpenCodeProgressResult } from "./opencode-progress-types"
+import type { OpenCodeProgressService } from "./opencode-progress-service"
+import type { OpenCodeResultReportResult } from "./opencode-result-report-types"
+import type { OpenCodeResultReportService } from "./opencode-result-report-service"
+import type { ResearchMemoryCandidate, ResearchMemoryRetrievalPreview } from "../research-memory/research-memory-types"
+import type { ResearchMemoryService } from "../research-memory/research-memory-service"
 import type { OpenCodeSessionInstructionPackService } from "./opencode-session-instruction-pack-service"
 import type { OpenCodeSessionService } from "./opencode-session-service"
 import type {
@@ -49,10 +55,19 @@ export type OpenCodeSessionContinuityServiceOptions = {
   launchReadinessService: OpenCodeLaunchReadinessService
   instructionPackService: OpenCodeSessionInstructionPackService
   commanderContinuityService: CommanderContinuityService
+  progressService: OpenCodeProgressService
+  resultReportService: OpenCodeResultReportService
+  researchMemoryService: ResearchMemoryService
   contextBudgetService: ContextBudgetService
   previousRefresh: (refreshId: string) => Promise<PreviousRefreshSnapshot | null>
   latestRefresh: (sessionId: string, continuityMode: string) => Promise<PreviousRefreshSnapshot | null>
   now?: () => Date
+}
+
+type ExecutorEvidence = {
+  progress: OpenCodeProgressResult[]
+  reports: OpenCodeResultReportResult[]
+  research?: ResearchMemoryRetrievalPreview
 }
 
 export class OpenCodeSessionContinuityService {
@@ -130,6 +145,7 @@ export class OpenCodeSessionContinuityService {
         `source_session=${sourceSessionId || "missing"}`,
         `target_session=${targetSessionId || "not selected"}`,
         `reason=${reason || "missing"}`,
+        `objective_delta=${bound(input.objective_delta ?? "") || "none"}`,
         `preserve=${boundedArray(input.preserve).join(", ") || "latest bounded snapshot"}`,
         `discard=${boundedArray(input.discard).join(", ") || "raw history"}`,
       ].join("; "), [], []),
@@ -231,9 +247,18 @@ export class OpenCodeSessionContinuityService {
     for (const warning of mid.warnings) {
       if (/operator_handoff|session-scoped|FTS|lexical|research memory/i.test(warning)) warnings.push(warning)
     }
-    const refs = mid.source_refs.filter((item) => EXECUTOR_SOURCE_KINDS.has(item.source_kind)).slice(0, MAX_REFS).map(toRef)
     const includeResearchAuto = mode === "auto" && (mid.open_loops.some((loop) => loop.loop_kind === "pending_commander_question" || loop.loop_kind === "watchdog_timed_out") || /blocker|question/i.test(mid.latest_progress_summary))
+    const evidence = await this.collectExecutorEvidence(base.sessionId, base.launch?.launch_id, base.session?.objective, mid, mode, includeResearchAuto, input)
+    const refs = uniqueRefs([
+      ...mid.source_refs.filter((item) => EXECUTOR_SOURCE_KINDS.has(item.source_kind)).map(toRef),
+      ...progressRefs(evidence.progress),
+      ...reportRefs(evidence.reports),
+      ...researchCandidateRefs(evidence.research?.candidates ?? []),
+    ]).slice(0, MAX_REFS)
     if (mode === "omit" || (mode === "auto" && !includeResearchAuto)) warnings.push("research memory omitted to save tokens; tactical state did not require bounded retrieval")
+    for (const warning of evidence.research?.warnings ?? []) {
+      if (/FTS|lexical|session-scoped|research memory|hybrid/i.test(warning)) warnings.push(warning)
+    }
     const budgetPreview = await this.options.contextBudgetService.preview({
       purpose: "opencode_executor_session",
       role: "executor",
@@ -246,7 +271,7 @@ export class OpenCodeSessionContinuityService {
     blockers.push(...budgetPreview.blockers)
     const previous = await this.resolvePrevious(input.previous_refresh_id, previousTargetSessionId, previousMode)
     if (previous.error) blockers.push(previous.error)
-    const sections = executorSections(base, mid, refs, mode, includeResearchAuto)
+    const sections = executorSections(base, mid, refs, evidence, mode, includeResearchAuto)
     const budget = applyBudget(sections, budgetPreview.budget)
     const delta = buildContinuityDelta(refs, sections, previous.snapshot)
     const humanBlocked = mid.open_loops.some((loop) => loop.loop_kind === "human_stop" || loop.loop_kind === "human_pause")
@@ -306,6 +331,27 @@ export class OpenCodeSessionContinuityService {
     if (snapshot && snapshot.continuity_mode !== continuityMode) return { snapshot, error: "previous refresh belongs to another continuity mode" }
     return { snapshot }
   }
+
+  private async collectExecutorEvidence(sessionId: string, launchId: string | undefined, objective: string | undefined, mid: CommanderMidMissionContinuityPacket, mode: "auto" | "include" | "omit", includeResearchAuto: boolean, input: OpenCodeSessionContinuityInput): Promise<ExecutorEvidence> {
+    if (!sessionId) return { progress: [], reports: [] }
+    const maxProgress = clamp(input.max_progress_items, 5, 1, 20)
+    const maxResearch = clamp(input.max_research_candidates, 3, 1, 3)
+    const progressRecords = await this.options.progressService.list({ session_id: sessionId, launch_id: launchId, limit: maxProgress })
+    const progress = (await Promise.all(progressRecords.map((record) => this.options.progressService.get(record.progress_id)))).filter((item): item is OpenCodeProgressResult => !!item)
+    const reportRecords = await this.options.resultReportService.list({ session_id: sessionId, launch_id: launchId, limit: 3 })
+    const reports = (await Promise.all(reportRecords.map((record) => this.options.resultReportService.get(record.report_id)))).filter((item): item is OpenCodeResultReportResult => !!item)
+    const shouldSearch = mode === "include" || (mode === "auto" && includeResearchAuto)
+    const query = bound([
+      objective,
+      mid.latest_progress_summary,
+      progress.find((item) => item.blockers_preview.length || item.question_preview)?.report_summary_preview,
+      progress.find((item) => item.question_preview)?.question_preview,
+    ].filter(Boolean).join(" "))
+    const research = shouldSearch && query
+      ? this.options.researchMemoryService.preview({ query, session_id: sessionId, limit: maxResearch, include_failures: true, include_artifacts: false })
+      : undefined
+    return { progress, reports, research }
+  }
 }
 
 export function readOpenCodeSessionContinuityInput(value: unknown): OpenCodeSessionContinuityInput {
@@ -318,21 +364,22 @@ export function readOpenCodeContinuationInput(value: unknown): OpenCodeContinuat
   return { source_session_id: optional(input.sourceSessionId ?? input.sourceSession ?? input.source_session_id ?? input.source_session ?? input.sessionId ?? input.session_id ?? input.session), source_launch_id: optional(input.sourceLaunchId ?? input.sourceLaunch ?? input.source_launch_id ?? input.source_launch ?? input.launchId ?? input.launch_id ?? input.launch), target_session_id: optional(input.targetSessionId ?? input.targetSession ?? input.target_session_id ?? input.target_session), continuity_mode: optional(input.continuityMode ?? input.continuity_mode ?? input.mode), continuation_reason: optional(input.continuationReason ?? input.continuation_reason ?? input.reason), patch_reason: optional(input.patchReason ?? input.patch_reason), fork_reason: optional(input.forkReason ?? input.fork_reason), checkpoint_id: optional(input.checkpointId ?? input.checkpoint_id ?? input.checkpoint), previous_refresh_id: optional(input.previousRefreshId ?? input.previousRefresh ?? input.previous_refresh_id ?? input.previous_refresh), preserve: readArray(input.preserve), discard: readArray(input.discard), objective_delta: optional(input.objectiveDelta ?? input.objective_delta), provider_kind: optional(input.providerKind ?? input.provider_kind ?? input.provider), model_id: optional(input.modelId ?? input.model_id ?? input.model), max_context_tokens: optionalNumber(input.maxContextTokens ?? input.max_context_tokens), max_context_bytes: optionalNumber(input.maxContextBytes ?? input.max_context_bytes), research_memory_mode: readResearchMode(input.researchMemoryMode ?? input.research_memory_mode ?? input.research_memory), max_progress_items: optionalNumber(input.maxProgressItems ?? input.max_progress_items ?? input.max_progress), max_open_loops: optionalNumber(input.maxOpenLoops ?? input.max_open_loops), max_research_candidates: optionalNumber(input.maxResearchCandidates ?? input.max_research_candidates) }
 }
 
-function executorSections(base: any, mid: CommanderMidMissionContinuityPacket, refs: OpenCodeContinuitySourceRef[], researchMode: string, includeResearchAuto: boolean): OpenCodeContinuitySection[] {
+function executorSections(base: any, mid: CommanderMidMissionContinuityPacket, refs: OpenCodeContinuitySourceRef[], evidence: ExecutorEvidence, researchMode: string, includeResearchAuto: boolean): OpenCodeContinuitySection[] {
   const select = (...kinds: string[]) => refs.filter((item) => kinds.includes(item.source_kind))
+  const researchRefs = researchCandidateRefs(evidence.research?.candidates ?? [])
   return [
     makeSection("authority_boundary", "required", "OpenCode is tactical executor; Commander owns strategy; runtime owns durable authority and gates.", [], []),
     makeSection("session_identity", "required", `session=${base.sessionId}; launch=${base.launch?.launch_id ?? "missing"}; native_session=${base.launch?.native_session_id ?? "missing"}; base_pack=${base.pack?.pack_id ?? "missing"}`, select("opencode_session", "opencode_launch"), []),
     makeSection("tactical_objective", "required", `${base.session?.objective ?? "missing objective"}; success=${(base.session?.success_criteria ?? []).join("; ")}; constraints=${(base.session?.constraints ?? []).join("; ")}`, select("opencode_session"), []),
     makeSection("current_execution_state", "high", mid.latest_progress_summary, select("opencode_progress"), []),
-    makeSection("recent_attempts", "medium", mid.local_session_working_memory_summary, select("opencode_progress", "result_report"), []),
+    makeSection("recent_attempts", "medium", recentAttemptsSummary(evidence.progress, evidence.reports, mid.local_session_working_memory_summary), select("opencode_progress", "result_report"), []),
     makeSection("pending_questions", "high", mid.commander_dialogue_summary, select("commander_question"), []),
     makeSection("commander_guidance", "high", mid.guidance_delivery_summary, select("commander_guidance", "guidance_delivery"), /pending|operator_handoff/i.test(mid.guidance_delivery_summary) ? ["Guidance metadata exists, but OpenCode receipt is not proven."] : []),
     makeSection("human_controls", "required", mid.human_control_summary || "no durable human stop, pause, correction, or override evidence is recorded", select("human_control"), []),
     makeSection("watchdog_and_wake", "high", `${mid.watchdog_summary}; ${mid.wake_supervision_summary}`, select("opencode_watchdog", "wake_supervisor", "wake_supervisor_execution", "wake_action_execution"), []),
     makeSection("result_state", "medium", mid.result_state_summary, select("result_report", "result_review", "research_ingestion"), ["result-review acceptance is evidence disposition, not mission completion"]),
-    makeSection("relevant_files_tests_artifacts", "medium", "Only bounded file/test/artifact claims from durable progress and result refs are included; contents and diffs are excluded.", select("opencode_progress", "result_report"), []),
-    makeSection("research_memory_advisory", "low", researchMode === "omit" || (researchMode === "auto" && !includeResearchAuto) ? "omitted to save tokens" : (mid.research_memory_summary ?? "bounded research memory unavailable"), select("research_memory"), ["research memory is advisory; missing matches do not prove novelty"]),
+    makeSection("relevant_files_tests_artifacts", "medium", structuredEvidenceSummary(evidence.progress, evidence.reports), select("opencode_progress", "result_report"), []),
+    makeSection("research_memory_advisory", "low", researchMode === "omit" || (researchMode === "auto" && !includeResearchAuto) ? "omitted to save tokens" : researchMemorySummary(evidence.research, mid.research_memory_summary), researchRefs, ["research memory is advisory; missing matches do not prove novelty", ...(evidence.research?.warnings ?? []).filter((item) => /FTS|lexical|session-scoped|fallback|hybrid/i.test(item)).slice(0, 2)]),
     makeSection("omitted_raw_content", "excluded", "Raw OpenCode transcripts, logs, diffs, file contents, event history, Commander chat, provider output, and full research.db are excluded.", [], []),
   ]
 }
@@ -402,6 +449,77 @@ async function latestActiveLaunch(service: OpenCodeLaunchGateService, sessionId:
   return launches.filter((item) => ACTIVE_LAUNCH_STATUSES.has(item.status)).sort((a, b) => b.started_at.localeCompare(a.started_at))[0] ?? null
 }
 function toRef(item: CommanderContinuitySourceRef): OpenCodeContinuitySourceRef { return { source_kind: bound(item.source_kind, 80), source_id: bound(item.source_id, 160), label: item.label ? bound(item.label) : undefined, status: item.status ? bound(item.status, 80) : undefined, summary_preview: item.summary_preview ? bound(item.summary_preview) : undefined, pointer_only: true } }
+function progressRefs(items: OpenCodeProgressResult[]): OpenCodeContinuitySourceRef[] { return items.map((item) => ({ source_kind: "opencode_progress", source_id: item.progress_id, label: item.kind, status: item.execution_state, summary_preview: item.report_summary_preview, pointer_only: true })) }
+function reportRefs(items: OpenCodeResultReportResult[]): OpenCodeContinuitySourceRef[] { return items.map((item) => ({ source_kind: "result_report", source_id: item.report_id, label: item.result_kind, status: item.review_state, summary_preview: item.summary_preview, pointer_only: true })) }
+function researchCandidateRefs(items: ResearchMemoryCandidate[]): OpenCodeContinuitySourceRef[] {
+  return items.slice(0, 8).map((item) => ({
+    source_kind: "research_memory",
+    source_id: item.result_id,
+    label: item.evidence_kind_preview ? `${item.label}/${item.evidence_kind_preview}` : item.label,
+    status: item.status ?? item.search_engine_used ?? item.rank_source,
+    summary_preview: bound([item.question_preview, item.method_preview, item.outcome_preview].filter(Boolean).join("; ")),
+    pointer_only: true,
+  }))
+}
+function recentAttemptsSummary(progress: OpenCodeProgressResult[], reports: OpenCodeResultReportResult[], fallback: string): string {
+  const progressLines = progress.map((item) => [
+    `${item.progress_id} ${item.kind}/${item.execution_state}: ${item.report_summary_preview}`,
+    item.current_step_preview ? `step=${item.current_step_preview}` : "",
+    item.commands_run_preview.length ? `commands=${item.commands_run_preview.join(", ")}` : "",
+    item.tests_run_preview.length ? `tests=${item.tests_run_preview.join(", ")}` : "",
+    item.blockers_preview.length ? `blockers=${item.blockers_preview.join(", ")}` : "",
+    item.next_action_preview ? `next=${item.next_action_preview}` : "",
+  ].filter(Boolean).join("; "))
+  const reportLines = reports.map((item) => [
+    `${item.report_id} ${item.result_kind}/${item.result_disposition}: ${item.summary_preview}`,
+    item.outcome_preview ? `outcome=${item.outcome_preview}` : "",
+    item.followups_preview.length ? `followups=${item.followups_preview.join(", ")}` : "",
+  ].filter(Boolean).join("; "))
+  const lines = [...progressLines, ...reportLines]
+  return lines.length ? lines.join(" | ") : fallback
+}
+function structuredEvidenceSummary(progress: OpenCodeProgressResult[], reports: OpenCodeResultReportResult[]): string {
+  const files = unique([...progress.flatMap((item) => item.files_touched_preview), ...reports.flatMap((item) => item.changed_files_preview)]).slice(0, 12)
+  const commands = unique(progress.flatMap((item) => item.commands_run_preview)).slice(0, 8)
+  const tests = unique([...progress.flatMap((item) => item.tests_run_preview), ...reports.flatMap((item) => item.tests_run_preview), ...reports.flatMap((item) => item.test_results_preview)]).slice(0, 12)
+  const artifacts = unique([...progress.flatMap((item) => item.artifacts_preview), ...reports.flatMap((item) => item.artifacts_preview)]).slice(0, 12)
+  const failures = unique([...progress.flatMap((item) => item.blockers_preview), ...reports.flatMap((item) => item.known_failures_preview)]).slice(0, 12)
+  const followups = unique([...progress.map((item) => item.next_action_preview).filter((item): item is string => !!item), ...reports.flatMap((item) => item.followups_preview)]).slice(0, 12)
+  const parts = [
+    `files=${files.join(", ") || "none"}`,
+    `commands=${commands.join(", ") || "none"}`,
+    `tests=${tests.join(", ") || "none"}`,
+    `artifacts=${artifacts.join(", ") || "none"}`,
+    `failures=${failures.join(", ") || "none"}`,
+    `next=${followups.join(", ") || "none"}`,
+  ]
+  return `Bounded durable file/test/artifact evidence only; no contents, raw logs, or diffs. ${parts.join("; ")}`
+}
+function researchMemorySummary(research: ResearchMemoryRetrievalPreview | undefined, fallback: string | undefined): string {
+  if (!research) return fallback ?? "bounded research memory unavailable"
+  const candidates = research.candidates.slice(0, 3).map((item) => [
+    `${item.result_id} label=${item.label}`,
+    item.evidence_kind_preview ? `evidence=${item.evidence_kind_preview}` : "",
+    `question=${item.question_preview}`,
+    item.method_preview ? `method=${item.method_preview}` : "",
+    item.outcome_preview ? `outcome=${item.outcome_preview}` : "",
+    item.status ? `status=${item.status}` : "",
+    item.confidence ? `confidence=${item.confidence}` : "",
+    `pointer_only=true`,
+  ].filter(Boolean).join("; "))
+  return candidates.length ? candidates.join(" | ") : research.redacted_summary_preview
+}
+function uniqueRefs(items: OpenCodeContinuitySourceRef[]): OpenCodeContinuitySourceRef[] {
+  const seen = new Set<string>()
+  const out: OpenCodeContinuitySourceRef[] = []
+  for (const item of items) {
+    const key = `${item.source_kind}:${item.source_id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(item)
+  }
+  return out
+}
 function safetyFlags() { return { delivery_performed: false as const, opencode_prompt_sent: false as const, native_session_action_performed: false as const, process_control_performed: false as const, session_state_mutated: false as const, mission_mutated: false as const, provider_called: false as const, mcp_called: false as const, research_db_written: false as const } }
 function redactContinuityPacket<T extends { budget: OpenCodeContinuityBudget }>(packet: T): T { const redacted = redactValue(packet) as T; redacted.budget = packet.budget; return redacted }
 function readMode(value: unknown): Exclude<OpenCodeContinuityMode, "active_refresh"> { return value === "fork_from_session" || value === "patch_session" || value === "resume_from_checkpoint" ? value : "continue_same_session" }
