@@ -211,5 +211,6 @@ export type OpenCodeContinuationInput = {
   max_context_bytes?: number
   research_memory_mode?: "auto" | "include" | "omit"
   max_progress_items?: number
+  max_open_loops?: number
   max_research_candidates?: number
 }
