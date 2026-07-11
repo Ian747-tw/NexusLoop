@@ -330,7 +330,7 @@ function executorSections(base: any, mid: CommanderMidMissionContinuityPacket, r
 function makeSection(kind: string, priority: OpenCodeContinuitySection["priority"], summary: string, refs: OpenCodeContinuitySourceRef[], warnings: string[]): OpenCodeContinuitySection {
   const bounded = bound(summary)
   const bytes = Buffer.byteLength(bounded, "utf8")
-  return { section_id: `continuity_section_${hash(kind).slice(0, 12)}`, section_kind: kind, status: priority === "excluded" ? "excluded" : refs.length ? "included" : kind === "authority_boundary" || kind === "tactical_objective" || kind === "omitted_raw_content" ? "included" : "missing", priority, summary_preview: bounded, item_count: refs.length, omitted_count: 0, estimated_tokens: Math.ceil(bytes / 4), estimated_bytes: bytes, source_refs: refs.slice(0, 8), warnings: warnings.map((item) => bound(item)).slice(0, 4) }
+  return { section_id: `continuity_section_${hash(kind).slice(0, 12)}`, section_kind: kind, status: priority === "excluded" ? "excluded" : refs.length ? "included" : ["authority_boundary", "tactical_objective", "continuation_lineage", "omitted_raw_content"].includes(kind) ? "included" : "missing", priority, summary_preview: bounded, item_count: refs.length, omitted_count: 0, estimated_tokens: Math.ceil(bytes / 4), estimated_bytes: bytes, source_refs: refs.slice(0, 8), warnings: warnings.map((item) => bound(item)).slice(0, 4) }
 }
 
 function applyBudget(sections: OpenCodeContinuitySection[], profile: any): OpenCodeContinuityBudget {

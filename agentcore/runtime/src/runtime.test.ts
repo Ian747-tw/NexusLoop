@@ -23984,6 +23984,11 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(revisedFork).toMatchObject({ status: "written", target_session_id: targetSession.session_id })
     expect(revisedFork.packet_hash).not.toBe(forkWritten.packet_hash)
     expect(revisedFork.refresh_id).not.toBe(forkWritten.refresh_id)
+    const revisedForkContext = await readFile(join(dir, revisedFork.target_dir, "CONTEXT_REFRESH.md"), "utf8")
+    expect(revisedForkContext).toContain("## continuation_lineage")
+    expect(revisedForkContext).toContain("reason=preserve bounded fork intent")
+    expect(revisedForkContext).toContain("preserve=latest tests")
+    expect(revisedForkContext).toContain("discard=superseded attempt")
     const budgetRefresh = await server.command("runtime.write_opencode_context_refresh", { sessionId, previousRefresh: second.refresh_id, modelId: "local-small", maxContextTokens: 2048 }) as Record<string, any>
     expect(budgetRefresh).toMatchObject({ status: "written", target_session_id: sessionId })
     expect(budgetRefresh.refresh_id).not.toBe(second.refresh_id)
