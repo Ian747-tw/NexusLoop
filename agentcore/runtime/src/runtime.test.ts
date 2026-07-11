@@ -23984,6 +23984,9 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(revisedFork).toMatchObject({ status: "written", target_session_id: targetSession.session_id })
     expect(revisedFork.packet_hash).not.toBe(forkWritten.packet_hash)
     expect(revisedFork.refresh_id).not.toBe(forkWritten.refresh_id)
+    const budgetRefresh = await server.command("runtime.write_opencode_context_refresh", { sessionId, previousRefresh: second.refresh_id, modelId: "local-small", maxContextTokens: 2048 }) as Record<string, any>
+    expect(budgetRefresh).toMatchObject({ status: "written", target_session_id: sessionId })
+    expect(budgetRefresh.refresh_id).not.toBe(second.refresh_id)
     await server.shutdown()
 
     const noStartAdapter = new LongLivedAdapter()
@@ -23993,7 +23996,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(noStartPreview).toMatchObject({ packet_kind: "session_refresh" })
     await expect(client.command("runtime.preview_opencode_context_refresh", { sessionId })).resolves.toMatchObject({ consumption_status: "not_delivered" })
     await expect(client.command("runtime.write_opencode_context_refresh", { sessionId, dryRun: true })).resolves.toMatchObject({ status: "dry_run" })
-    await expect(client.command("runtime.list_opencode_context_refreshes", { sessionId })).resolves.toHaveLength(2)
+    await expect(client.command("runtime.list_opencode_context_refreshes", { sessionId })).resolves.toHaveLength(3)
     expect(noStartAdapter.startCalls).toBe(0)
     const refreshEvents = (await noStartServer.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")
     const sourceRefreshEvents = refreshEvents.filter((event) => event.target_session_id === sessionId)
@@ -24001,7 +24004,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await noStartServer.eventStore.append(appendedLast)
     await expect(client.command("runtime.latest_opencode_context_refresh", { sessionId })).resolves.toMatchObject({ refresh_id: "refresh_same_timestamp_later" })
     for (let index = 0; index < 101; index += 1) await noStartServer.eventStore.append({ ...appendedLast, refresh_id: `refresh_summary_${index}`, packet_id: `packet_summary_${index}`, refresh_hash: `hash_summary_${index}` })
-    await expect(client.command("runtime.opencode_context_refresh_summary", { limit: 5 })).resolves.toMatchObject({ total_refreshes: 106, not_delivered_count: 106, latest_refreshes: expect.any(Array) })
+    await expect(client.command("runtime.opencode_context_refresh_summary", { limit: 5 })).resolves.toMatchObject({ total_refreshes: 107, not_delivered_count: 107, latest_refreshes: expect.any(Array) })
     expect(((await client.command("runtime.opencode_context_refresh_summary", { limit: 5 })) as Record<string, any>).latest_refreshes).toHaveLength(5)
     await client.shutdown()
 

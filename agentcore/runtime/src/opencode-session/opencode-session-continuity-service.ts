@@ -40,6 +40,7 @@ export type PreviousRefreshSnapshot = {
   source_refs: OpenCodeContinuitySourceRef[]
   section_hashes?: Record<string, string>
   base_pack_hash?: string
+  budget_id?: string
 }
 
 export type OpenCodeSessionContinuityServiceOptions = {

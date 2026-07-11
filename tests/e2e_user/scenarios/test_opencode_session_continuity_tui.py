@@ -109,7 +109,7 @@ def test_user_writes_bounded_opencode_context_refresh_without_delivery(sandbox) 
         for key in ["delivery_performed", "opencode_prompt_sent", "native_session_action_performed", "process_control_performed", "session_state_mutated", "mission_mutated", "provider_called", "mcp_called", "research_db_written"]:
             assert event[key] is False
     forbidden = {"opencode_prompt_sent", "opencode_commander_guidance_delivered", "opencode_session_process_paused", "opencode_session_process_resumed", "opencode_session_process_killed", "opencode_session_process_stopped", "runtime_checkpoint_created", "followup_mission_created", "commander_proposal_created"}
-    assert forbidden.isdisjoint({event["kind"] for event in refresh_events})
+    assert forbidden.isdisjoint({event["kind"] for event in events})
     serialized = json.dumps(refresh_events)
     assert "continuity-refresh-secret" not in serialized
     assert "token=abc123" not in serialized
