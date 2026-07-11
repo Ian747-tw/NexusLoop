@@ -23988,6 +23988,8 @@ describe("ProcessOpenCodeAdapter", () => {
 
     const continuation = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "continue_same_session", reason: "continue bounded work", maxOpenLoops: 1 }) as Record<string, any>
     expect(continuation).toMatchObject({ packet_kind: "continuation", continuity_mode: "continue_same_session", source_session_id: sessionId, target_session_id: sessionId, consumption_status: "not_delivered", native_session_action_performed: false })
+    const launchContinuation = await server.command("runtime.preview_opencode_continuation", { sourceLaunch: launched.launch_id, mode: "continue_same_session", reason: "continue from launch pointer" }) as Record<string, any>
+    expect(launchContinuation).toMatchObject({ status: "ready", source_session_id: sessionId, target_session_id: sessionId, source_launch_id: launched.launch_id })
     const continuedRefresh = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, mode: "continue_same_session", continuation_reason: "continue bounded work" }) as Record<string, any>
     expect(continuedRefresh).toMatchObject({ status: "written", continuity_mode: "continue_same_session", target_session_id: sessionId })
     const activeFromContinuation = await server.command("runtime.preview_opencode_session_continuity", { sessionId, previousRefresh: continuedRefresh.refresh_id }) as Record<string, any>

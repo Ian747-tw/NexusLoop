@@ -69,11 +69,12 @@ export class OpenCodeSessionContinuityService {
 
   async continuation(input: OpenCodeContinuationInput = {}): Promise<OpenCodeContinuationPacket> {
     const mode = readMode(input.continuity_mode)
-    const sourceSessionId = bound(input.source_session_id ?? "", 120)
+    const requestedSourceSessionId = bound(input.source_session_id ?? "", 120)
     const requestedTargetSessionId = bound(input.target_session_id ?? "", 120)
     const sameSessionMode = mode === "continue_same_session" || mode === "patch_session"
+    const base = await this.resolveBase(requestedSourceSessionId, input.source_launch_id)
+    const sourceSessionId = requestedSourceSessionId || base.sessionId
     const targetSessionId = mode === "fork_from_session" ? requestedTargetSessionId : sameSessionMode ? sourceSessionId : bound(requestedTargetSessionId || sourceSessionId, 120)
-    const base = await this.resolveBase(sourceSessionId, input.source_launch_id)
     const blockers = [...base.blockers]
     const warnings = [...base.warnings]
     if (!sourceSessionId) blockers.push("source_session_id is required")
@@ -192,7 +193,7 @@ export class OpenCodeSessionContinuityService {
     if (!sessionIdInput && !launchIdInput) blockers.push("session_id or launch_id is required")
     const launchById = launchIdInput ? await this.options.launchService.get(launchIdInput) : null
     if (launchIdInput && !launchById) blockers.push("launch_id does not resolve")
-    const sessionId = bound(sessionIdInput ?? launchById?.session_id ?? "", 120)
+    const sessionId = bound(sessionIdInput || launchById?.session_id || "", 120)
     const session = sessionId ? await this.options.sessionService.get(sessionId) : null
     if (sessionId && !session) blockers.push("session_id does not resolve")
     const launch = launchById ?? (sessionId ? await latestActiveLaunch(this.options.launchService, sessionId) : null)
