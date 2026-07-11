@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { Database } from "bun:sqlite"
@@ -43,6 +43,7 @@ import { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-
 import { OpenCodeWakeSupervisorExecutionService } from "./opencode-session/opencode-wake-supervisor-execution-service"
 import { buildContinuityDelta, continuitySectionHash, type PreviousRefreshSnapshot } from "./opencode-session/opencode-session-continuity-service"
 import type { OpenCodeContinuitySection, OpenCodeContinuitySourceRef } from "./opencode-session/opencode-session-continuity-types"
+import { validateContextRefreshTarget } from "./opencode-session/opencode-context-refresh-service"
 import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
@@ -23979,6 +23980,13 @@ describe("ProcessOpenCodeAdapter", () => {
     const appendedLast = { ...refreshEvents.at(-1)!, refresh_id: "refresh_same_timestamp_later", packet_id: "packet_same_timestamp_later", refresh_hash: "hash_same_timestamp_later", written_at: refreshEvents.at(-1)!.written_at }
     await noStartServer.eventStore.append(appendedLast)
     await expect(client.command("runtime.latest_opencode_context_refresh", { sessionId })).resolves.toMatchObject({ refresh_id: "refresh_same_timestamp_later" })
+    for (let index = 0; index < 101; index += 1) await noStartServer.eventStore.append({ ...appendedLast, refresh_id: `refresh_summary_${index}`, packet_id: `packet_summary_${index}`, refresh_hash: `hash_summary_${index}` })
+    await expect(client.command("runtime.opencode_context_refresh_summary", { limit: 5 })).resolves.toMatchObject({ total_refreshes: 104, not_delivered_count: 104, latest_refreshes: expect.any(Array) })
+    expect(((await client.command("runtime.opencode_context_refresh_summary", { limit: 5 })) as Record<string, any>).latest_refreshes).toHaveLength(5)
     await client.shutdown()
+
+    await rename(join(dir, ".nxl"), join(dir, ".nxl-real"))
+    await symlink(".nxl-real", join(dir, ".nxl"))
+    await expect(validateContextRefreshTarget(dir, join(dir, ".nxl", "opencode", "sessions", sessionId, "context-refreshes", "refresh_symlink_test"))).resolves.toBe("context-refresh target contains a symlink component")
   })
 })

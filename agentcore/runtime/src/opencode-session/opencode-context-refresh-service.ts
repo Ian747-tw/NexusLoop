@@ -50,7 +50,7 @@ export class OpenCodeContextRefreshService {
     const refreshId = refreshIdFor(built.preview.refresh_hash)
     if (!built.preview.can_write) return blockedResult(built.preview, refreshId, writtenAt, writtenBy)
     const targetDir = absoluteTargetDir(this.options.projectDir, built.preview.target_session_id, refreshId)
-    const preflight = await validateTarget(this.options.projectDir, targetDir)
+    const preflight = await validateContextRefreshTarget(this.options.projectDir, targetDir)
     if (preflight) return { ...blockedResult(built.preview, refreshId, writtenAt, writtenBy), error: preflight }
     if (input.dry_run) return resultFromPreview(built.preview, refreshId, "dry_run", writtenAt, writtenBy)
 
@@ -68,7 +68,7 @@ export class OpenCodeContextRefreshService {
         if (await filesMatch(target, rebuilt.files)) return resultFromEvent(existing)
         return { ...blockedResult(rebuilt.preview, rebuiltId, writtenAt, writtenBy), error: "existing context-refresh event was found but files are missing or differ; artifact integrity repair is required" }
       }
-      const targetError = await validateTarget(this.options.projectDir, target)
+      const targetError = await validateContextRefreshTarget(this.options.projectDir, target)
       if (targetError) return { ...blockedResult(rebuilt.preview, rebuiltId, writtenAt, writtenBy), error: targetError }
       await writeAtomically(this.options.projectDir, target, rebuilt.files)
       const packet = rebuilt.packet
@@ -137,7 +137,10 @@ export class OpenCodeContextRefreshService {
   }
 
   async summary(input: { limit?: number } = {}): Promise<OpenCodeContextRefreshSummary> {
-    const all = await this.list({ limit: 100 })
+    const all = (await this.events())
+      .map((item, appendOrder) => ({ record: recordFromEvent(item), appendOrder }))
+      .sort((a, b) => b.record.written_at.localeCompare(a.record.written_at) || b.appendOrder - a.appendOrder)
+      .map((item) => item.record)
     return redactValue({
       total_refreshes: all.length,
       session_count: new Set(all.map((item) => item.target_session_id)).size,
@@ -248,7 +251,25 @@ function blockedResult(preview: OpenCodeContextRefreshPreview, refreshId: string
 function recordFromEvent(event: Record<string, any>): OpenCodeContextRefreshRecord { return redactValue({ refresh_id: event.refresh_id, packet_id: event.packet_id, packet_kind: event.packet_kind, continuity_mode: event.continuity_mode, source_session_id: event.source_session_id, target_session_id: event.target_session_id, launch_id: event.source_launch_id, native_session_id: event.source_native_session_id, base_pack_id: event.base_pack_id, previous_refresh_id: event.previous_refresh_id, status: "written", written_at: event.written_at, written_by: event.written_by, summary_preview: `context refresh ${event.refresh_id}; ${event.continuity_mode}; consumption_status=not_delivered`, refresh_hash: event.refresh_hash }) }
 function resultFromEvent(event: Record<string, any>): OpenCodeContextRefreshResult { return redactValue({ refresh_id: event.refresh_id, status: "written", packet_id: event.packet_id, packet_hash: event.packet_hash, packet_kind: event.packet_kind, continuity_mode: event.continuity_mode, source_session_id: event.source_session_id, target_session_id: event.target_session_id, launch_id: event.source_launch_id, native_session_id: event.source_native_session_id, base_pack_id: event.base_pack_id, base_pack_hash: event.base_pack_hash, previous_refresh_id: event.previous_refresh_id, delta: { delta_kind: event.delta_kind, previous_refresh_id: event.previous_refresh_id, previous_packet_hash: event.previous_packet_hash, changed_section_kinds: event.changed_section_kinds ?? [], new_progress_ids: [], new_question_ids: [], new_guidance_ids: [], new_delivery_ids: [], new_human_control_ids: [], new_watchdog_ids: [], new_wake_execution_ids: [], new_wake_action_ids: [], new_result_report_ids: [], new_result_review_ids: [], new_research_ingestion_ids: [], new_research_memory_ids: [], summary_preview: event.delta_kind === "initial_snapshot" ? "initial bounded tactical snapshot" : "bounded incremental delta", delta_hash: event.delta_hash }, target_dir: dirname(String(event.files?.[0]?.relative_path ?? "")), files: (event.files ?? []).map((item: any) => ({ ...item, would_write: false, summary_preview: `${item.file_kind} artifact`, section_kinds: [], source_ref_ids: [], warnings: [] })), total_size_bytes: event.total_size_bytes, consumption_status: "not_delivered", written_at: event.written_at, written_by: event.written_by, refresh_hash: event.refresh_hash, recommended_commands: [{ label: "Show refresh", command: `/opencode-context-refresh-show ${event.refresh_id}`, command_type: "read" }], ...safetyFlags() }) as OpenCodeContextRefreshResult }
 function snapshotFromEvent(event: Record<string, any>): PreviousRefreshSnapshot { return { refresh_id: event.refresh_id, packet_hash: event.packet_hash, refresh_hash: event.refresh_hash, target_session_id: event.target_session_id, continuity_mode: event.continuity_mode, source_refs: (event.source_refs ?? []).slice(0, 48), section_hashes: event.section_hashes, base_pack_hash: event.base_pack_hash } }
-async function validateTarget(projectDir: string, target: string): Promise<string | undefined> { const root = resolve(projectDir, ".nxl", "opencode", "sessions"); const resolved = resolve(target); if (resolved !== root && !resolved.startsWith(`${root}${sep}`)) return "context-refresh path escapes project session directory"; let current = root; for (const part of relative(root, resolved).split(sep).filter(Boolean)) { current = join(current, part); try { if ((await lstat(current)).isSymbolicLink()) return "context-refresh target contains a symlink component" } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; break } } }
+export async function validateContextRefreshTarget(projectDir: string, target: string): Promise<string | undefined> {
+  const projectRoot = resolve(projectDir)
+  const root = join(projectRoot, ".nxl", "opencode", "sessions")
+  const resolved = resolve(target)
+  if (resolved !== root && !resolved.startsWith(`${root}${sep}`)) return "context-refresh path escapes project session directory"
+  const components = [join(projectRoot, ".nxl"), join(projectRoot, ".nxl", "opencode"), root]
+  let current = root
+  for (const part of relative(root, resolved).split(sep).filter(Boolean)) {
+    current = join(current, part)
+    components.push(current)
+  }
+  for (const component of components) {
+    try {
+      if ((await lstat(component)).isSymbolicLink()) return "context-refresh target contains a symlink component"
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    }
+  }
+}
 async function writeAtomically(projectDir: string, target: string, files: GeneratedFile[]) { await mkdir(dirname(target), { recursive: true }); const temp = `${target}.tmp-${process.pid}-${Date.now()}`; await mkdir(temp, { recursive: false }); try { for (const file of files) await writeFile(join(temp, file.relative_path.split("/").pop()!), file.content, { encoding: "utf8", flag: "wx" }); await rename(temp, target) } catch (error) { await rm(temp, { recursive: true, force: true }); throw error } }
 async function filesMatch(target: string, files: GeneratedFile[]) { try { for (const file of files) if (hash(await readFile(join(target, file.relative_path.split("/").pop()!), "utf8")) !== file.sha256) return false; return true } catch { return false } }
 function absoluteTargetDir(projectDir: string, sessionId: string, refreshId: string) { return join(projectDir, ".nxl", "opencode", "sessions", sessionId, "context-refreshes", refreshId) }
