@@ -23982,7 +23982,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const second = await server.command("runtime.write_opencode_context_refresh", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
     expect(second.refresh_id).not.toBe(written.refresh_id)
     expect(second.delta.previous_packet_hash).toBe(written.packet_hash)
-    await expect(server.command("runtime.get_opencode_context_refresh", { refreshId: second.refresh_id })).resolves.toMatchObject({ delta: { previous_packet_hash: written.packet_hash } })
+    await expect(server.command("runtime.get_opencode_context_refresh", { refreshId: second.refresh_id })).resolves.toMatchObject({ delta: { previous_packet_hash: written.packet_hash, new_progress_ids: [progress.progress_id] } })
     const latestPacket = await server.command("runtime.preview_opencode_session_continuity", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
     expect(latestPacket.delta).toMatchObject({ delta_kind: "incremental", previous_refresh_id: written.refresh_id, new_progress_ids: [progress.progress_id] })
     expect(latestPacket.delta.summary_preview).not.toBe("no substantive continuity delta")
@@ -24013,6 +24013,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(checkpoint.blockers).toContain("checkpoint-to-OpenCode continuity binding is future 9W/9X work")
     const unboundFork = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "fork_from_session", reason: "select target later" }) as Record<string, any>
     expect(unboundFork).toMatchObject({ status: "ready", continuity_readiness: "needs_target_session", source_session_id: sessionId, target_session_id: undefined, target_base_pack_id: undefined, target_base_pack_hash: undefined })
+    await expect(server.command("runtime.preview_opencode_context_refresh", { sourceSession: sessionId, mode: "fork_from_session", reason: "select target later" })).resolves.toMatchObject({ status: "blocked", can_write: false, source_session_id: sessionId, target_session_id: "", target_dir: "", base_pack_id: undefined, base_pack_hash: undefined })
     const targetSession = await server.command("runtime.create_opencode_session_plan", { objective: "fork continuity target", successCriteria: ["retain bounded lineage"], constraints: ["no native fork"] }) as { session_id: string }
     await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: targetSession.session_id, providerKind: "local", modelId: "local-medium" })
     const invalidSameSessionTarget = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "continue_same_session", continuation_reason: "must remain on source" }) as Record<string, any>

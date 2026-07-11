@@ -107,6 +107,18 @@ export class OpenCodeContextRefreshService {
         delta_kind: packet.delta.delta_kind,
         delta_hash: packet.delta.delta_hash,
         changed_section_kinds: packet.delta.changed_section_kinds,
+        new_progress_ids: packet.delta.new_progress_ids,
+        new_question_ids: packet.delta.new_question_ids,
+        new_guidance_ids: packet.delta.new_guidance_ids,
+        new_delivery_ids: packet.delta.new_delivery_ids,
+        new_human_control_ids: packet.delta.new_human_control_ids,
+        new_watchdog_ids: packet.delta.new_watchdog_ids,
+        new_wake_execution_ids: packet.delta.new_wake_execution_ids,
+        new_wake_action_ids: packet.delta.new_wake_action_ids,
+        new_result_report_ids: packet.delta.new_result_report_ids,
+        new_result_review_ids: packet.delta.new_result_review_ids,
+        new_research_ingestion_ids: packet.delta.new_research_ingestion_ids,
+        new_research_memory_ids: packet.delta.new_research_memory_ids,
         source_refs: packet.source_refs.slice(0, 48),
         section_hashes: Object.fromEntries(packet.sections.map((item) => [item.section_kind, continuitySectionHash(item)])),
         omitted_sections: packet.budget.omitted_sections,
@@ -193,7 +205,8 @@ export class OpenCodeContextRefreshService {
       ? await this.options.continuityService.continuation(input)
       : await this.options.continuityService.session(input)
     const sourceSession = packet.packet_kind === "session_refresh" ? packet.source_session_id : packet.source_session_id
-    const targetSession = packet.packet_kind === "session_refresh" ? packet.target_session_id : (packet.target_session_id ?? packet.source_session_id)
+    const unboundFork = packet.packet_kind === "continuation" && packet.continuity_mode === "fork_from_session" && !packet.target_session_id
+    const targetSession = packet.packet_kind === "session_refresh" ? packet.target_session_id : (packet.target_session_id ?? (unboundFork ? "" : packet.source_session_id))
     const blockers = [...packet.blockers]
     const warnings = [...packet.warnings, "context refresh is an immutable artifact only; future 9X must explicitly select and deliver it"]
     if (!SESSION_ID_PATTERN.test(targetSession)) blockers.push("target session ID contains unsafe path characters")
@@ -201,7 +214,7 @@ export class OpenCodeContextRefreshService {
     if (packet.packet_kind === "continuation" && packet.continuity_mode === "fork_from_session" && !packet.target_base_pack_id) blockers.push("fork target requires its own written base instruction pack")
     const refreshHash = hash(stableJson({ packet: packet.packet_hash, targetSession, previous: packet.delta.previous_refresh_id, delta: packet.delta.delta_hash, base: packet.packet_kind === "session_refresh" ? packet.base_pack_hash : packet.target_base_pack_hash ?? packet.base_pack_hash }))
     const refreshId = refreshIdFor(refreshHash)
-    const targetDir = `.nxl/opencode/sessions/${targetSession}/context-refreshes/${refreshId}`
+    const targetDir = targetSession ? `.nxl/opencode/sessions/${targetSession}/context-refreshes/${refreshId}` : ""
     const contents = buildContents(packet, refreshId)
     const files = contents.map((item) => filePreview(targetDir, item.kind, item.name, item.content, packet))
     const total = files.reduce((sum, item) => sum + item.size_bytes, 0)
@@ -220,8 +233,8 @@ export class OpenCodeContextRefreshService {
       target_session_id: targetSession,
       launch_id: packet.packet_kind === "session_refresh" ? packet.launch_id : packet.source_launch_id,
       native_session_id: packet.packet_kind === "session_refresh" ? packet.native_session_id : packet.source_native_session_id,
-      base_pack_id: packet.packet_kind === "session_refresh" ? packet.base_pack_id : packet.target_base_pack_id ?? packet.base_pack_id,
-      base_pack_hash: packet.packet_kind === "session_refresh" ? packet.base_pack_hash : packet.target_base_pack_hash ?? packet.base_pack_hash,
+      base_pack_id: packet.packet_kind === "session_refresh" ? packet.base_pack_id : packet.continuity_mode === "fork_from_session" ? packet.target_base_pack_id : packet.target_base_pack_id ?? packet.base_pack_id,
+      base_pack_hash: packet.packet_kind === "session_refresh" ? packet.base_pack_hash : packet.continuity_mode === "fork_from_session" ? packet.target_base_pack_hash : packet.target_base_pack_hash ?? packet.base_pack_hash,
       previous_refresh_id: packet.delta.previous_refresh_id,
       delta: packet.delta,
       target_dir: targetDir,
@@ -272,7 +285,7 @@ function filePreview(targetDir: string, kind: any, name: string, content: string
 function resultFromPreview(preview: OpenCodeContextRefreshPreview, refreshId: string, status: "written" | "dry_run", writtenAt: string, writtenBy: string): OpenCodeContextRefreshResult { return redactValue({ refresh_id: refreshId, status, packet_id: preview.packet_id, packet_hash: preview.packet_hash, packet_kind: preview.packet_kind, continuity_mode: preview.continuity_mode, source_session_id: preview.source_session_id, target_session_id: preview.target_session_id, launch_id: preview.launch_id, native_session_id: preview.native_session_id, base_pack_id: preview.base_pack_id, base_pack_hash: preview.base_pack_hash, previous_refresh_id: preview.previous_refresh_id, delta: preview.delta, target_dir: preview.target_dir, files: preview.files.map((item) => ({ ...item, would_write: status === "written" })), total_size_bytes: preview.total_size_bytes, consumption_status: "not_delivered", written_at: writtenAt, written_by: writtenBy, refresh_hash: preview.refresh_hash, recommended_commands: preview.recommended_commands, ...safetyFlags() }) as OpenCodeContextRefreshResult }
 function blockedResult(preview: OpenCodeContextRefreshPreview, refreshId: string, at: string, by: string): OpenCodeContextRefreshResult { return { ...resultFromPreview(preview, refreshId, "dry_run", at, by), status: "blocked", error: preview.blockers[0] ?? "context refresh is blocked" } }
 function recordFromEvent(event: Record<string, any>): OpenCodeContextRefreshRecord { return redactValue({ refresh_id: event.refresh_id, packet_id: event.packet_id, packet_kind: event.packet_kind, continuity_mode: event.continuity_mode, source_session_id: event.source_session_id, target_session_id: event.target_session_id, launch_id: event.source_launch_id, native_session_id: event.source_native_session_id, base_pack_id: event.base_pack_id, previous_refresh_id: event.previous_refresh_id, status: "written", written_at: event.written_at, written_by: event.written_by, summary_preview: `context refresh ${event.refresh_id}; ${event.continuity_mode}; consumption_status=not_delivered`, refresh_hash: event.refresh_hash }) }
-function resultFromEvent(event: Record<string, any>): OpenCodeContextRefreshResult { return redactValue({ refresh_id: event.refresh_id, status: "written", packet_id: event.packet_id, packet_hash: event.packet_hash, packet_kind: event.packet_kind, continuity_mode: event.continuity_mode, source_session_id: event.source_session_id, target_session_id: event.target_session_id, launch_id: event.source_launch_id, native_session_id: event.source_native_session_id, base_pack_id: event.base_pack_id, base_pack_hash: event.base_pack_hash, previous_refresh_id: event.previous_refresh_id, delta: { delta_kind: event.delta_kind, previous_refresh_id: event.previous_refresh_id, previous_packet_hash: event.previous_packet_hash, changed_section_kinds: event.changed_section_kinds ?? [], new_progress_ids: [], new_question_ids: [], new_guidance_ids: [], new_delivery_ids: [], new_human_control_ids: [], new_watchdog_ids: [], new_wake_execution_ids: [], new_wake_action_ids: [], new_result_report_ids: [], new_result_review_ids: [], new_research_ingestion_ids: [], new_research_memory_ids: [], summary_preview: event.delta_kind === "initial_snapshot" ? "initial bounded tactical snapshot" : "bounded incremental delta", delta_hash: event.delta_hash }, target_dir: dirname(String(event.files?.[0]?.relative_path ?? "")), files: (event.files ?? []).map((item: any) => ({ ...item, would_write: false, summary_preview: `${item.file_kind} artifact`, section_kinds: [], source_ref_ids: [], warnings: [] })), total_size_bytes: event.total_size_bytes, consumption_status: "not_delivered", written_at: event.written_at, written_by: event.written_by, refresh_hash: event.refresh_hash, recommended_commands: [{ label: "Show refresh", command: `/opencode-context-refresh-show ${event.refresh_id}`, command_type: "read" }], ...safetyFlags() }) as OpenCodeContextRefreshResult }
+function resultFromEvent(event: Record<string, any>): OpenCodeContextRefreshResult { return redactValue({ refresh_id: event.refresh_id, status: "written", packet_id: event.packet_id, packet_hash: event.packet_hash, packet_kind: event.packet_kind, continuity_mode: event.continuity_mode, source_session_id: event.source_session_id, target_session_id: event.target_session_id, launch_id: event.source_launch_id, native_session_id: event.source_native_session_id, base_pack_id: event.base_pack_id, base_pack_hash: event.base_pack_hash, previous_refresh_id: event.previous_refresh_id, delta: { delta_kind: event.delta_kind, previous_refresh_id: event.previous_refresh_id, previous_packet_hash: event.previous_packet_hash, changed_section_kinds: event.changed_section_kinds ?? [], new_progress_ids: event.new_progress_ids ?? [], new_question_ids: event.new_question_ids ?? [], new_guidance_ids: event.new_guidance_ids ?? [], new_delivery_ids: event.new_delivery_ids ?? [], new_human_control_ids: event.new_human_control_ids ?? [], new_watchdog_ids: event.new_watchdog_ids ?? [], new_wake_execution_ids: event.new_wake_execution_ids ?? [], new_wake_action_ids: event.new_wake_action_ids ?? [], new_result_report_ids: event.new_result_report_ids ?? [], new_result_review_ids: event.new_result_review_ids ?? [], new_research_ingestion_ids: event.new_research_ingestion_ids ?? [], new_research_memory_ids: event.new_research_memory_ids ?? [], summary_preview: event.delta_kind === "initial_snapshot" ? "initial bounded tactical snapshot" : "bounded incremental delta", delta_hash: event.delta_hash }, target_dir: dirname(String(event.files?.[0]?.relative_path ?? "")), files: (event.files ?? []).map((item: any) => ({ ...item, would_write: false, summary_preview: `${item.file_kind} artifact`, section_kinds: [], source_ref_ids: [], warnings: [] })), total_size_bytes: event.total_size_bytes, consumption_status: "not_delivered", written_at: event.written_at, written_by: event.written_by, refresh_hash: event.refresh_hash, recommended_commands: [{ label: "Show refresh", command: `/opencode-context-refresh-show ${event.refresh_id}`, command_type: "read" }], ...safetyFlags() }) as OpenCodeContextRefreshResult }
 function snapshotFromEvent(event: Record<string, any>): PreviousRefreshSnapshot { return { refresh_id: event.refresh_id, packet_hash: event.packet_hash, refresh_hash: event.refresh_hash, target_session_id: event.target_session_id, continuity_mode: event.continuity_mode, source_refs: (event.source_refs ?? []).slice(0, 48), section_hashes: event.section_hashes, base_pack_hash: event.base_pack_hash, budget_id: event.budget_id } }
 export async function validateContextRefreshTarget(projectDir: string, target: string): Promise<string | undefined> {
   const projectRoot = resolve(projectDir)
