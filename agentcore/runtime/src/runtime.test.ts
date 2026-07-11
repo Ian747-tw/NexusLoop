@@ -41,6 +41,8 @@ import { OpenCodeSessionInstructionPackService } from "./opencode-session/openco
 import { ProcessOpenCodeLaunchAdapter } from "./opencode-session/opencode-native-launch-adapter"
 import { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-supervisor-service"
 import { OpenCodeWakeSupervisorExecutionService } from "./opencode-session/opencode-wake-supervisor-execution-service"
+import { buildContinuityDelta, continuitySectionHash, type PreviousRefreshSnapshot } from "./opencode-session/opencode-session-continuity-service"
+import type { OpenCodeContinuitySection, OpenCodeContinuitySourceRef } from "./opencode-session/opencode-session-continuity-types"
 import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
@@ -23886,6 +23888,20 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(reader.command("runtime.commander_target_context", { targetType: "proposal", targetId: proposal.proposal_id })).resolves.toMatchObject({ found: true })
   })
 
+  test("OpenCode continuity delta tracks status-only changes for durable source refs", () => {
+    const pendingRef: OpenCodeContinuitySourceRef = { source_kind: "commander_question", source_id: "question_same", status: "pending", summary_preview: "waiting for bounded answer", pointer_only: true }
+    const answeredRef: OpenCodeContinuitySourceRef = { ...pendingRef, status: "answered", summary_preview: "bounded answer recorded" }
+    const pendingSection: OpenCodeContinuitySection = { section_id: "section_question", section_kind: "pending_questions", status: "included", priority: "high", summary_preview: "one pending question", item_count: 1, omitted_count: 0, estimated_tokens: 4, estimated_bytes: 16, source_refs: [pendingRef], warnings: [] }
+    const answeredSection: OpenCodeContinuitySection = { ...pendingSection, summary_preview: "question answered", source_refs: [answeredRef] }
+    const previous: PreviousRefreshSnapshot = { refresh_id: "refresh_previous", packet_hash: "packet_previous", refresh_hash: "refresh_hash_previous", target_session_id: "session_same", continuity_mode: "active_refresh", source_refs: [pendingRef], section_hashes: { pending_questions: continuitySectionHash(pendingSection) } }
+
+    const delta = buildContinuityDelta([answeredRef], [answeredSection], previous)
+
+    expect(delta.new_question_ids).toEqual([])
+    expect(delta.changed_section_kinds).toEqual(["pending_questions"])
+    expect(delta.summary_preview).not.toBe("no substantive continuity delta")
+  })
+
   test("OpenCode context refresh writes immutable snapshot plus delta artifacts without delivery side effects", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -23959,6 +23975,10 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(client.command("runtime.write_opencode_context_refresh", { sessionId, dryRun: true })).resolves.toMatchObject({ status: "dry_run" })
     await expect(client.command("runtime.list_opencode_context_refreshes", { sessionId })).resolves.toHaveLength(2)
     expect(noStartAdapter.startCalls).toBe(0)
+    const refreshEvents = (await noStartServer.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")
+    const appendedLast = { ...refreshEvents.at(-1)!, refresh_id: "refresh_same_timestamp_later", packet_id: "packet_same_timestamp_later", refresh_hash: "hash_same_timestamp_later", written_at: refreshEvents.at(-1)!.written_at }
+    await noStartServer.eventStore.append(appendedLast)
+    await expect(client.command("runtime.latest_opencode_context_refresh", { sessionId })).resolves.toMatchObject({ refresh_id: "refresh_same_timestamp_later" })
     await client.shutdown()
   })
 })

@@ -13,7 +13,7 @@ import type {
   OpenCodeContextRefreshWriteInput,
 } from "./opencode-context-refresh-types"
 import type { OpenCodeContinuationPacket, OpenCodeContinuitySafetyFlags, OpenCodeSessionContinuityPacket } from "./opencode-session-continuity-types"
-import type { OpenCodeSessionContinuityService, PreviousRefreshSnapshot } from "./opencode-session-continuity-service"
+import { continuitySectionHash, type OpenCodeSessionContinuityService, type PreviousRefreshSnapshot } from "./opencode-session-continuity-service"
 
 export const OPENCODE_CONTEXT_REFRESH_EVENT_KIND = "opencode_session_context_refresh_written"
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._-]+$/
@@ -97,7 +97,7 @@ export class OpenCodeContextRefreshService {
         delta_hash: packet.delta.delta_hash,
         changed_section_kinds: packet.delta.changed_section_kinds,
         source_refs: packet.source_refs.slice(0, 48),
-        section_hashes: Object.fromEntries(packet.sections.map((item) => [item.section_kind, hash(stableJson({ status: item.status, summary: item.summary_preview, refs: item.source_refs.map((ref) => ref.source_id) }))])),
+        section_hashes: Object.fromEntries(packet.sections.map((item) => [item.section_kind, continuitySectionHash(item)])),
         omitted_sections: packet.budget.omitted_sections,
         files: rebuilt.files.map(({ file_kind, relative_path, size_bytes, sha256 }) => ({ file_kind, relative_path, size_bytes, sha256 })),
         total_size_bytes: rebuilt.preview.total_size_bytes,
@@ -120,8 +120,9 @@ export class OpenCodeContextRefreshService {
     return (await this.events())
       .filter((item) => !input.session_id || item.target_session_id === input.session_id)
       .filter((item) => !input.continuity_mode || item.continuity_mode === input.continuity_mode)
-      .map(recordFromEvent)
-      .sort((a, b) => b.written_at.localeCompare(a.written_at))
+      .map((item, appendOrder) => ({ record: recordFromEvent(item), appendOrder }))
+      .sort((a, b) => b.record.written_at.localeCompare(a.record.written_at) || b.appendOrder - a.appendOrder)
+      .map((item) => item.record)
       .slice(0, limit)
   }
 
@@ -157,7 +158,7 @@ export class OpenCodeContextRefreshService {
   }
 
   async latestSnapshot(sessionId: string): Promise<PreviousRefreshSnapshot | null> {
-    const event = (await this.events()).filter((item) => item.target_session_id === sessionId).sort((a, b) => String(b.written_at).localeCompare(String(a.written_at)))[0]
+    const event = (await this.events()).filter((item) => item.target_session_id === sessionId).at(-1)
     return event ? snapshotFromEvent(event) : null
   }
 

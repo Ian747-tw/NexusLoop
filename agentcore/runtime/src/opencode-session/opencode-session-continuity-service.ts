@@ -224,7 +224,7 @@ export class OpenCodeSessionContinuityService {
     if (previous.error) blockers.push(previous.error)
     const sections = executorSections(base, mid, refs, mode, includeResearchAuto)
     const budget = applyBudget(sections, budgetPreview.budget)
-    const delta = buildDelta(refs, sections, previous.snapshot)
+    const delta = buildContinuityDelta(refs, sections, previous.snapshot)
     const humanBlocked = mid.open_loops.some((loop) => loop.loop_kind === "human_stop" || loop.loop_kind === "human_pause")
     const readiness = blockers.length ? "blocked" : humanBlocked ? "needs_human_review" : base.launch?.native_session_id ? "ready_for_artifact" : "needs_native_session_id"
     const packetHash = hash(stableJson({ session: base.sessionId, launch: base.launch?.launch_id, pack: base.pack?.pack_hash, refs: refs.map((item) => [item.source_kind, item.source_id, item.status]), delta: delta.delta_hash, sections: sections.map((item) => [item.section_kind, item.summary_preview]), budget: budget.budget_id }))
@@ -339,21 +339,31 @@ function applyBudget(sections: OpenCodeContinuitySection[], profile: any): OpenC
   return { budget_id: profile.budget_id, provider_kind: profile.provider_kind, model_id: profile.model_id, max_context_tokens: maxTokens, max_context_bytes: maxBytes, max_output_tokens: profile.max_output_tokens, safety_margin_tokens: profile.safety_margin_tokens, safety_margin_bytes: profile.safety_margin_bytes, target_input_tokens: maxTokens ? Math.max(0, maxTokens - (profile.max_output_tokens ?? 0) - (profile.safety_margin_tokens ?? 0)) : undefined, estimated_input_tokens: estimatedTokens, estimated_input_bytes: estimatedBytes, over_budget: Boolean((maxTokens && estimatedTokens > maxTokens) || (maxBytes && estimatedBytes > maxBytes)), section_budgets: sectionBudgets, omitted_sections: omitted, truncation_warnings: warnings }
 }
 
-function buildDelta(refs: OpenCodeContinuitySourceRef[], sections: OpenCodeContinuitySection[], previous: PreviousRefreshSnapshot | null): OpenCodeContinuityDelta {
+export function buildContinuityDelta(refs: OpenCodeContinuitySourceRef[], sections: OpenCodeContinuitySection[], previous: PreviousRefreshSnapshot | null): OpenCodeContinuityDelta {
   const previousKeys = new Set((previous?.source_refs ?? []).map((item) => `${item.source_kind}:${item.source_id}`))
   const newRefs = refs.filter((item) => !previousKeys.has(`${item.source_kind}:${item.source_id}`))
   const ids = (kind: string) => newRefs.filter((item) => item.source_kind === kind).map((item) => item.source_id).slice(0, MAX_DELTA_IDS)
-  const changed = previous ? sections.filter((item) => item.status !== "excluded" && item.source_refs.some((ref) => newRefs.includes(ref))).map((item) => item.section_kind) : sections.filter((item) => item.status === "included").map((item) => item.section_kind)
-  const payload = { previous: previous?.refresh_id, refs: newRefs.map((item) => [item.source_kind, item.source_id]), changed }
+  const changed = previous
+    ? sections.filter((item) => item.status !== "excluded" && previous.section_hashes?.[item.section_kind] !== continuitySectionHash(item)).map((item) => item.section_kind)
+    : sections.filter((item) => item.status === "included").map((item) => item.section_kind)
+  const payload = { previous: previous?.refresh_id, refs: newRefs.map((item) => [item.source_kind, item.source_id]), changed, section_hashes: Object.fromEntries(sections.map((item) => [item.section_kind, continuitySectionHash(item)])) }
   return {
     delta_kind: previous ? "incremental" : "initial_snapshot",
     previous_refresh_id: previous?.refresh_id,
     previous_packet_hash: previous?.packet_hash,
     changed_section_kinds: unique(changed).slice(0, 20),
     new_progress_ids: ids("opencode_progress"), new_question_ids: ids("commander_question"), new_guidance_ids: ids("commander_guidance"), new_delivery_ids: ids("guidance_delivery"), new_human_control_ids: ids("human_control"), new_watchdog_ids: ids("opencode_watchdog"), new_wake_execution_ids: ids("wake_supervisor_execution"), new_wake_action_ids: ids("wake_action_execution"), new_result_report_ids: ids("result_report"), new_result_review_ids: ids("result_review"), new_research_ingestion_ids: ids("research_ingestion"), new_research_memory_ids: ids("research_memory"),
-    summary_preview: newRefs.length ? `${newRefs.length} new durable source refs across ${unique(changed).length} changed sections` : previous ? "no substantive continuity delta" : "initial bounded tactical snapshot",
+    summary_preview: newRefs.length || changed.length ? `${newRefs.length} new durable source refs across ${unique(changed).length} changed sections` : previous ? "no substantive continuity delta" : "initial bounded tactical snapshot",
     delta_hash: hash(stableJson(payload)),
   }
+}
+
+export function continuitySectionHash(section: OpenCodeContinuitySection): string {
+  return hash(stableJson({
+    status: section.status,
+    summary: section.summary_preview,
+    refs: section.source_refs.map((ref) => [ref.source_kind, ref.source_id, ref.status, ref.label, ref.summary_preview]),
+  }))
 }
 
 function continuityCommands(sessionId: string) { return [
