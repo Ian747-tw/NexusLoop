@@ -24011,6 +24011,8 @@ describe("ProcessOpenCodeAdapter", () => {
     const checkpoint = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "resume_from_checkpoint", checkpoint: "checkpoint-1", reason: "inspect only" }) as Record<string, any>
     expect(checkpoint).toMatchObject({ status: "blocked", continuity_readiness: "needs_checkpoint_binding", native_session_action_performed: false })
     expect(checkpoint.blockers).toContain("checkpoint-to-OpenCode continuity binding is future 9W/9X work")
+    const unboundFork = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "fork_from_session", reason: "select target later" }) as Record<string, any>
+    expect(unboundFork).toMatchObject({ status: "ready", continuity_readiness: "needs_target_session", source_session_id: sessionId, target_session_id: undefined, target_base_pack_id: undefined, target_base_pack_hash: undefined })
     const targetSession = await server.command("runtime.create_opencode_session_plan", { objective: "fork continuity target", successCriteria: ["retain bounded lineage"], constraints: ["no native fork"] }) as { session_id: string }
     await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: targetSession.session_id, providerKind: "local", modelId: "local-medium" })
     const invalidSameSessionTarget = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "continue_same_session", continuation_reason: "must remain on source" }) as Record<string, any>

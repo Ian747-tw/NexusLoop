@@ -90,7 +90,7 @@ export class OpenCodeSessionContinuityService {
       blockers.push("checkpoint-to-OpenCode continuity binding is future 9W/9X work")
       warnings.push("checkpoint contents were not read or restored")
     }
-    let targetPack = base.pack
+    let targetPack = mode === "fork_from_session" ? null : base.pack
     if (mode === "fork_from_session") {
       if (!targetSessionId) warnings.push("target_session_id is required for a non-dry fork refresh write")
       if (targetSessionId && targetSessionId === sourceSessionId) blockers.push("fork target_session_id must differ from source_session_id")
