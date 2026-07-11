@@ -69,13 +69,16 @@ export class OpenCodeSessionContinuityService {
   async continuation(input: OpenCodeContinuationInput = {}): Promise<OpenCodeContinuationPacket> {
     const mode = readMode(input.continuity_mode)
     const sourceSessionId = bound(input.source_session_id ?? "", 120)
-    const targetSessionId = mode === "fork_from_session" ? bound(input.target_session_id ?? "", 120) : bound(input.target_session_id ?? sourceSessionId, 120)
+    const requestedTargetSessionId = bound(input.target_session_id ?? "", 120)
+    const sameSessionMode = mode === "continue_same_session" || mode === "patch_session"
+    const targetSessionId = mode === "fork_from_session" ? requestedTargetSessionId : sameSessionMode ? sourceSessionId : bound(requestedTargetSessionId || sourceSessionId, 120)
     const base = await this.resolveBase(sourceSessionId, input.source_launch_id)
     const blockers = [...base.blockers]
     const warnings = [...base.warnings]
     if (!sourceSessionId) blockers.push("source_session_id is required")
     if (input.continuity_mode && !["continue_same_session", "fork_from_session", "patch_session", "resume_from_checkpoint"].includes(input.continuity_mode)) blockers.push("continuity_mode is unsupported")
     if (!input.continuity_mode || input.continuity_mode === "active_refresh") blockers.push("continuation_mode must be continue_same_session, fork_from_session, patch_session, or resume_from_checkpoint")
+    if (sameSessionMode && requestedTargetSessionId && requestedTargetSessionId !== sourceSessionId) blockers.push(`${mode} target_session_id must match source_session_id`)
     const reason = bound(input.continuation_reason ?? input.patch_reason ?? input.fork_reason ?? "")
     if (mode === "continue_same_session" && !reason) blockers.push("continuation_reason is required")
     if (mode === "patch_session" && !bound(input.patch_reason ?? "")) blockers.push("patch_reason is required")

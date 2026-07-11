@@ -23967,6 +23967,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(checkpoint.blockers).toContain("checkpoint-to-OpenCode continuity binding is future 9W/9X work")
     const targetSession = await server.command("runtime.create_opencode_session_plan", { objective: "fork continuity target", successCriteria: ["retain bounded lineage"], constraints: ["no native fork"] }) as { session_id: string }
     await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: targetSession.session_id, providerKind: "local", modelId: "local-medium" })
+    const invalidSameSessionTarget = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "continue_same_session", continuation_reason: "must remain on source" }) as Record<string, any>
+    expect(invalidSameSessionTarget).toMatchObject({ status: "blocked", source_session_id: sessionId, target_session_id: sessionId })
+    expect(invalidSameSessionTarget.error).toContain("continue_same_session target_session_id must match source_session_id")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(2)
     const forkWritten = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent", previousRefresh: second.refresh_id }) as Record<string, any>
     expect(forkWritten).toMatchObject({ status: "written", packet_kind: "continuation", continuity_mode: "fork_from_session", source_session_id: sessionId, target_session_id: targetSession.session_id })
     expect(forkWritten.refresh_id).not.toBe(second.refresh_id)
