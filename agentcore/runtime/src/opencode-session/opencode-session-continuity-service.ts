@@ -127,7 +127,18 @@ export class OpenCodeSessionContinuityService {
         `discard=${boundedArray(input.discard).join(", ") || "raw history"}`,
       ].join("; "), [], []),
     ]
-    const packetHash = hash(stableJson({ mode, sourceSessionId, targetSessionId, reason, checkpoint: input.checkpoint_id, source: packet.packet_hash, targetPack: targetPack?.pack_hash }))
+    const packetHash = hash(stableJson({
+      mode,
+      sourceSessionId,
+      targetSessionId,
+      reason,
+      checkpoint: input.checkpoint_id,
+      preserve: boundedArray(input.preserve),
+      discard: boundedArray(input.discard),
+      objective_delta: bound(input.objective_delta ?? ""),
+      source: packet.packet_hash,
+      targetPack: targetPack?.pack_hash,
+    }))
     return redactValue({
       packet_id: `opencode_continuation_${packetHash.slice(0, 20)}`,
       packet_kind: "continuation",

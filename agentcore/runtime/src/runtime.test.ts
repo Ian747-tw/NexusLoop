@@ -43,7 +43,7 @@ import { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-
 import { OpenCodeWakeSupervisorExecutionService } from "./opencode-session/opencode-wake-supervisor-execution-service"
 import { buildContinuityDelta, continuitySectionHash, type PreviousRefreshSnapshot } from "./opencode-session/opencode-session-continuity-service"
 import type { OpenCodeContinuitySection, OpenCodeContinuitySourceRef } from "./opencode-session/opencode-session-continuity-types"
-import { validateContextRefreshTarget } from "./opencode-session/opencode-context-refresh-service"
+import { readOpenCodeContextRefreshWriteInput, validateContextRefreshTarget } from "./opencode-session/opencode-context-refresh-service"
 import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
 import type { CommanderProposal, CommanderProposalInput } from "./missions/proposal-types"
@@ -23903,6 +23903,11 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(delta.summary_preview).not.toBe("no substantive continuity delta")
   })
 
+  test("OpenCode context refresh parser honors snake-case research memory mode", () => {
+    expect(readOpenCodeContextRefreshWriteInput({ research_memory_mode: "include" }).research_memory_mode).toBe("include")
+    expect(readOpenCodeContextRefreshWriteInput({ research_memory_mode: "omit" }).research_memory_mode).toBe("omit")
+  })
+
   test("OpenCode context refresh writes immutable snapshot plus delta artifacts without delivery side effects", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -23975,6 +23980,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(forkWritten).toMatchObject({ status: "written", packet_kind: "continuation", continuity_mode: "fork_from_session", source_session_id: sessionId, target_session_id: targetSession.session_id })
     expect(forkWritten.refresh_id).not.toBe(second.refresh_id)
     expect(existsSync(join(dir, forkWritten.target_dir, "CONTEXT_REFRESH.md"))).toBe(true)
+    const revisedFork = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent", previousRefresh: second.refresh_id, preserve: ["latest tests"], discard: ["superseded attempt"] }) as Record<string, any>
+    expect(revisedFork).toMatchObject({ status: "written", target_session_id: targetSession.session_id })
+    expect(revisedFork.packet_hash).not.toBe(forkWritten.packet_hash)
+    expect(revisedFork.refresh_id).not.toBe(forkWritten.refresh_id)
     await server.shutdown()
 
     const noStartAdapter = new LongLivedAdapter()
@@ -23992,7 +24001,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await noStartServer.eventStore.append(appendedLast)
     await expect(client.command("runtime.latest_opencode_context_refresh", { sessionId })).resolves.toMatchObject({ refresh_id: "refresh_same_timestamp_later" })
     for (let index = 0; index < 101; index += 1) await noStartServer.eventStore.append({ ...appendedLast, refresh_id: `refresh_summary_${index}`, packet_id: `packet_summary_${index}`, refresh_hash: `hash_summary_${index}` })
-    await expect(client.command("runtime.opencode_context_refresh_summary", { limit: 5 })).resolves.toMatchObject({ total_refreshes: 105, not_delivered_count: 105, latest_refreshes: expect.any(Array) })
+    await expect(client.command("runtime.opencode_context_refresh_summary", { limit: 5 })).resolves.toMatchObject({ total_refreshes: 106, not_delivered_count: 106, latest_refreshes: expect.any(Array) })
     expect(((await client.command("runtime.opencode_context_refresh_summary", { limit: 5 })) as Record<string, any>).latest_refreshes).toHaveLength(5)
     await client.shutdown()
 
