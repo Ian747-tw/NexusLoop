@@ -45,6 +45,11 @@ export type ResearchMemoryCandidate = {
   related_event_ids: string[]
   relevance_score: number
   duplicate_similarity_score: number
+  rank_source?: "fts" | "lexical" | "hybrid"
+  fts_score?: number
+  lexical_score?: number
+  filter_explanation_preview?: string
+  search_engine_used?: "hybrid_fts_lexical" | "bounded_lexical"
   matched_terms: string[]
   unmatched_query_terms: string[]
   matched_fields: string[]
@@ -124,13 +129,19 @@ export type ResearchMemorySearchProfile = {
   status: "ready" | "degraded" | "blocked"
   retrieval_policy: ResearchMemoryRetrievalPolicy
   has_research_db_projection: boolean
-  search_engine: "bounded_lexical"
+  search_engine: "bounded_lexical" | "hybrid_fts_lexical"
   semantic_search_enabled: false
   vector_index_enabled: false
-  fts_index_enabled: false
+  fts_index_enabled: boolean
+  fts_available?: boolean
+  fts_fallback_reason?: string
+  embedding_search_enabled?: false
+  provider_rerank_enabled?: false
   scan_limit: number
   default_limit: number
   max_limit: number
+  indexed_field_count?: number
+  indexed_result_count?: number
   supported_filters: string[]
   unsupported_filters: string[]
   source_counts: Record<string, number>

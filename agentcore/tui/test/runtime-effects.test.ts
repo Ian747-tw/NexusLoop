@@ -6412,13 +6412,16 @@ describe("runtime UI effects", () => {
     expect(state.researchMemory?.retrievalPreview?.candidates[0]).toMatchObject({
       pointer_only: true,
       matched_fields: expect.any(Array),
-      scoring_explanation_preview: expect.stringContaining("bounded lexical score"),
+      scoring_explanation_preview: expect.stringContaining("hybrid FTS+lexical score"),
+      rank_source: "hybrid",
+      search_engine_used: "hybrid_fts_lexical",
     })
     let snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("Research memory and novelty")
     expect(snapshot).toContain("retrieval=fake-research-memory")
     expect(snapshot).toContain("retrieval_candidates")
-    expect(snapshot).toContain("scoring=bounded lexical score")
+    expect(snapshot).toContain("rank_source=hybrid")
+    expect(snapshot).toContain("scoring=hybrid FTS+lexical score")
     expect(snapshot).toContain("fields=")
     expect(snapshot).toContain("refs=research_db:fake-finding-timeout")
     expect(snapshot).toContain("artifacts=fake-artifact-timeout")
@@ -6447,16 +6450,18 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-memory-profile", args: [] })
     expect(state.researchMemory?.searchProfile).toMatchObject({
-      search_engine: "bounded_lexical",
+      search_engine: "hybrid_fts_lexical",
       semantic_search_enabled: false,
       vector_index_enabled: false,
-      fts_index_enabled: false,
+      fts_index_enabled: true,
+      embedding_search_enabled: false,
     })
     snapshot = layoutSnapshot(state)
-    expect(snapshot).toContain("engine=bounded_lexical")
+    expect(snapshot).toContain("engine=hybrid_fts_lexical")
     expect(snapshot).toContain("semantic_search_enabled=false")
     expect(snapshot).toContain("vector_index_enabled=false")
-    expect(snapshot).toContain("fts_index_enabled=false")
+    expect(snapshot).toContain("embedding_search_enabled=false")
+    expect(snapshot).toContain("fts_index_enabled=true")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "research-novelty-preview", args: ["question=adapter", "timeout", "method=watchdog", "config=short-interval"] })
     expect(state.researchMemory?.noveltyPreview?.duplicate_risk).toBe("high")
@@ -6510,7 +6515,7 @@ describe("runtime UI effects", () => {
       calls_provider: false,
       mutates_events: false,
     })
-    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("bounded lexical")
+    expect(state.commandAuthority?.selected?.notes.join(" ")).toContain("hybrid FTS+lexical")
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "context-packet-preview", args: ["purpose=commander_research_decision"] })
     expect(state.contextPackets?.preview?.purpose).toBe("commander_research_decision")
@@ -6539,7 +6544,7 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-continuity-preview", args: ["objective=plan", "next", "continuity-safe", "research", "token=abc123"] })
     expect(state.commanderContinuity?.proposalPacket).toMatchObject({
       packet_kind: "proposal",
-      research_search_profile_summary: expect.stringContaining("bounded_lexical"),
+      research_search_profile_summary: expect.stringContaining("hybrid_fts_lexical"),
     })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-proposal-memory-packet", args: ["objective=plan", "next", "continuity-safe", "research", "token=abc123"] })
     expect(state.commanderContinuity?.proposalPacket?.packet_kind).toBe("proposal")
@@ -6560,7 +6565,7 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("Commander continuity")
     expect(snapshot).toContain("proposal_packet=fake-continuity-proposal")
     expect(snapshot).toContain("mid_mission_packet=fake-continuity-midmission")
-    expect(snapshot).toContain("search_profile=bounded_lexical")
+    expect(snapshot).toContain("search_profile=hybrid_fts_lexical")
     expect(snapshot).toContain("semantic_search_enabled=false")
     expect(snapshot).toContain("proposal_open_loops")
     expect(snapshot).toContain("human_correction")

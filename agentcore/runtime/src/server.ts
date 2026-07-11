@@ -272,6 +272,7 @@ export interface RuntimeResearchDbProjection extends RuntimeResearchDbReader {
   checkProjectionIntegrity(eventsPath?: string): ResearchProjectionIntegrity
   rebuildFromEvents(eventsPath?: string): void
   getProjectionStatus(): ResearchProjectionStatus
+  repairResearchResultsFtsProjectionIfNeeded?(): void
   getTopic(id: string): Topic | null
   addSource(input: Parameters<ExternalApiResearchDbWriter["addSource"]>[0]): ReturnType<ExternalApiResearchDbWriter["addSource"]>
   addNote(input: Parameters<ExternalApiResearchDbWriter["addNote"]>[0]): ReturnType<ExternalApiResearchDbWriter["addNote"]>
@@ -482,7 +483,7 @@ export class RuntimeServer {
     this.researchProjectionMode = options.researchProjectionMode ?? "auto_rebuild"
     this.researchDb = options.researchDb ?? null
     this.ownsResearchDb = options.researchDb === undefined
-    this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir))
+    this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir, { allowFtsProjectionRepair: this.runLock.isHeld() }))
     this.commanderQueueNow = options.commanderQueueNow
     this.researchProjectionHealth = {
       mode: this.researchProjectionMode,
@@ -3171,18 +3172,32 @@ export class RuntimeServer {
     }
 
     const integrity = this.checkResearchProjectionForStatus({ emit: true })
-    if (integrity.ok && !integrity.stale) return
+    if (integrity.ok && !integrity.stale) {
+      this.ensureResearchFtsProjectionWritable(operation)
+      return
+    }
     if (integrity.stale && this.researchProjectionMode === "auto_rebuild") {
       this.requireProjectionWriteLock(`research projection auto-rebuild during ${operation}`)
       this.rebuildProjection(operation)
       const rebuilt = this.checkResearchProjectionForStatus({ emit: true })
-      if (rebuilt.ok && !rebuilt.stale) return
+      if (rebuilt.ok && !rebuilt.stale) {
+        this.ensureResearchFtsProjectionWritable(operation)
+        return
+      }
       throw new Error(`research projection rebuild did not produce a usable projection: ${rebuilt.reason ?? "unknown"}`)
     }
 
     const reason = integrity.reason ?? (integrity.stale ? "stale" : "unknown")
     if (integrity.stale) throw new Error(`research projection stale: ${reason}`)
     throw new Error(`research projection corrupt: ${reason}`)
+  }
+
+  private ensureResearchFtsProjectionWritable(operation: "startup" | "read"): void {
+    if (operation !== "startup") return
+    const db = this.getResearchDb()
+    if (typeof db.repairResearchResultsFtsProjectionIfNeeded !== "function") return
+    this.requireProjectionWriteLock("research FTS projection repair during startup")
+    db.repairResearchResultsFtsProjectionIfNeeded()
   }
 
   private checkResearchProjectionForStatus(options: { emit?: boolean } = {}): ResearchProjectionIntegrity {
@@ -4380,6 +4395,8 @@ export class RuntimeServer {
       policy: "projection_read",
       getResearchResult: typeof db.getResearchResult === "function" ? db.getResearchResult.bind(db) : undefined,
       searchResearchResults: typeof db.searchResearchResults === "function" ? db.searchResearchResults.bind(db) : undefined,
+      searchResearchResultsFts: typeof db.searchResearchResultsFts === "function" ? db.searchResearchResultsFts.bind(db) : undefined,
+      researchResultsFtsStatus: typeof db.researchResultsFtsStatus === "function" ? db.researchResultsFtsStatus.bind(db) : undefined,
       listResultCitationPointers: typeof db.listResultCitationPointers === "function" ? db.listResultCitationPointers.bind(db) : undefined,
       listResultArtifactPointers: typeof db.listResultArtifactPointers === "function" ? db.listResultArtifactPointers.bind(db) : undefined,
       listResultCitations: typeof db.listResultCitations === "function" ? db.listResultCitations.bind(db) : undefined,

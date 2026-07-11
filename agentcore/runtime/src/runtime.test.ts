@@ -4,6 +4,7 @@ import { existsSync } from "node:fs"
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { Database } from "bun:sqlite"
 import { RuntimeServer } from "./server"
 import type { RuntimeResearchDbProjection } from "./server"
 import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv, readWakeSchedulerBootstrapConfigFromEnv } from "./launch-config"
@@ -55,6 +56,7 @@ import {
   type ResearchProjectionIntegrity,
   type ResearchProjectionStatus,
   type ResearchResult,
+  type SearchResearchResultsFtsOptions,
   type SearchOptions,
   type Topic,
   type TopicSnapshot,
@@ -17785,7 +17787,7 @@ describe("OpenCode launch readiness", () => {
     db.createTopic({ id: "topic_launch_gate", title: "Launch gate" })
     db.proposeResearchResult({
       result_id: "result_unrelated_launch_gate",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "adapter timeout watchdog",
       summary: "prior timeout watchdog result",
       confidence: "medium",
@@ -20799,7 +20801,7 @@ describe("OpenCode launch readiness", () => {
     db.createTopic({ id: "topic_launch_config", title: "Launch config" })
     db.proposeResearchResult({
       result_id: "result_launch_config",
-      result_type: "finding",
+      result_type: "implementation_change",
       title: "launch config env",
       summary: "prior launch config finding",
       confidence: "medium",
@@ -21081,9 +21083,275 @@ describe("OpenCode launch readiness", () => {
     await server.shutdown()
   })
 
+  test("read-only research memory commands do not repair inconsistent FTS without run lock", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, { appendEvents: true, allowFtsProjectionRepair: true, idFactory: () => "unused" })
+    db.proposeResearchResult({
+      result_id: "readonly_fts_runtime_result",
+      result_type: "implementation_change",
+      title: "readonly fts runtime fallback",
+      summary: "lexical fallback should still find this accepted result",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("readonly_fts_runtime_result")
+    const beforeMarker = db.researchResultsFtsStatus().rebuild_marker ?? null
+    db.close()
+
+    const sqlite = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      sqlite.query("DELETE FROM research_results_fts WHERE result_id = ?").run("readonly_fts_runtime_result")
+    } finally {
+      sqlite.close()
+    }
+    const beforeEvents = await readJsonlEvents(dir)
+    const beforeRowsDb = new Database(join(dir, ".nxl", "research.db"))
+    const damagedRows = beforeRowsDb.query("SELECT rowid, result_id FROM research_results_fts ORDER BY result_id").all()
+    beforeRowsDb.close()
+
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+    const search = await server.command("runtime.preview_research_memory_retrieval", { query: "readonly fts runtime fallback", limit: 10 }) as { status: string; candidates: Array<{ result_id: string }>; warnings: string[] }
+    expect(search.status).toBe("ready")
+    expect(search.candidates.map((candidate) => candidate.result_id)).toContain("readonly_fts_runtime_result")
+    expect(search.warnings.join(" ")).toContain("FTS")
+    expect(search.warnings.join(" ")).toContain("bounded lexical fallback")
+    const profile = await server.command("runtime.research_memory_search_profile") as { fts_index_enabled: boolean; search_engine: string; warnings: string[] }
+    expect(profile.fts_index_enabled).toBe(false)
+    expect(profile.search_engine).toBe("bounded_lexical")
+    expect(profile.warnings.join(" ")).toContain("bounded lexical fallback")
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+
+    await server.start()
+    const startedProfile = await server.command("runtime.research_memory_search_profile") as { fts_index_enabled: boolean; search_engine: string }
+    expect(startedProfile.fts_index_enabled).toBe(true)
+    expect(startedProfile.search_engine).toBe("hybrid_fts_lexical")
+    await server.shutdown()
+
+    const after = new Database(join(dir, ".nxl", "research.db"))
+    try {
+      expect(after.query("SELECT rowid, result_id FROM research_results_fts ORDER BY result_id").all()).not.toEqual(damagedRows)
+      expect(after.query("SELECT result_id FROM research_results_fts ORDER BY result_id").all()).toEqual([{ result_id: "readonly_fts_runtime_result" }])
+      const projection = after
+        .query("SELECT rebuilt_at FROM research_projection WHERE projection_name = ?")
+        .get("research_results_fts") as { rebuilt_at: string | null } | null
+      expect(projection?.rebuilt_at ?? null).not.toBe(beforeMarker)
+    } finally {
+      after.close()
+    }
+  })
+
+  test("read-only research memory commands do not create missing FTS table without run lock", async () => {
+    const dir = await tempProject()
+    const db = ResearchDb.open(dir, { appendEvents: true, allowFtsProjectionRepair: true, idFactory: () => "unused" })
+    db.proposeResearchResult({
+      result_id: "readonly_missing_fts_runtime_result",
+      result_type: "implementation_change",
+      title: "readonly missing fts runtime fallback",
+      summary: "lexical fallback should find this accepted result before FTS creation",
+      confidence: "high",
+      created_by: "commander",
+    })
+    db.acceptResearchResult("readonly_missing_fts_runtime_result")
+    db.close()
+
+    const dbPath = join(dir, ".nxl", "research.db")
+    const sqlite = new Database(dbPath)
+    try {
+      sqlite.exec("DROP TABLE research_results_fts")
+      sqlite.query("DELETE FROM research_projection WHERE projection_name = ?").run("research_results_fts")
+    } finally {
+      sqlite.close()
+    }
+    const beforeEvents = await readJsonlEvents(dir)
+
+    const server = new RuntimeServer({ projectDir: dir, mode: "status", adapter: new LongLivedAdapter(), researchProjectionMode: "check_only" })
+    const search = await server.command("runtime.preview_research_memory_retrieval", { query: "readonly missing fts runtime fallback", limit: 10 }) as { status: string; candidates: Array<{ result_id: string }>; warnings: string[] }
+    expect(search.status).toBe("ready")
+    expect(search.candidates.map((candidate) => candidate.result_id)).toContain("readonly_missing_fts_runtime_result")
+    expect(search.warnings.join(" ")).toContain("FTS")
+    expect(await readJsonlEvents(dir)).toEqual(beforeEvents)
+
+    const readOnlyDb = new Database(dbPath)
+    try {
+      expect(readOnlyDb.query("SELECT name FROM sqlite_master WHERE name = 'research_results_fts'").get()).toBeNull()
+    } finally {
+      readOnlyDb.close()
+    }
+
+    await server.start()
+    const startedProfile = await server.command("runtime.research_memory_search_profile") as { fts_index_enabled: boolean; search_engine: string }
+    expect(startedProfile.fts_index_enabled).toBe(true)
+    expect(startedProfile.search_engine).toBe("hybrid_fts_lexical")
+    await server.shutdown()
+
+    const repaired = new Database(dbPath)
+    try {
+      expect(repaired.query("SELECT result_id FROM research_results_fts ORDER BY result_id").all()).toEqual([
+        { result_id: "readonly_missing_fts_runtime_result" },
+      ])
+    } finally {
+      repaired.close()
+    }
+  })
+
+  test("hybrid research memory retrieval aligns failure filters on FTS-only candidates", () => {
+    const result = (input: Partial<ResearchResult> & Pick<ResearchResult, "result_id" | "result_type" | "title" | "summary">): ResearchResult => ({
+      label: null,
+      status: "accepted",
+      confidence: "high",
+      mission_id: null,
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      training_run_id: null,
+      metrics: null,
+      reproduction: null,
+      created_by: "commander",
+      created_at: "2026-06-29T00:00:00.000Z",
+      updated_at: "2026-06-29T00:00:00.000Z",
+      ...input,
+    })
+    const ftsOnlyFinding = result({
+      result_id: "hybrid_failure_filter_valid_finding",
+      result_type: "implementation_change",
+      label: "finding",
+      title: "hybridfailurecap valid finding",
+      summary: "hybridfailurecap older valid finding should survive pre-limit failure filtering",
+    })
+    const ftsOnlyStatus = result({
+      result_id: "hybrid_status_note_target",
+      result_type: "implementation_change",
+      label: "status update",
+      title: "hybridstatusnote status update",
+      summary: "derived status note should survive pre-limit evidence filtering",
+    })
+    const ftsOnlyMetric = result({
+      result_id: "hybrid_metric_observation_target",
+      result_type: "evaluation_result",
+      label: "trial",
+      title: "hybridmetricobservation evaluation metrics",
+      summary: "typed metric observation should survive post-merge evidence filtering",
+      metrics: { accuracy: 0.91 },
+    })
+    const derivedFailures = [
+      result({ result_id: "hybrid_failure_label_failed", result_type: "implementation_change", label: "failed experiment", title: "hybridderivedfailure failed experiment", summary: "derived failure label" }),
+      result({ result_id: "hybrid_failure_label_bug", result_type: "implementation_change", label: "bug regression", title: "hybridderivedfailure bug regression", summary: "derived failure label" }),
+      result({ result_id: "hybrid_failure_label_rejected", result_type: "implementation_change", label: "rejected approach", title: "hybridderivedfailure rejected approach", summary: "derived failure label" }),
+      result({ result_id: "hybrid_failure_type_negative", result_type: "negative_finding", title: "hybridderivedfailure negative finding", summary: "derived failure type" }),
+      result({ result_id: "hybrid_failure_type_bug", result_type: "bug_diagnosis", title: "hybridderivedfailure bug diagnosis", summary: "derived failure type" }),
+    ]
+    const ftsCalls: SearchResearchResultsFtsOptions[] = []
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        researchResultsFtsStatus: () => ({ available: true, indexed_result_count: 6, indexed_field_count: 6 }),
+        searchResearchResults: () => [],
+        searchResearchResultsFts: (options) => {
+          ftsCalls.push(options)
+          if (options.query === "hybridfailurecap" && options.include_failures === false) return [{ ...ftsOnlyFinding, fts_score: 1 }]
+          if (options.query === "hybridstatusnote" && options.evidence_kind === "status_note") return [{ ...ftsOnlyStatus, fts_score: 1 }]
+          if (options.query === "hybridmetricobservation" && options.evidence_kind === "metric_observation") return [{ ...ftsOnlyMetric, fts_score: 1 }]
+          if (options.query === "hybridderivedfailure" && options.labels?.includes("failure") && options.include_failures === false) return []
+          if (options.query === "hybridderivedfailure" && options.labels?.includes("failure")) return derivedFailures.map((item, index) => ({ ...item, fts_score: 1 - index / 10 }))
+          return []
+        },
+      }),
+    })
+
+    const nonFailure = service.preview({
+      query: "hybridfailurecap",
+      include_failures: false,
+      limit: 5,
+    })
+    expect(nonFailure.status).toBe("ready")
+    expect(nonFailure.candidates.map((candidate) => candidate.result_id)).toEqual(["hybrid_failure_filter_valid_finding"])
+    expect(nonFailure.candidates[0]?.rank_source).toMatch(/fts|hybrid/)
+    expect(nonFailure.candidates[0]?.fts_score).toEqual(expect.any(Number))
+    expect(nonFailure.candidates[0]?.lexical_score).toEqual(expect.any(Number))
+    expect(nonFailure.candidates[0]?.matched_terms).toContain("hybridfailurecap")
+    expect(nonFailure.candidates[0]?.matched_fields.length).toBeGreaterThan(0)
+    expect(nonFailure.candidates[0]?.scoring_explanation_preview).toContain("score")
+    expect(nonFailure.candidates[0]?.pointer_only).toBe(true)
+    expect(ftsCalls[0]).toMatchObject({ query: "hybridfailurecap", include_failures: false })
+
+    const statusNote = service.preview({
+      query: "hybridstatusnote",
+      evidence_kind: "status_note",
+      limit: 5,
+    })
+    expect(statusNote.status).toBe("ready")
+    expect(statusNote.candidates).toEqual([expect.objectContaining({
+      result_id: "hybrid_status_note_target",
+      evidence_kind_preview: "status_note",
+      rank_source: expect.stringMatching(/fts|hybrid/),
+      pointer_only: true,
+    })])
+    expect(statusNote.candidates[0]?.fts_score).toEqual(expect.any(Number))
+    expect(statusNote.candidates[0]?.matched_terms).toContain("hybridstatusnote")
+    expect(ftsCalls[1]).toMatchObject({ query: "hybridstatusnote", evidence_kind: "status_note" })
+
+    const metricObservation = service.preview({
+      query: "hybridmetricobservation",
+      evidence_kind: "metric_observation",
+      limit: 5,
+    })
+    expect(metricObservation.status).toBe("ready")
+    expect(metricObservation.candidates).toEqual([expect.objectContaining({
+      result_id: "hybrid_metric_observation_target",
+      method_preview: "evaluation_result",
+      rank_source: expect.stringMatching(/fts|hybrid/),
+      pointer_only: true,
+    })])
+    expect(metricObservation.candidates[0]?.fts_score).toEqual(expect.any(Number))
+    expect(metricObservation.candidates[0]?.lexical_score).toEqual(expect.any(Number))
+    expect(metricObservation.candidates[0]?.matched_terms).toContain("hybridmetricobservation")
+    expect(ftsCalls[2]).toMatchObject({ query: "hybridmetricobservation", evidence_kind: "metric_observation" })
+
+    const failures = service.preview({
+      query: "hybridderivedfailure",
+      labels: ["failure"],
+      limit: 10,
+    })
+    expect(failures.status).toBe("ready")
+    expect(failures.candidates.map((candidate) => candidate.result_id).sort()).toEqual([
+      "hybrid_failure_label_bug",
+      "hybrid_failure_label_failed",
+      "hybrid_failure_label_rejected",
+      "hybrid_failure_type_bug",
+      "hybrid_failure_type_negative",
+    ])
+    expect(failures.candidates.every((candidate) => candidate.label === "failure")).toBe(true)
+    expect(failures.candidates.every((candidate) => candidate.pointer_only)).toBe(true)
+    expect(failures.candidates.every((candidate) => typeof candidate.fts_score === "number")).toBe(true)
+    expect(failures.candidates.every((candidate) => typeof candidate.lexical_score === "number")).toBe(true)
+    expect(failures.candidates.every((candidate) => candidate.matched_terms.includes("hybridderivedfailure"))).toBe(true)
+    expect(failures.candidates.every((candidate) => candidate.matched_fields.length > 0)).toBe(true)
+    expect(failures.candidates.every((candidate) => candidate.scoring_explanation_preview.includes("score"))).toBe(true)
+    expect(ftsCalls[3]).toMatchObject({ query: "hybridderivedfailure", labels: ["failure"] })
+
+    const contradictory = service.preview({
+      query: "hybridderivedfailure",
+      labels: ["failure"],
+      include_failures: false,
+      limit: 10,
+    })
+    expect(contradictory.candidates).toEqual([])
+    expect(ftsCalls[4]).toMatchObject({ query: "hybridderivedfailure", labels: ["failure"], include_failures: false })
+
+    const near = service.nearDuplicates({ query: "hybridderivedfailure", labels: ["failure"], include_failures: true })
+    expect(near.status).toBe("ready")
+    expect(["medium", "high"]).toContain(near.novelty_risk)
+    expect(near.candidates.map((candidate) => candidate.result_id)).toContain("hybrid_failure_label_failed")
+    const profile = service.searchProfile()
+    expect(profile.search_engine).toBe("hybrid_fts_lexical")
+    expect(profile.fts_index_enabled).toBe(true)
+  })
+
   test("research memory search inspection near-duplicates and profile remain bounded read-only", async () => {
     const dir = await tempProject()
-    const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
+    const db = ResearchDb.open(dir, { appendEvents: true, allowFtsProjectionRepair: true, idFactory: () => "unused" })
     db.createTopic({ id: "topic_search_inspection", title: "Search inspection" })
     db.addArtifact({ id: "artifact_search", topic_id: "topic_search_inspection", kind: "report", content: "raw artifact token=abc123 must not leak", description: "memory search artifact pointer" })
     db.recordCitation({ citation_id: "citation_search", source_type: "event", source_uri: "event://search", quoted_text_or_summary: "citation body token=abc123 must not leak", title: "memory search citation pointer" })
@@ -21134,14 +21402,17 @@ describe("OpenCode launch readiness", () => {
       limit: 5,
     }) as {
       status: string
-      candidates: Array<{ result_id: string; label: string; matched_terms: string[]; unmatched_query_terms: string[]; matched_fields: string[]; scoring_explanation_preview: string; pointer_only: boolean; source_refs: Array<{ pointer_only: boolean }> }>
+      candidates: Array<{ result_id: string; label: string; matched_terms: string[]; unmatched_query_terms: string[]; matched_fields: string[]; scoring_explanation_preview: string; rank_source?: string; fts_score?: number; lexical_score?: number; search_engine_used?: string; pointer_only: boolean; source_refs: Array<{ pointer_only: boolean }> }>
     }
     expect(search.status).toBe("ready")
     expect(search.candidates).toEqual([expect.objectContaining({ result_id: "finding_memory_search", label: "finding", pointer_only: true })])
     expect(search.candidates[0]?.matched_terms).toEqual(expect.arrayContaining(["memory", "search", "expansion"]))
     expect(search.candidates[0]?.unmatched_query_terms).toEqual(expect.any(Array))
     expect(search.candidates[0]?.matched_fields).toContain("question/title")
-    expect(search.candidates[0]?.scoring_explanation_preview).toContain("bounded lexical score")
+    expect(search.candidates[0]?.scoring_explanation_preview).toMatch(/hybrid FTS\+lexical score|bounded lexical score/)
+    expect(search.candidates[0]?.rank_source).toMatch(/hybrid|lexical/)
+    expect(search.candidates[0]?.lexical_score).toEqual(expect.any(Number))
+    expect(search.candidates[0]?.search_engine_used).toMatch(/hybrid_fts_lexical|bounded_lexical/)
     expect(search.candidates[0]?.source_refs.every((ref) => ref.pointer_only)).toBe(true)
     expect(JSON.stringify(search)).not.toContain("abc123")
 
@@ -21213,11 +21484,18 @@ describe("OpenCode launch readiness", () => {
     expect(near.likely_duplicate_count).toBeGreaterThanOrEqual(1)
     expect(near.candidates.map((candidate) => candidate.result_id)).toContain("failure_memory_search")
 
-    const profile = await server.command("runtime.research_memory_search_profile") as { search_engine: string; semantic_search_enabled: boolean; vector_index_enabled: boolean; fts_index_enabled: boolean; max_limit: number; supported_filters: string[]; label_counts: Record<string, number> }
-    expect(profile).toMatchObject({ search_engine: "bounded_lexical", semantic_search_enabled: false, vector_index_enabled: false, fts_index_enabled: false, max_limit: 20 })
+    const profile = await server.command("runtime.research_memory_search_profile") as { search_engine: string; semantic_search_enabled: boolean; vector_index_enabled: boolean; embedding_search_enabled?: boolean; fts_index_enabled: boolean; fts_available?: boolean; max_limit: number; indexed_field_count?: number; indexed_result_count?: number; supported_filters: string[]; label_counts: Record<string, number>; warnings: string[] }
+    expect(profile).toMatchObject({ search_engine: "hybrid_fts_lexical", semantic_search_enabled: false, vector_index_enabled: false, embedding_search_enabled: false, fts_index_enabled: true, fts_available: true, max_limit: 20 })
+    expect(profile.indexed_field_count).toBeGreaterThan(0)
+    expect(profile.indexed_result_count).toBeGreaterThanOrEqual(2)
+    expect(profile.warnings.join(" ")).toContain("hybrid FTS+lexical")
     expect(profile.supported_filters).toEqual(expect.arrayContaining(["labels", "result_type", "confidence", "has_artifacts"]))
     expect(profile.label_counts.finding).toBeGreaterThanOrEqual(1)
     expect(profile.label_counts.failure).toBeGreaterThanOrEqual(1)
+
+    const unsafeQuery = await server.command("runtime.preview_research_memory_retrieval", { query: "\" OR 1=1 -- memory search", limit: 5 }) as { status: string; warnings: string[]; candidates: Array<{ result_id: string }> }
+    expect(unsafeQuery.status).toMatch(/ready|empty/)
+    expect(unsafeQuery.candidates.map((candidate) => candidate.result_id)).not.toContain("proposed_memory_search")
 
     await expect(server.command("runtime.get_research_memory_record", {})).resolves.toMatchObject({ status: "blocked" })
     await expect(server.command("runtime.preview_research_memory_near_duplicates", {})).resolves.toMatchObject({ status: "blocked" })
@@ -21521,6 +21799,87 @@ describe("OpenCode launch readiness", () => {
     expect(serialized).not.toContain("api_key")
   })
 
+  test("research memory hybrid retrieval materializes FTS-only matches outside the lexical scan", () => {
+    const ftsOnlyResult: ResearchResult & { fts_score: number } = {
+      result_id: "result_deep_archive_match",
+      result_type: "finding",
+      status: "accepted",
+      title: "deeparchive hybrid memory finding",
+      summary: "older bounded evidence that should be found through FTS",
+      confidence: "high",
+      label: "finding",
+      metrics: {},
+      reproduction: {},
+      created_at: "2026-06-01T00:00:00.000Z",
+      updated_at: "2026-06-01T00:00:00.000Z",
+      created_by: "commander",
+      mission_id: null,
+      candidate_id: null,
+      hypothesis_id: null,
+      trial_id: null,
+      training_run_id: null,
+      fts_score: 0.91,
+    }
+    const ftsOptions: SearchResearchResultsFtsOptions[] = []
+    const service = new ResearchMemoryService({
+      now: () => new Date("2026-06-29T00:00:00.000Z"),
+      readAdapter: () => ({
+        available: true,
+        policy: "projection_read",
+        searchResearchResults: () => [],
+        searchResearchResultsFts: (options) => {
+          ftsOptions.push(options)
+          return [ftsOnlyResult]
+        },
+        researchResultsFtsStatus: () => ({ available: true, indexed_result_count: 1, indexed_field_count: 8 }),
+      }),
+    })
+
+    const preview = service.preview({ query: "deeparchive hybrid", limit: 3 })
+    expect(preview.status).toBe("ready")
+    expect(preview.candidates.map((candidate) => candidate.result_id)).toEqual(["result_deep_archive_match"])
+    expect(preview.candidates[0]?.rank_source).toBe("hybrid")
+    expect(preview.candidates[0]?.fts_score).toBe(0.91)
+    expect(preview.candidates[0]?.search_engine_used).toBe("hybrid_fts_lexical")
+
+    const sessionFallback = service.preview({ query: "deeparchive hybrid", session_id: "session_missing", limit: 3 })
+    expect(sessionFallback.status).toBe("ready")
+    expect(sessionFallback.candidates.map((candidate) => candidate.result_id)).toEqual(["result_deep_archive_match"])
+    expect(sessionFallback.warnings.join(" ")).toContain("session-scoped research memory is not available yet; using global internal memory preview")
+
+    const requiresCitation = service.preview({ query: "deeparchive hybrid", has_citations: true, limit: 3 })
+    expect(requiresCitation.status).toBe("empty")
+    expect(requiresCitation.candidates).toEqual([])
+    expect(ftsOptions.at(-1)).toMatchObject({ has_citations: true })
+
+    const requiresNoCitation = service.preview({ query: "deeparchive hybrid", has_citations: false, limit: 3 })
+    expect(requiresNoCitation.status).toBe("ready")
+    expect(requiresNoCitation.candidates.map((candidate) => candidate.result_id)).toEqual(["result_deep_archive_match"])
+    expect(ftsOptions.at(-1)).toMatchObject({ has_citations: false })
+
+    const labelFiltered = service.preview({
+      query: "deeparchive hybrid",
+      labels: ["finding"],
+      confidence: "high",
+      include_failures: false,
+      has_artifacts: false,
+      has_metrics: true,
+      since: "2026-01-01T00:00:00.000Z",
+      until: "2026-12-31T00:00:00.000Z",
+      limit: 3,
+    })
+    expect(labelFiltered.status).toBe("ready")
+    expect(ftsOptions.at(-1)).toMatchObject({
+      labels: ["finding"],
+      confidence: "high",
+      include_failures: false,
+      has_artifacts: false,
+      has_metrics: true,
+      since: "2026-01-01T00:00:00.000Z",
+      until: "2026-12-31T00:00:00.000Z",
+    })
+  })
+
   test("research novelty flags duplicate risk without blocking repeated work", async () => {
     const dir = await tempProject()
     const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
@@ -21681,7 +22040,7 @@ describe("OpenCode launch readiness", () => {
     }
     expect(proposal.status).toBe("ready")
     expect(["open_loops_pending", "blocked", "ready", "duplicate_risk_high"]).toContain(proposal.readiness)
-    expect(proposal.research_search_profile_summary).toContain("bounded_lexical")
+    expect(proposal.research_search_profile_summary).toMatch(/hybrid_fts_lexical|bounded_lexical/)
     expect(proposal.research_search_profile_summary).toContain("semantic_search_enabled=false")
     expect(proposal.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({ section_kind: "research_memory" }),
@@ -21801,8 +22160,8 @@ describe("OpenCode launch readiness", () => {
     }
     const search = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-search")
     expect(search?.aliases).toEqual(expect.arrayContaining(["/research-search", "/memory-search"]))
-    expect(search?.notes.join(" ")).toContain("bounded lexical")
-    expect(search?.notes.join(" ")).toContain("Semantic/vector search is not enabled")
+    expect(search?.notes.join(" ")).toContain("hybrid FTS+lexical")
+    expect(search?.notes.join(" ")).toContain("Semantic/vector/provider/MCP/online search is not enabled")
     const show = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-show")
     expect(show?.aliases).toEqual(expect.arrayContaining(["/memory-show", "/research-memory-inspect", "/memory-inspect", "/research-inspect"]))
     const duplicates = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-near-duplicates")
@@ -21810,7 +22169,7 @@ describe("OpenCode launch readiness", () => {
     expect(duplicates?.notes.join(" ")).toContain("advisory")
     const profile = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-memory-profile")
     expect(profile?.aliases).toEqual(expect.arrayContaining(["/research-search-profile", "/memory-profile"]))
-    expect(profile?.notes.join(" ")).toContain("semantic/vector/FTS/provider search is disabled")
+    expect(profile?.notes.join(" ")).toContain("semantic/vector/embedding/provider search is disabled")
     const novelty = COMMAND_AUTHORITY_REGISTRY.find((item) => item.slash_command === "/research-novelty-preview")
     expect(novelty?.aliases).toEqual(expect.arrayContaining(["/novelty-preview", "/research-dup-check"]))
     expect(novelty?.notes.join(" ")).toContain("flagged, not forbidden")

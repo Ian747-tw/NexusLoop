@@ -100,6 +100,9 @@ const RESEARCH_ENTITY_TYPES = new Set<ResearchEntityType>([
   "training_checkpoint",
   "reproduction_record",
 ])
+export const RESEARCH_MEMORY_FAILURE_LABEL_TERMS = ["negative", "failure", "failed", "bug", "rejected"] as const
+export const RESEARCH_MEMORY_FAILURE_RESULT_TYPES = ["negative_finding", "bug_diagnosis"] as const satisfies readonly ResearchResultType[]
+export const RESEARCH_MEMORY_TYPED_EVIDENCE_RESULT_TYPES = ["reproduction_record", "evaluation_result", "full_training_result"] as const satisfies readonly ResearchResultType[]
 const EVIDENCE_REQUIRED_RESULT_TYPES = new Set<ResearchResultType>([
   "finding",
   "literature_finding",
@@ -116,6 +119,7 @@ export interface ResearchDbOptions {
   dbPath?: string
   eventsPath?: string
   appendEvents?: boolean
+  allowFtsProjectionRepair?: boolean
   now?: () => Date
   idFactory?: () => string
 }
@@ -452,6 +456,23 @@ export interface SearchResearchResultsOptions extends SearchOptions {
   order?: "oldest" | "newest"
 }
 
+export interface SearchResearchResultsFtsOptions extends SearchResearchResultsOptions {
+  query: string
+  labels?: string[]
+  confidence?: ResearchResultConfidence
+  evidence_kind?: string
+  include_failures?: boolean
+  has_artifacts?: boolean
+  has_citations?: boolean
+  has_metrics?: boolean
+  since?: string
+  until?: string
+}
+
+export interface ResearchResultFtsMatch extends ResearchResult {
+  fts_score: number
+}
+
 export interface SearchCitationsOptions extends SearchOptions {
   source_type?: CitationSourceType
 }
@@ -635,6 +656,9 @@ interface ParsedJsonlEvent {
 }
 
 const RESEARCH_PROJECTION_NAME = "research_db_v1"
+const RESEARCH_RESULTS_FTS_PROJECTION_NAME = "research_results_fts"
+const RESEARCH_RESULTS_FTS_SCHEMA_VERSION = 1
+const RESEARCH_RESULTS_FTS_VERSION_MARKER = `schema:${RESEARCH_RESULTS_FTS_SCHEMA_VERSION}`
 const SUPPORTED_RESEARCH_EVENT_TYPES = new Set([
   "topic_created",
   "source_added",
@@ -710,17 +734,20 @@ export class ResearchDb {
   private readonly db: Database
   private readonly eventsPath: string
   private readonly appendEvents: boolean
+  private readonly allowFtsProjectionRepair: boolean
   private readonly now: () => Date
   private readonly idFactory: () => string
   private pendingJsonlEvents: ResearchJsonlEvent[] | null = null
+  private researchResultsFtsFallbackReason: string | null = null
 
   private constructor(
     db: Database,
-    options: Required<Pick<ResearchDbOptions, "eventsPath" | "appendEvents" | "now" | "idFactory">>,
+    options: Required<Pick<ResearchDbOptions, "eventsPath" | "appendEvents" | "allowFtsProjectionRepair" | "now" | "idFactory">>,
   ) {
     this.db = db
     this.eventsPath = options.eventsPath
     this.appendEvents = options.appendEvents
+    this.allowFtsProjectionRepair = options.allowFtsProjectionRepair
     this.now = options.now
     this.idFactory = options.idFactory
   }
@@ -734,6 +761,7 @@ export class ResearchDb {
     const researchDb = new ResearchDb(db, {
       eventsPath,
       appendEvents: options.appendEvents ?? true,
+      allowFtsProjectionRepair: options.allowFtsProjectionRepair ?? false,
       now: options.now ?? (() => new Date()),
       idFactory: options.idFactory ?? (() => randomUUID()),
     })
@@ -751,6 +779,7 @@ export class ResearchDb {
       ...options,
       eventsPath: eventsPath ?? options.eventsPath,
       appendEvents: true,
+      allowFtsProjectionRepair: true,
     })
     try {
       db.rebuildFromEvents(eventsPath ?? options.eventsPath ?? join(projectDir, ".nxl", "events.jsonl"))
@@ -1057,6 +1086,7 @@ export class ResearchDb {
       this.db.query("UPDATE research_results SET status = ?, updated_at = ? WHERE result_id = ?").run("accepted", updatedAt, id)
       const result = this.getResearchResult(id)
       if (!result) throw new Error(`research result not found: ${id}`)
+      this.syncResearchResultFts(result)
       this.recordEvent("ResearchResultAccepted", "research_result", id, result)
       return result
     })
@@ -1071,6 +1101,7 @@ export class ResearchDb {
       this.db.query("UPDATE research_results SET status = ?, updated_at = ? WHERE result_id = ?").run("rejected", updatedAt, id)
       const result = this.getResearchResult(id)
       if (!result) throw new Error(`research result not found: ${id}`)
+      this.syncResearchResultFts(result)
       this.recordEvent("ResearchResultRejected", "research_result", id, { result, reason: cleanReason ? redactString(cleanReason) : null })
       return result
     })
@@ -1116,6 +1147,161 @@ export class ResearchDb {
     return (this.db.query(`SELECT * FROM research_results ${where} ORDER BY ${order} LIMIT ?`).all(...params) as ResearchResultRow[]).map((row) =>
       this.researchResultFromRow(row),
     )
+  }
+
+  searchResearchResultsFts(options: SearchResearchResultsFtsOptions): ResearchResultFtsMatch[] {
+    const ftsQuery = sanitizeFtsQuery(options.query)
+    if (!ftsQuery) return []
+    if (!this.isResearchResultsFtsUsable()) return []
+    const filters = ["research_results_fts MATCH ?"]
+    const params: SQLQueryBindings[] = [ftsQuery]
+    this.pushResearchResultMemoryFilters(filters, params, options)
+    if (options.result_type !== undefined) {
+      assertAllowed(RESEARCH_RESULT_TYPES, options.result_type, "research result type")
+      filters.push("r.result_type = ?")
+      params.push(options.result_type)
+    }
+    if (options.status !== undefined) {
+      assertAllowed(RESEARCH_RESULT_STATUSES, options.status, "research result status")
+      filters.push("r.status = ?")
+      params.push(options.status)
+    } else {
+      filters.push("r.status = ?")
+      params.push("accepted")
+    }
+    if (options.mission_id !== undefined) {
+      filters.push("r.mission_id = ?")
+      params.push(cleanId(options.mission_id))
+    }
+    if (options.candidate_id !== undefined) {
+      filters.push("r.candidate_id = ?")
+      params.push(cleanId(options.candidate_id))
+    }
+    if (options.trial_id !== undefined) {
+      filters.push("r.trial_id = ?")
+      params.push(cleanId(options.trial_id))
+    }
+    if (options.training_run_id !== undefined) {
+      filters.push("r.training_run_id = ?")
+      params.push(cleanId(options.training_run_id))
+    }
+    params.push(cleanLimit(options.limit))
+    const rows = this.db
+      .query(
+        `SELECT r.*, bm25(research_results_fts) AS fts_score
+         FROM research_results_fts
+         INNER JOIN research_results r ON r.result_id = research_results_fts.result_id
+         WHERE ${filters.join(" AND ")}
+         ORDER BY fts_score ASC, r.updated_at DESC, r.result_id DESC
+         LIMIT ?`,
+      )
+      .all(...params) as Array<ResearchResultRow & { fts_score: number }>
+    return rows.map((row, index) => ({ ...this.researchResultFromRow(row)!, fts_score: normalizeFtsRank(index, rows.length) }))
+  }
+
+  private pushResearchResultMemoryFilters(filters: string[], params: SQLQueryBindings[], options: SearchResearchResultsFtsOptions): void {
+    if (options.confidence !== undefined) {
+      assertAllowed(RESEARCH_RESULT_CONFIDENCES, options.confidence, "research result confidence")
+      filters.push("r.confidence = ?")
+      params.push(options.confidence)
+    }
+    if (options.include_failures === false) {
+      const failurePredicate = researchResultFailureSqlPredicate("r")
+      filters.push(`NOT (${failurePredicate.clause})`)
+      params.push(...failurePredicate.params)
+    }
+    const labelFilters = (options.labels ?? []).map((label) => cleanOptional(label)).filter((label): label is string => !!label)
+    if (labelFilters.length > 0) {
+      const clauses: string[] = []
+      const labelValues = Array.from(new Set(labelFilters)).slice(0, 20)
+      const exactLabelValues = labelValues.filter((label) => label.toLowerCase() !== "failure")
+      if (exactLabelValues.length > 0) {
+        const explicitPlaceholders = exactLabelValues.map(() => "?").join(", ")
+        clauses.push(`r.label IN (${explicitPlaceholders})`)
+        params.push(...exactLabelValues)
+      }
+      const resultTypes = new Set<ResearchResultType>()
+      for (const label of labelValues) {
+        if (label.toLowerCase() === "failure") continue
+        for (const resultType of researchResultTypesForMemoryLabel(label)) resultTypes.add(resultType)
+      }
+      if (resultTypes.size > 0) {
+        const typeValues = Array.from(resultTypes)
+        clauses.push(`r.result_type IN (${typeValues.map(() => "?").join(", ")})`)
+        params.push(...typeValues)
+      }
+      if (labelValues.some((label) => label.toLowerCase() === "failure")) {
+        const failurePredicate = researchResultFailureSqlPredicate("r")
+        clauses.push(failurePredicate.clause)
+        params.push(...failurePredicate.params)
+      }
+      filters.push(`(${clauses.join(" OR ")})`)
+    }
+    const evidenceKind = cleanOptional(options.evidence_kind)
+    if (evidenceKind) {
+      const evidencePredicate = researchResultEvidenceKindSqlPredicate("r", evidenceKind)
+      filters.push(evidencePredicate.clause)
+      params.push(...evidencePredicate.params)
+    }
+    if (options.has_artifacts !== undefined) {
+      filters.push(options.has_artifacts
+        ? "EXISTS (SELECT 1 FROM result_artifacts ra WHERE ra.result_id = r.result_id)"
+        : "NOT EXISTS (SELECT 1 FROM result_artifacts ra WHERE ra.result_id = r.result_id)")
+    }
+    if (options.has_citations !== undefined) {
+      filters.push(options.has_citations
+        ? "EXISTS (SELECT 1 FROM result_citations rc WHERE rc.result_id = r.result_id)"
+        : "NOT EXISTS (SELECT 1 FROM result_citations rc WHERE rc.result_id = r.result_id)")
+    }
+    if (options.has_metrics !== undefined) {
+      filters.push(options.has_metrics
+        ? "(r.metrics_json IS NOT NULL AND r.metrics_json NOT IN ('null', '{}', '[]'))"
+        : "(r.metrics_json IS NULL OR r.metrics_json IN ('null', '{}', '[]'))")
+    }
+    const since = cleanOptional(options.since)
+    if (since) {
+      filters.push("r.created_at >= ?")
+      params.push(since)
+    }
+    const until = cleanOptional(options.until)
+    if (until) {
+      filters.push("r.created_at <= ?")
+      params.push(until)
+    }
+  }
+
+  researchResultsFtsStatus(): { available: boolean; indexed_result_count: number; indexed_field_count: number; fallback_reason?: string; projection_version?: number; rebuild_marker?: string | null; expected_indexed_result_count?: number } {
+    if (!this.isResearchResultsFtsAvailable()) {
+      return { available: false, indexed_result_count: 0, indexed_field_count: 0, fallback_reason: "SQLite FTS5 research_results_fts index is unavailable" }
+    }
+    const readiness = this.inspectResearchResultsFtsReadiness(false)
+    if (!readiness.ready) {
+      return {
+        available: false,
+        indexed_result_count: this.countResearchResultsFtsRows(),
+        indexed_field_count: 8,
+        fallback_reason: `${this.researchResultsFtsFallbackReason ?? readiness.reason ?? "SQLite FTS5 research_results_fts projection is not ready"}; using bounded lexical fallback`,
+        projection_version: readiness.projection?.last_event_id === RESEARCH_RESULTS_FTS_VERSION_MARKER ? RESEARCH_RESULTS_FTS_SCHEMA_VERSION : undefined,
+        rebuild_marker: readiness.projection?.rebuilt_at ?? null,
+        expected_indexed_result_count: readiness.projection?.applied_count,
+      }
+    }
+    const projection = this.getResearchResultsFtsProjection()
+    return {
+      available: true,
+      indexed_result_count: this.countResearchResultsFtsRows(),
+      indexed_field_count: 8,
+      projection_version: projection?.last_event_id === RESEARCH_RESULTS_FTS_VERSION_MARKER ? RESEARCH_RESULTS_FTS_SCHEMA_VERSION : undefined,
+      rebuild_marker: projection?.rebuilt_at ?? null,
+      expected_indexed_result_count: projection?.applied_count,
+    }
+  }
+
+  repairResearchResultsFtsProjectionIfNeeded(): void {
+    const tableCreated = this.ensureResearchResultsFts()
+    if (!this.isResearchResultsFtsAvailable()) return
+    if (!tableCreated && this.inspectResearchResultsFtsReadiness(false).ready) return
+    this.repairResearchResultsFts()
   }
 
   recordCitation(input: CitationInput): Citation {
@@ -1997,12 +2183,14 @@ export class ResearchDb {
     if (!existsSync(eventsPath)) throw new Error(`event log missing: ${eventsPath}`)
     const parsed = readJsonlEvents(eventsPath)
     this.inTransaction(() => {
+      this.ensureResearchResultsFts()
       this.resetProjectionTables()
       this.upsertProjectionStatus(null, null, 0, this.timestamp())
       let appliedCount = 0
       for (const item of parsed) {
         if (this.applyParsedEvent(item, appliedCount + 1)) appliedCount += 1
       }
+      if (this.isResearchResultsFtsAvailable()) this.markResearchResultsFtsProjectionReady(this.countResearchResultsFtsRows(), this.timestamp())
     })
   }
 
@@ -2373,6 +2561,8 @@ export class ResearchDb {
     this.ensureColumn("training_runs", "input_hash", "TEXT")
     this.backfillLinkEventIds()
     this.backfillInputHashes()
+    const ftsTableCreated = this.allowFtsProjectionRepair ? this.ensureResearchResultsFts() : false
+    this.ensureResearchResultsFtsProjection(ftsTableCreated)
     this.db.query("INSERT OR IGNORE INTO research_schema (version, applied_at) VALUES (?, ?)").run(1, this.timestamp())
   }
 
@@ -2387,12 +2577,13 @@ export class ResearchDb {
     this.db.query("DELETE FROM result_citations").run()
     this.db.query("DELETE FROM citations").run()
     this.db.query("DELETE FROM research_results").run()
+    if (this.isResearchResultsFtsAvailable()) this.db.query("DELETE FROM research_results_fts").run()
     this.db.query("DELETE FROM artifacts").run()
     this.db.query("DELETE FROM notes").run()
     this.db.query("DELETE FROM sources").run()
     this.db.query("DELETE FROM topics").run()
     this.db.query("DELETE FROM research_events").run()
-    this.db.query("DELETE FROM research_projection WHERE projection_name = ?").run(RESEARCH_PROJECTION_NAME)
+    this.db.query("DELETE FROM research_projection WHERE projection_name IN (?, ?)").run(RESEARCH_PROJECTION_NAME, RESEARCH_RESULTS_FTS_PROJECTION_NAME)
   }
 
   private applyParsedEvent(item: ParsedJsonlEvent, appliedCount?: number): boolean {
@@ -2655,6 +2846,8 @@ export class ResearchDb {
         createdAt,
         updatedAt,
       )
+    const result = this.getResearchResult(resultId)
+    if (result) this.syncResearchResultFts(result)
   }
 
   private applyCitation(payload: unknown): void {
@@ -2876,6 +3069,186 @@ export class ResearchDb {
     if (!columns.some((row) => row.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
     }
+  }
+
+  private ensureResearchResultsFts(): boolean {
+    const existed = this.isResearchResultsFtsAvailable()
+    try {
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS research_results_fts USING fts5(
+          result_id UNINDEXED,
+          status UNINDEXED,
+          result_type,
+          label,
+          title,
+          summary,
+          metrics_preview,
+          reproduction_preview
+        );
+      `)
+      return !existed && this.isResearchResultsFtsAvailable()
+    } catch {
+      // FTS5 is optional projection infrastructure. Search falls back to bounded lexical retrieval.
+      return false
+    }
+  }
+
+  private isResearchResultsFtsAvailable(): boolean {
+    try {
+      const row = this.db.query("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name = 'research_results_fts'").get() as {
+        name: string
+        sql: string | null
+      } | null
+      if (row?.name !== "research_results_fts" || !row.sql || !/\bUSING\s+fts5\b/i.test(row.sql)) return false
+      const columns = new Set((this.db.query("PRAGMA table_info(research_results_fts)").all() as { name: string }[]).map((column) => column.name))
+      for (const column of ["result_id", "status", "result_type", "label", "title", "summary", "metrics_preview", "reproduction_preview"]) {
+        if (!columns.has(column)) return false
+      }
+      this.db.query("SELECT rowid FROM research_results_fts WHERE research_results_fts MATCH ? LIMIT 1").all("__nxl_no_match__")
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private ensureResearchResultsFtsProjection(tableCreated: boolean): void {
+    if (!this.isResearchResultsFtsAvailable()) return
+    const readiness = this.inspectResearchResultsFtsReadiness(tableCreated)
+    if (readiness.ready) {
+      this.researchResultsFtsFallbackReason = null
+      return
+    }
+    if (!this.allowFtsProjectionRepair) {
+      this.researchResultsFtsFallbackReason = readiness.reason ?? "SQLite FTS5 research_results_fts projection requires repair; using bounded lexical fallback"
+      return
+    }
+    this.repairResearchResultsFts()
+  }
+
+  private isResearchResultsFtsUsable(): boolean {
+    if (!this.isResearchResultsFtsAvailable()) return false
+    return this.inspectResearchResultsFtsReadiness(false).ready
+  }
+
+  private inspectResearchResultsFtsReadiness(tableCreated: boolean): { ready: boolean; reason?: string; projection?: ResearchProjectionRow | null } {
+    if (!this.isResearchResultsFtsAvailable()) return { ready: false, reason: "SQLite FTS5 research_results_fts index is unavailable", projection: null }
+    const projection = this.getResearchResultsFtsProjection()
+    if (tableCreated) return { ready: false, reason: "SQLite FTS5 research_results_fts table was newly created and requires transactional backfill", projection }
+    if (!projection) return { ready: false, reason: "SQLite FTS5 research_results_fts projection metadata is missing", projection }
+    if (projection.last_event_id !== RESEARCH_RESULTS_FTS_VERSION_MARKER) {
+      return { ready: false, reason: "SQLite FTS5 research_results_fts projection schema version is outdated", projection }
+    }
+    const indexedCount = this.countResearchResultsFtsRows()
+    const acceptedCount = this.countAcceptedResearchResults()
+    if (projection.applied_count !== indexedCount) {
+      return { ready: false, reason: "SQLite FTS5 research_results_fts projection count does not match indexed rows", projection }
+    }
+    if (indexedCount !== acceptedCount) {
+      return { ready: false, reason: "SQLite FTS5 research_results_fts indexed count does not match accepted result count", projection }
+    }
+    if (this.hasResearchResultsFtsMembershipMismatch()) {
+      return { ready: false, reason: "SQLite FTS5 research_results_fts membership is inconsistent with accepted results", projection }
+    }
+    return { ready: true, projection }
+  }
+
+  private getResearchResultsFtsProjection(): ResearchProjectionRow | null {
+    return this.db
+      .query("SELECT projection_name, last_event_id, last_event_timestamp, applied_count, rebuilt_at, updated_at FROM research_projection WHERE projection_name = ?")
+      .get(RESEARCH_RESULTS_FTS_PROJECTION_NAME) as ResearchProjectionRow | null
+  }
+
+  private countResearchResultsFtsRows(): number {
+    if (!this.isResearchResultsFtsAvailable()) return 0
+    const row = this.db.query("SELECT COUNT(*) AS count FROM research_results_fts").get() as { count: number }
+    return row.count
+  }
+
+  private countAcceptedResearchResults(): number {
+    const row = this.db.query("SELECT COUNT(*) AS count FROM research_results WHERE status = 'accepted'").get() as { count: number }
+    return row.count
+  }
+
+  private hasResearchResultsFtsMembershipMismatch(): boolean {
+    if (!this.isResearchResultsFtsAvailable()) return false
+    const missingAccepted = this.db
+      .query(
+        `SELECT r.result_id
+         FROM research_results r
+         WHERE r.status = 'accepted'
+           AND NOT EXISTS (SELECT 1 FROM research_results_fts f WHERE f.result_id = r.result_id)
+         LIMIT 1`,
+      )
+      .get() as { result_id: string } | null
+    if (missingAccepted) return true
+    const staleIndexed = this.db
+      .query(
+        `SELECT f.result_id
+         FROM research_results_fts f
+         LEFT JOIN research_results r ON r.result_id = f.result_id
+         WHERE r.result_id IS NULL OR r.status != 'accepted'
+         LIMIT 1`,
+      )
+      .get() as { result_id: string } | null
+    return !!staleIndexed
+  }
+
+  private repairResearchResultsFts(): void {
+    if (!this.isResearchResultsFtsAvailable()) return
+    this.db.exec("BEGIN IMMEDIATE")
+    try {
+      this.rebuildResearchResultsFts()
+      this.db.exec("COMMIT")
+      this.researchResultsFtsFallbackReason = null
+    } catch (error) {
+      try {
+        this.db.exec("ROLLBACK")
+      } catch {
+        // Preserve the original rebuild failure.
+      }
+      this.researchResultsFtsFallbackReason = error instanceof Error ? `SQLite FTS5 research_results_fts repair failed: ${error.message}` : "SQLite FTS5 research_results_fts repair failed"
+      throw error
+    }
+  }
+
+  private rebuildResearchResultsFts(): void {
+    if (!this.isResearchResultsFtsAvailable()) return
+    this.db.query("DELETE FROM research_results_fts").run()
+    const rows = this.db.query("SELECT * FROM research_results WHERE status = 'accepted' ORDER BY updated_at, result_id").all() as ResearchResultRow[]
+    for (const row of rows) this.syncResearchResultFts(this.researchResultFromRow(row)!, false)
+    this.markResearchResultsFtsProjectionReady(rows.length, this.timestamp())
+  }
+
+  private syncResearchResultFts(result: ResearchResult, updateProjection = true): void {
+    if (!this.isResearchResultsFtsAvailable()) return
+    this.db.query("DELETE FROM research_results_fts WHERE result_id = ?").run(result.result_id)
+    if (result.status === "accepted") {
+      this.db
+        .query("INSERT INTO research_results_fts (result_id, status, result_type, label, title, summary, metrics_preview, reproduction_preview) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(
+          result.result_id,
+          result.status,
+          result.result_type,
+          result.label ?? "",
+          ftsBound(result.title),
+          ftsBound(result.summary),
+          ftsPreview(result.metrics),
+          ftsPreview(result.reproduction),
+      )
+    }
+    if (updateProjection) {
+      this.markResearchResultsFtsProjectionReady(this.countResearchResultsFtsRows(), null)
+      this.researchResultsFtsFallbackReason = null
+    }
+  }
+
+  private markResearchResultsFtsProjectionReady(indexedCount: number, rebuiltAt: string | null): void {
+    const updatedAt = this.timestamp()
+    this.db
+      .query(
+        "INSERT INTO research_projection (projection_name, last_event_id, last_event_timestamp, applied_count, rebuilt_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(projection_name) DO UPDATE SET last_event_id = excluded.last_event_id, last_event_timestamp = excluded.last_event_timestamp, applied_count = excluded.applied_count, rebuilt_at = COALESCE(excluded.rebuilt_at, research_projection.rebuilt_at), updated_at = excluded.updated_at",
+      )
+      .run(RESEARCH_RESULTS_FTS_PROJECTION_NAME, RESEARCH_RESULTS_FTS_VERSION_MARKER, null, indexedCount, rebuiltAt, updatedAt)
   }
 
   private getSource(id: string): Source | null {
@@ -3731,6 +4104,130 @@ function inputHashTableForEntity(entityType: string): { table: string; idColumn:
 
 function likeContains(value: string): string {
   return `%${value.replace(/[\\%_]/g, (character) => `\\${character}`)}%`
+}
+
+function sanitizeFtsQuery(value: string): string | null {
+  const tokens = value
+    .toLowerCase()
+    .match(/[a-z0-9][a-z0-9_-]{1,}/g)
+    ?.map((token) => token.replace(/"/g, ""))
+    .filter(Boolean)
+    .slice(0, 12) ?? []
+  if (tokens.length === 0) return null
+  return tokens.map((token) => `"${token}"`).join(" OR ")
+}
+
+function normalizeFtsRank(index: number, total: number): number {
+  if (total <= 0) return 0
+  return Math.round(((total - index) / total) * 1_000_000) / 1_000_000
+}
+
+function researchResultTypesForMemoryLabel(label: string): ResearchResultType[] {
+  switch (label.toLowerCase()) {
+    case "finding":
+      return ["finding", "literature_finding"]
+    case "failure":
+      return ["negative_finding", "bug_diagnosis"]
+    case "probe":
+      return ["probe_result"]
+    case "trial":
+      return ["smoke_test_result", "evaluation_result", "ablation_result"]
+    case "full_training":
+      return ["full_training_result"]
+    default:
+      return []
+  }
+}
+
+function researchResultFailureSqlPredicate(alias: string): { clause: string; params: SQLQueryBindings[] } {
+  const resultTypePlaceholders = RESEARCH_MEMORY_FAILURE_RESULT_TYPES.map(() => "?").join(", ")
+  const labelClauses = RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map(() => `LOWER(COALESCE(${alias}.label, '')) LIKE ?`)
+  const statusClauses = RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map(() => `LOWER(COALESCE(${alias}.status, '')) LIKE ?`)
+  return {
+    clause: `(${alias}.result_type IN (${resultTypePlaceholders}) OR ${[...labelClauses, ...statusClauses].join(" OR ")})`,
+    params: [
+      ...RESEARCH_MEMORY_FAILURE_RESULT_TYPES,
+      ...RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map((term) => `%${term}%`),
+      ...RESEARCH_MEMORY_FAILURE_LABEL_TERMS.map((term) => `%${term}%`),
+    ],
+  }
+}
+
+function researchResultEvidenceKindSqlPredicate(alias: string, evidenceKind: string): { clause: string; params: SQLQueryBindings[] } {
+  switch (evidenceKind.toLowerCase()) {
+    case "positive_finding": {
+      const failurePredicate = researchResultFailureSqlPredicate(alias)
+      const inconclusivePredicate = researchResultTermSqlPredicate(alias, "inconclusive")
+      const partialPredicate = researchResultTermSqlPredicate(alias, "partial")
+      const blockedPredicate = researchResultTermSqlPredicate(alias, "blocked")
+      const statusPredicate = researchResultTermSqlPredicate(alias, "status")
+      const excluded = [failurePredicate, inconclusivePredicate, partialPredicate, blockedPredicate, statusPredicate]
+      return {
+        clause: excluded.map((predicate) => `NOT (${predicate.clause})`).join(" AND "),
+        params: excluded.flatMap((predicate) => predicate.params),
+      }
+    }
+    case "negative_result":
+      return researchResultFailureSqlPredicate(alias)
+    case "inconclusive_result":
+      return researchResultTermSqlPredicate(alias, "inconclusive")
+    case "partial_result":
+      return researchResultTermSqlPredicate(alias, "partial")
+    case "blocked_result":
+      return researchResultTermSqlPredicate(alias, "blocked")
+    case "status_note":
+      return researchResultTermSqlPredicate(alias, "status")
+    case "artifact_index":
+    case "metric_observation": {
+      const resultTypes = researchResultTypesForEvidenceKind(evidenceKind)
+      return {
+        clause: `${alias}.result_type IN (${resultTypes.map(() => "?").join(", ")})`,
+        params: resultTypes,
+      }
+    }
+    default:
+      return { clause: `${alias}.label = ?`, params: [evidenceKind] }
+  }
+}
+
+function researchResultTermSqlPredicate(alias: string, term: string): { clause: string; params: SQLQueryBindings[] } {
+  return {
+    clause: `(LOWER(COALESCE(${alias}.label, '')) LIKE ? OR LOWER(COALESCE(${alias}.result_type, '')) LIKE ?)`,
+    params: [`%${term}%`, `%${term}%`],
+  }
+}
+
+function researchResultTypesForEvidenceKind(evidenceKind: string): ResearchResultType[] {
+  switch (evidenceKind.toLowerCase()) {
+    case "positive_finding":
+      return ["finding", "literature_finding", "implementation_change"]
+    case "negative_result":
+      return ["negative_finding", "bug_diagnosis"]
+    case "partial_result":
+    case "inconclusive_result":
+    case "blocked_result":
+    case "status_note":
+      return []
+    case "artifact_index":
+    case "metric_observation":
+      return [...RESEARCH_MEMORY_TYPED_EVIDENCE_RESULT_TYPES]
+    default:
+      return []
+  }
+}
+
+function ftsPreview(value: unknown): string {
+  if (value === null || value === undefined) return ""
+  try {
+    return ftsBound(JSON.stringify(redactValue(value)))
+  } catch {
+    return ""
+  }
+}
+
+function ftsBound(value: string): string {
+  const text = String(value).replace(/\s+/g, " ").trim()
+  return text.length <= 500 ? text : text.slice(0, 500)
 }
 
 function researchEventFromRow(row: ResearchEventRow): ResearchEvent {

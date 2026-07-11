@@ -160,23 +160,24 @@ def test_user_searches_inspects_and_profiles_research_memory_without_writes(sand
     stdout = search_result.stdout
     assert "Research memory and novelty" in stdout
     assert "retrieval_candidates" in stdout
-    assert "scoring=bounded lexical score" in stdout
+    assert "scoring=" in stdout
+    assert "rank_source=" in stdout
     assert "fields=" in stdout
     assert "matched" in stdout
     assert "near_duplicates=" in stdout
     assert "risk=" in stdout
     assert "search_profile=" in stdout
-    assert "engine=bounded_lexical" in stdout
+    assert ("engine=hybrid_fts_lexical" in stdout) or ("engine=bounded_lexical" in stdout)
     assert "semantic_search_enabled=false" in stdout
     assert "vector_index_enabled=false" in stdout
-    assert "fts_index_enabled=false" in stdout
+    assert "fts_index_enabled=" in stdout
     assert f"selected={memory_id}" in stdout
     assert "selected_refs artifacts=" in stdout
     assert "provenance=" in stdout
     assert "previews do not include raw research records" in stdout
     assert "full research.db" in stdout
     assert "selected=/research-memory-near-duplicates risk=safe_read" in stdout
-    assert "bounded lexical" in stdout
+    assert "lexical" in stdout
     assert "research-search-secret" not in stdout
     assert "research-search-secret-abc123" not in stdout
     assert "token=abc123" not in stdout
