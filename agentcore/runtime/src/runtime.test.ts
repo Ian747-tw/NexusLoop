@@ -23955,6 +23955,14 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(duplicate.refresh_id).toBe(written.refresh_id)
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(1)
 
+    const priorDeltaPath = join(dir, written.target_dir, "DELTA.md")
+    const priorDelta = await readFile(priorDeltaPath, "utf8")
+    await rm(priorDeltaPath)
+    const corruptDuplicate = await server.command("runtime.write_opencode_context_refresh", { sessionId }) as Record<string, any>
+    expect(corruptDuplicate).toMatchObject({ status: "blocked", error: "existing context-refresh event was found but files are missing or differ; artifact integrity repair is required" })
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(1)
+    await writeFile(priorDeltaPath, priorDelta)
+
     const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "progress", summary: "bounded refresh delta", files: ["fileA.ts"], tests: ["bun-test"] }) as { progress_id: string }
     const secondPreview = await server.command("runtime.preview_opencode_context_refresh", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
     expect(secondPreview.status).toBe("ready")

@@ -68,7 +68,11 @@ export class OpenCodeContextRefreshService {
           && unchanged.target_session_id === rebuilt.preview.target_session_id
           && unchanged.base_pack_hash === rebuilt.preview.base_pack_hash
           && previous?.budget_id === rebuilt.packet.budget.budget_id
-        if (reusableActiveRefresh) return unchanged
+        if (reusableActiveRefresh) {
+          const previousTarget = absoluteTargetDir(this.options.projectDir, unchanged.target_session_id, unchanged.refresh_id)
+          if (await eventFilesMatch(previousTarget, unchanged.files)) return unchanged
+          return { ...blockedResult(rebuilt.preview, rebuiltId, writtenAt, writtenBy), error: "existing context-refresh event was found but files are missing or differ; artifact integrity repair is required" }
+        }
       }
       const existing = await this.findExistingByHash(rebuilt.preview.target_session_id, rebuilt.preview.refresh_hash)
       const target = absoluteTargetDir(this.options.projectDir, rebuilt.preview.target_session_id, rebuiltId)
@@ -283,6 +287,19 @@ export async function validateContextRefreshTarget(projectDir: string, target: s
 }
 async function writeAtomically(projectDir: string, target: string, files: GeneratedFile[]) { await mkdir(dirname(target), { recursive: true }); const temp = `${target}.tmp-${process.pid}-${Date.now()}`; await mkdir(temp, { recursive: false }); try { for (const file of files) await writeFile(join(temp, file.relative_path.split("/").pop()!), file.content, { encoding: "utf8", flag: "wx" }); await rename(temp, target) } catch (error) { await rm(temp, { recursive: true, force: true }); throw error } }
 async function filesMatch(target: string, files: GeneratedFile[]) { try { for (const file of files) if (hash(await readFile(join(target, file.relative_path.split("/").pop()!), "utf8")) !== file.sha256) return false; return true } catch { return false } }
+async function eventFilesMatch(target: string, files: OpenCodeContextRefreshFilePreview[]) {
+  const expectedNames = new Set(["CONTEXT_REFRESH.md", "DELTA.md", "REFRESH_MANIFEST.json"])
+  if (files.length !== expectedNames.size) return false
+  try {
+    for (const file of files) {
+      const name = file.relative_path.split("/").pop()
+      if (!name || !expectedNames.delete(name) || hash(await readFile(join(target, name), "utf8")) !== file.sha256) return false
+    }
+    return expectedNames.size === 0
+  } catch {
+    return false
+  }
+}
 function absoluteTargetDir(projectDir: string, sessionId: string, refreshId: string) { return join(projectDir, ".nxl", "opencode", "sessions", sessionId, "context-refreshes", refreshId) }
 function refreshIdFor(refreshHash: string) { return `opencode_refresh_${refreshHash.slice(0, 24)}` }
 function safetyFlags(): OpenCodeContinuitySafetyFlags { return { delivery_performed: false, opencode_prompt_sent: false, native_session_action_performed: false, process_control_performed: false, session_state_mutated: false, mission_mutated: false, provider_called: false, mcp_called: false, research_db_written: false } }
