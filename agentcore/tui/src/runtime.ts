@@ -5134,9 +5134,10 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   private writeOpenCodeContextRefresh(payload: Record<string, unknown>): Record<string, any> {
     const preview = this.previewOpenCodeContextRefresh(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
     const existing = this.opencodeContextRefreshes.find((item) => item.refresh_hash === preview.refresh_hash)
-    if (existing) return existing
-    const result: Record<string, any> = { ...preview, refresh_id: `fake-refresh-${preview.refresh_hash.slice(0, 16)}`, status: preview.can_write ? payload.dryRun || payload.dry_run ? "dry_run" : "written" : "blocked", written_at: new Date(0).toISOString(), written_by: String(payload.writtenBy ?? payload.written_by ?? "operator"), error: preview.can_write ? undefined : preview.blockers[0] }
+    if (existing && !dryRun) return existing
+    const result: Record<string, any> = { ...preview, refresh_id: `fake-refresh-${preview.refresh_hash.slice(0, 16)}`, status: preview.can_write ? dryRun ? "dry_run" : "written" : "blocked", written_at: new Date(0).toISOString(), written_by: String(payload.writtenBy ?? payload.written_by ?? "operator"), error: preview.can_write ? undefined : preview.blockers[0] }
     delete result.preview_id
     if (result.status === "written") this.opencodeContextRefreshes.unshift({ ...result, source_refs: preview.source_refs, packet_hash: preview.packet_hash })
     return result
