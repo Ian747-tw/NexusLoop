@@ -23906,6 +23906,7 @@ describe("ProcessOpenCodeAdapter", () => {
   test("OpenCode context refresh parser honors snake-case research memory mode", () => {
     expect(readOpenCodeContextRefreshWriteInput({ research_memory_mode: "include", max_progress_items: 2, max_open_loops: 3, max_research_candidates: 1 })).toMatchObject({ research_memory_mode: "include", max_progress_items: 2, max_open_loops: 3, max_research_candidates: 1 })
     expect(readOpenCodeContextRefreshWriteInput({ research_memory_mode: "omit" }).research_memory_mode).toBe("omit")
+    expect(readOpenCodeContextRefreshWriteInput({ sourceSession: "source", sourceLaunch: "launch", targetSession: "target" })).toMatchObject({ source_session_id: "source", source_launch_id: "launch", target_session_id: "target" })
   })
 
   test("OpenCode context refresh writes immutable snapshot plus delta artifacts without delivery side effects", async () => {
@@ -23966,6 +23967,15 @@ describe("ProcessOpenCodeAdapter", () => {
     const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "progress", summary: "bounded refresh delta", files: ["fileA.ts"], tests: ["bun-test"] }) as { progress_id: string }
     const secondPreview = await server.command("runtime.preview_opencode_context_refresh", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
     expect(secondPreview.status).toBe("ready")
+    const append = server.eventStore.append.bind(server.eventStore)
+    server.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if ((event as { kind?: string }).kind === "opencode_session_context_refresh_written") throw new Error("context refresh append failed")
+      return append(event)
+    }
+    await expect(server.command("runtime.write_opencode_context_refresh", { sessionId, previousRefresh: written.refresh_id })).rejects.toThrow("context refresh append failed")
+    expect(existsSync(join(dir, secondPreview.target_dir))).toBe(false)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(1)
+    server.eventStore.append = append
     const second = await server.command("runtime.write_opencode_context_refresh", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
     expect(second.refresh_id).not.toBe(written.refresh_id)
     const latestPacket = await server.command("runtime.preview_opencode_session_continuity", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>

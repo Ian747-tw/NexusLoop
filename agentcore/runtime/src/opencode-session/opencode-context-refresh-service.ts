@@ -125,7 +125,16 @@ export class OpenCodeContextRefreshService {
       }) as JsonlEvent
       event.estimated_input_tokens = packet.budget.estimated_input_tokens
       event.estimated_input_bytes = packet.budget.estimated_input_bytes
-      await this.options.eventStore.append(event)
+      try {
+        await this.options.eventStore.append(event)
+      } catch (error) {
+        try {
+          await rm(target, { recursive: true, force: true })
+        } catch (cleanupError) {
+          throw new Error(`context-refresh event append failed and artifact cleanup failed: ${bound(String(cleanupError))}`, { cause: error })
+        }
+        throw error
+      }
       return resultFromPreview(rebuilt.preview, rebuiltId, "written", writtenAt, writtenBy)
     })
   }
@@ -239,7 +248,7 @@ export function readOpenCodeContextRefreshWriteInput(value: unknown): OpenCodeCo
   const input = isRecord(value) ? value : {}
   return {
     session_id: optional(input.sessionId ?? input.session_id ?? input.session), launch_id: optional(input.launchId ?? input.launch_id ?? input.launch),
-    source_session_id: optional(input.sourceSessionId ?? input.source_session_id ?? input.source_session), source_launch_id: optional(input.sourceLaunchId ?? input.source_launch_id ?? input.source_launch), target_session_id: optional(input.targetSessionId ?? input.target_session_id ?? input.target_session),
+    source_session_id: optional(input.sourceSessionId ?? input.sourceSession ?? input.source_session_id ?? input.source_session), source_launch_id: optional(input.sourceLaunchId ?? input.sourceLaunch ?? input.source_launch_id ?? input.source_launch), target_session_id: optional(input.targetSessionId ?? input.targetSession ?? input.target_session_id ?? input.target_session),
     packet_kind: input.packetKind === "continuation" || input.packet_kind === "continuation" ? "continuation" : undefined, continuity_mode: optional(input.continuityMode ?? input.continuity_mode ?? input.mode),
     continuation_reason: optional(input.continuationReason ?? input.continuation_reason ?? input.reason), patch_reason: optional(input.patchReason ?? input.patch_reason), fork_reason: optional(input.forkReason ?? input.fork_reason), checkpoint_id: optional(input.checkpointId ?? input.checkpoint_id ?? input.checkpoint), previous_refresh_id: optional(input.previousRefreshId ?? input.previousRefresh ?? input.previous_refresh_id ?? input.previous_refresh),
     preserve: readArray(input.preserve), discard: readArray(input.discard), objective_delta: optional(input.objectiveDelta ?? input.objective_delta), provider_kind: optional(input.providerKind ?? input.provider_kind ?? input.provider), model_id: optional(input.modelId ?? input.model_id ?? input.model), max_context_tokens: optionalNumber(input.maxContextTokens ?? input.max_context_tokens), max_context_bytes: optionalNumber(input.maxContextBytes ?? input.max_context_bytes), research_memory_mode: input.researchMemoryMode === "include" || input.research_memory_mode === "include" || input.research_memory === "include" ? "include" : input.researchMemoryMode === "omit" || input.research_memory_mode === "omit" || input.research_memory === "omit" ? "omit" : "auto", max_progress_items: optionalNumber(input.maxProgressItems ?? input.max_progress_items ?? input.max_progress), max_open_loops: optionalNumber(input.maxOpenLoops ?? input.max_open_loops), max_research_candidates: optionalNumber(input.maxResearchCandidates ?? input.max_research_candidates), dry_run: input.dryRun === true || input.dry_run === true, written_by: optional(input.writtenBy ?? input.written_by),
