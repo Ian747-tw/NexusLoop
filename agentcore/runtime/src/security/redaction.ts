@@ -14,7 +14,8 @@ export function redactValue<T>(value: T): T {
   if (value && typeof value === "object") {
     const output: Record<string, unknown> = {}
     for (const [key, item] of Object.entries(value)) {
-      output[key] = /secret|token|api[_-]?key|password/i.test(key) ? "[REDACTED]" : redactValue(item)
+      const safeNumericTokenMetadata = typeof item === "number" && /(?:_tokens|_token_count)$/i.test(key)
+      output[key] = /secret|token|api[_-]?key|password/i.test(key) && !safeNumericTokenMetadata ? "[REDACTED]" : redactValue(item)
     }
     return output as T
   }

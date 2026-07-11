@@ -51,7 +51,7 @@ export type OpenCodeSessionContinuityServiceOptions = {
   commanderContinuityService: CommanderContinuityService
   contextBudgetService: ContextBudgetService
   previousRefresh: (refreshId: string) => Promise<PreviousRefreshSnapshot | null>
-  latestRefresh: (sessionId: string) => Promise<PreviousRefreshSnapshot | null>
+  latestRefresh: (sessionId: string, continuityMode: string) => Promise<PreviousRefreshSnapshot | null>
   now?: () => Date
 }
 
@@ -112,7 +112,7 @@ export class OpenCodeSessionContinuityService {
       research_memory_mode: input.research_memory_mode,
       max_progress_items: input.max_progress_items,
       max_research_candidates: input.max_research_candidates,
-    }, base)
+    }, base, targetSessionId || sourceSessionId, mode)
     blockers.push(...packet.blockers)
     warnings.push(...packet.warnings)
     if ((mode === "continue_same_session" || mode === "patch_session") && !base.launch?.native_session_id) warnings.push("native_session_id is missing; artifact compilation remains available but native continuation is not ready")
@@ -140,7 +140,7 @@ export class OpenCodeSessionContinuityService {
       source: packet.packet_hash,
       targetPack: targetPack?.pack_hash,
     }))
-    return redactValue({
+    return redactContinuityPacket({
       packet_id: `opencode_continuation_${packetHash.slice(0, 20)}`,
       packet_kind: "continuation",
       continuity_mode: mode,
@@ -202,7 +202,7 @@ export class OpenCodeSessionContinuityService {
     return { sessionId, session, launch, pack, blockers, warnings }
   }
 
-  private async compileSession(input: OpenCodeSessionContinuityInput, base: Awaited<ReturnType<OpenCodeSessionContinuityService["resolveBase"]>>): Promise<OpenCodeSessionContinuityPacket> {
+  private async compileSession(input: OpenCodeSessionContinuityInput, base: Awaited<ReturnType<OpenCodeSessionContinuityService["resolveBase"]>>, previousTargetSessionId = base.sessionId, previousMode: OpenCodeContinuityMode = "active_refresh"): Promise<OpenCodeSessionContinuityPacket> {
     const generatedAt = this.now().toISOString()
     const blockers = [...base.blockers]
     const warnings = [...base.warnings]
@@ -235,7 +235,7 @@ export class OpenCodeSessionContinuityService {
       max_context_bytes: input.max_context_bytes,
     })
     blockers.push(...budgetPreview.blockers)
-    const previous = await this.resolvePrevious(input.previous_refresh_id, base.sessionId)
+    const previous = await this.resolvePrevious(input.previous_refresh_id, previousTargetSessionId, previousMode)
     if (previous.error) blockers.push(previous.error)
     const sections = executorSections(base, mid, refs, mode, includeResearchAuto)
     const budget = applyBudget(sections, budgetPreview.budget)
@@ -243,7 +243,7 @@ export class OpenCodeSessionContinuityService {
     const humanBlocked = mid.open_loops.some((loop) => loop.loop_kind === "human_stop" || loop.loop_kind === "human_pause")
     const readiness = blockers.length ? "blocked" : humanBlocked ? "needs_human_review" : base.launch?.native_session_id ? "ready_for_artifact" : "needs_native_session_id"
     const packetHash = hash(stableJson({ session: base.sessionId, launch: base.launch?.launch_id, pack: base.pack?.pack_hash, refs: refs.map((item) => [item.source_kind, item.source_id, item.status]), delta: delta.delta_hash, sections: sections.map((item) => [item.section_kind, item.summary_preview]), budget: budget.budget_id }))
-    return redactValue({
+    return redactContinuityPacket({
       packet_id: `opencode_continuity_${packetHash.slice(0, 20)}`,
       packet_kind: "session_refresh",
       continuity_mode: "active_refresh",
@@ -290,10 +290,11 @@ export class OpenCodeSessionContinuityService {
     }) as OpenCodeSessionContinuityPacket
   }
 
-  private async resolvePrevious(explicitId: string | undefined, sessionId: string): Promise<{ snapshot: PreviousRefreshSnapshot | null; error?: string }> {
-    const snapshot = explicitId ? await this.options.previousRefresh(explicitId) : sessionId ? await this.options.latestRefresh(sessionId) : null
+  private async resolvePrevious(explicitId: string | undefined, sessionId: string, continuityMode: OpenCodeContinuityMode): Promise<{ snapshot: PreviousRefreshSnapshot | null; error?: string }> {
+    const snapshot = explicitId ? await this.options.previousRefresh(explicitId) : sessionId ? await this.options.latestRefresh(sessionId, continuityMode) : null
     if (explicitId && !snapshot) return { snapshot: null, error: "previous_refresh_id does not resolve" }
     if (snapshot && snapshot.target_session_id !== sessionId) return { snapshot, error: "previous refresh belongs to another target session" }
+    if (snapshot && snapshot.continuity_mode !== continuityMode) return { snapshot, error: "previous refresh belongs to another continuity mode" }
     return { snapshot }
   }
 }
@@ -393,6 +394,7 @@ async function latestActiveLaunch(service: OpenCodeLaunchGateService, sessionId:
 }
 function toRef(item: CommanderContinuitySourceRef): OpenCodeContinuitySourceRef { return { source_kind: bound(item.source_kind, 80), source_id: bound(item.source_id, 160), label: item.label ? bound(item.label) : undefined, status: item.status ? bound(item.status, 80) : undefined, summary_preview: item.summary_preview ? bound(item.summary_preview) : undefined, pointer_only: true } }
 function safetyFlags() { return { delivery_performed: false as const, opencode_prompt_sent: false as const, native_session_action_performed: false as const, process_control_performed: false as const, session_state_mutated: false as const, mission_mutated: false as const, provider_called: false as const, mcp_called: false as const, research_db_written: false as const } }
+function redactContinuityPacket<T extends { budget: OpenCodeContinuityBudget }>(packet: T): T { const redacted = redactValue(packet) as T; redacted.budget = packet.budget; return redacted }
 function readMode(value: unknown): Exclude<OpenCodeContinuityMode, "active_refresh"> { return value === "fork_from_session" || value === "patch_session" || value === "resume_from_checkpoint" ? value : "continue_same_session" }
 function readResearchMode(value: unknown): "auto" | "include" | "omit" { return value === "include" || value === "omit" ? value : "auto" }
 function boundedArray(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map((item) => bound(item)).filter(Boolean).slice(0, 12) : [] }

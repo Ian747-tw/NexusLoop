@@ -4412,7 +4412,7 @@ export class RuntimeServer {
       commanderContinuityService: this.commanderContinuityService(),
       contextBudgetService: this.contextBudgetService(),
       previousRefresh: (refreshId) => this.opencodeContextRefreshService().previousSnapshot(refreshId),
-      latestRefresh: (sessionId) => this.opencodeContextRefreshService().latestSnapshot(sessionId),
+      latestRefresh: (sessionId, continuityMode) => this.opencodeContextRefreshService().latestSnapshot(sessionId, continuityMode),
       now: this.researchSynthesisNow,
     })
     return this.opencodeSessionContinuityServiceInstance

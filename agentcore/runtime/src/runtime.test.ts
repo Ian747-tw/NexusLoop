@@ -23929,6 +23929,8 @@ describe("ProcessOpenCodeAdapter", () => {
     const packet = await server.command("runtime.preview_opencode_session_continuity", { sessionId }) as Record<string, any>
     expect(packet).toMatchObject({ packet_kind: "session_refresh", continuity_mode: "active_refresh", source_session_id: sessionId, target_session_id: sessionId, launch_id: launched.launch_id, base_pack_id: packId, context_strategy: "immutable_base_plus_latest_snapshot_and_delta", consumption_status: "not_delivered", delivery_performed: false, opencode_prompt_sent: false, native_session_action_performed: false, process_control_performed: false, session_state_mutated: false, mission_mutated: false, provider_called: false, mcp_called: false, research_db_written: false })
     expect(packet.delta.delta_kind).toBe("initial_snapshot")
+    expect(typeof packet.budget.estimated_input_tokens).toBe("number")
+    expect(typeof packet.budget.max_context_tokens).toBe("number")
     expect(packet.sections.map((item: any) => item.section_kind)).toEqual(expect.arrayContaining(["authority_boundary", "tactical_objective", "current_execution_state", "commander_guidance", "human_controls", "watchdog_and_wake", "result_state", "omitted_raw_content"]))
     expect(JSON.stringify(packet)).not.toMatch(/proposal_lineage|project_direction|raw OpenCode transcript content/)
 
@@ -23943,7 +23945,11 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(written).toMatchObject({ status: "written", consumption_status: "not_delivered", opencode_prompt_sent: false, native_session_action_performed: false, process_control_performed: false })
     expect(await Promise.all(baseNames.map(async (name) => [name, createHash("sha256").update(await readFile(join(baseDir, name))).digest("hex")]))).toEqual(Object.entries(baseHashes))
     for (const name of ["CONTEXT_REFRESH.md", "DELTA.md", "REFRESH_MANIFEST.json"]) expect(existsSync(join(dir, written.target_dir, name))).toBe(true)
-    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(1)
+    const firstRefreshEvents = (await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")
+    expect(firstRefreshEvents).toHaveLength(1)
+    expect(typeof firstRefreshEvents[0]!.estimated_input_tokens).toBe("number")
+    const firstManifest = JSON.parse(await readFile(join(dir, written.target_dir, "REFRESH_MANIFEST.json"), "utf8"))
+    expect(typeof firstManifest.budget.estimated_input_tokens).toBe("number")
 
     const duplicate = await server.command("runtime.write_opencode_context_refresh", { sessionId }) as Record<string, any>
     expect(duplicate.refresh_id).toBe(written.refresh_id)
@@ -23964,6 +23970,11 @@ describe("ProcessOpenCodeAdapter", () => {
 
     const continuation = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "continue_same_session", reason: "continue bounded work" }) as Record<string, any>
     expect(continuation).toMatchObject({ packet_kind: "continuation", continuity_mode: "continue_same_session", source_session_id: sessionId, target_session_id: sessionId, consumption_status: "not_delivered", native_session_action_performed: false })
+    const continuedRefresh = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, mode: "continue_same_session", continuation_reason: "continue bounded work" }) as Record<string, any>
+    expect(continuedRefresh).toMatchObject({ status: "written", continuity_mode: "continue_same_session", target_session_id: sessionId })
+    const activeFromContinuation = await server.command("runtime.preview_opencode_session_continuity", { sessionId, previousRefresh: continuedRefresh.refresh_id }) as Record<string, any>
+    expect(activeFromContinuation).toMatchObject({ status: "blocked" })
+    expect(activeFromContinuation.blockers).toContain("previous refresh belongs to another continuity mode")
     const patchMissing = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "patch_session" }) as Record<string, any>
     expect(patchMissing.status).toBe("blocked")
     expect(patchMissing.blockers).toContain("patch_reason is required")
@@ -23975,12 +23986,14 @@ describe("ProcessOpenCodeAdapter", () => {
     const invalidSameSessionTarget = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "continue_same_session", continuation_reason: "must remain on source" }) as Record<string, any>
     expect(invalidSameSessionTarget).toMatchObject({ status: "blocked", source_session_id: sessionId, target_session_id: sessionId })
     expect(invalidSameSessionTarget.error).toContain("continue_same_session target_session_id must match source_session_id")
-    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(2)
-    const forkWritten = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent", previousRefresh: second.refresh_id }) as Record<string, any>
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(3)
+    const mismatchedForkBaseline = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent", previousRefresh: second.refresh_id }) as Record<string, any>
+    expect(mismatchedForkBaseline).toMatchObject({ status: "blocked", error: "previous refresh belongs to another target session" })
+    const forkWritten = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent" }) as Record<string, any>
     expect(forkWritten).toMatchObject({ status: "written", packet_kind: "continuation", continuity_mode: "fork_from_session", source_session_id: sessionId, target_session_id: targetSession.session_id })
     expect(forkWritten.refresh_id).not.toBe(second.refresh_id)
     expect(existsSync(join(dir, forkWritten.target_dir, "CONTEXT_REFRESH.md"))).toBe(true)
-    const revisedFork = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent", previousRefresh: second.refresh_id, preserve: ["latest tests"], discard: ["superseded attempt"] }) as Record<string, any>
+    const revisedFork = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent", previousRefresh: forkWritten.refresh_id, preserve: ["latest tests"], discard: ["superseded attempt"] }) as Record<string, any>
     expect(revisedFork).toMatchObject({ status: "written", target_session_id: targetSession.session_id })
     expect(revisedFork.packet_hash).not.toBe(forkWritten.packet_hash)
     expect(revisedFork.refresh_id).not.toBe(forkWritten.refresh_id)
@@ -24001,7 +24014,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(noStartPreview).toMatchObject({ packet_kind: "session_refresh" })
     await expect(client.command("runtime.preview_opencode_context_refresh", { sessionId })).resolves.toMatchObject({ consumption_status: "not_delivered" })
     await expect(client.command("runtime.write_opencode_context_refresh", { sessionId, dryRun: true })).resolves.toMatchObject({ status: "dry_run" })
-    await expect(client.command("runtime.list_opencode_context_refreshes", { sessionId })).resolves.toHaveLength(3)
+    await expect(client.command("runtime.list_opencode_context_refreshes", { sessionId })).resolves.toHaveLength(4)
     expect(noStartAdapter.startCalls).toBe(0)
     const refreshEvents = (await noStartServer.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")
     const sourceRefreshEvents = refreshEvents.filter((event) => event.target_session_id === sessionId)
@@ -24009,7 +24022,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await noStartServer.eventStore.append(appendedLast)
     await expect(client.command("runtime.latest_opencode_context_refresh", { sessionId })).resolves.toMatchObject({ refresh_id: "refresh_same_timestamp_later" })
     for (let index = 0; index < 101; index += 1) await noStartServer.eventStore.append({ ...appendedLast, refresh_id: `refresh_summary_${index}`, packet_id: `packet_summary_${index}`, refresh_hash: `hash_summary_${index}` })
-    await expect(client.command("runtime.opencode_context_refresh_summary", { limit: 5 })).resolves.toMatchObject({ total_refreshes: 107, not_delivered_count: 107, latest_refreshes: expect.any(Array) })
+    await expect(client.command("runtime.opencode_context_refresh_summary", { limit: 5 })).resolves.toMatchObject({ total_refreshes: 108, not_delivered_count: 108, latest_refreshes: expect.any(Array) })
     expect(((await client.command("runtime.opencode_context_refresh_summary", { limit: 5 })) as Record<string, any>).latest_refreshes).toHaveLength(5)
     await client.shutdown()
 

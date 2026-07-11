@@ -80,7 +80,7 @@ export class OpenCodeContextRefreshService {
       if (targetError) return { ...blockedResult(rebuilt.preview, rebuiltId, writtenAt, writtenBy), error: targetError }
       await writeAtomically(this.options.projectDir, target, rebuilt.files)
       const packet = rebuilt.packet
-      await this.options.eventStore.append(redactValue({
+      const event = redactValue({
         kind: OPENCODE_CONTEXT_REFRESH_EVENT_KIND,
         refresh_id: rebuiltId,
         status: "written",
@@ -118,7 +118,10 @@ export class OpenCodeContextRefreshService {
         written_by: writtenBy,
         refresh_hash: rebuilt.preview.refresh_hash,
         redaction_policy: "bounded executor-safe snapshot and delta; excludes raw OpenCode transcripts/logs, file contents, diffs, event history, Commander chat, provider output, credentials, and full research.db",
-      }) as JsonlEvent)
+      }) as JsonlEvent
+      event.estimated_input_tokens = packet.budget.estimated_input_tokens
+      event.estimated_input_bytes = packet.budget.estimated_input_bytes
+      await this.options.eventStore.append(event)
       return resultFromPreview(rebuilt.preview, rebuiltId, "written", writtenAt, writtenBy)
     })
   }
@@ -168,8 +171,8 @@ export class OpenCodeContextRefreshService {
     return event ? snapshotFromEvent(event) : null
   }
 
-  async latestSnapshot(sessionId: string): Promise<PreviousRefreshSnapshot | null> {
-    const event = (await this.events()).filter((item) => item.target_session_id === sessionId).at(-1)
+  async latestSnapshot(sessionId: string, continuityMode: string): Promise<PreviousRefreshSnapshot | null> {
+    const event = (await this.events()).filter((item) => item.target_session_id === sessionId && item.continuity_mode === continuityMode).at(-1)
     return event ? snapshotFromEvent(event) : null
   }
 
