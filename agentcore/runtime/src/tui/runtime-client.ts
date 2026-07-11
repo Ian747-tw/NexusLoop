@@ -49,6 +49,8 @@ import type { ContextPacketPreview, ContextPacketPreviewInput, ContextPacketSumm
 import type { ResearchMemoryInspectionInput, ResearchMemoryInspectionPreview, ResearchMemoryNearDuplicateInput, ResearchMemoryNearDuplicatePreview, ResearchMemoryRetrievalInput, ResearchMemoryRetrievalPreview, ResearchMemorySearchProfile, ResearchMemorySummary, ResearchNoveltyInput, ResearchNoveltyPreview } from "../research-memory/research-memory-types"
 import type { ResearchIngestionPreview, ResearchIngestionPreviewInput, ResearchIngestionRecord, ResearchIngestionRecordInput, ResearchIngestionResult, ResearchIngestionSummary } from "../research/research-ingestion-types"
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityInput, CommanderMidMissionContinuityPacket, CommanderProposalContinuityInput, CommanderProposalContinuityPacket } from "../continuity/commander-continuity-types"
+import type { OpenCodeContinuationInput, OpenCodeContinuationPacket, OpenCodeSessionContinuityInput, OpenCodeSessionContinuityPacket } from "../opencode-session/opencode-session-continuity-types"
+import type { OpenCodeContextRefreshPreview, OpenCodeContextRefreshRecord, OpenCodeContextRefreshResult, OpenCodeContextRefreshSummary, OpenCodeContextRefreshWriteInput } from "../opencode-session/opencode-context-refresh-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
 import type { RuntimeRestoreInput, RuntimeRestorePreview, RuntimeResumeAnchor } from "../checkpoints/runtime-restore-types"
 import type { WakeAssessment, WakeAssessmentInput, WakeAssessmentPreview, WakeAssessmentRecord } from "../wake/wake-hook-types"
@@ -450,6 +452,14 @@ export interface RuntimeClient {
   command(name: "runtime.commander_continuity_summary", payload?: { limit?: number; includeClosed?: boolean; include_closed?: boolean }): Promise<CommanderContinuitySummary>
   command(name: "runtime.list_commander_continuity_open_loops", payload?: { session_id?: string; sessionId?: string; session?: string; launch_id?: string; launchId?: string; launch?: string; severity?: string; kind?: string; loopKind?: string; loop_kind?: string; limit?: number }): Promise<CommanderContinuityOpenLoop[]>
   command(name: "runtime.show_commander_continuity_thread", payload?: { thread_id?: string; threadId?: string; thread?: string; session_id?: string; sessionId?: string; session?: string; launch_id?: string; launchId?: string; launch?: string; mission_id?: string; missionId?: string; mission?: string; objective?: string }): Promise<CommanderContinuityThreadCard | null>
+  command(name: "runtime.preview_opencode_session_continuity", payload?: OpenCodeSessionContinuityInput | Record<string, unknown>): Promise<OpenCodeSessionContinuityPacket>
+  command(name: "runtime.preview_opencode_continuation", payload?: OpenCodeContinuationInput | Record<string, unknown>): Promise<OpenCodeContinuationPacket>
+  command(name: "runtime.preview_opencode_context_refresh", payload?: OpenCodeContextRefreshWriteInput | Record<string, unknown>): Promise<OpenCodeContextRefreshPreview>
+  command(name: "runtime.write_opencode_context_refresh", payload?: OpenCodeContextRefreshWriteInput | Record<string, unknown>): Promise<OpenCodeContextRefreshResult>
+  command(name: "runtime.list_opencode_context_refreshes", payload?: { limit?: number; session_id?: string; sessionId?: string; session?: string; continuity_mode?: string }): Promise<OpenCodeContextRefreshRecord[]>
+  command(name: "runtime.get_opencode_context_refresh", payload: { refresh_id: string } | { refreshId: string }): Promise<OpenCodeContextRefreshResult | null>
+  command(name: "runtime.latest_opencode_context_refresh", payload?: { session_id?: string; sessionId?: string; session?: string }): Promise<OpenCodeContextRefreshResult | null>
+  command(name: "runtime.opencode_context_refresh_summary", payload?: { limit?: number }): Promise<OpenCodeContextRefreshSummary>
   command(name: "runtime.preview_research_novelty_check", payload?: ResearchNoveltyInput | { question?: string; method?: string; config?: string; labels?: string[]; limit?: number; missionId?: string; mission_id?: string; sessionId?: string; session_id?: string; repetitionReason?: string; repetition_reason?: string; reason?: string; includeFailures?: boolean; include_failures?: boolean }): Promise<ResearchNoveltyPreview>
   command(name: "runtime.preview_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewPreview>
   command(name: "runtime.execute_commander_executor_review", payload?: CommanderExecutorReviewInput): Promise<CommanderExecutorReviewResult>
@@ -701,6 +711,14 @@ export interface RuntimeCommandEnvelope {
     | "runtime.get_opencode_session_instruction_pack"
     | "runtime.preview_opencode_launch_readiness"
     | "runtime.opencode_launch_readiness_summary"
+    | "runtime.preview_opencode_session_continuity"
+    | "runtime.preview_opencode_continuation"
+    | "runtime.preview_opencode_context_refresh"
+    | "runtime.write_opencode_context_refresh"
+    | "runtime.list_opencode_context_refreshes"
+    | "runtime.get_opencode_context_refresh"
+    | "runtime.latest_opencode_context_refresh"
+    | "runtime.opencode_context_refresh_summary"
     | "runtime.preview_commander_executor_review"
     | "runtime.execute_commander_executor_review"
     | "runtime.list_commander_executor_reviews"

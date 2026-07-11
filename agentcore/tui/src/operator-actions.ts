@@ -137,6 +137,9 @@ const WRITE_COMMANDS = new Set([
   "research-ingest",
   "research-promote",
   "research-memory-ingest",
+  "opencode-context-refresh-write",
+  "opencode-refresh-write",
+  "context-refresh-write",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"

@@ -203,7 +203,7 @@ export class CommanderContinuityService {
     ])
     const openLoops = input.include_open_loops === false ? [] : await this.openLoops({ session_id: sid, launch_id: lid, limit: clamp(input.max_open_loops, 12, 1, 50) })
     const objective = bound(session?.objective ?? "")
-    const includeResearch = input.include_research_memory === true || questions.some((question) => question.status === "pending_commander") || watchdogs.some((watchdog) => watchdog.watchdog_status === "timed_out" || watchdog.watchdog_status === "stale")
+    const includeResearch = input.include_research_memory === true || (input.include_research_memory !== false && (questions.some((question) => question.status === "pending_commander") || watchdogs.some((watchdog) => watchdog.watchdog_status === "timed_out" || watchdog.watchdog_status === "stale")))
     const research = includeResearch && objective ? await this.researchSection(objective, { maxCandidates: clamp(input.max_research_candidates, 3, 1, 12), maxInspected: 1, includeNearDuplicates: false, sessionId: sid, missionId: session?.mission_id }) : null
     if (!research) warnings.add("research memory omitted to save tokens; no explicit include_research_memory request or blocker-driven memory need")
     if (deliveries.some((delivery) => delivery.delivery_status_after === "pending_delivery")) warnings.add("operator_handoff delivery metadata may not mean OpenCode received guidance")

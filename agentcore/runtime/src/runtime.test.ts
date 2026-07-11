@@ -23885,4 +23885,80 @@ describe("ProcessOpenCodeAdapter", () => {
     const reader = new RuntimeServer({ projectDir: dir, mode: "view-records", researchProjectionMode: "disabled" })
     await expect(reader.command("runtime.commander_target_context", { targetType: "proposal", targetId: proposal.proposal_id })).resolves.toMatchObject({ found: true })
   })
+
+  test("OpenCode context refresh writes immutable snapshot plus delta artifacts without delivery side effects", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled", opencodeLaunchId: () => "launch_continuity_1" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "continuity refresh test", successCriteria: ["bounded snapshot"], constraints: ["no delivery"] }) as { session_id: string }
+    const sessionId = session.session_id
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    const packId = pack.pack_id
+    const launched = await server.command("runtime.launch_opencode_session", { sessionId, packId, providerKind: "local", modelId: "local-medium" }) as { launch_id: string }
+    const baseDir = join(dir, ".nxl", "opencode", "sessions", sessionId)
+    const baseNames = ["TASK.md", "CONTEXT.md", "GUIDANCE.md", "SESSION_MEMORY.md", "POLICY.md", "MANIFEST.json", "opencode-session-config.json"]
+    const baseHashes = Object.fromEntries(await Promise.all(baseNames.map(async (name) => [name, createHash("sha256").update(await readFile(join(baseDir, name))).digest("hex")])))
+
+    const before = await server.eventStore.readAll()
+    const missing = await server.command("runtime.preview_opencode_session_continuity", {}) as { status: string; blockers: string[] }
+    expect(missing.status).toBe("blocked")
+    expect(missing.blockers).toContain("session_id or launch_id is required")
+    const packet = await server.command("runtime.preview_opencode_session_continuity", { sessionId }) as Record<string, any>
+    expect(packet).toMatchObject({ packet_kind: "session_refresh", continuity_mode: "active_refresh", source_session_id: sessionId, target_session_id: sessionId, launch_id: launched.launch_id, base_pack_id: packId, context_strategy: "immutable_base_plus_latest_snapshot_and_delta", consumption_status: "not_delivered", delivery_performed: false, opencode_prompt_sent: false, native_session_action_performed: false, process_control_performed: false, session_state_mutated: false, mission_mutated: false, provider_called: false, mcp_called: false, research_db_written: false })
+    expect(packet.delta.delta_kind).toBe("initial_snapshot")
+    expect(packet.sections.map((item: any) => item.section_kind)).toEqual(expect.arrayContaining(["authority_boundary", "tactical_objective", "current_execution_state", "commander_guidance", "human_controls", "watchdog_and_wake", "result_state", "omitted_raw_content"]))
+    expect(JSON.stringify(packet)).not.toMatch(/proposal_lineage|project_direction|raw OpenCode transcript content/)
+
+    const preview = await server.command("runtime.preview_opencode_context_refresh", { sessionId }) as Record<string, any>
+    expect(preview).toMatchObject({ status: "ready", can_write: true, consumption_status: "not_delivered", delivery_performed: false })
+    expect(preview.files.map((item: any) => item.relative_path.split("/").pop())).toEqual(["CONTEXT_REFRESH.md", "DELTA.md", "REFRESH_MANIFEST.json"])
+    const dry = await server.command("runtime.write_opencode_context_refresh", { sessionId, dryRun: true }) as Record<string, any>
+    expect(dry.status).toBe("dry_run")
+    expect(await server.eventStore.readAll()).toEqual(before)
+
+    const written = await server.command("runtime.write_opencode_context_refresh", { sessionId }) as Record<string, any>
+    expect(written).toMatchObject({ status: "written", consumption_status: "not_delivered", opencode_prompt_sent: false, native_session_action_performed: false, process_control_performed: false })
+    expect(await Promise.all(baseNames.map(async (name) => [name, createHash("sha256").update(await readFile(join(baseDir, name))).digest("hex")]))).toEqual(Object.entries(baseHashes))
+    for (const name of ["CONTEXT_REFRESH.md", "DELTA.md", "REFRESH_MANIFEST.json"]) expect(existsSync(join(dir, written.target_dir, name))).toBe(true)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(1)
+
+    const duplicate = await server.command("runtime.write_opencode_context_refresh", { sessionId }) as Record<string, any>
+    expect(duplicate.refresh_id).toBe(written.refresh_id)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(1)
+
+    const progress = await server.command("runtime.record_opencode_progress", { sessionId, kind: "progress", summary: "bounded refresh delta", files: ["fileA.ts"], tests: ["bun-test"] }) as { progress_id: string }
+    const secondPreview = await server.command("runtime.preview_opencode_context_refresh", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
+    expect(secondPreview.status).toBe("ready")
+    const second = await server.command("runtime.write_opencode_context_refresh", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
+    expect(second.refresh_id).not.toBe(written.refresh_id)
+    const latestPacket = await server.command("runtime.preview_opencode_session_continuity", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
+    expect(latestPacket.delta).toMatchObject({ delta_kind: "incremental", previous_refresh_id: written.refresh_id, new_progress_ids: [progress.progress_id] })
+    expect(latestPacket.delta.summary_preview).not.toBe("no substantive continuity delta")
+    await expect(server.command("runtime.list_opencode_context_refreshes", { sessionId })).resolves.toHaveLength(2)
+    await expect(server.command("runtime.latest_opencode_context_refresh", { sessionId })).resolves.toMatchObject({ refresh_id: second.refresh_id })
+    await expect(server.command("runtime.get_opencode_context_refresh", { refreshId: written.refresh_id })).resolves.toMatchObject({ refresh_id: written.refresh_id })
+    await expect(server.command("runtime.opencode_context_refresh_summary", {})).resolves.toMatchObject({ total_refreshes: 2, not_delivered_count: 2 })
+
+    const continuation = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "continue_same_session", reason: "continue bounded work" }) as Record<string, any>
+    expect(continuation).toMatchObject({ packet_kind: "continuation", continuity_mode: "continue_same_session", source_session_id: sessionId, target_session_id: sessionId, consumption_status: "not_delivered", native_session_action_performed: false })
+    const patchMissing = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "patch_session" }) as Record<string, any>
+    expect(patchMissing.status).toBe("blocked")
+    expect(patchMissing.blockers).toContain("patch_reason is required")
+    const checkpoint = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "resume_from_checkpoint", checkpoint: "checkpoint-1", reason: "inspect only" }) as Record<string, any>
+    expect(checkpoint).toMatchObject({ status: "blocked", continuity_readiness: "needs_checkpoint_binding", native_session_action_performed: false })
+    expect(checkpoint.blockers).toContain("checkpoint-to-OpenCode continuity binding is future 9W/9X work")
+    await server.shutdown()
+
+    const noStartAdapter = new LongLivedAdapter()
+    const noStartServer = new RuntimeServer({ projectDir: dir, adapter: noStartAdapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server: noStartServer, autoStart: true, ownsServer: true })
+    const noStartPreview = await client.command("runtime.preview_opencode_session_continuity", { sessionId }) as Record<string, unknown>
+    expect(noStartPreview).toMatchObject({ packet_kind: "session_refresh" })
+    await expect(client.command("runtime.preview_opencode_context_refresh", { sessionId })).resolves.toMatchObject({ consumption_status: "not_delivered" })
+    await expect(client.command("runtime.write_opencode_context_refresh", { sessionId, dryRun: true })).resolves.toMatchObject({ status: "dry_run" })
+    await expect(client.command("runtime.list_opencode_context_refreshes", { sessionId })).resolves.toHaveLength(2)
+    expect(noStartAdapter.startCalls).toBe(0)
+    await client.shutdown()
+  })
 })

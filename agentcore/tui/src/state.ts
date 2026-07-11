@@ -3388,6 +3388,18 @@ export type CommanderContinuityState = {
   commandError?: string
 }
 
+export type OpenCodeContinuityState = {
+  sessionPacket?: Record<string, any> | null
+  continuationPacket?: Record<string, any> | null
+  refreshPreview?: Record<string, any> | null
+  latestResult?: Record<string, any> | null
+  records: Array<Record<string, any>>
+  selected?: Record<string, any> | null
+  latest?: Record<string, any> | null
+  summary?: Record<string, any> | null
+  commandError?: string
+}
+
 export type CommanderExecutorReviewCommandSummary = {
   label: string
   command: string
@@ -5685,6 +5697,7 @@ export type UiState = {
   researchIngestions?: ResearchIngestionState
   researchMemory?: ResearchMemoryState
   commanderContinuity?: CommanderContinuityState
+  opencodeContinuity?: OpenCodeContinuityState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState
   executorReviewProposalCreate?: ExecutorReviewProposalCreateState

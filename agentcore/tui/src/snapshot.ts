@@ -103,6 +103,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...researchIngestionLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderContinuityLines(state))
+  out.push(...opencodeContinuityLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
   out.push(...executorReviewProposalCreateLines(state))
@@ -119,6 +120,29 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...wakeSchedulerLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
+}
+
+function opencodeContinuityLines(state: UiState): string[] {
+  const continuity = state.opencodeContinuity
+  if (!continuity) return []
+  const out = ["OpenCode session continuity"]
+  for (const [label, raw] of [["session_packet", continuity.sessionPacket], ["continuation_packet", continuity.continuationPacket], ["refresh_preview", continuity.refreshPreview], ["latest_result", continuity.latestResult], ["selected", continuity.selected], ["latest", continuity.latest], ["summary", continuity.summary]] as const) {
+    if (!raw || typeof raw !== "object") continue
+    const value = raw as Record<string, any>
+    out.push(`  ${label}=${value.packet_id ?? value.refresh_id ?? value.preview_id ?? "loaded"} status=${value.status ?? "ready"}`)
+    for (const key of ["packet_kind", "continuity_mode", "continuity_readiness", "consumption_status", "source_session_id", "target_session_id", "launch_id", "native_session_id", "native_session_link_status", "base_pack_id", "base_pack_hash", "base_context_packet_id", "base_context_packet_hash", "previous_refresh_id", "previous_refresh_hash", "context_strategy", "research_memory_mode", "target_dir", "refresh_hash"]) if (value[key] !== undefined) out.push(`  ${key}=${redactText(String(value[key]))}`)
+    for (const key of ["total_refreshes", "session_count", "active_refresh_count", "continue_same_session_count", "fork_from_session_count", "patch_session_count", "resume_from_checkpoint_count", "not_delivered_count"]) if (value[key] !== undefined) out.push(`  ${key}=${value[key]}`)
+    if (value.delta) out.push(`  delta=${value.delta.delta_kind} changed=${(value.delta.changed_section_kinds ?? []).join(",") || "none"} summary=${redactText(String(value.delta.summary_preview ?? ""))}`)
+    if (value.budget) out.push(`  budget=${value.budget.budget_id} tokens=${value.budget.estimated_input_tokens} bytes=${value.budget.estimated_input_bytes} omitted=${(value.budget.omitted_sections ?? []).join(",") || "none"}`)
+    for (const section of (value.sections ?? []).slice(0, 16)) out.push(`  section=${section.section_kind} status=${section.status} priority=${section.priority} refs=${section.item_count}`)
+    for (const file of (value.files ?? []).slice(0, 6)) out.push(`  file=${file.file_kind} path=${file.relative_path} bytes=${file.size_bytes} sha256=${file.sha256}`)
+    for (const key of ["delivery_performed", "opencode_prompt_sent", "native_session_action_performed", "process_control_performed", "session_state_mutated", "mission_mutated", "provider_called", "mcp_called", "research_db_written"]) if (value[key] !== undefined) out.push(`  ${key}=${value[key]}`)
+    for (const warning of (value.warnings ?? []).slice(0, 8)) out.push(`  warning=${redactText(String(warning))}`)
+  }
+  for (const record of continuity.records.slice(0, 20)) out.push(`  record=${record.refresh_id} mode=${record.continuity_mode} session=${record.target_session_id} status=${record.status}`)
+  if (continuity.commandError) out.push(`  command_error=${redactText(continuity.commandError)}`)
+  out.push("  note=context refresh is an immutable artifact only; OpenCode has not consumed it; no prompt/native session action/process control/mission mutation occurred; future 9X must explicitly select and deliver a refresh")
+  return out
 }
 
 function runtimeLines(state: UiState): string[] {

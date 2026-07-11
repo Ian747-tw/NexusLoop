@@ -63,6 +63,7 @@ import type {
   CommanderContinuitySectionSummary,
   CommanderContinuitySourceRefSummary,
   CommanderContinuityState,
+  OpenCodeContinuityState,
   CommanderContinuitySummaryState,
   CommanderContinuityThreadCardSummary,
   CommanderMidMissionContinuityPacketSummary,
@@ -5972,6 +5973,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeResultReviewGateCommands.has(command)) return state.opencodeResultReviews?.commandError
   if (researchIngestionCommands.has(command)) return state.researchIngestions?.commandError
   if (commanderContinuityCommands.has(command)) return state.commanderContinuity?.commandError
+  if (opencodeContinuityCommands.has(command)) return state.opencodeContinuity?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
   if (executorReviewProposalDraftCommands.has(command)) return state.executorReviewProposalDrafts?.commandError
@@ -6030,6 +6032,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeResultReviewGateCommands.has(command)) return { ...state, opencodeResultReviews: { ...opencodeResultReviewGateState(state), commandError: undefined } }
   if (researchIngestionCommands.has(command)) return { ...state, researchIngestions: { ...researchIngestionState(state), commandError: undefined } }
   if (commanderContinuityCommands.has(command)) return { ...state, commanderContinuity: { ...commanderContinuityState(state), commandError: undefined } }
+  if (opencodeContinuityCommands.has(command)) return { ...state, opencodeContinuity: { ...opencodeContinuityState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
   if (executorReviewProposalDraftCommands.has(command)) return { ...state, executorReviewProposalDrafts: { ...executorReviewProposalDraftState(state), commandError: undefined } }
@@ -6587,6 +6590,33 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "commander-continuity-thread":
     case "continuity-thread":
       return applyRuntimeUiEffect(commandState, runtime, commanderContinuityThreadEffect(args))
+    case "opencode-continuity-preview":
+    case "session-continuity-preview":
+    case "continuity-refresh-preview":
+      return executeOpenCodeContinuityCommand(commandState, runtime, "runtime.preview_opencode_session_continuity", parseOpenCodeContinuityArgs(args), "sessionPacket")
+    case "opencode-continuation-preview":
+    case "continuation-packet-preview":
+      return executeOpenCodeContinuityCommand(commandState, runtime, "runtime.preview_opencode_continuation", parseOpenCodeContinuityArgs(args), "continuationPacket")
+    case "opencode-context-refresh-preview":
+    case "opencode-refresh-preview":
+      return executeOpenCodeContinuityCommand(commandState, runtime, "runtime.preview_opencode_context_refresh", parseOpenCodeContinuityArgs(args), "refreshPreview")
+    case "opencode-context-refresh-dry-run":
+    case "opencode-refresh-dry-run":
+      return executeOpenCodeContinuityCommand(commandState, runtime, "runtime.write_opencode_context_refresh", { ...parseOpenCodeContinuityArgs(args), dryRun: true }, "latestResult")
+    case "opencode-context-refresh-write":
+    case "opencode-refresh-write":
+    case "context-refresh-write":
+      return executeOpenCodeContinuityCommand(commandState, runtime, "runtime.write_opencode_context_refresh", parseOpenCodeContinuityArgs(args), "latestResult")
+    case "opencode-context-refreshes":
+    case "context-refreshes":
+      return executeOpenCodeContinuityCommand(commandState, runtime, "runtime.list_opencode_context_refreshes", parseOpenCodeContinuityArgs(args), "records")
+    case "opencode-context-refresh-latest":
+    case "context-refresh-latest":
+      return executeOpenCodeContinuityCommand(commandState, runtime, "runtime.latest_opencode_context_refresh", parseOpenCodeContinuityArgs(args), "latest")
+    case "opencode-context-refresh-show":
+      return executeOpenCodeContinuityCommand(commandState, runtime, "runtime.get_opencode_context_refresh", { refreshId: requiredArg(args, 0, "refreshId") }, "selected")
+    case "opencode-context-refresh-summary":
+      return executeOpenCodeContinuityCommand(commandState, runtime, "runtime.opencode_context_refresh_summary", { limit: HANDOFF_LIMIT }, "summary")
     case "research-novelty-preview":
     case "novelty-preview":
     case "research-dup-check":
@@ -8087,6 +8117,13 @@ const commanderContinuityCommands = new Set([
   "continuity-summary",
   "open-loops",
   "continuity-thread",
+])
+
+const opencodeContinuityCommands = new Set([
+  "opencode-continuity-preview", "session-continuity-preview", "continuity-refresh-preview",
+  "opencode-continuation-preview", "continuation-packet-preview", "opencode-context-refresh-preview", "opencode-refresh-preview",
+  "opencode-context-refresh-dry-run", "opencode-refresh-dry-run", "opencode-context-refresh-write", "opencode-refresh-write", "context-refresh-write",
+  "opencode-context-refreshes", "context-refreshes", "opencode-context-refresh-latest", "context-refresh-latest", "opencode-context-refresh-show", "opencode-context-refresh-summary",
 ])
 
 const researchMemoryEffectTypes = new Set<RuntimeUiEffect["type"]>([
@@ -16689,6 +16726,10 @@ function commanderContinuityState(state: UiState): CommanderContinuityState {
   return state.commanderContinuity ?? { proposalPacket: null, midMissionPacket: null, summary: null, openLoops: [], selectedThread: null }
 }
 
+function opencodeContinuityState(state: UiState): OpenCodeContinuityState {
+  return state.opencodeContinuity ?? { sessionPacket: null, continuationPacket: null, refreshPreview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
+}
+
 function commanderExecutorReviewState(state: UiState): CommanderExecutorReviewState {
   return state.commanderExecutorReview ?? { preview: null, latestResult: null, records: [], selected: null }
 }
@@ -18626,6 +18667,60 @@ function readKeyValueWithFreeText(args: string[], index: number, knownKeys: Set<
     }
   }
   return { key, value: parts.join(" ").trim(), nextIndex }
+}
+
+async function executeOpenCodeContinuityCommand(
+  state: UiState,
+  runtime: RuntimeClient,
+  runtimeCommand: string,
+  payload: Record<string, unknown>,
+  field: "sessionPacket" | "continuationPacket" | "refreshPreview" | "latestResult" | "records" | "selected" | "latest" | "summary",
+): Promise<UiState> {
+  try {
+    const raw = await runtime.command(runtimeCommand, payload)
+    const value = redactUnknown(raw)
+    const blocked = value && typeof value === "object" && !Array.isArray(value) && ["blocked", "failed"].includes(String((value as Record<string, unknown>).status ?? ""))
+    const error = blocked ? redactText(String((value as Record<string, unknown>).error ?? ((value as Record<string, unknown>).blockers as string[] | undefined)?.join("; ") ?? "continuity command blocked")) : undefined
+    return {
+      ...state,
+      opencodeContinuity: { ...opencodeContinuityState(state), [field]: value, commandError: error },
+      systemActions: [...state.systemActions, { title: "OpenCode session continuity", detail: `${field} ${blocked ? "blocked" : "loaded"}`, status: blocked ? "blocked" : "loaded" }].slice(-12),
+    }
+  } catch (error) {
+    const message = redactText(error instanceof Error ? error.message : String(error))
+    return { ...state, opencodeContinuity: { ...opencodeContinuityState(state), commandError: message }, systemActions: [...state.systemActions, { title: "OpenCode continuity command error", detail: message, status: "failed" }].slice(-12) }
+  }
+}
+
+function parseOpenCodeContinuityArgs(args: string[]): Record<string, unknown> {
+  const known = new Set(["session", "launch", "source_session", "source_launch", "target_session", "mode", "reason", "continuation_reason", "patch_reason", "fork_reason", "checkpoint", "previous_refresh", "preserve", "discard", "objective_delta", "provider", "model", "max_context_tokens", "max_context_bytes", "research_memory", "max_progress", "max_open_loops", "max_research_candidates", "written_by", "limit"])
+  const free = new Set(["reason", "continuation_reason", "patch_reason", "fork_reason", "objective_delta"])
+  const payload: Record<string, unknown> = {}
+  for (let index = 0; index < args.length; index += 1) {
+    const parsed = readKeyValueWithFreeText(args, index, known, free, "continuity args must use supported key=value fields")
+    index = parsed.nextIndex
+    const key = parsed.key
+    const value = parsed.value
+    if (key === "session") payload.sessionId = value
+    else if (key === "launch") payload.launchId = value
+    else if (key === "source_session") payload.sourceSessionId = value
+    else if (key === "source_launch") payload.sourceLaunchId = value
+    else if (key === "target_session") payload.targetSessionId = value
+    else if (key === "mode") { payload.continuityMode = value; if (value !== "active_refresh") payload.packetKind = "continuation" }
+    else if (key === "reason" || key === "continuation_reason") payload.continuationReason = value
+    else if (key === "patch_reason") payload.patchReason = value
+    else if (key === "fork_reason") payload.forkReason = value
+    else if (key === "checkpoint") payload.checkpointId = value
+    else if (key === "previous_refresh") payload.previousRefreshId = value
+    else if (key === "preserve" || key === "discard") payload[key] = commaList(value)
+    else if (key === "objective_delta") payload.objectiveDelta = value
+    else if (key === "provider") payload.providerKind = value
+    else if (key === "model") payload.modelId = value
+    else if (key === "research_memory") payload.researchMemoryMode = value
+    else if (["max_context_tokens", "max_context_bytes", "max_progress", "max_open_loops", "max_research_candidates", "limit"].includes(key)) payload[key] = readPositiveInteger(value, key, key === "limit" ? HANDOFF_LIMIT : 128000)
+    else if (key === "written_by") payload.writtenBy = value
+  }
+  return payload
 }
 
 function looksLikeAnyKeyValueArg(value: string, knownKeys: Set<string>): boolean {
