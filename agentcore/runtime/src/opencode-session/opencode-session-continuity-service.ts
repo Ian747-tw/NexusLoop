@@ -99,6 +99,10 @@ export class OpenCodeSessionContinuityService {
         const packs = await this.options.instructionPackService.list({ session_id: targetSessionId, limit: 1, status: "written" })
         targetPack = packs[0] ? await this.options.instructionPackService.get(packs[0].pack_id) : null
         if (!targetPack) warnings.push("target session needs its own written base instruction pack before artifact write")
+        if (targetPack) {
+          const targetReadiness = await this.options.launchReadinessService.preview({ session_id: targetSessionId, pack_id: targetPack.pack_id })
+          if (!targetReadiness.instruction_files_verified || !targetReadiness.manifest_verified || !targetReadiness.config_verified) blockers.push("target base instruction pack on-disk integrity verification failed")
+        }
       }
     }
     const packet = await this.compileSession({

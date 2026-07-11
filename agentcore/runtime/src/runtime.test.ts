@@ -24007,6 +24007,13 @@ describe("ProcessOpenCodeAdapter", () => {
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(3)
     const mismatchedForkBaseline = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent", previousRefresh: second.refresh_id }) as Record<string, any>
     expect(mismatchedForkBaseline).toMatchObject({ status: "blocked", error: "previous refresh belongs to another target session" })
+    const targetTaskPath = join(dir, ".nxl", "opencode", "sessions", targetSession.session_id, "TASK.md")
+    const targetTask = await readFile(targetTaskPath, "utf8")
+    await writeFile(targetTaskPath, `${targetTask}\ncorrupt target pack\n`)
+    const corruptTargetFork = await server.command("runtime.write_opencode_context_refresh", { sourceSession: sessionId, targetSession: targetSession.session_id, mode: "fork_from_session", forkReason: "must verify target pack" }) as Record<string, any>
+    expect(corruptTargetFork).toMatchObject({ status: "blocked" })
+    expect(corruptTargetFork.error).toContain("target base instruction pack on-disk integrity verification failed")
+    await writeFile(targetTaskPath, targetTask)
     const forkWritten = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent" }) as Record<string, any>
     expect(forkWritten).toMatchObject({ status: "written", packet_kind: "continuation", continuity_mode: "fork_from_session", source_session_id: sessionId, target_session_id: targetSession.session_id })
     expect(forkWritten.refresh_id).not.toBe(second.refresh_id)
