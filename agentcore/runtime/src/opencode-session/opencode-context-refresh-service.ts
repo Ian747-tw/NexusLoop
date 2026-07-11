@@ -61,14 +61,12 @@ export class OpenCodeContextRefreshService {
       if (rebuilt.packet.delta.previous_refresh_id && rebuilt.packet.delta.summary_preview === "no substantive continuity delta") {
         const unchanged = await this.get(rebuilt.packet.delta.previous_refresh_id)
         const previous = await this.previousSnapshot(rebuilt.packet.delta.previous_refresh_id)
-        const reusableActiveRefresh = rebuilt.packet.packet_kind === "session_refresh"
-          && rebuilt.packet.continuity_mode === "active_refresh"
-          && unchanged?.packet_kind === "session_refresh"
-          && unchanged.continuity_mode === "active_refresh"
+        const reusableRefresh = unchanged?.packet_kind === rebuilt.packet.packet_kind
+          && unchanged.continuity_mode === rebuilt.packet.continuity_mode
           && unchanged.target_session_id === rebuilt.preview.target_session_id
           && unchanged.base_pack_hash === rebuilt.preview.base_pack_hash
           && previous?.budget_id === rebuilt.packet.budget.budget_id
-        if (reusableActiveRefresh) {
+        if (reusableRefresh) {
           const previousTarget = absoluteTargetDir(this.options.projectDir, unchanged.target_session_id, unchanged.refresh_id)
           if (await eventFilesMatch(previousTarget, unchanged.files)) return unchanged
           return { ...blockedResult(rebuilt.preview, rebuiltId, writtenAt, writtenBy), error: "existing context-refresh event was found but files are missing or differ; artifact integrity repair is required" }
@@ -104,6 +102,7 @@ export class OpenCodeContextRefreshService {
         base_context_packet_hash: packet.packet_kind === "session_refresh" ? packet.base_context_packet_hash : undefined,
         previous_refresh_id: rebuilt.preview.previous_refresh_id,
         previous_refresh_hash: packet.packet_kind === "session_refresh" ? packet.previous_refresh_hash : undefined,
+        previous_packet_hash: packet.delta.previous_packet_hash,
         context_strategy: "immutable_base_plus_latest_snapshot_and_delta",
         delta_kind: packet.delta.delta_kind,
         delta_hash: packet.delta.delta_hash,

@@ -23981,6 +23981,8 @@ describe("ProcessOpenCodeAdapter", () => {
     server.eventStore.append = append
     const second = await server.command("runtime.write_opencode_context_refresh", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
     expect(second.refresh_id).not.toBe(written.refresh_id)
+    expect(second.delta.previous_packet_hash).toBe(written.packet_hash)
+    await expect(server.command("runtime.get_opencode_context_refresh", { refreshId: second.refresh_id })).resolves.toMatchObject({ delta: { previous_packet_hash: written.packet_hash } })
     const latestPacket = await server.command("runtime.preview_opencode_session_continuity", { sessionId, previousRefresh: written.refresh_id }) as Record<string, any>
     expect(latestPacket.delta).toMatchObject({ delta_kind: "incremental", previous_refresh_id: written.refresh_id, new_progress_ids: [progress.progress_id] })
     expect(latestPacket.delta.summary_preview).not.toBe("no substantive continuity delta")
@@ -23996,6 +23998,9 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(launchContinuation).toMatchObject({ status: "ready", source_session_id: sessionId, target_session_id: sessionId, source_launch_id: launched.launch_id })
     const continuedRefresh = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, mode: "continue_same_session", continuation_reason: "continue bounded work" }) as Record<string, any>
     expect(continuedRefresh).toMatchObject({ status: "written", continuity_mode: "continue_same_session", target_session_id: sessionId })
+    const duplicateContinuation = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, mode: "continue_same_session", continuation_reason: "continue bounded work" }) as Record<string, any>
+    expect(duplicateContinuation.refresh_id).toBe(continuedRefresh.refresh_id)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(3)
     const activeFromContinuation = await server.command("runtime.preview_opencode_session_continuity", { sessionId, previousRefresh: continuedRefresh.refresh_id }) as Record<string, any>
     expect(activeFromContinuation).toMatchObject({ status: "blocked" })
     expect(activeFromContinuation.blockers).toContain("previous refresh belongs to another continuity mode")
