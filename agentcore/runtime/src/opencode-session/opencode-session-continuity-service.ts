@@ -83,8 +83,8 @@ export class OpenCodeSessionContinuityService {
     if (sameSessionMode && requestedTargetSessionId && requestedTargetSessionId !== sourceSessionId) blockers.push(`${mode} target_session_id must match source_session_id`)
     const reason = bound(input.continuation_reason ?? input.patch_reason ?? input.fork_reason ?? "")
     if (mode === "continue_same_session" && !reason) blockers.push("continuation_reason is required")
-    if (mode === "patch_session" && !bound(input.patch_reason ?? "")) blockers.push("patch_reason is required")
-    if (mode === "fork_from_session" && !bound(input.fork_reason ?? "")) blockers.push("fork_reason is required")
+    if (mode === "patch_session" && !reason) blockers.push("patch_reason is required")
+    if (mode === "fork_from_session" && !reason) blockers.push("fork_reason is required")
     if (mode === "resume_from_checkpoint" && !bound(input.checkpoint_id ?? "")) blockers.push("checkpoint_id is required")
     if (mode === "resume_from_checkpoint") {
       blockers.push("checkpoint-to-OpenCode continuity binding is future 9W/9X work")
@@ -162,8 +162,8 @@ export class OpenCodeSessionContinuityService {
       target_session_id: targetSessionId || undefined,
       checkpoint_id: bound(input.checkpoint_id ?? "") || undefined,
       continuation_reason_preview: reason,
-      patch_reason_preview: bound(input.patch_reason ?? "") || undefined,
-      fork_reason_preview: bound(input.fork_reason ?? "") || undefined,
+      patch_reason_preview: mode === "patch_session" ? reason : undefined,
+      fork_reason_preview: mode === "fork_from_session" ? reason : undefined,
       parent_child_summary: mode === "fork_from_session" ? `${sourceSessionId} -> ${targetSessionId || "unselected target"}` : `${sourceSessionId} remains the target session`,
       preserve_summary: boundedArray(input.preserve).length ? boundedArray(input.preserve) : ["immutable base pack", "latest bounded tactical snapshot", "durable source refs"],
       discard_summary: boundedArray(input.discard).length ? boundedArray(input.discard) : ["raw transcript", "raw logs", "full event history"],
@@ -328,7 +328,7 @@ function executorSections(base: any, mid: CommanderMidMissionContinuityPacket, r
     makeSection("recent_attempts", "medium", mid.local_session_working_memory_summary, select("opencode_progress", "result_report"), []),
     makeSection("pending_questions", "high", mid.commander_dialogue_summary, select("commander_question"), []),
     makeSection("commander_guidance", "high", mid.guidance_delivery_summary, select("commander_guidance", "guidance_delivery"), /pending|operator_handoff/i.test(mid.guidance_delivery_summary) ? ["Guidance metadata exists, but OpenCode receipt is not proven."] : []),
-    makeSection("human_controls", "required", mid.human_control_summary, select("human_control"), []),
+    makeSection("human_controls", "required", mid.human_control_summary || "no durable human stop, pause, correction, or override evidence is recorded", select("human_control"), []),
     makeSection("watchdog_and_wake", "high", `${mid.watchdog_summary}; ${mid.wake_supervision_summary}`, select("opencode_watchdog", "wake_supervisor", "wake_supervisor_execution", "wake_action_execution"), []),
     makeSection("result_state", "medium", mid.result_state_summary, select("result_report", "result_review", "research_ingestion"), ["result-review acceptance is evidence disposition, not mission completion"]),
     makeSection("relevant_files_tests_artifacts", "medium", "Only bounded file/test/artifact claims from durable progress and result refs are included; contents and diffs are excluded.", select("opencode_progress", "result_report"), []),
@@ -340,7 +340,7 @@ function executorSections(base: any, mid: CommanderMidMissionContinuityPacket, r
 function makeSection(kind: string, priority: OpenCodeContinuitySection["priority"], summary: string, refs: OpenCodeContinuitySourceRef[], warnings: string[]): OpenCodeContinuitySection {
   const bounded = bound(summary)
   const bytes = Buffer.byteLength(bounded, "utf8")
-  return { section_id: `continuity_section_${hash(kind).slice(0, 12)}`, section_kind: kind, status: priority === "excluded" ? "excluded" : refs.length ? "included" : ["authority_boundary", "tactical_objective", "continuation_lineage", "omitted_raw_content"].includes(kind) ? "included" : "missing", priority, summary_preview: bounded, item_count: refs.length, omitted_count: 0, estimated_tokens: Math.ceil(bytes / 4), estimated_bytes: bytes, source_refs: refs.slice(0, 8), warnings: warnings.map((item) => bound(item)).slice(0, 4) }
+  return { section_id: `continuity_section_${hash(kind).slice(0, 12)}`, section_kind: kind, status: priority === "excluded" ? "excluded" : refs.length || priority === "required" || ["authority_boundary", "tactical_objective", "continuation_lineage", "omitted_raw_content"].includes(kind) ? "included" : "missing", priority, summary_preview: bounded, item_count: refs.length, omitted_count: 0, estimated_tokens: Math.ceil(bytes / 4), estimated_bytes: bytes, source_refs: refs.slice(0, 8), warnings: warnings.map((item) => bound(item)).slice(0, 4) }
 }
 
 function applyBudget(sections: OpenCodeContinuitySection[], profile: any): OpenCodeContinuityBudget {

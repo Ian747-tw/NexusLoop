@@ -23934,6 +23934,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(typeof packet.budget.estimated_input_tokens).toBe("number")
     expect(typeof packet.budget.max_context_tokens).toBe("number")
     expect(packet.sections.map((item: any) => item.section_kind)).toEqual(expect.arrayContaining(["authority_boundary", "tactical_objective", "current_execution_state", "commander_guidance", "human_controls", "watchdog_and_wake", "result_state", "omitted_raw_content"]))
+    expect(packet.sections.find((item: any) => item.section_kind === "human_controls")).toMatchObject({ status: "included", priority: "required" })
     expect(JSON.stringify(packet)).not.toMatch(/proposal_lineage|project_direction|raw OpenCode transcript content/)
 
     const preview = await server.command("runtime.preview_opencode_context_refresh", { sessionId }) as Record<string, any>
@@ -23952,6 +23953,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(typeof firstRefreshEvents[0]!.estimated_input_tokens).toBe("number")
     const firstManifest = JSON.parse(await readFile(join(dir, written.target_dir, "REFRESH_MANIFEST.json"), "utf8"))
     expect(typeof firstManifest.budget.estimated_input_tokens).toBe("number")
+    expect(await readFile(join(dir, written.target_dir, "CONTEXT_REFRESH.md"), "utf8")).toContain("## human_controls")
 
     const duplicate = await server.command("runtime.write_opencode_context_refresh", { sessionId }) as Record<string, any>
     expect(duplicate.refresh_id).toBe(written.refresh_id)
@@ -24000,6 +24002,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const patchMissing = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "patch_session" }) as Record<string, any>
     expect(patchMissing.status).toBe("blocked")
     expect(patchMissing.blockers).toContain("patch_reason is required")
+    await expect(server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "patch_session", reason: "generic bounded patch reason" })).resolves.toMatchObject({ status: "ready", patch_reason_preview: "generic bounded patch reason" })
     const checkpoint = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "resume_from_checkpoint", checkpoint: "checkpoint-1", reason: "inspect only" }) as Record<string, any>
     expect(checkpoint).toMatchObject({ status: "blocked", continuity_readiness: "needs_checkpoint_binding", native_session_action_performed: false })
     expect(checkpoint.blockers).toContain("checkpoint-to-OpenCode continuity binding is future 9W/9X work")
@@ -24011,6 +24014,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "opencode_session_context_refresh_written")).toHaveLength(3)
     const mismatchedForkBaseline = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, target_session_id: targetSession.session_id, mode: "fork_from_session", forkReason: "preserve bounded fork intent", previousRefresh: second.refresh_id }) as Record<string, any>
     expect(mismatchedForkBaseline).toMatchObject({ status: "blocked", error: "previous refresh belongs to another target session" })
+    await expect(server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, targetSession: targetSession.session_id, mode: "fork_from_session", reason: "generic bounded fork reason" })).resolves.toMatchObject({ status: "ready", fork_reason_preview: "generic bounded fork reason" })
     const targetTaskPath = join(dir, ".nxl", "opencode", "sessions", targetSession.session_id, "TASK.md")
     const targetTask = await readFile(targetTaskPath, "utf8")
     await writeFile(targetTaskPath, `${targetTask}\ncorrupt target pack\n`)
