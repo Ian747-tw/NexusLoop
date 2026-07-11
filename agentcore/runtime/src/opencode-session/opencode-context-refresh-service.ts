@@ -60,7 +60,13 @@ export class OpenCodeContextRefreshService {
       if (!rebuilt.preview.can_write) return blockedResult(rebuilt.preview, rebuiltId, writtenAt, writtenBy)
       if (rebuilt.packet.delta.previous_refresh_id && rebuilt.packet.delta.summary_preview === "no substantive continuity delta") {
         const unchanged = await this.get(rebuilt.packet.delta.previous_refresh_id)
-        if (unchanged) return unchanged
+        const reusableActiveRefresh = rebuilt.packet.packet_kind === "session_refresh"
+          && rebuilt.packet.continuity_mode === "active_refresh"
+          && unchanged?.packet_kind === "session_refresh"
+          && unchanged.continuity_mode === "active_refresh"
+          && unchanged.target_session_id === rebuilt.preview.target_session_id
+          && unchanged.base_pack_hash === rebuilt.preview.base_pack_hash
+        if (reusableActiveRefresh) return unchanged
       }
       const existing = await this.findExistingByHash(rebuilt.preview.target_session_id, rebuilt.preview.refresh_hash)
       const target = absoluteTargetDir(this.options.projectDir, rebuilt.preview.target_session_id, rebuiltId)
