@@ -23907,6 +23907,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(readOpenCodeContextRefreshWriteInput({ research_memory_mode: "include", max_progress_items: 2, max_open_loops: 3, max_research_candidates: 1 })).toMatchObject({ research_memory_mode: "include", max_progress_items: 2, max_open_loops: 3, max_research_candidates: 1 })
     expect(readOpenCodeContextRefreshWriteInput({ research_memory_mode: "omit" }).research_memory_mode).toBe("omit")
     expect(readOpenCodeContextRefreshWriteInput({ sourceSession: "source", sourceLaunch: "launch", targetSession: "target" })).toMatchObject({ source_session_id: "source", source_launch_id: "launch", target_session_id: "target" })
+    expect(readOpenCodeContextRefreshWriteInput({ session: "source", launch: "launch", mode: "continue_same_session" })).toMatchObject({ source_session_id: "source", source_launch_id: "launch" })
   })
 
   test("OpenCode context refresh writes immutable snapshot plus delta artifacts without delivery side effects", async () => {
@@ -23988,6 +23989,7 @@ describe("ProcessOpenCodeAdapter", () => {
 
     const continuation = await server.command("runtime.preview_opencode_continuation", { sourceSession: sessionId, mode: "continue_same_session", reason: "continue bounded work", maxOpenLoops: 1 }) as Record<string, any>
     expect(continuation).toMatchObject({ packet_kind: "continuation", continuity_mode: "continue_same_session", source_session_id: sessionId, target_session_id: sessionId, consumption_status: "not_delivered", native_session_action_performed: false })
+    await expect(server.command("runtime.preview_opencode_continuation", { session: sessionId, mode: "continue_same_session", reason: "continue from session alias", researchMemory: "omit" })).resolves.toMatchObject({ status: "ready", source_session_id: sessionId, target_session_id: sessionId })
     const launchContinuation = await server.command("runtime.preview_opencode_continuation", { sourceLaunch: launched.launch_id, mode: "continue_same_session", reason: "continue from launch pointer" }) as Record<string, any>
     expect(launchContinuation).toMatchObject({ status: "ready", source_session_id: sessionId, target_session_id: sessionId, source_launch_id: launched.launch_id })
     const continuedRefresh = await server.command("runtime.write_opencode_context_refresh", { source_session_id: sessionId, mode: "continue_same_session", continuation_reason: "continue bounded work" }) as Record<string, any>
