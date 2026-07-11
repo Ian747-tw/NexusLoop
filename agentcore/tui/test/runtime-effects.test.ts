@@ -6619,6 +6619,8 @@ describe("runtime UI effects", () => {
     expect(state.opencodeContinuity?.refreshPreview?.packet_snapshot?.delta).toMatchObject({ delta_kind: "incremental" })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-continuation-preview", args: [`source_session=${sessionId}`, "mode=patch_session", "patch_reason=preserve bounded state"] })
     expect(state.opencodeContinuity?.continuationPacket).toMatchObject({ packet_kind: "continuation", continuity_mode: "patch_session", native_session_action_performed: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-continuation-preview", args: [`source_session_id=${sessionId}`, "mode=continue_same_session", "continuation_reason=preserve snake case IDs", `previous_refresh_id=${refreshId}`] })
+    expect(state.opencodeContinuity?.continuationPacket).toMatchObject({ packet_kind: "continuation", continuity_mode: "continue_same_session", source_session_id: sessionId })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-context-refreshes", args: [`session=${sessionId}`] })
     expect(state.opencodeContinuity?.records).toHaveLength(1)
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "opencode-context-refresh-latest", args: [`session=${sessionId}`] })

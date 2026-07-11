@@ -18693,7 +18693,7 @@ async function executeOpenCodeContinuityCommand(
 }
 
 function parseOpenCodeContinuityArgs(args: string[]): Record<string, unknown> {
-  const known = new Set(["session", "launch", "source_session", "source_launch", "target_session", "mode", "reason", "continuation_reason", "patch_reason", "fork_reason", "checkpoint", "previous_refresh", "preserve", "discard", "objective_delta", "provider", "model", "max_context_tokens", "max_context_bytes", "research_memory", "max_progress", "max_open_loops", "max_research_candidates", "written_by", "limit"])
+  const known = new Set(["session", "session_id", "launch", "launch_id", "source_session", "source_session_id", "source_launch", "source_launch_id", "target_session", "target_session_id", "mode", "reason", "continuation_reason", "patch_reason", "fork_reason", "checkpoint", "checkpoint_id", "previous_refresh", "previous_refresh_id", "preserve", "discard", "objective_delta", "provider", "model", "max_context_tokens", "max_context_bytes", "research_memory", "max_progress", "max_open_loops", "max_research_candidates", "written_by", "limit"])
   const free = new Set(["reason", "continuation_reason", "patch_reason", "fork_reason", "objective_delta"])
   const payload: Record<string, unknown> = {}
   for (let index = 0; index < args.length; index += 1) {
@@ -18701,17 +18701,17 @@ function parseOpenCodeContinuityArgs(args: string[]): Record<string, unknown> {
     index = parsed.nextIndex
     const key = parsed.key
     const value = parsed.value
-    if (key === "session") payload.sessionId = value
-    else if (key === "launch") payload.launchId = value
-    else if (key === "source_session") payload.sourceSessionId = value
-    else if (key === "source_launch") payload.sourceLaunchId = value
-    else if (key === "target_session") payload.targetSessionId = value
+    if (key === "session" || key === "session_id") payload.sessionId = value
+    else if (key === "launch" || key === "launch_id") payload.launchId = value
+    else if (key === "source_session" || key === "source_session_id") payload.sourceSessionId = value
+    else if (key === "source_launch" || key === "source_launch_id") payload.sourceLaunchId = value
+    else if (key === "target_session" || key === "target_session_id") payload.targetSessionId = value
     else if (key === "mode") { payload.continuityMode = value; if (value !== "active_refresh") payload.packetKind = "continuation" }
     else if (key === "reason" || key === "continuation_reason") payload.continuationReason = value
     else if (key === "patch_reason") payload.patchReason = value
     else if (key === "fork_reason") payload.forkReason = value
-    else if (key === "checkpoint") payload.checkpointId = value
-    else if (key === "previous_refresh") payload.previousRefreshId = value
+    else if (key === "checkpoint" || key === "checkpoint_id") payload.checkpointId = value
+    else if (key === "previous_refresh" || key === "previous_refresh_id") payload.previousRefreshId = value
     else if (key === "preserve" || key === "discard") payload[key] = commaList(value)
     else if (key === "objective_delta") payload.objectiveDelta = value
     else if (key === "provider") payload.providerKind = value
