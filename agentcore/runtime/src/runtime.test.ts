@@ -23904,7 +23904,7 @@ describe("ProcessOpenCodeAdapter", () => {
   })
 
   test("OpenCode context refresh parser honors snake-case research memory mode", () => {
-    expect(readOpenCodeContextRefreshWriteInput({ research_memory_mode: "include" }).research_memory_mode).toBe("include")
+    expect(readOpenCodeContextRefreshWriteInput({ research_memory_mode: "include", max_progress_items: 2, max_open_loops: 3, max_research_candidates: 1 })).toMatchObject({ research_memory_mode: "include", max_progress_items: 2, max_open_loops: 3, max_research_candidates: 1 })
     expect(readOpenCodeContextRefreshWriteInput({ research_memory_mode: "omit" }).research_memory_mode).toBe("omit")
   })
 
@@ -23997,11 +23997,14 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(revisedFork).toMatchObject({ status: "written", target_session_id: targetSession.session_id })
     expect(revisedFork.packet_hash).not.toBe(forkWritten.packet_hash)
     expect(revisedFork.refresh_id).not.toBe(forkWritten.refresh_id)
+    expect(revisedFork.delta.changed_section_kinds).toContain("continuation_lineage")
+    expect(revisedFork.delta.summary_preview).not.toBe("no substantive continuity delta")
     const revisedForkContext = await readFile(join(dir, revisedFork.target_dir, "CONTEXT_REFRESH.md"), "utf8")
     expect(revisedForkContext).toContain("## continuation_lineage")
     expect(revisedForkContext).toContain("reason=preserve bounded fork intent")
     expect(revisedForkContext).toContain("preserve=latest tests")
     expect(revisedForkContext).toContain("discard=superseded attempt")
+    expect(await readFile(join(dir, revisedFork.target_dir, "DELTA.md"), "utf8")).toContain("continuation_lineage")
     const budgetRefresh = await server.command("runtime.write_opencode_context_refresh", { sessionId, previousRefresh: second.refresh_id, modelId: "local-small", maxContextTokens: 2048 }) as Record<string, any>
     expect(budgetRefresh).toMatchObject({ status: "written", target_session_id: sessionId })
     expect(budgetRefresh.refresh_id).not.toBe(second.refresh_id)

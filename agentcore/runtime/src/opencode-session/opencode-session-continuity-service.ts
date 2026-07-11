@@ -128,6 +128,8 @@ export class OpenCodeSessionContinuityService {
         `discard=${boundedArray(input.discard).join(", ") || "raw history"}`,
       ].join("; "), [], []),
     ]
+    const continuationPrevious = await this.resolvePrevious(input.previous_refresh_id, targetSessionId || sourceSessionId, mode)
+    const delta = buildContinuityDelta(packet.source_refs, sections, continuationPrevious.snapshot)
     const packetHash = hash(stableJson({
       mode,
       sourceSessionId,
@@ -138,6 +140,7 @@ export class OpenCodeSessionContinuityService {
       discard: boundedArray(input.discard),
       objective_delta: bound(input.objective_delta ?? ""),
       source: packet.packet_hash,
+      delta: delta.delta_hash,
       targetPack: targetPack?.pack_hash,
     }))
     return redactContinuityPacket({
@@ -163,9 +166,9 @@ export class OpenCodeSessionContinuityService {
       base_pack_hash: base.pack?.pack_hash,
       target_base_pack_id: targetPack?.pack_id,
       target_base_pack_hash: targetPack?.pack_hash,
-      previous_refresh_id: packet.previous_refresh_id,
+      previous_refresh_id: delta.previous_refresh_id,
       sections,
-      delta: packet.delta,
+      delta,
       source_refs: packet.source_refs,
       blockers: unique(blockers),
       warnings: unique(warnings),
