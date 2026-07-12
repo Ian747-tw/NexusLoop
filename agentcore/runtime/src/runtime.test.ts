@@ -1026,6 +1026,8 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/opencode-result-review")).toMatchObject({ risk: "medium_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, expected_event_kinds: ["opencode_result_review_recorded"] })
     expect(service.get("/opencode-result-reviews")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_opencode_result_reviews", mutates_events: false })
     expect(service.get("/result-review-summary")).toMatchObject({ slash_command: "/opencode-result-review-summary", risk: "safe_read", runtime_command: "runtime.opencode_result_review_summary", owner: "opencode_handoff", mutates_events: false })
+    expect(service.list({ command: "/commander-capabilities" })).toHaveLength(1)
+    expect(service.get("/commander-capabilities")).toMatchObject({ slash_command: "/commander-tool-summary", runtime_command: "runtime.commander_tool_catalog_summary", owner: "commander_tools" })
     expect(service.get("/research-ingestion-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_research_ingestion", owner: "research", mutates_events: false })
     expect(service.get("/research-ingestion-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.record_research_ingestion", owner: "research", mutates_events: false })
     expect(service.get("/research-ingestion")).toMatchObject({ risk: "high_impact_write", gate: "opencode_runtime", owner: "research", mutates_events: true, expected_event_kinds: ["research_event", "research_memory_ingestion_recorded"] })
@@ -24166,6 +24168,11 @@ describe("ProcessOpenCodeAdapter", () => {
     const memoryTools = await server.command("runtime.list_commander_tools", { namespace: "memory" }) as Array<Record<string, any>>
     expect(memoryTools.map((tool) => tool.tool_id)).toContain("memory.search")
     expect(memoryTools.every((tool) => tool.schema_metadata.schema_loaded === false)).toBe(true)
+    const runtimeReadTools = await server.command("runtime.list_commander_tools", { namespace: "runtime_read" }) as Array<Record<string, any>>
+    expect(runtimeReadTools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tool_id: "runtime.status", namespace: "runtime_read", availability: "implemented_read_surface" }),
+      expect.objectContaining({ tool_id: "runtime.mission_show", namespace: "runtime_read", authority_id: expect.stringContaining("command_authority_") }),
+    ]))
     const repoTools = await server.command("runtime.list_commander_tools", { namespace: "repo_read" }) as Array<Record<string, any>>
     expect(repoTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "repo.search_text", availability: "future_internal_read", runtime_command: undefined })]))
     const githubTools = await server.command("runtime.list_commander_tools", { namespace: "github_read" }) as Array<Record<string, any>>
