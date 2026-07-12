@@ -18783,7 +18783,8 @@ async function executeCommanderToolCommand(state: UiState, runtime: RuntimeClien
     const raw = await runtime.command(runtimeCommand, payload)
     return { ...state, commanderTools: { ...commanderToolsState(state), [field]: redactUnknown(raw), commandError: undefined } }
   } catch (error) {
-    return { ...state, commanderTools: { ...commanderToolsState(state), commandError: String(redactUnknown(error)) } }
+    const message = error instanceof Error ? error.message : String(error)
+    return { ...state, commanderTools: { ...commanderToolsState(state), commandError: redactText(message) } }
   }
 }
 

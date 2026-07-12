@@ -345,8 +345,10 @@ function scoreTool(tool: CommanderToolDescriptor, query: string, phase?: Command
     if (tool.description.toLowerCase().includes(term)) { score += 4; matchedFields.add("description") }
   }
   const allowed = phase ? tool.allowed_phases.includes(phase) : true
-  if (allowed) score += 3
-  if (tool.availability === "implemented_read_surface") score += 2
+  if (matchedFields.size > 0) {
+    if (allowed) score += 3
+    if (tool.availability === "implemented_read_surface") score += 2
+  }
   return {
     tool_id: tool.tool_id,
     namespace: tool.namespace,

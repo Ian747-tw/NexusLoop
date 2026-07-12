@@ -6679,5 +6679,7 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("sk-test")
     const errorState = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-search", args: [] })
     expect(errorState.commanderTools?.commandError).toContain("requires query")
+    const runtimeErrorState = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-profile", args: ["phase=unknown"] })
+    expect(runtimeErrorState.commanderTools?.commandError).toContain("commander tool phase is unsupported")
   })
 })
