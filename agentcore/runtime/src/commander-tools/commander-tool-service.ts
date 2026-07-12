@@ -273,8 +273,9 @@ export class CommanderToolService {
   }
 
   private filterTools(input: CommanderToolListInput | CommanderToolSearchInput): CommanderToolDescriptor[] {
+    const applyPhaseFilter = !("query" in input) || input.allowed_in_phase_only !== false
     return this.tools
-      .filter((tool) => !input.phase || tool.allowed_phases.includes(input.phase))
+      .filter((tool) => !applyPhaseFilter || !input.phase || tool.allowed_phases.includes(input.phase))
       .filter((tool) => !input.namespace || tool.namespace === input.namespace)
       .filter((tool) => !input.risk || tool.risk === input.risk)
       .filter((tool) => !input.side_effect_class || tool.side_effect_class === input.side_effect_class)

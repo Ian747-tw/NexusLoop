@@ -6659,6 +6659,8 @@ describe("runtime UI effects", () => {
     const githubRecords = state.commanderTools?.records ?? []
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tools", args: ["namespace=governance"] })
     const governanceRecords = state.commanderTools?.records ?? []
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tools", args: ["limit=50"] })
+    const cappedListRecords = state.commanderTools?.records ?? []
 
     expect(state.commanderTools?.validation).toMatchObject({ status: "ready" })
     expect(state.commanderTools?.summary).toMatchObject({ provider_call_count: 0, direct_external_write_count: 0 })
@@ -6672,6 +6674,7 @@ describe("runtime UI effects", () => {
     expect(repoRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "repo.search_text", availability: "future_internal_read" })]))
     expect(githubRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "github.pr_checks", availability: "future_external_read" })]))
     expect(governanceRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "governance.stage_pr_merge", availability: "future_governance_intent" })]))
+    expect(cappedListRecords).toHaveLength(50)
     const snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("Commander tools")
     expect(snapshot).toContain("execution_enabled=false")

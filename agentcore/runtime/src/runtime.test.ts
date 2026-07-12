@@ -24185,6 +24185,8 @@ describe("ProcessOpenCodeAdapter", () => {
     const noMatchSearch = await server.command("runtime.search_commander_tools", { query: "zzzz", phase: "proposal_investigation" }) as Record<string, any>
     expect(noMatchSearch).toMatchObject({ execution_enabled: false, status: "empty", total_matches: 0, returned_matches: 0 })
     expect(noMatchSearch.matches).toEqual([])
+    const crossPhaseSearch = await server.command("runtime.search_commander_tools", { query: "memory.show", phase: "general_read", allowed_in_phase_only: false }) as Record<string, any>
+    expect(crossPhaseSearch.matches[0]).toMatchObject({ tool_id: "memory.show", allowed_in_phase: false })
     const schemaSearch = await server.command("runtime.search_commander_tools", { query: "research memory", include_schema: true, limit: 10 }) as Record<string, any>
     expect(schemaSearch.matches.length).toBeLessThanOrEqual(3)
     expect(schemaSearch.schema_bytes_returned).toBeGreaterThan(0)

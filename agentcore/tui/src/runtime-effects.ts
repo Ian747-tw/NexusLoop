@@ -6086,7 +6086,7 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "commander-capabilities":
       return executeCommanderToolCommand(commandState, runtime, "runtime.commander_tool_catalog_summary", {}, "summary")
     case "commander-tools":
-      return executeCommanderToolCommand(commandState, runtime, "runtime.list_commander_tools", parseCommanderToolArgs(args), "records")
+      return executeCommanderToolCommand(commandState, runtime, "runtime.list_commander_tools", parseCommanderToolArgs(args, 50), "records")
     case "commander-tool-show":
     case "tool-show":
       return executeCommanderToolCommand(commandState, runtime, "runtime.get_commander_tool", { toolId: requiredArg(args, 0, "toolId") }, "selected")
@@ -18728,7 +18728,7 @@ function readKeyValueWithFreeText(args: string[], index: number, knownKeys: Set<
   return { key, value: parts.join(" ").trim(), nextIndex }
 }
 
-function parseCommanderToolArgs(args: string[]): Record<string, unknown> {
+function parseCommanderToolArgs(args: string[], limitMax = 20): Record<string, unknown> {
   const payload: Record<string, unknown> = {}
   for (const arg of args) {
     const [key, ...rest] = arg.split("=")
@@ -18752,7 +18752,7 @@ function parseCommanderToolArgs(args: string[]): Record<string, unknown> {
       case "limit":
       case "max_context_tokens":
       case "max_context_bytes":
-        payload[key] = readPositiveInteger(value, key, key === "limit" ? 20 : 512000)
+        payload[key] = readPositiveInteger(value, key, key === "limit" ? limitMax : 512000)
         break
       default:
         throw new Error("commander tool args must use supported key=value fields")
