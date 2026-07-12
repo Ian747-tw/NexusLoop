@@ -110,7 +110,7 @@ export class CommanderToolService {
     const generatedAt = this.now().toISOString()
     const contract = profileContract(phase)
     const allowed = namespaceByPhase(phase)
-    const tools = this.tools.filter((tool) => tool.allowed_phases.includes(phase) || allowed.includes(tool.namespace))
+    const tools = this.tools.filter((tool) => allowed.includes(tool.namespace) && tool.allowed_phases.includes(phase))
     const always = CORE_ORDER.filter((id) => this.tools.some((tool) => tool.tool_id === id && tool.allowed_phases.includes(phase)))
     return {
       profile_id: `commander_tool_profile_${phase}`,

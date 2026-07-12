@@ -24194,6 +24194,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(profile).toMatchObject({ execution_enabled: false })
     expect(profile.allowed_namespaces).toEqual(expect.arrayContaining(["memory", "continuity", "repo_read", "github_read", "external_research"]))
     expect(profile).not.toHaveProperty("workflow_steps")
+    const generalReadProfile = await server.command("runtime.preview_commander_tool_profile", { phase: "general_read" }) as Record<string, any>
+    const generalReadToolIds = [...generalReadProfile.always_loaded_tool_ids, ...generalReadProfile.deferred_tool_ids, ...generalReadProfile.unavailable_tool_ids, ...generalReadProfile.staged_intent_tool_ids]
+    expect(generalReadToolIds).not.toContain("memory.show")
+    expect(generalReadToolIds).toContain("memory.search")
     const bootstrap = await server.command("runtime.preview_commander_tool_bootstrap", { phase: "proposal_investigation", provider: "local", model: "local-medium" }) as Record<string, any>
     expect(bootstrap).toMatchObject({ execution_enabled: false, over_budget: false })
     expect(bootstrap.always_loaded_tools.map((tool: any) => tool.tool_id)).toContain("commander.tool_search")
