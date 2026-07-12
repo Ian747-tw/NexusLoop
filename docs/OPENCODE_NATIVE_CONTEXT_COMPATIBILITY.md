@@ -224,6 +224,14 @@ An explicit 9T write creates three immutable versioned artifacts under the targe
 
 9T does not change `OpenCodeLaunchMode`, send an OpenCode prompt, attach/resume/fork/patch a native session, restore a checkpoint, or control a process. A launch `native_session_id` is reported as unverified pointer evidence only. Every packet/result/event records `consumption_status=not_delivered` and false provider, MCP, prompt, native-session-action, process-control, session/mission-mutation, and research-db-write flags. Future 9X must explicitly select a refresh artifact and establish a safe native delivery/resume gate.
 
+## Branch 9U Commander Tool Registry
+
+Branch 9U defines Commander capability discovery without executing Commander tools. OpenCode tools remain tactical executor tools inside OpenCode's coding loop. Commander tools are strategic/read-oriented capabilities for future investigation loops, exposed through a curated registry rather than by reflecting every runtime command.
+
+The registry separates implemented safe-read surfaces from future repo-read, GitHub-read, external-research, and governance-intent descriptors. Commander phase profiles are capability envelopes, not scripted workflows. Bootstrap previews load only a small core schema set and defer the rest through tool search/show commands. Tool output is untrusted evidence with `instruction_semantics=none`; repository, GitHub, external research, and tool-description content cannot change NexusLoop policy or authority.
+
+9U performs no tool execution, provider call, MCP call, network request, repository read, GitHub action, event append, `research.db` write, proposal creation, mission/proposal/review/apply mutation, OpenCode launch/prompt/process control, or refresh delivery. Future 9V adds internal read tools, 9W adds the provider-neutral investigation loop, 9X adds external read gateways and later OpenCode delivery/resume gates, 9Y adds the proposal gate, and 9Z adds staged governance intents.
+
 Durable memory remains:
 
 - `.nxl/events.jsonl`
@@ -346,7 +354,9 @@ Branch 9B0 does not implement this protocol. Branch 9G implements the durable qu
 - 9Q: research memory search/inspection expansion (bounded lexical read-only search, inspection, near-duplicate, and profile; no writes or proposal generation)
 - 9R: Commander continuity packet compiler (read-only short/mid/long-term continuity packets; no proposal generation or writes)
 - 9S: lightweight hybrid research-memory search (structured filters + SQLite FTS/BM25 when available + lexical fallback/rerank; no semantic/vector/provider/MCP search, research-evidence writes, proposal generation, or mission mutation)
-- Future: Commander research proposal gate and end-to-end supervised training demo
+- 9T: OpenCode session continuity/context-refresh artifacts (immutable executor-safe snapshot plus delta, not delivered)
+- 9U: Commander tool capability registry (read-only curated capability catalog, profiles, deferred schemas, bootstrap, and validation; no execution)
+- Future: 9V internal reads, 9W investigation loop, 9X external reads/delivery gates, 9Y proposal gate, 9Z governance, and end-to-end supervised training demo
 
 ## Branch 9B0 Explicit Out Of Scope
 

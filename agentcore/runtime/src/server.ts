@@ -117,6 +117,8 @@ import { ResearchIngestionService, readResearchIngestionPreviewInput, readResear
 import type { ResearchIngestionPreview, ResearchIngestionRecord, ResearchIngestionResult, ResearchIngestionSummary } from "./research/research-ingestion-types"
 import { CommanderContinuityService, readCommanderContinuityOpenLoopInput, readCommanderContinuitySummaryInput, readCommanderContinuityThreadInput, readCommanderMidMissionContinuityInput, readCommanderProposalContinuityInput } from "./continuity/commander-continuity-service"
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityPacket, CommanderProposalContinuityPacket } from "./continuity/commander-continuity-types"
+import { CommanderToolService, readCommanderToolGetInput, readCommanderToolListInput, readCommanderToolSearchInput } from "./commander-tools/commander-tool-service"
+import type { CommanderToolBootstrapPreview, CommanderToolDescriptor, CommanderToolDescriptorSummary, CommanderToolProfile, CommanderToolRegistrySummary, CommanderToolRegistryValidation, CommanderToolSearchPreview } from "./commander-tools/commander-tool-types"
 import { OpenCodeSessionContinuityService, readOpenCodeContinuationInput, readOpenCodeSessionContinuityInput } from "./opencode-session/opencode-session-continuity-service"
 import type { OpenCodeContinuationPacket, OpenCodeSessionContinuityPacket } from "./opencode-session/opencode-session-continuity-types"
 import { OpenCodeContextRefreshService, readOpenCodeContextRefreshWriteInput } from "./opencode-session/opencode-context-refresh-service"
@@ -376,6 +378,7 @@ export class RuntimeServer {
   private researchIngestionServiceInstance: ResearchIngestionService | null = null
   private researchIngestionReadServiceInstance: Pick<ResearchIngestionService, "list" | "latest"> | null = null
   private commanderContinuityServiceInstance: CommanderContinuityService | null = null
+  private commanderToolServiceInstance: CommanderToolService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -638,6 +641,26 @@ export class RuntimeServer {
         return new CommandAuthorityService().get(requiredString(payload.command, "command"))
       case "runtime.command_authority_validation_profile":
         return new CommandAuthorityService().validationProfile(requiredString(payload.command, "command"), optionalStringArray(payload.changedFiles ?? payload.changed_files, "changedFiles") ?? [])
+      case "runtime.commander_tool_catalog_summary":
+        return this.commanderToolCatalogSummary()
+      case "runtime.list_commander_tools":
+        return this.listCommanderTools(readCommanderToolListInput(payload))
+      case "runtime.get_commander_tool":
+        return this.getCommanderTool(readCommanderToolGetInput(payload))
+      case "runtime.search_commander_tools":
+        return this.searchCommanderTools(readCommanderToolSearchInput(payload))
+      case "runtime.preview_commander_tool_profile":
+        return this.previewCommanderToolProfile({ phase: optionalString(payload.phase, "phase") })
+      case "runtime.preview_commander_tool_bootstrap":
+        return this.previewCommanderToolBootstrap({
+          phase: optionalString(payload.phase, "phase"),
+          provider_kind: optionalString(payload.providerKind ?? payload.provider_kind ?? payload.provider, "provider"),
+          model_id: optionalString(payload.modelId ?? payload.model_id ?? payload.model, "model"),
+          max_context_tokens: optionalPositiveInteger(payload.maxContextTokens ?? payload.max_context_tokens, "maxContextTokens", 128000),
+          max_context_bytes: optionalPositiveInteger(payload.maxContextBytes ?? payload.max_context_bytes, "maxContextBytes", 512000),
+        })
+      case "runtime.validate_commander_tool_registry":
+        return this.validateCommanderToolRegistry()
       case "runtime.reasoning_provider_health":
         return this.reasoningProviderHealth()
       case "runtime.preview_reasoning_provider_smoke":
@@ -2484,6 +2507,34 @@ export class RuntimeServer {
 
   researchMemorySearchProfile(): ResearchMemorySearchProfile {
     return this.researchMemoryService().searchProfile()
+  }
+
+  commanderToolCatalogSummary(): CommanderToolRegistrySummary {
+    return this.commanderToolService().summary()
+  }
+
+  listCommanderTools(input: Parameters<CommanderToolService["list"]>[0] = {}): CommanderToolDescriptorSummary[] {
+    return this.commanderToolService().list(input)
+  }
+
+  getCommanderTool(input: Parameters<CommanderToolService["get"]>[0] = {}): CommanderToolDescriptor {
+    return this.commanderToolService().get(input)
+  }
+
+  searchCommanderTools(input: Parameters<CommanderToolService["search"]>[0] = {}): CommanderToolSearchPreview {
+    return this.commanderToolService().search(input)
+  }
+
+  previewCommanderToolProfile(input: Parameters<CommanderToolService["profile"]>[0] = {}): CommanderToolProfile {
+    return this.commanderToolService().profile(input)
+  }
+
+  previewCommanderToolBootstrap(input: Parameters<CommanderToolService["bootstrap"]>[0] = {}): Promise<CommanderToolBootstrapPreview> {
+    return this.commanderToolService().bootstrap(input)
+  }
+
+  validateCommanderToolRegistry(): CommanderToolRegistryValidation {
+    return this.commanderToolService().validate()
   }
 
   previewCommanderProposalContinuity(input: Parameters<CommanderContinuityService["proposal"]>[0] = {}): Promise<CommanderProposalContinuityPacket> {
@@ -4401,6 +4452,14 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
     })
     return this.commanderContinuityServiceInstance
+  }
+
+  private commanderToolService(): CommanderToolService {
+    this.commanderToolServiceInstance ??= new CommanderToolService({
+      contextBudgetService: this.contextBudgetService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderToolServiceInstance
   }
 
   private opencodeSessionContinuityService(): OpenCodeSessionContinuityService {

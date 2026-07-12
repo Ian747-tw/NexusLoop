@@ -63,6 +63,7 @@ import type {
   CommanderContinuitySectionSummary,
   CommanderContinuitySourceRefSummary,
   CommanderContinuityState,
+  CommanderToolsState,
   OpenCodeContinuityState,
   CommanderContinuitySummaryState,
   CommanderContinuityThreadCardSummary,
@@ -2312,6 +2313,7 @@ export async function applyRuntimeUiEffect(
     if (isOpenCodeSessionInstructionPackEffect(effect)) return recordOpenCodeSessionInstructionPackCommandError(state, error)
     if (isResearchIngestionEffect(effect)) return recordResearchIngestionCommandError(state, error)
     if (isCommanderContinuityEffect(effect)) return recordCommanderContinuityCommandError(state, error)
+    if (isCommanderToolEffect(effect)) return recordCommanderToolCommandError(state, error)
     if (isResearchMemoryEffect(effect)) return recordResearchMemoryCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
@@ -6032,6 +6034,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeResultReviewGateCommands.has(command)) return { ...state, opencodeResultReviews: { ...opencodeResultReviewGateState(state), commandError: undefined } }
   if (researchIngestionCommands.has(command)) return { ...state, researchIngestions: { ...researchIngestionState(state), commandError: undefined } }
   if (commanderContinuityCommands.has(command)) return { ...state, commanderContinuity: { ...commanderContinuityState(state), commandError: undefined } }
+  if (commanderToolCommands.has(command)) return { ...state, commanderTools: { ...commanderToolsState(state), commandError: undefined } }
   if (opencodeContinuityCommands.has(command)) return { ...state, opencodeContinuity: { ...opencodeContinuityState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
@@ -6079,6 +6082,26 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-command-authority-record", command: requiredRest(args, 0, "slashCommand") })
     case "authority-profile":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-command-authority-validation-profile", command: requiredRest(args, 0, "slashCommand") })
+    case "commander-tool-summary":
+    case "commander-capabilities":
+      return executeCommanderToolCommand(commandState, runtime, "runtime.commander_tool_catalog_summary", {}, "summary")
+    case "commander-tools":
+      return executeCommanderToolCommand(commandState, runtime, "runtime.list_commander_tools", parseCommanderToolArgs(args), "records")
+    case "commander-tool-show":
+    case "tool-show":
+      return executeCommanderToolCommand(commandState, runtime, "runtime.get_commander_tool", { toolId: requiredArg(args, 0, "toolId") }, "selected")
+    case "commander-tool-search":
+    case "tool-search":
+      return executeCommanderToolCommand(commandState, runtime, "runtime.search_commander_tools", parseCommanderToolSearchArgs(args), "search")
+    case "commander-tool-profile":
+    case "tool-profile":
+      return executeCommanderToolCommand(commandState, runtime, "runtime.preview_commander_tool_profile", parseCommanderToolArgs(args), "profile")
+    case "commander-tool-bootstrap":
+    case "tool-bootstrap":
+      return executeCommanderToolCommand(commandState, runtime, "runtime.preview_commander_tool_bootstrap", parseCommanderToolArgs(args), "bootstrap")
+    case "commander-tool-registry-validate":
+    case "tool-registry-validate":
+      return executeCommanderToolCommand(commandState, runtime, "runtime.validate_commander_tool_registry", {}, "validation")
     case "apis":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-external-api-connectors", limit: EXTERNAL_API_LIMIT })
     case "api":
@@ -7546,6 +7569,10 @@ function isCommanderContinuityEffect(effect: RuntimeUiEffect): boolean {
   return commanderContinuityCommands.has(effect.command)
 }
 
+function isCommanderToolEffect(effect: RuntimeUiEffect): boolean {
+  return effect.type === "send-command" && commanderToolCommands.has(effect.command)
+}
+
 function isCommanderExecutorReviewEffect(effect: RuntimeUiEffect): boolean {
   if (effect.type !== "send-command") return commanderExecutorReviewEffectTypes.has(effect.type)
   return commanderExecutorReviewCommands.has(effect.command)
@@ -8117,6 +8144,22 @@ const commanderContinuityCommands = new Set([
   "continuity-summary",
   "open-loops",
   "continuity-thread",
+])
+
+const commanderToolCommands = new Set([
+  "commander-tool-summary",
+  "commander-tools",
+  "commander-tool-show",
+  "commander-tool-search",
+  "commander-tool-profile",
+  "commander-tool-bootstrap",
+  "commander-tool-registry-validate",
+  "commander-capabilities",
+  "tool-search",
+  "tool-show",
+  "tool-profile",
+  "tool-bootstrap",
+  "tool-registry-validate",
 ])
 
 const opencodeContinuityCommands = new Set([
@@ -9671,6 +9714,18 @@ function recordCommanderContinuityCommandError(state: UiState, error: unknown): 
       commandError: message,
     },
     systemActions: [...state.systemActions, { title: "commander continuity command error", detail: message, status: "failed" }].slice(-12),
+  }
+}
+
+function recordCommanderToolCommandError(state: UiState, error: unknown): UiState {
+  const message = redactText(error instanceof Error ? error.message : String(error))
+  return {
+    ...state,
+    commanderTools: {
+      ...commanderToolsState(state),
+      commandError: message,
+    },
+    systemActions: [...state.systemActions, { title: "commander tool command error", detail: message, status: "failed" }].slice(-12),
   }
 }
 
@@ -16726,6 +16781,10 @@ function commanderContinuityState(state: UiState): CommanderContinuityState {
   return state.commanderContinuity ?? { proposalPacket: null, midMissionPacket: null, summary: null, openLoops: [], selectedThread: null }
 }
 
+function commanderToolsState(state: UiState): CommanderToolsState {
+  return state.commanderTools ?? { summary: null, records: [], selected: null, search: null, profile: null, bootstrap: null, validation: null }
+}
+
 function opencodeContinuityState(state: UiState): OpenCodeContinuityState {
   return state.opencodeContinuity ?? { sessionPacket: null, continuationPacket: null, refreshPreview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
 }
@@ -18667,6 +18726,65 @@ function readKeyValueWithFreeText(args: string[], index: number, knownKeys: Set<
     }
   }
   return { key, value: parts.join(" ").trim(), nextIndex }
+}
+
+function parseCommanderToolArgs(args: string[]): Record<string, unknown> {
+  const payload: Record<string, unknown> = {}
+  for (const arg of args) {
+    const [key, ...rest] = arg.split("=")
+    if (rest.length === 0) continue
+    const value = rest.join("=")
+    switch (key) {
+      case "phase":
+      case "namespace":
+      case "risk":
+      case "availability":
+      case "side_effect_class":
+      case "provider":
+      case "model":
+        payload[key] = value
+        break
+      case "implemented_only":
+      case "include_schema":
+      case "allowed_in_phase_only":
+        payload[key] = readBooleanText(value, key)
+        break
+      case "limit":
+      case "max_context_tokens":
+      case "max_context_bytes":
+        payload[key] = readPositiveInteger(value, key, key === "limit" ? 20 : 512000)
+        break
+      default:
+        throw new Error("commander tool args must use supported key=value fields")
+    }
+  }
+  return payload
+}
+
+function parseCommanderToolSearchArgs(args: string[]): Record<string, unknown> {
+  if (args.length === 0) throw new Error("commander tool search requires query")
+  if (!args.some((arg) => arg.startsWith("query="))) return { ...parseCommanderToolArgs(args.filter((arg) => arg.includes("="))), query: args.filter((arg) => !arg.includes("=")).join(" ") || args.join(" ") }
+  const known = new Set(["query", "phase", "namespace", "risk", "side_effect_class", "availability", "implemented_only", "allowed_in_phase_only", "include_schema", "limit"])
+  const payload: Record<string, unknown> = {}
+  let index = 0
+  while (index < args.length) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, known, new Set(["query"]), "commander tool search args must use query=<text> and optional filters")
+    index = nextIndex + 1
+    if (key === "query") payload.query = value
+    else if (key === "implemented_only" || key === "allowed_in_phase_only" || key === "include_schema") payload[key] = readBooleanText(value, key)
+    else if (key === "limit") payload.limit = readPositiveInteger(value, key, 20)
+    else payload[key] = value
+  }
+  return payload
+}
+
+async function executeCommanderToolCommand(state: UiState, runtime: RuntimeClient, runtimeCommand: string, payload: Record<string, unknown>, field: keyof CommanderToolsState): Promise<UiState> {
+  try {
+    const raw = await runtime.command(runtimeCommand, payload)
+    return { ...state, commanderTools: { ...commanderToolsState(state), [field]: redactUnknown(raw), commandError: undefined } }
+  } catch (error) {
+    return { ...state, commanderTools: { ...commanderToolsState(state), commandError: String(redactUnknown(error)) } }
+  }
 }
 
 async function executeOpenCodeContinuityCommand(

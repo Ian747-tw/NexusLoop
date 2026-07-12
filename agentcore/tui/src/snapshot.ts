@@ -103,6 +103,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...researchIngestionLines(state))
   out.push(...researchMemoryLines(state))
   out.push(...commanderContinuityLines(state))
+  out.push(...commanderToolLines(state))
   out.push(...opencodeContinuityLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -142,6 +143,50 @@ function opencodeContinuityLines(state: UiState): string[] {
   for (const record of continuity.records.slice(0, 20)) out.push(`  record=${record.refresh_id} mode=${record.continuity_mode} session=${record.target_session_id} status=${record.status}`)
   if (continuity.commandError) out.push(`  command_error=${redactText(continuity.commandError)}`)
   out.push("  note=context refresh is an immutable artifact only; OpenCode has not consumed it; no prompt/native session action/process control/mission mutation occurred; future 9X must explicitly select and deliver a refresh")
+  return out
+}
+
+function commanderToolLines(state: UiState): string[] {
+  const tools = state.commanderTools
+  const out = ["Commander tools"]
+  if (!tools) {
+    out.push("  summary=none")
+    out.push("  note=registry describes capabilities only; no Commander tool was executed, no provider/MCP/network call occurred, no proposal or mission was created, and no OpenCode action occurred")
+    return out
+  }
+  if (tools.summary) {
+    out.push(`  summary total=${tools.summary.total_tools} implemented=${tools.summary.implemented_tools} future=${tools.summary.future_tools} blocked=${tools.summary.blocked_tools} direct_external_write=${tools.summary.direct_external_write_count} provider_call=${tools.summary.provider_call_count}`)
+  } else out.push("  summary=none")
+  if (tools.records.length > 0) {
+    out.push("  records")
+    out.push(...tools.records.slice(0, 12).map((tool) => `    - ${tool.tool_id} namespace=${tool.namespace} availability=${tool.availability} risk=${tool.risk} side_effect=${tool.side_effect_class} schema_loaded=${tool.schema_metadata?.schema_loaded ?? false} fields=${arraySummary(tool.input_field_names ?? [])}`))
+  } else out.push("  records=none")
+  if (tools.selected) {
+    const tool = tools.selected
+    out.push(`  selected=${tool.tool_id} name=${preview(redactText(String(tool.name)))} namespace=${tool.namespace} availability=${tool.availability} authority=${preview(redactText(String(tool.authority_id ?? "none")))} risk=${tool.risk}`)
+    out.push(`  selected_flags side_effect=${tool.side_effect_class} trust=${preview(redactText(String(tool.trust_class ?? "unknown")))} instruction_semantics=${preview(redactText(String(tool.instruction_semantics ?? "none")))} network=${tool.requires_network} credentials=${tool.requires_credentials} approval=${tool.requires_approval} provider=${tool.calls_provider} mutates_events=${tool.mutates_events}`)
+    out.push(`  selected_schema loaded=${tool.schema_metadata?.schema_loaded ?? false} tokens=${tool.schema_metadata?.estimated_schema_tokens ?? 0} input_hash=${preview(redactText(String(tool.schema_metadata?.input_schema_hash ?? "none")))} output_hash=${preview(redactText(String(tool.schema_metadata?.output_schema_hash ?? "none")))}`)
+  } else out.push("  selected=none")
+  if (tools.search) {
+    out.push(`  search status=${tools.search.status} query=${preview(redactText(tools.search.query_preview))} matches=${tools.search.matches.length} execution_enabled=${tools.search.execution_enabled}`)
+    out.push(...tools.search.matches.slice(0, 8).map((match) => `    - ${match.tool_id} namespace=${match.namespace} score=${match.score} schema_loaded=${match.schema_loaded}`))
+    if (tools.search.warnings?.length) out.push(`  search_warnings=${tools.search.warnings.map((item) => preview(redactText(item))).join("; ")}`)
+    if (tools.search.blockers?.length) out.push(`  search_blockers=${tools.search.blockers.map((item) => preview(redactText(item))).join("; ")}`)
+  } else out.push("  search=none")
+  if (tools.profile) {
+    out.push(`  profile phase=${tools.profile.phase} execution_enabled=${tools.profile.execution_enabled} namespaces=${arraySummary(tools.profile.allowed_namespaces)} always_loaded=${arraySummary(tools.profile.always_loaded_tool_ids)} staged_intents=${arraySummary(tools.profile.staged_intent_tool_ids)}`)
+  } else out.push("  profile=none")
+  if (tools.bootstrap) {
+    out.push(`  bootstrap phase=${tools.bootstrap.phase} execution_enabled=${tools.bootstrap.execution_enabled} loaded=${tools.bootstrap.always_loaded_tools.length} deferred_namespaces=${tools.bootstrap.deferred_namespaces.length} schema_tokens=${tools.bootstrap.initial_schema_tokens} schema_bytes=${tools.bootstrap.initial_schema_bytes} over_budget=${tools.bootstrap.over_budget}`)
+    out.push(`  omitted_core=${arraySummary(tools.bootstrap.omitted_core_tools)}`)
+    out.push(...tools.bootstrap.always_loaded_tools.slice(0, 6).map((tool) => `    - loaded ${tool.tool_id} schema_loaded=${tool.schema_metadata?.schema_loaded ?? false}`))
+  } else out.push("  bootstrap=none")
+  if (tools.validation) {
+    out.push(`  validation status=${tools.validation.status} errors=${tools.validation.errors.length} warnings=${tools.validation.warnings.length} unsafe=${tools.validation.unsafe_exposure_count} authority_mismatch=${tools.validation.authority_mismatch_count}`)
+    if (tools.validation.errors.length) out.push(`  validation_errors=${tools.validation.errors.slice(0, 5).map((item) => preview(redactText(item))).join("; ")}`)
+  } else out.push("  validation=none")
+  if (tools.commandError) out.push(`  command_error=${preview(redactText(String(tools.commandError)))}`)
+  out.push("  note=registry describes capabilities only; execution_enabled=false; no tool execution, provider/MCP/network call, event append, proposal/mission mutation, repository read, GitHub action, or OpenCode action occurred")
   return out
 }
 

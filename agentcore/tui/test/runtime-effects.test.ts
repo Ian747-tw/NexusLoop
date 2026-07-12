@@ -6643,4 +6643,41 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("native_session_action_performed=false")
     expect(snapshot).toContain("context refresh is an immutable artifact only")
   })
+
+  test("fake runtime renders Commander tool registry surface", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-registry-validate" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-summary" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-bootstrap", args: ["phase=proposal_investigation", "provider=local", "model=local-medium"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-search", args: ["query=research", "memory", "phase=proposal_investigation"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-show", args: ["memory.search"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-profile", args: ["phase=mid_mission_supervision"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tools", args: ["namespace=repo_read"] })
+    const repoRecords = state.commanderTools?.records ?? []
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tools", args: ["namespace=github_read"] })
+    const githubRecords = state.commanderTools?.records ?? []
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tools", args: ["namespace=governance"] })
+    const governanceRecords = state.commanderTools?.records ?? []
+
+    expect(state.commanderTools?.validation).toMatchObject({ status: "ready" })
+    expect(state.commanderTools?.summary).toMatchObject({ provider_call_count: 0, direct_external_write_count: 0 })
+    expect(state.commanderTools?.bootstrap).toMatchObject({ execution_enabled: false, over_budget: false })
+    expect(state.commanderTools?.bootstrap?.always_loaded_tools.length).toBeLessThanOrEqual(4)
+    expect(state.commanderTools?.search).toMatchObject({ execution_enabled: false })
+    expect(state.commanderTools?.search?.matches.some((match) => match.tool_id === "memory.search")).toBe(true)
+    expect(state.commanderTools?.search?.matches.every((match) => match.schema_loaded === false)).toBe(true)
+    expect(state.commanderTools?.selected).toMatchObject({ tool_id: "memory.search", schema_metadata: expect.objectContaining({ schema_loaded: true }) })
+    expect(state.commanderTools?.profile).toMatchObject({ phase: "mid_mission_supervision", execution_enabled: false })
+    expect(repoRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "repo.search_text", availability: "future_internal_read" })]))
+    expect(githubRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "github.pr_checks", availability: "future_external_read" })]))
+    expect(governanceRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "governance.stage_pr_merge", availability: "future_governance_intent" })]))
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Commander tools")
+    expect(snapshot).toContain("execution_enabled=false")
+    expect(snapshot).toContain("no tool execution")
+    expect(snapshot).not.toContain("sk-test")
+    const errorState = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-search", args: [] })
+    expect(errorState.commanderTools?.commandError).toContain("requires query")
+  })
 })

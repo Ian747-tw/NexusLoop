@@ -28,6 +28,7 @@ export type CommandAuthorityOwner =
   | "research"
   | "reasoning_provider"
   | "commander_cycle"
+  | "commander_tools"
   | "opencode_handoff"
   | "runtime_checkpoint"
   | "runtime_restore"

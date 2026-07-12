@@ -49,6 +49,7 @@ import type { ContextPacketPreview, ContextPacketPreviewInput, ContextPacketSumm
 import type { ResearchMemoryInspectionInput, ResearchMemoryInspectionPreview, ResearchMemoryNearDuplicateInput, ResearchMemoryNearDuplicatePreview, ResearchMemoryRetrievalInput, ResearchMemoryRetrievalPreview, ResearchMemorySearchProfile, ResearchMemorySummary, ResearchNoveltyInput, ResearchNoveltyPreview } from "../research-memory/research-memory-types"
 import type { ResearchIngestionPreview, ResearchIngestionPreviewInput, ResearchIngestionRecord, ResearchIngestionRecordInput, ResearchIngestionResult, ResearchIngestionSummary } from "../research/research-ingestion-types"
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityInput, CommanderMidMissionContinuityPacket, CommanderProposalContinuityInput, CommanderProposalContinuityPacket } from "../continuity/commander-continuity-types"
+import type { CommanderToolBootstrapPreview, CommanderToolDescriptor, CommanderToolDescriptorSummary, CommanderToolListInput, CommanderToolProfile, CommanderToolRegistrySummary, CommanderToolRegistryValidation, CommanderToolSearchInput, CommanderToolSearchPreview } from "../commander-tools/commander-tool-types"
 import type { OpenCodeContinuationInput, OpenCodeContinuationPacket, OpenCodeSessionContinuityInput, OpenCodeSessionContinuityPacket } from "../opencode-session/opencode-session-continuity-types"
 import type { OpenCodeContextRefreshPreview, OpenCodeContextRefreshRecord, OpenCodeContextRefreshResult, OpenCodeContextRefreshSummary, OpenCodeContextRefreshWriteInput } from "../opencode-session/opencode-context-refresh-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
@@ -88,6 +89,13 @@ export interface RuntimeClient {
   command(name: "runtime.command_authority_list", payload?: CommandAuthorityQuery): Promise<CommandAuthorityRecord[]>
   command(name: "runtime.command_authority_get", payload: { command: string }): Promise<CommandAuthorityRecord>
   command(name: "runtime.command_authority_validation_profile", payload: { command: string; changedFiles?: string[]; changed_files?: string[] }): Promise<CommandValidationProfile>
+  command(name: "runtime.commander_tool_catalog_summary"): Promise<CommanderToolRegistrySummary>
+  command(name: "runtime.list_commander_tools", payload?: CommanderToolListInput): Promise<CommanderToolDescriptorSummary[]>
+  command(name: "runtime.get_commander_tool", payload: { tool_id?: string; toolId?: string; id?: string; include_schema?: boolean; includeSchema?: boolean }): Promise<CommanderToolDescriptor>
+  command(name: "runtime.search_commander_tools", payload: CommanderToolSearchInput): Promise<CommanderToolSearchPreview>
+  command(name: "runtime.preview_commander_tool_profile", payload: { phase?: string }): Promise<CommanderToolProfile>
+  command(name: "runtime.preview_commander_tool_bootstrap", payload: { phase?: string; provider_kind?: string; provider?: string; model_id?: string; model?: string; max_context_tokens?: number; max_context_bytes?: number }): Promise<CommanderToolBootstrapPreview>
+  command(name: "runtime.validate_commander_tool_registry"): Promise<CommanderToolRegistryValidation>
   command(name: "runtime.reasoning_provider_health"): Promise<ReasoningProviderHealth>
   command(name: "runtime.preview_reasoning_provider_smoke", payload?: { surface?: string; requestedBy?: string; requested_by?: string }): Promise<ReasoningProviderSmokePreview>
   command(name: "runtime.execute_reasoning_provider_smoke", payload?: { surface?: string; dryRun?: boolean; dry_run?: boolean; requestedBy?: string; requested_by?: string }): Promise<ReasoningProviderSmokeResult>

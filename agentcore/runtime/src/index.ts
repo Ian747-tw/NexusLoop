@@ -313,6 +313,28 @@ export type {
 export type { ExecutorToolCall, ExecutorToolResult, MissionToolName } from "./missions/mission-tool-types"
 export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"
+export { CommanderToolService } from "./commander-tools/commander-tool-service"
+export { COMMANDER_TOOL_REGISTRY, COMMANDER_TOOL_NAMESPACES, COMMANDER_TOOL_PHASES } from "./commander-tools/commander-tool-registry"
+export type {
+  CommanderToolAvailability,
+  CommanderToolBootstrapPreview,
+  CommanderToolDescriptor,
+  CommanderToolDescriptorSummary,
+  CommanderToolJsonSchema,
+  CommanderToolListInput,
+  CommanderToolLoadPolicy,
+  CommanderToolNamespace,
+  CommanderToolNamespaceSummary,
+  CommanderToolPhase,
+  CommanderToolProfile,
+  CommanderToolRegistrySummary,
+  CommanderToolRegistryValidation,
+  CommanderToolSearchInput,
+  CommanderToolSearchMatch,
+  CommanderToolSearchPreview,
+  CommanderToolSideEffectClass,
+  CommanderToolTrustClass,
+} from "./commander-tools/commander-tool-types"
 export type {
   Artifact,
   ArtifactInput,

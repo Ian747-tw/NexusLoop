@@ -770,6 +770,77 @@ export type ExternalApiState = {
   commandError?: string
 }
 
+export type CommanderToolDescriptorSummary = Record<string, unknown> & {
+  tool_id: string
+  namespace: string
+  name: string
+  availability: string
+  risk: string
+  side_effect_class: string
+  load_policy: string
+  schema_metadata?: { schema_loaded?: boolean; estimated_schema_tokens?: number; input_schema_hash?: string; output_schema_hash?: string }
+  input_field_names?: string[]
+  output_field_names?: string[]
+  execution_enabled?: false
+}
+
+export type CommanderToolRegistrySummaryState = Record<string, unknown> & {
+  total_tools: number
+  implemented_tools: number
+  future_tools: number
+  blocked_tools: number
+  direct_external_write_count: number
+  provider_call_count: number
+}
+
+export type CommanderToolSearchPreviewSummary = Record<string, unknown> & {
+  status: string
+  query_preview: string
+  matches: Array<Record<string, unknown> & { tool_id: string; namespace: string; name: string; schema_loaded: boolean; score: number }>
+  execution_enabled: false
+  warnings: string[]
+  blockers: string[]
+}
+
+export type CommanderToolProfileSummary = Record<string, unknown> & {
+  phase: string
+  execution_enabled: false
+  allowed_namespaces: string[]
+  always_loaded_tool_ids: string[]
+  deferred_tool_ids: string[]
+  staged_intent_tool_ids: string[]
+}
+
+export type CommanderToolBootstrapPreviewSummary = Record<string, unknown> & {
+  phase: string
+  execution_enabled: false
+  always_loaded_tools: CommanderToolDescriptorSummary[]
+  deferred_namespaces: Array<Record<string, unknown> & { namespace: string; implemented_count: number; future_count: number }>
+  initial_schema_tokens: number
+  initial_schema_bytes: number
+  over_budget: boolean
+  omitted_core_tools: string[]
+}
+
+export type CommanderToolRegistryValidationSummary = Record<string, unknown> & {
+  status: string
+  errors: string[]
+  warnings: string[]
+  unsafe_exposure_count: number
+  authority_mismatch_count: number
+}
+
+export type CommanderToolsState = {
+  summary?: CommanderToolRegistrySummaryState | null
+  records: CommanderToolDescriptorSummary[]
+  selected?: CommanderToolDescriptorSummary | null
+  search?: CommanderToolSearchPreviewSummary | null
+  profile?: CommanderToolProfileSummary | null
+  bootstrap?: CommanderToolBootstrapPreviewSummary | null
+  validation?: CommanderToolRegistryValidationSummary | null
+  commandError?: string
+}
+
 export type ResearchSynthesisRecommendedActionSummary = {
   title: string
   summary: string
@@ -5697,6 +5768,7 @@ export type UiState = {
   researchIngestions?: ResearchIngestionState
   researchMemory?: ResearchMemoryState
   commanderContinuity?: CommanderContinuityState
+  commanderTools?: CommanderToolsState
   opencodeContinuity?: OpenCodeContinuityState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

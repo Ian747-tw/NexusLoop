@@ -155,6 +155,29 @@ describe("TUI keyboard command model", () => {
     ])
   })
 
+  test("commander tool slash commands route only exact whitelist commands", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/commander-tool-search query=research memory phase=proposal_investigation",
+    }
+
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+
+    expect(result.state.messageDraft).toBe("")
+    expect(result.state.lastCommand).toBe("commander-tool-search")
+    expect(result.effects).toEqual([
+      { type: "send-command", command: "commander-tool-search", args: ["query=research", "memory", "phase=proposal_investigation"] },
+    ])
+
+    const pathState: UiState = { ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: "/tmp/tool-search" }
+    expect(applyKeyCommandWithEffects(pathState, { type: "submit" }).effects).toEqual([{ type: "send-user-message", message: "/tmp/tool-search" }])
+
+    const dotState: UiState = { ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: ".tool-search query=memory" }
+    expect(applyKeyCommandWithEffects(dotState, { type: "submit" }).effects).toEqual([{ type: "send-user-message", message: ".tool-search query=memory" }])
+  })
+
   test("research synthesis slash commands route only exact whitelist commands", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),
