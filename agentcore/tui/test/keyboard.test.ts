@@ -1448,4 +1448,26 @@ describe("TUI keyboard command model", () => {
       expect(result.effects).toEqual([{ type: "send-user-message", message }])
     }
   })
+
+  test("parses OpenCode continuity and context refresh commands through the slash whitelist", () => {
+    for (const [message, command] of [
+      ["/opencode-continuity-preview session=session-1", "opencode-continuity-preview"],
+      ["/opencode-continuation-preview source_session=session-1 mode=patch_session patch_reason=bounded patch", "opencode-continuation-preview"],
+      ["/opencode-continuation-preview source_session_id=session-1 source_launch_id=launch-1 mode=continue_same_session continuation_reason=bounded continuation previous_refresh_id=refresh-1", "opencode-continuation-preview"],
+      ["/opencode-context-refresh-preview session=session-1", "opencode-context-refresh-preview"],
+      ["/opencode-context-refresh-dry-run session=session-1", "opencode-context-refresh-dry-run"],
+      ["/opencode-context-refresh-write session=session-1", "opencode-context-refresh-write"],
+      ["/context-refreshes session=session-1", "context-refreshes"],
+      ["/context-refresh-latest session=session-1", "context-refresh-latest"],
+      ["/opencode-context-refresh-show refresh-1", "opencode-context-refresh-show"],
+      ["/opencode-context-refresh-summary", "opencode-context-refresh-summary"],
+    ]) {
+      const result = applyKeyCommandWithEffects({ ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: message }, { type: "submit" })
+      expect(result.effects[0]).toMatchObject({ type: "send-command", command })
+    }
+    for (const message of ["/tmp/opencode-context-refresh", "/path/opencode-refresh-write", ".opencode-refresh-write session=session-1", ":opencode-refresh-write session=session-1"]) {
+      const result = applyKeyCommandWithEffects({ ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: message }, { type: "submit" })
+      expect(result.effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
 })

@@ -68,6 +68,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly opencodeResultReports: OpenCodeResultReportResultSummary[] = []
   private readonly opencodeResultReviews: OpenCodeResultReviewGateResultSummary[] = []
   private readonly researchIngestions: ResearchIngestionResultSummary[] = []
+  private readonly opencodeContextRefreshes: Array<Record<string, any>> = []
   private readonly commanderExecutorReviews: CommanderExecutorReviewResultSummary[] = []
   private readonly executorReviewProposalCreates: ExecutorReviewProposalCreateResultSummary[] = []
   private readonly executorReviewProposalReviewRequests: ExecutorReviewProposalReviewRequestResultSummary[] = []
@@ -640,6 +641,22 @@ export class FakeRuntimeClient implements RuntimeClient {
         return this.commanderContinuityOpenLoops(payload)
       case "runtime.show_commander_continuity_thread":
         return this.commanderContinuityThread(payload)
+      case "runtime.preview_opencode_session_continuity":
+        return this.previewOpenCodeSessionContinuity(payload)
+      case "runtime.preview_opencode_continuation":
+        return this.previewOpenCodeContinuation(payload)
+      case "runtime.preview_opencode_context_refresh":
+        return this.previewOpenCodeContextRefresh(payload)
+      case "runtime.write_opencode_context_refresh":
+        return this.writeOpenCodeContextRefresh(payload)
+      case "runtime.list_opencode_context_refreshes":
+        return this.opencodeContextRefreshes.filter((item) => !payload.sessionId && !payload.session_id && !payload.session || item.target_session_id === String(payload.sessionId ?? payload.session_id ?? payload.session)).slice(0, readLimit(payload.limit, 20))
+      case "runtime.get_opencode_context_refresh":
+        return this.opencodeContextRefreshes.find((item) => item.refresh_id === String(payload.refreshId ?? payload.refresh_id ?? "")) ?? null
+      case "runtime.latest_opencode_context_refresh":
+        return this.opencodeContextRefreshes.filter((item) => !payload.sessionId && !payload.session_id && !payload.session || item.target_session_id === String(payload.sessionId ?? payload.session_id ?? payload.session))[0] ?? null
+      case "runtime.opencode_context_refresh_summary":
+        return this.fakeOpenCodeContextRefreshSummary(payload)
       case "runtime.preview_commander_executor_review":
         return this.previewCommanderExecutorReview(payload)
       case "runtime.execute_commander_executor_review":
@@ -5051,6 +5068,84 @@ export class FakeRuntimeClient implements RuntimeClient {
       last_updated_at: new Date(0).toISOString(),
       summary_preview: "continuity thread inference is best-effort; explicit proposal thread IDs are future work",
     }
+  }
+
+  private previewOpenCodeSessionContinuity(payload: Record<string, unknown>): Record<string, any> {
+    const sessionId = optionalString(payload.sessionId ?? payload.session_id ?? payload.session)
+    const launchId = optionalString(payload.launchId ?? payload.launch_id ?? payload.launch)
+    const launch = launchId ? this.opencodeLaunches.find((item) => item.launch_id === launchId) : [...this.opencodeLaunches].reverse().find((item) => item.session_id === sessionId)
+    const resolvedSession = sessionId ?? launch?.session_id ?? ""
+    const session = this.opencodeSessions.find((item) => item.session_id === resolvedSession)
+    const pack = [...this.opencodeSessionInstructionPacks].reverse().find((item) => item.session_id === resolvedSession)
+    const previousId = optionalString(payload.previousRefreshId ?? payload.previous_refresh_id ?? payload.previous_refresh) ?? this.opencodeContextRefreshes.find((item) => item.target_session_id === resolvedSession)?.refresh_id
+    const previous = this.opencodeContextRefreshes.find((item) => item.refresh_id === previousId)
+    const progress = this.opencodeProgressRecords.filter((item) => item.session_id === resolvedSession)
+    const latestProgress = progress[progress.length - 1]
+    const questions = this.opencodeCommanderQuestions.filter((item) => item.session_id === resolvedSession)
+    const guidance = this.commanderGuidanceRecords.filter((item) => item.session_id === resolvedSession)
+    const deliveries = this.commanderGuidanceDeliveryRecords.filter((item) => item.session_id === resolvedSession)
+    const controls = this.opencodeHumanControlRecords.filter((item) => item.session_id === resolvedSession)
+    const refs = [
+      session && fakeContinuityRef("opencode_session", session.session_id, session.status, session.objective),
+      launch && fakeContinuityRef("opencode_launch", launch.launch_id, launch.status, launch.output_summary_preview ?? "fake launch"),
+      ...progress.slice(-5).map((item) => fakeContinuityRef("opencode_progress", item.progress_id, item.execution_state, item.report_summary_preview)),
+      ...questions.slice(-5).map((item) => fakeContinuityRef("commander_question", item.question_id, item.status, item.question_preview)),
+      ...guidance.slice(-5).map((item) => fakeContinuityRef("commander_guidance", item.guidance_id, item.delivery_status, item.answer_preview)),
+      ...deliveries.slice(-5).map((item) => fakeContinuityRef("guidance_delivery", item.delivery_id, item.delivery_status_after, item.target_summary_preview)),
+      ...controls.slice(-5).map((item) => fakeContinuityRef("human_control", item.control_id, item.projected_state_after, item.human_note_preview)),
+    ].filter(Boolean) as CommanderContinuitySourceRefSummary[]
+    const previousKeys = new Set((previous?.source_refs ?? []).map((item: any) => `${item.source_kind}:${item.source_id}`))
+    const newRefs = refs.filter((item) => !previousKeys.has(`${item.source_kind}:${item.source_id}`))
+    const blockers = [!resolvedSession && "session_id or launch_id is required", resolvedSession && !session && "session_id does not resolve", resolvedSession && !launch && "active session continuity requires a launch_started or launched record", resolvedSession && !pack && "base instruction pack does not resolve"].filter(Boolean) as string[]
+    const hash = fakeStableHash(JSON.stringify({ resolvedSession, launch: launch?.launch_id, pack: pack?.pack_hash, refs: refs.map((item) => item.source_id), previousId }))
+    const section = (kind: string, priority: string, summary: string, sourceKinds: string[] = []) => ({ section_id: `fake-section-${kind}`, section_kind: kind, status: "included", priority, summary_preview: redactText(summary), item_count: refs.filter((item) => sourceKinds.includes(item.source_kind)).length, omitted_count: 0, estimated_tokens: Math.ceil(summary.length / 4), estimated_bytes: summary.length, source_refs: refs.filter((item) => sourceKinds.includes(item.source_kind)), warnings: [] })
+    return {
+      packet_id: `fake-continuity-${hash.slice(0, 16)}`, packet_kind: "session_refresh", continuity_mode: "active_refresh", status: blockers.length ? "blocked" : "ready", continuity_readiness: blockers.length ? "blocked" : controls.some((item) => item.control_kind === "pause_request" || item.control_kind === "stop_request") ? "needs_human_review" : launch?.native_session_id ? "ready_for_artifact" : "needs_native_session_id", consumption_status: "not_delivered",
+      source_session_id: resolvedSession, target_session_id: resolvedSession, launch_id: launch?.launch_id, native_session_id: launch?.native_session_id, native_session_link_status: launch?.native_session_id ? "linked" : "missing", base_pack_id: pack?.pack_id, base_pack_hash: pack?.pack_hash, base_context_packet_id: pack?.packet_id, base_context_packet_hash: pack?.packet_hash, previous_refresh_id: previousId, previous_refresh_hash: previous?.refresh_hash, context_strategy: "immutable_base_plus_latest_snapshot_and_delta", objective_preview: session?.objective ?? "", current_task_preview: session?.opencode_context_seed ?? session?.objective ?? "", success_criteria: session?.success_criteria ?? [], constraints: session?.constraints ?? [], latest_progress_summary: latestProgress?.report_summary_preview, pending_question_count: questions.filter((item) => item.status !== "answered").length, pending_guidance_count: guidance.filter((item) => item.delivery_status !== "delivered").length, pending_delivery_count: deliveries.filter((item) => item.delivery_status_after === "pending_delivery").length, latest_human_control_state: controls.at(-1)?.projected_state_after, research_memory_mode: String(payload.researchMemoryMode ?? payload.research_memory ?? "auto"),
+      sections: [section("authority_boundary", "required", "OpenCode is tactical executor; Commander owns strategy; runtime owns durable authority."), section("session_identity", "required", `session=${resolvedSession} launch=${launch?.launch_id ?? "missing"} base_pack=${pack?.pack_id ?? "missing"}`, ["opencode_session", "opencode_launch"]), section("tactical_objective", "required", session?.objective ?? "missing objective", ["opencode_session"]), section("current_execution_state", "high", latestProgress?.report_summary_preview ?? "no progress", ["opencode_progress"]), section("pending_questions", "high", `pending questions=${questions.length}`, ["commander_question"]), section("commander_guidance", "high", `guidance=${guidance.length}; delivery=${deliveries.length}`, ["commander_guidance", "guidance_delivery"]), section("human_controls", "required", controls.at(-1)?.human_note_preview ?? "none", ["human_control"]), section("omitted_raw_content", "excluded", "raw transcripts, logs, files, diffs, events, Commander chat, provider output, and full research.db excluded")],
+      delta: { delta_kind: previous ? "incremental" : "initial_snapshot", previous_refresh_id: previous?.refresh_id, previous_packet_hash: previous?.packet_hash, changed_section_kinds: newRefs.length ? ["current_execution_state", "commander_guidance", "human_controls"] : [], new_progress_ids: newRefs.filter((item) => item.source_kind === "opencode_progress").map((item) => item.source_id), new_question_ids: newRefs.filter((item) => item.source_kind === "commander_question").map((item) => item.source_id), new_guidance_ids: newRefs.filter((item) => item.source_kind === "commander_guidance").map((item) => item.source_id), new_delivery_ids: newRefs.filter((item) => item.source_kind === "guidance_delivery").map((item) => item.source_id), new_human_control_ids: newRefs.filter((item) => item.source_kind === "human_control").map((item) => item.source_id), new_watchdog_ids: [], new_wake_execution_ids: [], new_wake_action_ids: [], new_result_report_ids: [], new_result_review_ids: [], new_research_ingestion_ids: [], new_research_memory_ids: [], summary_preview: previous ? newRefs.length ? `${newRefs.length} new durable source refs` : "no substantive continuity delta" : "initial bounded tactical snapshot", delta_hash: fakeStableHash(JSON.stringify(newRefs.map((item) => item.source_id))) },
+      source_refs: refs, blockers, warnings: ["native_session_id is pointer evidence only", ...(deliveries.length ? ["Guidance metadata exists, but OpenCode receipt is not proven."] : [])], recommended_commands: [{ label: "Write refresh", command: `/opencode-context-refresh-write session=${resolvedSession}`, command_type: "write" }], budget: { budget_id: `fake-budget-${resolvedSession}`, provider_kind: "local", model_id: "local-medium", max_context_tokens: 8000, max_context_bytes: 32000, max_output_tokens: 1000, safety_margin_tokens: 500, safety_margin_bytes: 2000, target_input_tokens: 6500, estimated_input_tokens: 500, estimated_input_bytes: 2000, over_budget: false, section_budgets: {}, omitted_sections: [], truncation_warnings: [] }, generated_at: new Date(0).toISOString(), redacted_summary_preview: blockers[0] ?? `executor-safe continuity for ${resolvedSession}`, packet_hash: hash,
+      delivery_performed: false, opencode_prompt_sent: false, native_session_action_performed: false, process_control_performed: false, session_state_mutated: false, mission_mutated: false, provider_called: false, mcp_called: false, research_db_written: false,
+    }
+  }
+
+  private previewOpenCodeContinuation(payload: Record<string, unknown>): Record<string, any> {
+    const source = String(payload.sourceSessionId ?? payload.source_session_id ?? payload.source_session ?? "")
+    const mode = String(payload.continuityMode ?? payload.continuity_mode ?? payload.mode ?? "continue_same_session")
+    const base = this.previewOpenCodeSessionContinuity({ sessionId: source, previousRefreshId: payload.previousRefreshId ?? payload.previous_refresh_id })
+    const target = String(payload.targetSessionId ?? payload.target_session_id ?? payload.target_session ?? source)
+    const reason = String(payload.continuationReason ?? payload.continuation_reason ?? payload.reason ?? payload.patchReason ?? payload.patch_reason ?? payload.forkReason ?? payload.fork_reason ?? "")
+    const blockers = [...base.blockers]
+    if (!source) blockers.push("source_session_id is required")
+    if (!reason && mode !== "resume_from_checkpoint") blockers.push(`${mode === "patch_session" ? "patch_reason" : mode === "fork_from_session" ? "fork_reason" : "continuation_reason"} is required`)
+    if (mode === "resume_from_checkpoint") blockers.push("checkpoint-to-OpenCode continuity binding is future 9W/9X work")
+    return { ...base, packet_id: `fake-continuation-${fakeStableHash(JSON.stringify({ source, target, mode, reason })).slice(0, 16)}`, packet_kind: "continuation", continuity_mode: mode, status: blockers.length ? "blocked" : "ready", continuity_readiness: mode === "resume_from_checkpoint" ? "needs_checkpoint_binding" : blockers.length ? "blocked" : base.continuity_readiness, source_session_id: source, source_launch_id: base.launch_id, source_native_session_id: base.native_session_id, target_session_id: target, continuation_reason_preview: redactText(reason), parent_child_summary: `${source} -> ${target}`, preserve_summary: ["immutable base pack", "latest bounded snapshot"], discard_summary: ["raw transcript", "raw logs"], blockers, packet_hash: fakeStableHash(JSON.stringify({ source, target, mode, reason, base: base.packet_hash })) }
+  }
+
+  private previewOpenCodeContextRefresh(payload: Record<string, unknown>): Record<string, any> {
+    const packet = payload.packetKind === "continuation" || (payload.continuityMode && payload.continuityMode !== "active_refresh") ? this.previewOpenCodeContinuation(payload) : this.previewOpenCodeSessionContinuity(payload)
+    const target = packet.target_session_id || packet.source_session_id
+    const refreshHash = fakeStableHash(JSON.stringify({ packet: packet.packet_hash, target, previous: packet.delta.previous_refresh_id }))
+    const refreshId = `fake-refresh-${refreshHash.slice(0, 16)}`
+    const targetDir = `.nxl/opencode/sessions/${target}/context-refreshes/${refreshId}`
+    const files = ["CONTEXT_REFRESH.md", "DELTA.md", "REFRESH_MANIFEST.json"].map((name, index) => ({ file_kind: index === 0 ? "context_refresh" : index === 1 ? "delta" : "manifest", relative_path: `${targetDir}/${name}`, size_bytes: 512 + index, sha256: fakeStableHash(JSON.stringify({ refreshId, name })), would_write: true, summary_preview: `${name} bounded artifact`, section_kinds: packet.sections.map((item: any) => item.section_kind), source_ref_ids: packet.source_refs.map((item: any) => item.source_id), warnings: [] }))
+    return { preview_id: `fake-refresh-preview-${refreshHash.slice(0, 16)}`, status: packet.status, can_write: packet.status !== "blocked", packet_kind: packet.packet_kind, continuity_mode: packet.continuity_mode, packet_id: packet.packet_id, packet_hash: packet.packet_hash, source_session_id: packet.source_session_id, target_session_id: target, launch_id: packet.launch_id ?? packet.source_launch_id, native_session_id: packet.native_session_id ?? packet.source_native_session_id, base_pack_id: packet.base_pack_id, base_pack_hash: packet.base_pack_hash, previous_refresh_id: packet.delta.previous_refresh_id, delta: packet.delta, target_dir: targetDir, files, total_size_bytes: files.reduce((sum, item) => sum + item.size_bytes, 0), consumption_status: "not_delivered", blockers: packet.blockers, warnings: packet.warnings, recommended_commands: packet.recommended_commands, generated_at: new Date(0).toISOString(), redacted_summary_preview: `immutable fake refresh preview for ${target}`, refresh_hash: refreshHash, source_refs: packet.source_refs, packet_snapshot: packet, delivery_performed: false, opencode_prompt_sent: false, native_session_action_performed: false, process_control_performed: false, session_state_mutated: false, mission_mutated: false, provider_called: false, mcp_called: false, research_db_written: false }
+  }
+
+  private writeOpenCodeContextRefresh(payload: Record<string, unknown>): Record<string, any> {
+    const preview = this.previewOpenCodeContextRefresh(payload)
+    const dryRun = payload.dryRun === true || payload.dry_run === true
+    const existing = this.opencodeContextRefreshes.find((item) => item.refresh_hash === preview.refresh_hash)
+    if (existing && !dryRun) return existing
+    const result: Record<string, any> = { ...preview, refresh_id: `fake-refresh-${preview.refresh_hash.slice(0, 16)}`, status: preview.can_write ? dryRun ? "dry_run" : "written" : "blocked", written_at: new Date(0).toISOString(), written_by: String(payload.writtenBy ?? payload.written_by ?? "operator"), error: preview.can_write ? undefined : preview.blockers[0] }
+    delete result.preview_id
+    if (result.status === "written") this.opencodeContextRefreshes.unshift({ ...result, source_refs: preview.source_refs, packet_hash: preview.packet_hash })
+    return result
+  }
+
+  private fakeOpenCodeContextRefreshSummary(payload: Record<string, unknown>): Record<string, any> {
+    const records = this.opencodeContextRefreshes.slice(0, readLimit(payload.limit, 20))
+    return { total_refreshes: this.opencodeContextRefreshes.length, session_count: new Set(this.opencodeContextRefreshes.map((item) => item.target_session_id)).size, active_refresh_count: this.opencodeContextRefreshes.filter((item) => item.continuity_mode === "active_refresh").length, continue_same_session_count: this.opencodeContextRefreshes.filter((item) => item.continuity_mode === "continue_same_session").length, fork_from_session_count: this.opencodeContextRefreshes.filter((item) => item.continuity_mode === "fork_from_session").length, patch_session_count: this.opencodeContextRefreshes.filter((item) => item.continuity_mode === "patch_session").length, resume_from_checkpoint_count: this.opencodeContextRefreshes.filter((item) => item.continuity_mode === "resume_from_checkpoint").length, not_delivered_count: this.opencodeContextRefreshes.length, latest_refreshes: records, generated_at: new Date(0).toISOString() }
   }
 
   private fakeCommanderContinuityOpenLoops(input: { sessionId?: string; launchId?: string; kind?: string; severity?: string; limit?: unknown }): CommanderContinuityOpenLoopSummary[] {
@@ -11890,6 +11985,15 @@ function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
       notes: ["Read-only best-effort continuity thread/lineage inspection with pointer-only source refs; no provider/MCP, no writes, no proposal creation."],
       out: ["provider calls", "MCP/online research", "research.db writes", "mission/proposal/review/apply mutation", "proposal creation"],
     }),
+    fakeCommandAuthorityRecord("/opencode-continuity-preview", "runtime.preview_opencode_session_continuity", "safe_read", "none", "opencode_handoff", { aliases: ["/session-continuity-preview", "/continuity-refresh-preview"], notes: ["bounded executor-safe continuity; no prompt/native action/process control/provider/MCP/research.db/mission mutation; not_delivered"], out: ["OpenCode delivery", "native session action", "process control"] }),
+    fakeCommandAuthorityRecord("/opencode-continuation-preview", "runtime.preview_opencode_continuation", "safe_read", "none", "opencode_handoff", { aliases: ["/continuation-packet-preview"], notes: ["packet mode only; no native continue/fork/patch/checkpoint action"], out: ["native session action", "checkpoint restore"] }),
+    fakeCommandAuthorityRecord("/opencode-context-refresh-preview", "runtime.preview_opencode_context_refresh", "safe_read", "none", "opencode_handoff", { aliases: ["/opencode-refresh-preview"], notes: ["immutable artifact preview only; not delivered"], out: ["file/event write", "OpenCode delivery"] }),
+    fakeCommandAuthorityRecord("/opencode-context-refresh-dry-run", "runtime.write_opencode_context_refresh", "safe_read", "none", "opencode_handoff", { aliases: ["/opencode-refresh-dry-run"], notes: ["dry-run writes no file/event"], out: ["artifact write", "OpenCode delivery"] }),
+    fakeCommandAuthorityRecord("/opencode-context-refresh-write", "runtime.write_opencode_context_refresh", "medium_risk_write", "opencode_runtime", "opencode_handoff", { mutates: true, lock: true, events: ["opencode_session_context_refresh_written"], aliases: ["/opencode-refresh-write", "/context-refresh-write"], notes: ["immutable versioned artifact/event only; no base-pack overwrite, prompt, native action, process control, provider/MCP, research.db, or mission mutation; not_delivered"], out: ["base pack overwrite", "OpenCode delivery", "native session action", "process control"] }),
+    fakeCommandAuthorityRecord("/opencode-context-refreshes", "runtime.list_opencode_context_refreshes", "safe_read", "none", "opencode_handoff", { aliases: ["/context-refreshes"], notes: ["bounded refresh records only"], out: ["OpenCode delivery"] }),
+    fakeCommandAuthorityRecord("/opencode-context-refresh-latest", "runtime.latest_opencode_context_refresh", "safe_read", "none", "opencode_handoff", { aliases: ["/context-refresh-latest"], notes: ["latest bounded refresh record"], out: ["OpenCode delivery"] }),
+    fakeCommandAuthorityRecord("/opencode-context-refresh-show", "runtime.get_opencode_context_refresh", "safe_read", "none", "opencode_handoff", { notes: ["bounded metadata; no file contents"], out: ["raw artifact contents"] }),
+    fakeCommandAuthorityRecord("/opencode-context-refresh-summary", "runtime.opencode_context_refresh_summary", "safe_read", "none", "opencode_handoff", { notes: ["bounded not-delivered refresh summary"], out: ["OpenCode delivery"] }),
     fakeCommandAuthorityRecord("/executor-review-preview", "runtime.preview_commander_executor_review", "safe_read", "reasoning_provider_runtime", "commander_cycle", {
       reads: ["/result-review-packet", "/authority-show /executor-review"],
       targeted: ["tests/e2e_user/scenarios/test_commander_executor_review_tui.py"],

@@ -206,6 +206,12 @@ Open-loop detection in 9R is event/projection-derived and pointer-only. It can f
 
 9R appends no continuity events, writes no `research.db` rows, creates no Commander proposal or follow-up mission, calls no provider/MCP/online research, sends no OpenCode prompts, launches or controls no OpenCode process, creates no checkpoints, and mutates no mission/proposal/review/apply state. Future Branch 9S may consume 9R packets at an explicit Commander research proposal gate.
 
+Branch 9T adds a separate executor-safe continuity layer. It anchors every packet to the immutable 9B3 base instruction pack, whitelists tactical state from the 9R mid-mission projection, applies the 9B1 executor context budget, and optionally includes bounded 9S research-memory pointers. A refresh artifact contains a self-contained current tactical snapshot plus a bounded delta from one previous refresh; future delivery needs the base pack and one selected latest refresh, not every historical refresh.
+
+9T writes versioned `CONTEXT_REFRESH.md`, `DELTA.md`, and `REFRESH_MANIFEST.json` files beneath `.nxl/opencode/sessions/<session_id>/context-refreshes/<refresh_id>/` only after an explicit write command. It never overwrites the base pack. Preview and dry-run are read-only. Written refresh events contain hashes, sizes, bounded source refs, budget/omission metadata, and false side-effect flags rather than generated file contents.
+
+9T continuity modes describe packet intent only. `continue_same_session`, `fork_from_session`, `patch_session`, and `resume_from_checkpoint` do not expand the current `OpenCodeLaunchMode = "fresh"` contract and perform no native attach, resume, fork, patch, checkpoint restoration, prompt delivery, or process control. A native session ID is pointer evidence from a launch record, not proof that the session is alive or attachable. Every packet and artifact remains `consumption_status=not_delivered`; future 9X must explicitly gate real delivery or native session actions.
+
 Future OpenCode launch modes should be explicit:
 
 - `fresh`

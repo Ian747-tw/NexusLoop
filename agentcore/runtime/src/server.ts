@@ -117,6 +117,10 @@ import { ResearchIngestionService, readResearchIngestionPreviewInput, readResear
 import type { ResearchIngestionPreview, ResearchIngestionRecord, ResearchIngestionResult, ResearchIngestionSummary } from "./research/research-ingestion-types"
 import { CommanderContinuityService, readCommanderContinuityOpenLoopInput, readCommanderContinuitySummaryInput, readCommanderContinuityThreadInput, readCommanderMidMissionContinuityInput, readCommanderProposalContinuityInput } from "./continuity/commander-continuity-service"
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityPacket, CommanderProposalContinuityPacket } from "./continuity/commander-continuity-types"
+import { OpenCodeSessionContinuityService, readOpenCodeContinuationInput, readOpenCodeSessionContinuityInput } from "./opencode-session/opencode-session-continuity-service"
+import type { OpenCodeContinuationPacket, OpenCodeSessionContinuityPacket } from "./opencode-session/opencode-session-continuity-types"
+import { OpenCodeContextRefreshService, readOpenCodeContextRefreshWriteInput } from "./opencode-session/opencode-context-refresh-service"
+import type { OpenCodeContextRefreshPreview, OpenCodeContextRefreshRecord, OpenCodeContextRefreshResult, OpenCodeContextRefreshSummary } from "./opencode-session/opencode-context-refresh-types"
 import type { OpenCodeSpawn } from "./opencode/process-adapter"
 import { RuntimeCheckpointService, readRuntimeCheckpointScope } from "./checkpoints/runtime-checkpoint-service"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord, RuntimeCheckpointSections } from "./checkpoints/runtime-checkpoint-types"
@@ -372,6 +376,8 @@ export class RuntimeServer {
   private researchIngestionServiceInstance: ResearchIngestionService | null = null
   private researchIngestionReadServiceInstance: Pick<ResearchIngestionService, "list" | "latest"> | null = null
   private commanderContinuityServiceInstance: CommanderContinuityService | null = null
+  private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
+  private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
   private contextPacketCompilerServiceInstance: ContextPacketCompilerService | null = null
   private researchMemoryServiceInstance: ResearchMemoryService | null = null
@@ -1239,6 +1245,22 @@ export class RuntimeServer {
         return this.listCommanderContinuityOpenLoops(readCommanderContinuityOpenLoopInput(payload))
       case "runtime.show_commander_continuity_thread":
         return this.showCommanderContinuityThread(readCommanderContinuityThreadInput(payload))
+      case "runtime.preview_opencode_session_continuity":
+        return this.previewOpenCodeSessionContinuity(readOpenCodeSessionContinuityInput(payload))
+      case "runtime.preview_opencode_continuation":
+        return this.previewOpenCodeContinuation(readOpenCodeContinuationInput(payload))
+      case "runtime.preview_opencode_context_refresh":
+        return this.previewOpenCodeContextRefresh(readOpenCodeContextRefreshWriteInput(payload))
+      case "runtime.write_opencode_context_refresh":
+        return this.writeOpenCodeContextRefresh(readOpenCodeContextRefreshWriteInput(payload))
+      case "runtime.list_opencode_context_refreshes":
+        return this.listOpenCodeContextRefreshes({ limit: optionalPositiveInteger(payload.limit, "limit", 100), session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId"), continuity_mode: optionalString(payload.continuityMode ?? payload.continuity_mode ?? payload.mode, "continuityMode") })
+      case "runtime.get_opencode_context_refresh":
+        return this.getOpenCodeContextRefresh(requiredString(payload.refreshId ?? payload.refresh_id, "refreshId"))
+      case "runtime.latest_opencode_context_refresh":
+        return this.latestOpenCodeContextRefresh({ session_id: optionalString(payload.sessionId ?? payload.session_id ?? payload.session, "sessionId") })
+      case "runtime.opencode_context_refresh_summary":
+        return this.openCodeContextRefreshSummary({ limit: optionalPositiveInteger(payload.limit, "limit", 100) })
       case "runtime.preview_research_novelty_check":
         return this.previewResearchNoveltyCheck(readResearchNoveltyInput(payload))
       case "runtime.preview_commander_executor_review":
@@ -2482,6 +2504,39 @@ export class RuntimeServer {
 
   showCommanderContinuityThread(input: Parameters<CommanderContinuityService["thread"]>[0] = {}): Promise<CommanderContinuityThreadCard | null> {
     return this.commanderContinuityService().thread(input)
+  }
+
+  previewOpenCodeSessionContinuity(input: Parameters<OpenCodeSessionContinuityService["session"]>[0] = {}): Promise<OpenCodeSessionContinuityPacket> {
+    return this.opencodeSessionContinuityService().session(input)
+  }
+
+  previewOpenCodeContinuation(input: Parameters<OpenCodeSessionContinuityService["continuation"]>[0] = {}): Promise<OpenCodeContinuationPacket> {
+    return this.opencodeSessionContinuityService().continuation(input)
+  }
+
+  previewOpenCodeContextRefresh(input: Parameters<OpenCodeContextRefreshService["preview"]>[0] = {}): Promise<OpenCodeContextRefreshPreview> {
+    return this.opencodeContextRefreshService().preview(input)
+  }
+
+  async writeOpenCodeContextRefresh(input: Parameters<OpenCodeContextRefreshService["write"]>[0] = {}): Promise<OpenCodeContextRefreshResult> {
+    if (input.dry_run === true) return this.opencodeContextRefreshService().write(input)
+    return this.withOpenCodeLaunchWriteLock(() => this.opencodeContextRefreshService().write(input))
+  }
+
+  listOpenCodeContextRefreshes(input: Parameters<OpenCodeContextRefreshService["list"]>[0] = {}): Promise<OpenCodeContextRefreshRecord[]> {
+    return this.opencodeContextRefreshService().list(input)
+  }
+
+  getOpenCodeContextRefresh(refreshId: string): Promise<OpenCodeContextRefreshResult | null> {
+    return this.opencodeContextRefreshService().get(refreshId)
+  }
+
+  latestOpenCodeContextRefresh(input: Parameters<OpenCodeContextRefreshService["latest"]>[0] = {}): Promise<OpenCodeContextRefreshResult | null> {
+    return this.opencodeContextRefreshService().latest(input)
+  }
+
+  openCodeContextRefreshSummary(input: Parameters<OpenCodeContextRefreshService["summary"]>[0] = {}): Promise<OpenCodeContextRefreshSummary> {
+    return this.opencodeContextRefreshService().summary(input)
   }
 
   previewResearchNoveltyCheck(input: Parameters<ResearchNoveltyService["preview"]>[0] = {}): ResearchNoveltyPreview {
@@ -4346,6 +4401,34 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
     })
     return this.commanderContinuityServiceInstance
+  }
+
+  private opencodeSessionContinuityService(): OpenCodeSessionContinuityService {
+    this.opencodeSessionContinuityServiceInstance ??= new OpenCodeSessionContinuityService({
+      sessionService: this.opencodeSessionService(),
+      launchService: this.opencodeLaunchGateService(),
+      launchReadinessService: this.opencodeLaunchReadinessService(),
+      instructionPackService: this.opencodeSessionInstructionPackService(),
+      commanderContinuityService: this.commanderContinuityService(),
+      progressService: this.opencodeProgressService(),
+      resultReportService: this.opencodeResultReportService(),
+      researchMemoryService: this.researchMemoryService(),
+      contextBudgetService: this.contextBudgetService(),
+      previousRefresh: (refreshId) => this.opencodeContextRefreshService().previousSnapshot(refreshId),
+      latestRefresh: (sessionId, continuityMode) => this.opencodeContextRefreshService().latestSnapshot(sessionId, continuityMode),
+      now: this.researchSynthesisNow,
+    })
+    return this.opencodeSessionContinuityServiceInstance
+  }
+
+  private opencodeContextRefreshService(): OpenCodeContextRefreshService {
+    this.opencodeContextRefreshServiceInstance ??= new OpenCodeContextRefreshService({
+      projectDir: this.projectDir,
+      eventStore: this.eventStore,
+      continuityService: this.opencodeSessionContinuityService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.opencodeContextRefreshServiceInstance
   }
 
   private researchIngestionReadService(): Pick<ResearchIngestionService, "list" | "latest"> {
