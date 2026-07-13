@@ -169,7 +169,12 @@ export class CommanderToolService {
       bytes += toolBytes
     }
     const eligibleTools = this.tools.filter((tool) => isToolAllowedInPhase(tool, phase))
-    const deferred = namespaceSummaries(eligibleTools).filter((item) => namespaceByPhase(phase).includes(item.namespace) && !loaded.some((tool) => tool.namespace === item.namespace && tool.load_policy === "always_loaded"))
+    const loadedAlwaysLoadedNamespaces = new Set(loaded.filter((tool) => tool.load_policy === "always_loaded").map((tool) => tool.namespace))
+    const deferred = namespaceSummaries(eligibleTools).filter((item) =>
+      namespaceByPhase(phase).includes(item.namespace)
+      && !loadedAlwaysLoadedNamespaces.has(item.namespace)
+      && namespaceSummaryHasRecords(item)
+    )
     return {
       preview_id: `commander_tool_bootstrap_${hash({ phase, loaded: loaded.map((tool) => tool.tool_id), budget: budget.budget.budget_id }).slice(0, 16)}`,
       phase,
@@ -424,6 +429,10 @@ function filterPreview(input: CommanderToolSearchInput): Record<string, string |
   const out: Record<string, string | boolean | number> = {}
   for (const [key, value] of Object.entries(input)) if (value !== undefined && key !== "query") out[key] = value as string | boolean | number
   return out
+}
+
+function namespaceSummaryHasRecords(item: { implemented_count: number; future_count: number; blocked_count: number }): boolean {
+  return item.implemented_count + item.future_count + item.blocked_count > 0
 }
 
 function readPhase(value: unknown): CommanderToolPhase {
