@@ -43,6 +43,7 @@ import { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-
 import { OpenCodeWakeSupervisorExecutionService } from "./opencode-session/opencode-wake-supervisor-execution-service"
 import { buildContinuityDelta, continuitySectionHash, type PreviousRefreshSnapshot } from "./opencode-session/opencode-session-continuity-service"
 import type { OpenCodeContinuitySection, OpenCodeContinuitySourceRef } from "./opencode-session/opencode-session-continuity-types"
+import { CommanderOperationalMemorySearchService, type CommanderOperationalMemoryRecord } from "./commander-tools/commander-operational-memory-search-service"
 import { readOpenCodeContextRefreshWriteInput, validateContextRefreshTarget } from "./opencode-session/opencode-context-refresh-service"
 import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
@@ -24301,6 +24302,33 @@ describe("ProcessOpenCodeAdapter", () => {
     await server.shutdown()
   })
 
+  test("Commander operational memory search filters before applying the scan cap", async () => {
+    const records: CommanderOperationalMemoryRecord[] = []
+    for (let index = 0; index < 850; index += 1) {
+      records.push({
+        source_kind: "opencode_progress",
+        source_id: `other-${index}`,
+        label: "progress",
+        status: "closed",
+        summary_preview: `other session continuity target ${index}`,
+        session_id: "session-other",
+      })
+    }
+    records.push({
+      source_kind: "opencode_progress",
+      source_id: "wanted-progress",
+      label: "progress",
+      status: "active",
+      summary_preview: "needle continuity target",
+      session_id: "session-wanted",
+    })
+    const service = new CommanderOperationalMemorySearchService({ collectRecords: async () => records, now: () => new Date("2026-01-01T00:00:00.000Z") })
+    const result = await service.search({ query: "needle continuity target", session_id: "session-wanted", limit: 5 })
+    expect(result).toMatchObject({ status: "ready", scanned_items: 1 })
+    expect(result.result?.candidates).toEqual([expect.objectContaining({ source_id: "wanted-progress", session_id: "session-wanted" })])
+    expect(result.warnings.join(" ")).not.toContain("scan capped")
+  })
+
   test("Commander repository reads enforce path policy, bounds, redaction, and manifests", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -24328,6 +24356,14 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(tree.result.entries.some((entry: any) => entry.path.startsWith(".nxl/"))).toBe(false)
     const search = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(search.result.matches[0]).toMatchObject({ path: "src/sample.ts", line_number: 1 })
+    await mkdir(join(dir, "mixed"), { recursive: true })
+    for (let index = 0; index < 8; index += 1) {
+      await writeFile(join(dir, "mixed", `a-${index}.md`), "CommanderToolServiceSample in ignored markdown\n")
+    }
+    await writeFile(join(dir, "mixed", "z-target.ts"), "export const filteredNeedle = 'extension-filter-needle'\n")
+    const extensionSearch = await server.command("runtime.commander_repo_search_text", { query: "extension-filter-needle", path: "mixed", extensions: "ts", max_files: 3 }) as Record<string, any>
+    expect(extensionSearch.result.matches).toEqual([expect.objectContaining({ path: "mixed/z-target.ts", line_number: 1 })])
+    expect(extensionSearch.result.scanned_files).toBe(1)
     await mkdir(join(dir, "many"), { recursive: true })
     for (let index = 0; index < 120; index += 1) {
       await writeFile(join(dir, "many", `match-${index}.ts`), `const hugeSearchNeedle${index} = "huge-search-needle ${"x".repeat(700)}"\n`)

@@ -84,16 +84,16 @@ export class CommanderRepoReadService {
     const root = await rootInfo(this.options.projectDir)
     const checked = await resolveSafePath(root, rootPath, { allowDirectory: true, includeUpstream })
     if (checked.error) blockers.push(checked.error)
-    let files: string[] = []
-    if (!checked.error && checked.absolute) files = await collectFiles(root, checked.absolute, includeUpstream, maxFiles)
+    let fileScan: { files: string[]; omitted: number; capped: boolean } = { files: [], omitted: 0, capped: false }
+    if (!checked.error && checked.absolute) fileScan = await collectFiles(root, checked.absolute, includeUpstream, maxFiles, (rel) => extensions.length === 0 || extensions.includes(extname(rel)))
+    const files = fileScan.files
     let scannedFiles = 0
     let scannedBytes = 0
-    let omittedFiles = Math.max(0, files.length - maxFiles)
+    let omittedFiles = fileScan.omitted
     const matches: CommanderRepoSearchResult["matches"] = []
     const needle = caseSensitive ? query ?? "" : (query ?? "").toLowerCase()
     for (const file of files.slice(0, maxFiles)) {
       const rel = toRelative(root, file)
-      if (extensions.length && !extensions.includes(extname(rel))) continue
       const text = await readTextFile(file, MAX_READ_BYTES)
       if (hasReadError(text)) {
         omittedFiles += 1
@@ -121,7 +121,7 @@ export class CommanderRepoReadService {
       }
       if (matches.length >= limit) break
     }
-    if (files.length >= maxFiles) warnings.push(`repo search file scan capped at ${maxFiles} files`)
+    if (fileScan.capped) warnings.push(`repo search file scan capped at ${maxFiles} matching files`)
     const result: CommanderRepoSearchResult = { query_preview: redactText(query ?? ""), path: checked.relative ?? rootPath, matches, scanned_files: scannedFiles, scanned_bytes: scannedBytes, omitted_files: omittedFiles }
     return this.wrap("repo.search_text", "repository_search_match", "repository_content_untrusted", result, started, blockers, warnings, false, scannedFiles, omittedFiles)
   }
@@ -169,7 +169,7 @@ export class CommanderRepoReadService {
     const root = await rootInfo(this.options.projectDir)
     const checked = await resolveSafePath(root, path, { allowDirectory: true, includeUpstream })
     if (checked.error) blockers.push(checked.error)
-    const files = !checked.error && checked.absolute ? await collectFiles(root, checked.absolute, includeUpstream, 3000) : []
+    const files = !checked.error && checked.absolute ? (await collectFiles(root, checked.absolute, includeUpstream, 3000)).files : []
     const candidates: CommanderRepoSymbolResult["candidates"] = []
     const declaration = declarationPattern(symbol ?? "")
     for (const file of files) {
@@ -412,10 +412,12 @@ async function walkTree(root: RootInfo, absolute: string, rel: string | undefine
   }
 }
 
-async function collectFiles(root: RootInfo, start: string, includeUpstream: boolean, maxFiles: number): Promise<string[]> {
+async function collectFiles(root: RootInfo, start: string, includeUpstream: boolean, maxFiles: number, includeFile: (rel: string) => boolean = () => true): Promise<{ files: string[]; omitted: number; capped: boolean }> {
   const out: string[] = []
+  let omitted = 0
+  let capped = false
   async function visit(path: string): Promise<void> {
-    if (out.length >= maxFiles) return
+    if (out.length >= maxFiles) { capped = true; return }
     const info = await lstat(path)
     const rel = toRelative(root, path)
     const name = basename(path)
@@ -425,10 +427,17 @@ async function collectFiles(root: RootInfo, start: string, includeUpstream: bool
       for (const child of (await readdir(path)).sort((a, b) => a.localeCompare(b))) await visit(join(path, child))
       return
     }
-    if (info.isFile()) out.push(path)
+    if (info.isFile() && includeFile(rel)) {
+      if (out.length >= maxFiles) {
+        omitted += 1
+        capped = true
+        return
+      }
+      out.push(path)
+    }
   }
   await visit(start)
-  return out
+  return { files: out, omitted, capped }
 }
 
 async function readTextFile(path: string, maxBytes: number): Promise<{ text: string; bytes: number } | { error: string }> {
@@ -459,7 +468,7 @@ function isDeniedPath(path: string): boolean {
 }
 
 async function manifestFiles(root: RootInfo, includeUpstream: boolean): Promise<string[]> {
-  const files = await collectFiles(root, root.root, includeUpstream, 1200)
+  const files = (await collectFiles(root, root.root, includeUpstream, 1200)).files
   return files.filter((file) => {
     const rel = toRelative(root, file)
     const name = basename(file)

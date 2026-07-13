@@ -58,16 +58,17 @@ export class CommanderOperationalMemorySearchService {
     const statuses = readCsv(input.statuses)
     let records: CommanderOperationalMemoryRecord[] = []
     if (blockers.length === 0) records = await this.options.collectRecords()
-    const scanned = Math.min(records.length, SCAN_LIMIT)
+    const filteredRecords = records
+      .filter((record) => !input.session_id || record.session_id === input.session_id)
+      .filter((record) => !input.launch_id || record.launch_id === input.launch_id)
+      .filter((record) => !input.mission_id || record.mission_id === input.mission_id)
+      .filter((record) => sourceKinds.length === 0 || sourceKinds.includes(record.source_kind))
+      .filter((record) => statuses.length === 0 || (record.status && statuses.includes(record.status)))
+      .filter((record) => withinTime(record.occurred_at, input.since, input.until))
+    const scanned = Math.min(filteredRecords.length, SCAN_LIMIT)
     const candidates = query
-      ? records
+      ? filteredRecords
           .slice(0, SCAN_LIMIT)
-          .filter((record) => !input.session_id || record.session_id === input.session_id)
-          .filter((record) => !input.launch_id || record.launch_id === input.launch_id)
-          .filter((record) => !input.mission_id || record.mission_id === input.mission_id)
-          .filter((record) => sourceKinds.length === 0 || sourceKinds.includes(record.source_kind))
-          .filter((record) => statuses.length === 0 || (record.status && statuses.includes(record.status)))
-          .filter((record) => withinTime(record.occurred_at, input.since, input.until))
           .map((record) => scoreRecord(record, query))
           .filter((candidate) => candidate.relevance_score > 0)
           .sort((a, b) => b.relevance_score - a.relevance_score || `${a.source_kind}:${a.source_id}`.localeCompare(`${b.source_kind}:${b.source_id}`))
@@ -111,7 +112,7 @@ export class CommanderOperationalMemorySearchService {
       max_output_bytes: 18_000,
       truncated: candidates.length > returned.length,
       scanned_items: scanned,
-      omitted_items: Math.max(0, records.length - scanned) + Math.max(0, candidates.length - returned.length),
+      omitted_items: Math.max(0, filteredRecords.length - scanned) + Math.max(0, candidates.length - returned.length),
       duration_ms: Math.max(0, Date.now() - started),
       blockers,
       warnings: [
@@ -119,7 +120,7 @@ export class CommanderOperationalMemorySearchService {
         "For accepted research evidence, use memory.search.",
         "Missing operational matches do not prove an event never occurred.",
         "Raw event-log content was not searched.",
-        ...(records.length > SCAN_LIMIT ? [`operational memory scan capped at ${SCAN_LIMIT} typed records`] : []),
+        ...(filteredRecords.length > SCAN_LIMIT ? [`operational memory scan capped at ${SCAN_LIMIT} filtered typed records`] : []),
       ],
       generated_at: generatedAt,
       result_hash: hash({ result, blockers }),
