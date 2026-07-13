@@ -24364,6 +24364,7 @@ describe("ProcessOpenCodeAdapter", () => {
       "function runTests() { return true }",
     ].join("\n"))
     await writeFile(join(dir, "src", "whitespace.py"), "def outer():\n    if True:\n        return 'indented'\n")
+    await writeFile(join(dir, "src", "a  b.ts"), "export const spacedPath = true\n")
     await mkdir(join(dir, ".aws"), { recursive: true })
     await writeFile(join(dir, ".aws", "credentials"), "aws_access_key_id = SHOULD_NOT_LEAK")
     await mkdir(join(dir, "nested", ".ssh"), { recursive: true })
@@ -24426,6 +24427,9 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("tokenName")
     const whitespaceRead = await server.command("runtime.commander_repo_read_lines", { path: "src/whitespace.py", start_line: 1, end_line: 3 }) as Record<string, any>
     expect(whitespaceRead.result.lines.map((line: any) => line.text)).toEqual(["def outer():", "    if True:", "        return 'indented'"])
+    const spacedPathRead = await server.command("runtime.commander_repo_read_lines", { path: "src/a  b.ts", start_line: 1, end_line: 1 }) as Record<string, any>
+    expect(spacedPathRead).toMatchObject({ status: "ready", result: { path: "src/a  b.ts" } })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "src/a\tb.ts" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["path contains unsupported control characters"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: "../outside" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["path traversal outside the project root is not allowed"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
@@ -24492,6 +24496,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".envrc" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked\t.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter contains unsupported control characters"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "../tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter cannot escape the project root"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "*.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git wildcard path filters are not supported"]) })
     const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>

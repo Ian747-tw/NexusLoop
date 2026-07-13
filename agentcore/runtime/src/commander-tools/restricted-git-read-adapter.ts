@@ -332,9 +332,9 @@ function readScope(value: unknown): "working_tree" | "staged" | "head" {
 }
 
 function optionalPath(value: unknown): { path?: string; error?: string } {
-  if (typeof value !== "string" || !value.trim()) return {}
-  const path = value.trim()
-  if (path.includes("\0") || /[\x00-\x08\x0e-\x1f]/.test(path)) return { error: "Git path filter contains unsupported control characters" }
+  if (typeof value !== "string" || value.length === 0) return {}
+  const path = value.length > 500 ? value.slice(0, 500) : value
+  if (/[\x00-\x1f]/.test(path)) return { error: "Git path filter contains unsupported control characters" }
   if (path.startsWith(":")) return { error: "Git pathspec magic is not supported" }
   if (/[*?\[\]]/.test(path)) return { error: "Git wildcard path filters are not supported" }
   if (path.startsWith("/") || resolve(path) === path) return { error: "Git path filter must be project-relative" }

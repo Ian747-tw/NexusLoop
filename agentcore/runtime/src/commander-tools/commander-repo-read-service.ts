@@ -50,7 +50,7 @@ export class CommanderRepoReadService {
 
   async tree(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderRepoTreeResult>> {
     const started = Date.now()
-    const path = optional(input.path) ?? "."
+    const path = optionalPath(input.path) ?? "."
     const depth = clamp(input.depth, 3, 1, 8)
     const limit = clamp(input.limit, 200, 1, 500)
     const includeHidden = boolean(input.includeHidden ?? input.include_hidden, false)
@@ -73,7 +73,7 @@ export class CommanderRepoReadService {
   async searchText(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderRepoSearchResult>> {
     const started = Date.now()
     const query = optional(input.query)
-    const rootPath = optional(input.path) ?? "."
+    const rootPath = optionalPath(input.path) ?? "."
     const blockers: string[] = []
     const warnings: string[] = [EVIDENCE_WARNING, REPO_WARNING, "Literal search only; regular expression syntax is not evaluated."]
     if (!query) blockers.push("repo text search requires query")
@@ -130,7 +130,7 @@ export class CommanderRepoReadService {
 
   async readLines(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderRepoFileResult>> {
     const started = Date.now()
-    const path = optional(input.path)
+    const path = optionalPath(input.path)
     const blockers: string[] = []
     const warnings: string[] = [EVIDENCE_WARNING, REPO_WARNING]
     if (!path) blockers.push("repo read requires path")
@@ -162,7 +162,7 @@ export class CommanderRepoReadService {
   async findSymbol(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderRepoSymbolResult>> {
     const started = Date.now()
     const symbol = optional(input.symbol)
-    const path = optional(input.path) ?? "."
+    const path = optionalPath(input.path) ?? "."
     const blockers: string[] = []
     const warnings: string[] = [EVIDENCE_WARNING, REPO_WARNING, "Lexical symbol lookup may miss generated, aliased, overloaded, or dynamically defined symbols."]
     if (!symbol) blockers.push("repo symbol lookup requires symbol")
@@ -367,7 +367,7 @@ async function rootInfo(projectDir: string): Promise<RootInfo> {
 }
 
 async function resolveSafePath(root: RootInfo, inputPath: string, options: { allowDirectory: boolean; includeUpstream: boolean }): Promise<{ absolute?: string; relative?: string; error?: string }> {
-  if (inputPath.includes("\0") || /[\x00-\x08\x0e-\x1f]/.test(inputPath)) return { error: "path contains unsupported control characters" }
+  if (/[\x00-\x1f]/.test(inputPath)) return { error: "path contains unsupported control characters" }
   if (resolve(inputPath) === inputPath) return { error: "absolute paths are not allowed" }
   if (inputPath.replace(/\\/g, "/").split("/").includes("..")) return { error: "path traversal outside the project root is not allowed" }
   const slashPath = inputPath.replace(/\\/g, "/")
@@ -585,6 +585,11 @@ function depthOf(path: string): number {
 function optional(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined
   return bound(value, 500)
+}
+
+function optionalPath(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined
+  return value.length > 500 ? value.slice(0, 500) : value
 }
 
 function csv(value: unknown): string[] {
