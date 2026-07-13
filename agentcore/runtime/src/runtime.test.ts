@@ -24442,7 +24442,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "add delete target"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "mv", "rename-source.txt", "rename-target.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     await rm(join(dir, "delete-me.txt"))
-    await writeFile(join(dir, ".env"), "aws_access_key_id = STILL_SHOULD_NOT_LEAK\n")
+    expect(Bun.spawnSync({ cmd: ["git", "mv", ".env", "public.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
     const before = await server.eventStore.readAll()
     const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
@@ -24462,11 +24462,14 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(wholeDiff.result.stat_preview).toContain("delete-me.txt")
     expect(JSON.stringify(wholeDiff.result)).not.toContain(".env")
     expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK")
-    expect(wholeDiff.warnings.join(" ")).toContain("Suppressed")
     const statOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", stat_only: true }) as Record<string, any>
     expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain(".env")
-    expect(statOnlyDiff.warnings.join(" ")).toContain("Suppressed")
+    const stagedStatOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "staged", stat_only: true }) as Record<string, any>
+    expect(JSON.stringify(stagedStatOnlyDiff.result)).not.toContain(".env")
+    expect(JSON.stringify(stagedStatOnlyDiff.result)).not.toContain("public.txt")
+    expect(stagedStatOnlyDiff.warnings.join(" ")).toContain("Suppressed")
+    expect(JSON.stringify(statOnlyDiff.result)).not.toContain("public.txt")
     const log = await server.command("runtime.commander_repo_git_log", { limit: 5 }) as Record<string, any>
     expect(log.result.commits).toEqual(expect.arrayContaining([expect.objectContaining({ subject_preview: "initial" })]))
     await expect(server.command("runtime.commander_repo_git_log", { path: "/tmp/tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter must be project-relative"]) })
@@ -24497,6 +24500,20 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(status.result.conflicted).toEqual(expect.arrayContaining(["conflict.txt"]))
     expect(JSON.stringify(status.result.staged)).not.toContain("conflict.txt")
     expect(JSON.stringify(status.result.unstaged)).not.toContain("conflict.txt")
+  })
+
+  test("Commander restricted Git status works on unborn HEAD", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "new-file.txt"), "new\n")
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status.status).toBe("ready")
+    expect(status.blockers).toEqual([])
+    expect(status.result.untracked).toEqual(expect.arrayContaining(["new-file.txt"]))
+    expect(status.result.head_sha).toBeUndefined()
+    expect(status.warnings.join(" ")).toContain("Git HEAD is unborn")
   })
 
   test("Commander restricted Git reads disable configured fsmonitor hooks", async () => {

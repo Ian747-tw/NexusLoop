@@ -226,7 +226,7 @@ function commanderInternalReadLines(state: UiState): string[] {
       for (const status of (result.staged ?? []).slice(0, 6)) out.push(`  staged=${preview(redactText(String(status.path ?? "")))} status=${preview(redactText(String(status.status ?? "")))}`)
       for (const status of (result.unstaged ?? []).slice(0, 6)) out.push(`  unstaged=${preview(redactText(String(status.path ?? "")))} status=${preview(redactText(String(status.status ?? "")))}`)
       for (const status of (result.untracked ?? []).slice(0, 6)) out.push(`  untracked=${preview(redactText(String(status.path ?? status ?? "")))}`)
-      for (const status of (result.conflicted ?? []).slice(0, 6)) out.push(`  conflicted=${preview(redactText(String(status.path ?? "")))} status=${preview(redactText(String(status.status ?? "")))}`)
+      for (const status of (result.conflicted ?? []).slice(0, 6)) out.push(`  conflicted=${preview(redactText(String(status.path ?? status ?? "")))} status=${preview(redactText(String(status.status ?? "")))}`)
       for (const file of (result.files ?? []).slice(0, 8)) out.push(`  git_file=${preview(redactText(String(file.path ?? "")))} additions=${file.additions ?? ""} deletions=${file.deletions ?? ""} binary=${file.binary ?? false}`)
       if (result.stat_preview) out.push(`  git_stat=${preview(redactText(String(result.stat_preview)))}`)
       if (result.patch_preview) out.push(`  git_patch=${preview(redactText(String(result.patch_preview)))}`)

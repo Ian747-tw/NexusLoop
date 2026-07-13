@@ -41,9 +41,10 @@ export class RestrictedGitReadAdapter {
       this.run(["rev-parse", "--abbrev-ref", "HEAD"]),
       this.run(["status", "--porcelain=v1", "-z", "--untracked-files=normal"]),
     ])
-    const blockers = [head.error, branch.error, porcelain.error].filter((item): item is string => !!item)
-    const parsed = parseStatus(porcelain.stdout, head.stdout.trim(), branch.stdout.trim())
+    const blockers = [porcelain.error].filter((item): item is string => !!item)
+    const parsed = parseStatus(porcelain.stdout, head.error ? "" : head.stdout.trim(), branch.error ? "HEAD" : branch.stdout.trim())
     const warnings = [...head.warnings, ...branch.warnings, ...porcelain.warnings]
+    if (head.error || branch.error) warnings.push("Git HEAD is unborn; status metadata is limited")
     if (parsed.omittedSensitive > 0) warnings.push(`Suppressed ${parsed.omittedSensitive} sensitive Git status path(s)`)
     return { result: parsed.result, blockers, warnings }
   }
@@ -238,7 +239,7 @@ function parseStatFiles(output: string): CommanderGitDiffResult["files"] {
     const match = line.match(/^\s*(.+?)\s+\|\s+(\d+|-)\s+([+\-]+|Bin\b.*)?\s*$/)
     if (!match) continue
     const path = match[1].trim()
-    if (!path || isDeniedRepositoryPath(path)) continue
+    if (!path || isDeniedStatPath(path)) continue
     const markers = match[3] ?? ""
     files.push({
       path,
@@ -289,7 +290,7 @@ function filterSensitiveStatLines(output: string): { output: string; omitted: nu
   let omitted = 0
   for (const line of output.split(/\r?\n/)) {
     const statPath = line.match(/^\s*(.+?)\s+\|\s+\d+/)?.[1]?.trim()
-    if (statPath && isDeniedRepositoryPath(statPath)) {
+    if (statPath && isDeniedStatPath(statPath)) {
       omitted += 1
       continue
     }
@@ -302,6 +303,13 @@ function summarizeDiffStat(output: string): string {
   const files = parseDiffFiles(output)
   if (files.length === 0) return "no diff"
   return files.slice(0, 40).map((file) => `${file.path} +${file.additions}/-${file.deletions}${file.binary ? " binary" : ""}`).join("; ")
+}
+
+function isDeniedStatPath(path: string): boolean {
+  if (isDeniedRepositoryPath(path)) return true
+  if (!path.includes("=>")) return false
+  const normalized = path.replace(/[{}]/g, "")
+  return normalized.split("=>").some((part) => isDeniedRepositoryPath(part.trim()))
 }
 
 function readScope(value: unknown): "working_tree" | "staged" | "head" {
