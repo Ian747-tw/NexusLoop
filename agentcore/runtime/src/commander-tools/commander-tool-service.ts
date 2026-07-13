@@ -224,6 +224,10 @@ export class CommanderToolService {
             authorityMismatch += 1
             mark(tool.tool_id, "implemented descriptor risk must match safe_read authority")
           }
+          if (authority.runtime_command !== tool.runtime_command) {
+            authorityMismatch += 1
+            mark(tool.tool_id, "implemented descriptor runtime command must match authority record")
+          }
           for (const [field, expected] of Object.entries({ mutates_events: false, creates_external_process: false, calls_provider: false, requires_approval: false, requires_run_lock: false, requires_network: false, requires_credentials: false }) as Array<[keyof CommanderToolDescriptor, false]>) {
             if (tool[field] !== expected) {
               unsafe += 1
