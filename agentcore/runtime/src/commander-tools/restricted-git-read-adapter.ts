@@ -51,14 +51,16 @@ export class RestrictedGitReadAdapter {
     const scope = readScope(input.scope)
     const context = clamp(input.contextLines ?? input.context_lines, 3, 0, 10)
     const statOnly = input.statOnly === true || input.stat_only === true || input.statOnly === "true" || input.stat_only === "true"
-    const path = optionalPath(input.path)
+    const pathFilter = optionalPath(input.path)
+    const path = pathFilter.path
     if (verified.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [verified.error], warnings: [] }
+    if (pathFilter.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [pathFilter.error], warnings: [] }
     if (path && isDeniedRepositoryPath(path)) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: ["sensitive Git diff path is denied"], warnings: [] }
     const baseArgs = scope === "staged" ? ["diff", "--cached"] : scope === "head" ? ["diff", "HEAD"] : ["diff"]
-    const args = [...baseArgs, "--no-ext-diff", "--no-textconv", "--no-color", `--unified=${context}`, ...(statOnly ? ["--stat"] : []), ...(path ? ["--", path] : [])]
+    const args = [...baseArgs, "--no-ext-diff", "--no-textconv", "--no-color", ...(statOnly ? ["--stat"] : [`--unified=${context}`]), ...(path ? ["--", path] : [])]
     const [head, diff] = await Promise.all([this.run(["rev-parse", "HEAD"]), this.run(args)])
     const blockers = [head.error, diff.error].filter((item): item is string => !!item)
-    const filtered = statOnly ? { output: diff.stdout, omitted: 0 } : filterSensitiveDiffSections(diff.stdout)
+    const filtered = statOnly ? filterSensitiveStatLines(diff.stdout) : filterSensitiveDiffSections(diff.stdout)
     const patch = redactText(filtered.output).slice(0, 64_000)
     const warnings = [...head.warnings, ...diff.warnings]
     if (filtered.omitted > 0) warnings.push(`Suppressed ${filtered.omitted} sensitive Git diff file(s) from patch output`)
@@ -78,8 +80,11 @@ export class RestrictedGitReadAdapter {
   async log(input: Record<string, unknown> = {}): Promise<{ result: CommanderGitLogResult; blockers: string[]; warnings: string[] }> {
     const verified = await this.verifyRoot()
     const limit = clamp(input.limit, 10, 1, 50)
-    const path = optionalPath(input.path)
+    const pathFilter = optionalPath(input.path)
+    const path = pathFilter.path
     if (verified.error) return { result: { commits: [] }, blockers: [verified.error], warnings: [] }
+    if (pathFilter.error) return { result: { commits: [] }, blockers: [pathFilter.error], warnings: [] }
+    if (path && isDeniedRepositoryPath(path)) return { result: { commits: [] }, blockers: ["sensitive Git log path is denied"], warnings: [] }
     const args = ["log", `-${limit}`, "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s", ...(path ? ["--", path] : [])]
     const output = await this.run(args)
     const commits = output.stdout.split(/\r?\n/).filter(Boolean).map((line) => {
@@ -159,9 +164,16 @@ function parseStatus(output: string, head: string, branch: string): CommanderGit
   const untracked: string[] = []
   const conflicted: string[] = []
   const parts = output.split("\0").filter(Boolean)
-  for (const entry of parts.slice(0, 300)) {
+  let parsedEntries = 0
+  let index = 0
+  for (; index < parts.length && parsedEntries < 300; index += 1) {
+    parsedEntries += 1
+    const entry = parts[index]
     const status = entry.slice(0, 2)
     const path = entry.slice(3)
+    if ((status.includes("R") || status.includes("C")) && index + 1 < parts.length) {
+      index += 1
+    }
     if (status === "??") untracked.push(path)
     else if (status.includes("U")) conflicted.push(path)
     else {
@@ -179,7 +191,7 @@ function parseStatus(output: string, head: string, branch: string): CommanderGit
     untracked,
     conflicted,
     counts: { staged: staged.length, unstaged: unstaged.length, untracked: untracked.length, conflicted: conflicted.length },
-    truncated: parts.length > 300,
+    truncated: index < parts.length,
   }
 }
 
@@ -234,6 +246,20 @@ function filterSensitiveDiffSections(output: string): { output: string; omitted:
   return { output: kept.join("\n"), omitted }
 }
 
+function filterSensitiveStatLines(output: string): { output: string; omitted: number } {
+  const kept: string[] = []
+  let omitted = 0
+  for (const line of output.split(/\r?\n/)) {
+    const statPath = line.match(/^\s*(.+?)\s+\|\s+\d+/)?.[1]?.trim()
+    if (statPath && isDeniedRepositoryPath(statPath)) {
+      omitted += 1
+      continue
+    }
+    kept.push(line)
+  }
+  return { output: kept.join("\n"), omitted }
+}
+
 function summarizeDiffStat(output: string): string {
   const files = parseDiffFiles(output)
   if (files.length === 0) return "no diff"
@@ -245,10 +271,13 @@ function readScope(value: unknown): "working_tree" | "staged" | "head" {
   return "working_tree"
 }
 
-function optionalPath(value: unknown): string | undefined {
-  if (typeof value !== "string" || !value.trim()) return undefined
-  if (value.includes("\0") || value.startsWith("/") || value.split(/[\\/]+/).includes("..")) return undefined
-  return value
+function optionalPath(value: unknown): { path?: string; error?: string } {
+  if (typeof value !== "string" || !value.trim()) return {}
+  const path = value.trim()
+  if (path.includes("\0") || /[\x00-\x08\x0e-\x1f]/.test(path)) return { error: "Git path filter contains unsupported control characters" }
+  if (path.startsWith("/") || resolve(path) === path) return { error: "Git path filter must be project-relative" }
+  if (path.split(/[\\/]+/).includes("..")) return { error: "Git path filter cannot escape the project root" }
+  return { path }
 }
 
 function clamp(value: unknown, fallback: number, min: number, max: number): number {

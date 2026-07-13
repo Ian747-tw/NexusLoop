@@ -24334,6 +24334,7 @@ describe("ProcessOpenCodeAdapter", () => {
     }
     const cappedSearch = await server.command("runtime.commander_repo_search_text", { query: "huge-search-needle", path: "many", limit: 100, context_lines: 3 }) as Record<string, any>
     expect(cappedSearch.truncated).toBe(true)
+    expect(cappedSearch.max_output_bytes).toBe(18_000)
     expect(cappedSearch.output_bytes).toBeLessThanOrEqual(cappedSearch.max_output_bytes)
     expect(Buffer.byteLength(JSON.stringify(cappedSearch.result))).toBeLessThanOrEqual(cappedSearch.max_output_bytes)
     expect(cappedSearch.result.matches.length).toBeLessThan(100)
@@ -24370,21 +24371,32 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, ".env"), "aws_access_key_id = SHOULD_NOT_LEAK\n")
     expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "rename-source.txt"), "rename me\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "rename-source.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "add rename source"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "mv", "rename-source.txt", "rename-target.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     await writeFile(join(dir, ".env"), "aws_access_key_id = STILL_SHOULD_NOT_LEAK\n")
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
     const before = await server.eventStore.readAll()
     const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
     expect(status).toMatchObject({ tool_id: "repo.git_status", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false, events_appended: false })
     expect(status.result.unstaged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
+    expect(status.result.staged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "rename-target.txt", status: "R" })]))
+    expect(JSON.stringify(status.result.staged)).not.toContain("rename-source.txt")
     const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
     expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
     expect(diff.result.patch_preview).toContain("[REDACTED]")
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "../tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter cannot escape the project root"]) })
     const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
     expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK")
     expect(wholeDiff.warnings.join(" ")).toContain("Suppressed")
+    const statOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", stat_only: true }) as Record<string, any>
+    expect(JSON.stringify(statOnlyDiff.result)).not.toContain(".env")
+    expect(statOnlyDiff.warnings.join(" ")).toContain("Suppressed")
     const log = await server.command("runtime.commander_repo_git_log", { limit: 3 }) as Record<string, any>
     expect(log.result.commits).toEqual(expect.arrayContaining([expect.objectContaining({ subject_preview: "initial" })]))
+    await expect(server.command("runtime.commander_repo_git_log", { path: "/tmp/tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter must be project-relative"]) })
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
   })
 
