@@ -22,7 +22,7 @@ import type {
 } from "./commander-tool-types"
 
 const CORE_ORDER = ["commander.tool_search", "commander.tool_get", "commander.tool_profile", "authority.describe"]
-const FORBIDDEN_PATTERNS = [/shell/i, /(^|\.)(write|edit|patch|commit|push)$/i, /^github\.(merge|approve|request_changes|write_file|create_commit|push)$/i, /^process\.(kill|stop)$/i, /^opencode\.prompt_send$/i, /^provider\.call$/i, /^mcp\.(install|execute_arbitrary)$/i]
+const FORBIDDEN_PATTERNS = [/shell/i, /(^|\.)[a-z0-9_]*(write|edit|patch|commit|push)[a-z0-9_]*$/i, /^github\.(merge|approve|request_changes|write_file|create_commit|push)$/i, /^process\.(kill|stop)$/i, /^opencode\.prompt_send$/i, /^provider\.call$/i, /^mcp\.(install|execute_arbitrary)$/i]
 
 export type CommanderToolServiceOptions = {
   contextBudgetService: ContextBudgetService

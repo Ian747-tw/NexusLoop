@@ -24252,6 +24252,8 @@ describe("ProcessOpenCodeAdapter", () => {
       contextBudgetService: {} as any,
       tools: [
         { ...COMMANDER_TOOL_REGISTRY[0], tool_id: "repo.shell" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, tool_id: "repo.write_file" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, tool_id: "repo.commit_changes" },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.search")!, risk: "medium_risk_write" },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.profile")!, requires_network: true },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.summary")!, requires_credentials: true },
@@ -24265,6 +24267,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const validation = service.validate()
     expect(validation.status).toBe("blocked")
     expect(validation.errors.join("\n")).toContain("forbidden direct tool capability")
+    expect(validation.invalid_tool_ids).toEqual(expect.arrayContaining(["repo.write_file", "repo.commit_changes"]))
     expect(validation.errors.join("\n")).toContain("allowed_phases must contain known Commander phases")
     expect(validation.errors.join("\n")).toContain("risk must match safe_read")
     expect(validation.errors.join("\n")).toContain("runtime command must match authority record")
