@@ -215,5 +215,5 @@ export type CommanderTestManifestResult = {
 
 export type CommanderDependencyManifestResult = {
   dependencies: Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true; content_hash: string }>
-  lockfiles: Array<{ path: string; size_bytes: number; sha256: string }>
+  lockfiles: Array<{ path: string; size_bytes: number; sha256?: string; hash_omitted?: boolean; omitted_reason?: string }>
 }

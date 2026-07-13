@@ -24372,7 +24372,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "nested", ".config", "gcloud", "configurations"), "credential_file_override = SHOULD_NOT_LEAK\n")
     await writeFile(join(dir, ".env"), "TOKEN=hidden")
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
-    const packageLockText = `{"lockfileVersion":3,"packages":{"large":"${"x".repeat(256_000)}"}}`
+    const packageLockText = `{"lockfileVersion":3,"packages":{"large":"${"x".repeat(1_100_000)}"}}`
     await writeFile(join(dir, "package-lock.json"), packageLockText)
     await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n]\n")
     await mkdir(join(dir, "aaa-filler"), { recursive: true })
@@ -24428,7 +24428,9 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(whitespaceRead.result.lines.map((line: any) => line.text)).toEqual(["def outer():", "    if True:", "        return 'indented'"])
     await expect(server.command("runtime.commander_repo_read_lines", { path: "../outside" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["path traversal outside the project root is not allowed"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".aws/credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.SSH/config" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.ssh/config" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.config/gcloud/configurations" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     const symbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
@@ -24439,7 +24441,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "click", dependency_group: "project.dependencies", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "rich", dependency_group: "project.optional-dependencies.extra", direct: true })]))
-    expect(deps.result.lockfiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "package-lock.json", size_bytes: packageLockText.length, sha256: createHash("sha256").update(packageLockText).digest("hex") })]))
+    expect(deps.result.lockfiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "package-lock.json", size_bytes: packageLockText.length, hash_omitted: true, omitted_reason: "lockfile exceeds hash cap" })]))
+    expect(deps.warnings.join(" ")).toContain("package-lock.json exceeds lockfile hash cap")
     expect(JSON.stringify(deps.result)).not.toContain("large")
     const runtimeOnlyDeps = await server.command("runtime.commander_repo_dependency_manifest", { include_optional: false }) as Record<string, any>
     expect(JSON.stringify(runtimeOnlyDeps.result.dependencies)).not.toContain("rich")
@@ -24486,6 +24489,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
     expect(diff.result.patch_preview).toContain("[REDACTED]")
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "../tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter cannot escape the project root"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "*.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git wildcard path filters are not supported"]) })
     const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
@@ -24507,6 +24511,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const log = await server.command("runtime.commander_repo_git_log", { limit: 5 }) as Record<string, any>
     expect(log.result.commits).toEqual(expect.arrayContaining([expect.objectContaining({ subject_preview: "initial" })]))
     await expect(server.command("runtime.commander_repo_git_log", { path: "/tmp/tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter must be project-relative"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_log", { path: ":(glob).env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git pathspec magic is not supported"]) })
     await expect(server.command("runtime.commander_repo_git_log", { path: "*.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git wildcard path filters are not supported"]) })
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
