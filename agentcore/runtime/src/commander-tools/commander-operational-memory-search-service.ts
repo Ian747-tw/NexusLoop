@@ -65,6 +65,7 @@ export class CommanderOperationalMemorySearchService {
       .filter((record) => !input.mission_id || record.mission_id === input.mission_id)
       .filter((record) => sourceKinds.length === 0 || sourceKinds.includes(record.source_kind))
       .filter((record) => statuses.length === 0 || (record.status && statuses.includes(record.status)))
+      .filter((record) => input.include_closed !== false || !isClosedOperationalStatus(record.status))
       .filter((record) => withinTime(record.occurred_at, input.since, input.until))
     const scanned = Math.min(filteredRecords.length, SCAN_LIMIT)
     const candidates = query
@@ -240,6 +241,11 @@ function withinTime(value: string | undefined, since?: string, until?: string): 
   if (since && time < Date.parse(since)) return false
   if (until && time > Date.parse(until)) return false
   return true
+}
+
+function isClosedOperationalStatus(status: string | undefined): boolean {
+  const normalized = (status ?? "").toLowerCase()
+  return ["closed", "complete", "completed", "accepted", "rejected", "failed", "cancelled", "canceled", "superseded", "resolved"].some((term) => normalized.includes(term))
 }
 
 function readCsv(value: unknown): string[] {

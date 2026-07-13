@@ -236,7 +236,7 @@ function parseDiffFiles(output: string): CommanderGitDiffResult["files"] {
 function parseStatFiles(output: string): CommanderGitDiffResult["files"] {
   const files: CommanderGitDiffResult["files"] = []
   for (const line of output.split(/\r?\n/)) {
-    const match = line.match(/^\s*(.+?)\s+\|\s+(\d+|-)\s+([+\-]+|Bin\b.*)?\s*$/)
+    const match = line.match(/^\s*(.+?)\s+\|\s+(?:(\d+|-)\s+([+\-]+)?|Bin\b.*)\s*$/)
     if (!match) continue
     const path = match[1].trim()
     if (!path || isDeniedStatPath(path)) continue
@@ -245,7 +245,7 @@ function parseStatFiles(output: string): CommanderGitDiffResult["files"] {
       path,
       additions: (markers.match(/\+/g) ?? []).length || undefined,
       deletions: (markers.match(/-/g) ?? []).length || undefined,
-      binary: /Bin\b/.test(markers),
+      binary: /\|\s+Bin\b/.test(line),
     })
   }
   return files
@@ -289,7 +289,7 @@ function filterSensitiveStatLines(output: string): { output: string; omitted: nu
   const kept: string[] = []
   let omitted = 0
   for (const line of output.split(/\r?\n/)) {
-    const statPath = line.match(/^\s*(.+?)\s+\|\s+\d+/)?.[1]?.trim()
+    const statPath = line.match(/^\s*(.+?)\s+\|\s+(?:\d+|Bin\b)/)?.[1]?.trim()
     if (statPath && isDeniedStatPath(statPath)) {
       omitted += 1
       continue

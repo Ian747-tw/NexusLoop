@@ -24327,6 +24327,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(result).toMatchObject({ status: "ready", scanned_items: 1 })
     expect(result.result?.candidates).toEqual([expect.objectContaining({ source_id: "wanted-progress", session_id: "session-wanted" })])
     expect(result.warnings.join(" ")).not.toContain("scan capped")
+    const activeOnly = await service.search({ query: "continuity target", include_closed: false, limit: 5 })
+    expect(activeOnly).toMatchObject({ status: "ready", scanned_items: 1 })
+    expect(activeOnly.result?.candidates).toEqual([expect.objectContaining({ source_id: "wanted-progress", status: "active" })])
+    expect(JSON.stringify(activeOnly.result)).not.toContain("other-")
   })
 
   test("Commander operational memory search enforces its output budget", async () => {
@@ -24440,8 +24444,12 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "delete-me.txt"), "delete me\n")
     expect(Bun.spawnSync({ cmd: ["git", "add", "delete-me.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "add delete target"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "secret.p12"), new Uint8Array([0, 1, 2, 3]))
+    expect(Bun.spawnSync({ cmd: ["git", "add", "secret.p12"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track binary secret"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "mv", "rename-source.txt", "rename-target.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     await rm(join(dir, "delete-me.txt"))
+    await writeFile(join(dir, "secret.p12"), new Uint8Array([0, 1, 2, 3, 4, 5]))
     expect(Bun.spawnSync({ cmd: ["git", "mv", ".env", "public.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
     const before = await server.eventStore.readAll()
@@ -24461,10 +24469,13 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "delete-me.txt", deletions: 1 })]))
     expect(wholeDiff.result.stat_preview).toContain("delete-me.txt")
     expect(JSON.stringify(wholeDiff.result)).not.toContain(".env")
+    expect(JSON.stringify(wholeDiff.result)).not.toContain("secret.p12")
     expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK")
     const statOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", stat_only: true }) as Record<string, any>
     expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain(".env")
+    expect(JSON.stringify(statOnlyDiff.result)).not.toContain("secret.p12")
+    expect(statOnlyDiff.warnings.join(" ")).toContain("Suppressed")
     const stagedStatOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "staged", stat_only: true }) as Record<string, any>
     expect(JSON.stringify(stagedStatOnlyDiff.result)).not.toContain(".env")
     expect(JSON.stringify(stagedStatOnlyDiff.result)).not.toContain("public.txt")
