@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { createReadStream } from "node:fs"
 import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises"
 import { basename, extname, join, relative, resolve, sep } from "node:path"
 import { redactText, redactValue } from "../security/redaction"
@@ -246,7 +247,7 @@ export class CommanderRepoReadService {
       const path = join(root.root, name)
       try {
         const info = await lstat(path)
-        if (info.isFile()) lockfiles.push({ path: name, size_bytes: info.size, sha256: sha(await readFile(path)) })
+        if (info.isFile()) lockfiles.push({ path: name, size_bytes: info.size, sha256: await shaFile(path) })
       } catch {
         // absent
       }
@@ -613,4 +614,15 @@ function boundPreserveWhitespace(value: unknown, max = 800): string {
 
 function sha(value: unknown): string {
   return createHash("sha256").update(Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest("hex")
+}
+
+async function shaFile(path: string): Promise<string> {
+  const hash = createHash("sha256")
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const stream = createReadStream(path)
+    stream.on("data", (chunk) => hash.update(chunk))
+    stream.on("error", rejectPromise)
+    stream.on("end", resolvePromise)
+  })
+  return hash.digest("hex")
 }

@@ -323,6 +323,7 @@ function optionalPath(value: unknown): { path?: string; error?: string } {
   const path = value.trim()
   if (path.includes("\0") || /[\x00-\x08\x0e-\x1f]/.test(path)) return { error: "Git path filter contains unsupported control characters" }
   if (path.startsWith(":")) return { error: "Git pathspec magic is not supported" }
+  if (/[*?\[\]]/.test(path)) return { error: "Git wildcard path filters are not supported" }
   if (path.startsWith("/") || resolve(path) === path) return { error: "Git path filter must be project-relative" }
   if (path.split(/[\\/]+/).includes("..")) return { error: "Git path filter cannot escape the project root" }
   return { path }
