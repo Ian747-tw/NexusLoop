@@ -30,9 +30,12 @@ const SENSITIVE_DIRECTORIES = new Set([
 export function isDeniedRepositoryPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "")
   const parts = normalized.split("/").filter(Boolean)
-  if (parts[0] === ".git" || parts[0] === ".nxl") return true
+  if (parts.includes(".git") || parts.includes(".nxl")) return true
   for (const sensitiveDir of SENSITIVE_DIRECTORIES) {
-    if (normalized === sensitiveDir || normalized.startsWith(`${sensitiveDir}/`)) return true
+    const sensitiveParts = sensitiveDir.split("/")
+    for (let index = 0; index <= parts.length - sensitiveParts.length; index += 1) {
+      if (sensitiveParts.every((part, offset) => parts[index + offset] === part)) return true
+    }
   }
   const name = parts.at(-1) ?? normalized
   if (SENSITIVE_BASENAMES.has(name)) return true

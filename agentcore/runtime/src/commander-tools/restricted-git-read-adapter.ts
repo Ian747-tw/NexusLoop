@@ -62,10 +62,11 @@ export class RestrictedGitReadAdapter {
     const baseArgs = scope === "staged" ? ["diff", "--cached"] : scope === "head" ? ["diff", "HEAD"] : ["diff"]
     const args = [...baseArgs, "--no-ext-diff", "--no-textconv", "--no-color", ...(statOnly ? ["--stat"] : [`--unified=${context}`]), ...(path ? ["--", path] : [])]
     const [head, diff] = await Promise.all([this.run(["rev-parse", "HEAD"]), this.run(args)])
-    const blockers = [head.error, diff.error].filter((item): item is string => !!item)
+    const blockers = [scope === "head" ? head.error : undefined, diff.error].filter((item): item is string => !!item)
     const filtered = statOnly ? filterSensitiveStatLines(diff.stdout) : filterSensitiveDiffSections(diff.stdout)
     const patch = redactText(filtered.output).slice(0, 64_000)
     const warnings = [...head.warnings, ...diff.warnings]
+    if (head.error && scope !== "head") warnings.push("Git HEAD is unborn; diff metadata is limited")
     if (filtered.omitted > 0) warnings.push(`Suppressed ${filtered.omitted} sensitive Git diff file(s) from patch output`)
     const result: CommanderGitDiffResult = {
       scope,

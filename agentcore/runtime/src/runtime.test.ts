@@ -24366,6 +24366,10 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "src", "whitespace.py"), "def outer():\n    if True:\n        return 'indented'\n")
     await mkdir(join(dir, ".aws"), { recursive: true })
     await writeFile(join(dir, ".aws", "credentials"), "aws_access_key_id = SHOULD_NOT_LEAK")
+    await mkdir(join(dir, "nested", ".ssh"), { recursive: true })
+    await writeFile(join(dir, "nested", ".ssh", "config"), "Host secret\n  IdentityFile /tmp/secret\n")
+    await mkdir(join(dir, "nested", ".config", "gcloud"), { recursive: true })
+    await writeFile(join(dir, "nested", ".config", "gcloud", "configurations"), "credential_file_override = SHOULD_NOT_LEAK\n")
     await writeFile(join(dir, ".env"), "TOKEN=hidden")
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
     await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n]\n")
@@ -24382,6 +24386,9 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(tree).toMatchObject({ tool_id: "repo.tree", trust_class: "repository_content_untrusted", instruction_semantics: "none", filesystem_written: false, events_appended: false, shell_used: false })
     expect(tree.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ path: ".nxl", readable: false, excluded_reason: "excluded by traversal policy" })]))
     expect(tree.result.entries.some((entry: any) => entry.path.startsWith(".nxl/"))).toBe(false)
+    const sensitiveTree = await server.command("runtime.commander_repo_tree", { path: "nested", depth: 3, include_hidden: true }) as Record<string, any>
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.ssh")
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.config/gcloud")
     const search = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(search.result.matches[0]).toMatchObject({ path: "src/sample.ts", line_number: 1 })
     await mkdir(join(dir, "mixed"), { recursive: true })
@@ -24420,6 +24427,8 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_repo_read_lines", { path: "../outside" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["path traversal outside the project root is not allowed"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".aws/credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.ssh/config" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.config/gcloud/configurations" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     const symbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(symbol.result.candidates[0]).toMatchObject({ declaration_kind: "class", confidence: "exact_declaration" })
     const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
@@ -24534,6 +24543,12 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(status.result.untracked).toEqual(expect.arrayContaining(["new-file.txt"]))
     expect(status.result.head_sha).toBeUndefined()
     expect(status.warnings.join(" ")).toContain("Git HEAD is unborn")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "new-file.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    const stagedDiff = await server.command("runtime.commander_repo_git_diff", { scope: "staged" }) as Record<string, any>
+    expect(stagedDiff.status).toBe("ready")
+    expect(stagedDiff.blockers).toEqual([])
+    expect(stagedDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "new-file.txt" })]))
+    expect(stagedDiff.warnings.join(" ")).toContain("Git HEAD is unborn")
   })
 
   test("Commander restricted Git reads disable configured fsmonitor hooks", async () => {

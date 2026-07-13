@@ -402,6 +402,7 @@ async function walkTree(root: RootInfo, absolute: string, rel: string | undefine
   const info = await lstat(absolute)
   const name = basename(absolute)
   const currentRel = rel ?? toRelative(root, absolute)
+  if (isDeniedPath(currentRel) && currentRel !== ".git" && currentRel !== ".nxl") return
   if (shouldSkip(currentRel, name, info.isDirectory(), includeHidden, includeUpstream, explicitUpstreamStart)) { entries.push({ path: currentRel, kind: info.isDirectory() ? "directory" : info.isSymbolicLink() ? "symlink" : "file", depth: depthOf(currentRel), readable: false, excluded_reason: "excluded by traversal policy" }); return }
   entries.push({ path: currentRel, kind: info.isDirectory() ? "directory" : info.isSymbolicLink() ? "symlink" : "file", size_bytes: info.isFile() ? info.size : undefined, depth: depthOf(currentRel), extension: info.isFile() ? extname(currentRel) : undefined, readable: info.isFile() || info.isDirectory(), content_hash: info.isFile() && info.size <= 64_000 ? sha(await readFile(absolute)) : undefined })
   if (!info.isDirectory() || depth <= 0 || info.isSymbolicLink()) return
