@@ -239,7 +239,7 @@ export class CommanderRepoReadService {
         }
       }
       if (basename(file) === "pyproject.toml") {
-        dependencies.push(...parsePyprojectDependencies(rel, text.text, includeDev).map((item) => ({ ...item, content_hash: sha(text.text) })))
+        dependencies.push(...parsePyprojectDependencies(rel, text.text, includeDev, includeOptional).map((item) => ({ ...item, content_hash: sha(text.text) })))
       }
     }
     for (const name of ["bun.lockb", "bun.lock", "package-lock.json", "uv.lock", "poetry.lock"]) {
@@ -479,7 +479,7 @@ async function manifestFiles(root: RootInfo, includeUpstream: boolean): Promise<
   })
 }
 
-function parsePyprojectDependencies(path: string, text: string, includeDev: boolean): Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }> {
+function parsePyprojectDependencies(path: string, text: string, includeDev: boolean, includeOptional: boolean): Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }> {
   const out: Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }> = []
   let group = "project"
   let arrayGroup: string | undefined
@@ -503,6 +503,7 @@ function parsePyprojectDependencies(path: string, text: string, includeDev: bool
       continue
     }
     if (!includeDev && /dev|test/i.test(group)) continue
+    if (!includeOptional && group === "project.optional-dependencies") continue
     const assignment = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=\s*(\[.*)$/)
     if (assignment) {
       const key = assignment[1]
@@ -514,7 +515,7 @@ function parsePyprojectDependencies(path: string, text: string, includeDev: bool
           : group === "dependency-groups"
             ? `dependency-groups.${key}`
             : undefined
-      if (dependencyGroup && (includeDev || !/dev|test/i.test(dependencyGroup))) {
+      if (dependencyGroup && (includeDev || !/dev|test/i.test(dependencyGroup)) && (includeOptional || !dependencyGroup.startsWith("project.optional-dependencies."))) {
         arrayGroup = dependencyGroup
         arrayBuffer = value
         if (value.includes("]")) flushArray()
@@ -522,7 +523,7 @@ function parsePyprojectDependencies(path: string, text: string, includeDev: bool
       }
     }
     const dep = line.match(/^\s*["']([^"']+)["']\s*,?\s*$/)
-    if (dep && /dependencies|optional-dependencies|dependency-groups/.test(group)) addPythonDependency(out, path, dep[1], group)
+    if (dep && /dependencies|optional-dependencies|dependency-groups/.test(group) && (includeOptional || !group.includes("optional-dependencies"))) addPythonDependency(out, path, dep[1], group)
   }
   flushArray()
   return out.slice(0, 120)

@@ -184,7 +184,7 @@ function parseStatus(output: string, head: string, branch: string): { result: Co
       continue
     }
     if (status === "??") untracked.push(path)
-    else if (status.includes("U")) conflicted.push(path)
+    else if (isUnmergedStatus(status)) conflicted.push(path)
     else {
       if (status[0] !== " ") staged.push({ path, status: status[0] })
       if (status[1] !== " ") unstaged.push({ path, status: status[1] })
@@ -207,13 +207,24 @@ function parseStatus(output: string, head: string, branch: string): { result: Co
 function parseDiffFiles(output: string): CommanderGitDiffResult["files"] {
   const files = new Map<string, { path: string; additions: number; deletions: number; binary: boolean }>()
   let current: string | undefined
+  let pendingOldPath: string | undefined
+  const ensureFile = (path: string) => {
+    current = path
+    if (!files.has(current)) files.set(current, { path: current, additions: 0, deletions: 0, binary: false })
+  }
   for (const line of output.split(/\r?\n/)) {
-    const file = line.match(/^\+\+\+ b\/(.+)/)
-    if (file) {
-      current = file[1]
-      files.set(current, { path: current, additions: 0, deletions: 0, binary: false })
+    const header = line.match(/^diff --git a\/(.+) b\/(.+)$/)
+    if (header) {
+      current = undefined
+      pendingOldPath = header[1]
       continue
     }
+    const file = line.match(/^\+\+\+ b\/(.+)/)
+    if (file) {
+      ensureFile(file[1])
+      continue
+    }
+    if (line === "+++ /dev/null" && pendingOldPath) ensureFile(pendingOldPath)
     if (/^Binary files /.test(line) && current) files.get(current)!.binary = true
     if (current && line.startsWith("+") && !line.startsWith("+++")) files.get(current)!.additions += 1
     if (current && line.startsWith("-") && !line.startsWith("---")) files.get(current)!.deletions += 1
@@ -302,9 +313,14 @@ function optionalPath(value: unknown): { path?: string; error?: string } {
   if (typeof value !== "string" || !value.trim()) return {}
   const path = value.trim()
   if (path.includes("\0") || /[\x00-\x08\x0e-\x1f]/.test(path)) return { error: "Git path filter contains unsupported control characters" }
+  if (path.startsWith(":")) return { error: "Git pathspec magic is not supported" }
   if (path.startsWith("/") || resolve(path) === path) return { error: "Git path filter must be project-relative" }
   if (path.split(/[\\/]+/).includes("..")) return { error: "Git path filter cannot escape the project root" }
   return { path }
+}
+
+function isUnmergedStatus(status: string): boolean {
+  return status.includes("U") || status === "AA" || status === "DD"
 }
 
 function clamp(value: unknown, fallback: number, min: number, max: number): number {

@@ -24364,7 +24364,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, ".aws", "credentials"), "aws_access_key_id = SHOULD_NOT_LEAK")
     await writeFile(join(dir, ".env"), "TOKEN=hidden")
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
-    await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n]\n")
+    await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n]\n")
     await mkdir(join(dir, "aaa-filler"), { recursive: true })
     for (let index = 0; index < 1250; index += 1) {
       await writeFile(join(dir, "aaa-filler", `filler-${index}.txt`), "not a manifest\n")
@@ -24414,6 +24414,9 @@ describe("ProcessOpenCodeAdapter", () => {
     const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "click", dependency_group: "project.dependencies", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "rich", dependency_group: "project.optional-dependencies.extra", direct: true })]))
+    const runtimeOnlyDeps = await server.command("runtime.commander_repo_dependency_manifest", { include_optional: false }) as Record<string, any>
+    expect(JSON.stringify(runtimeOnlyDeps.result.dependencies)).not.toContain("rich")
     expect(deps.result.lockfiles).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: "bun.lock" })]))
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
   })
@@ -24422,7 +24425,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
     await writeFile(join(dir, "tracked.txt"), "first\n")
-    expect(Bun.spawnSync({ cmd: ["git", "init"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
@@ -24434,7 +24437,11 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "rename-source.txt"), "rename me\n")
     expect(Bun.spawnSync({ cmd: ["git", "add", "rename-source.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "add rename source"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "delete-me.txt"), "delete me\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "delete-me.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "add delete target"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "mv", "rename-source.txt", "rename-target.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await rm(join(dir, "delete-me.txt"))
     await writeFile(join(dir, ".env"), "aws_access_key_id = STILL_SHOULD_NOT_LEAK\n")
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
     const before = await server.eventStore.readAll()
@@ -24451,6 +24458,8 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "../tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter cannot escape the project root"]) })
     const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
+    expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "delete-me.txt", deletions: 1 })]))
+    expect(wholeDiff.result.stat_preview).toContain("delete-me.txt")
     expect(JSON.stringify(wholeDiff.result)).not.toContain(".env")
     expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK")
     expect(wholeDiff.warnings.join(" ")).toContain("Suppressed")
@@ -24458,10 +24467,36 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain(".env")
     expect(statOnlyDiff.warnings.join(" ")).toContain("Suppressed")
-    const log = await server.command("runtime.commander_repo_git_log", { limit: 3 }) as Record<string, any>
+    const log = await server.command("runtime.commander_repo_git_log", { limit: 5 }) as Record<string, any>
     expect(log.result.commits).toEqual(expect.arrayContaining([expect.objectContaining({ subject_preview: "initial" })]))
     await expect(server.command("runtime.commander_repo_git_log", { path: "/tmp/tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter must be project-relative"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: ":(glob).env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git pathspec magic is not supported"]) })
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
+  })
+
+  test("Commander restricted Git status classifies add-add conflicts", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "base.txt"), "base\n")
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "base.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "base"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "checkout", "-b", "other"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "conflict.txt"), "other\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "conflict.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "other add"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "checkout", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "conflict.txt"), "master\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "conflict.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "master add"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "merge", "other"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).not.toBe(0)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status.result.conflicted).toEqual(expect.arrayContaining(["conflict.txt"]))
+    expect(JSON.stringify(status.result.staged)).not.toContain("conflict.txt")
+    expect(JSON.stringify(status.result.unstaged)).not.toContain("conflict.txt")
   })
 
   test("Commander restricted Git reads disable configured fsmonitor hooks", async () => {
