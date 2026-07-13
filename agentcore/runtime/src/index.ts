@@ -315,6 +315,9 @@ export { redactText, redactValue } from "./security/redaction"
 export { ResearchDb } from "./research-db/research-db"
 export { CommanderToolService } from "./commander-tools/commander-tool-service"
 export { COMMANDER_TOOL_REGISTRY, COMMANDER_TOOL_NAMESPACES, COMMANDER_TOOL_PHASES } from "./commander-tools/commander-tool-registry"
+export { CommanderOperationalMemorySearchService, readCommanderOperationalMemorySearchInput } from "./commander-tools/commander-operational-memory-search-service"
+export { CommanderRepoReadService } from "./commander-tools/commander-repo-read-service"
+export { RestrictedGitReadAdapter } from "./commander-tools/restricted-git-read-adapter"
 export type {
   CommanderToolAvailability,
   CommanderToolBootstrapPreview,
@@ -335,6 +338,25 @@ export type {
   CommanderToolSideEffectClass,
   CommanderToolTrustClass,
 } from "./commander-tools/commander-tool-types"
+export type {
+  CommanderDependencyManifestResult,
+  CommanderEvidenceCard,
+  CommanderGitDiffResult,
+  CommanderGitLogResult,
+  CommanderGitStatusResult,
+  CommanderInternalReadResult,
+  CommanderOperationalMemoryCandidate,
+  CommanderOperationalMemorySearchPreview,
+  CommanderReadSafetyFlags,
+  CommanderReadSourceKind,
+  CommanderReadStatus,
+  CommanderRepoFileResult,
+  CommanderRepoSearchResult,
+  CommanderRepoSymbolResult,
+  CommanderRepoTreeEntry,
+  CommanderRepoTreeResult,
+  CommanderTestManifestResult,
+} from "./commander-tools/commander-read-types"
 export type {
   Artifact,
   ArtifactInput,

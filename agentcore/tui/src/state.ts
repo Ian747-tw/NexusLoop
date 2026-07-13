@@ -841,6 +841,44 @@ export type CommanderToolsState = {
   commandError?: string
 }
 
+export type CommanderInternalReadResultSummary = Record<string, unknown> & {
+  tool_id: string
+  status: string
+  trust_class: string
+  instruction_semantics: "none"
+  result?: Record<string, unknown> | null
+  evidence?: Array<Record<string, unknown> & { evidence_id?: string; source_kind?: string; source_id?: string; summary_preview?: string }>
+  warnings?: string[]
+  blockers?: string[]
+  filesystem_written?: false
+  events_appended?: false
+  network_called?: false
+  provider_called?: false
+  mcp_called?: false
+  research_db_written?: false
+  mission_mutated?: false
+  proposal_mutated?: false
+  opencode_action_performed?: false
+  shell_used?: false
+  arbitrary_command_executed?: false
+  git_process_invoked?: boolean
+}
+
+export type CommanderInternalReadsState = {
+  continuitySearch?: CommanderInternalReadResultSummary | null
+  repoTree?: CommanderInternalReadResultSummary | null
+  repoSearch?: CommanderInternalReadResultSummary | null
+  repoFile?: CommanderInternalReadResultSummary | null
+  repoSymbol?: CommanderInternalReadResultSummary | null
+  gitStatus?: CommanderInternalReadResultSummary | null
+  gitDiff?: CommanderInternalReadResultSummary | null
+  gitLog?: CommanderInternalReadResultSummary | null
+  testManifest?: CommanderInternalReadResultSummary | null
+  dependencyManifest?: CommanderInternalReadResultSummary | null
+  lastResult?: CommanderInternalReadResultSummary | null
+  commandError?: string
+}
+
 export type ResearchSynthesisRecommendedActionSummary = {
   title: string
   summary: string
@@ -5769,6 +5807,7 @@ export type UiState = {
   researchMemory?: ResearchMemoryState
   commanderContinuity?: CommanderContinuityState
   commanderTools?: CommanderToolsState
+  commanderInternalReads?: CommanderInternalReadsState
   opencodeContinuity?: OpenCodeContinuityState
   commanderExecutorReview?: CommanderExecutorReviewState
   executorReviewProposalDrafts?: ExecutorReviewProposalDraftState

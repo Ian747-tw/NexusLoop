@@ -50,6 +50,7 @@ import type { ResearchMemoryInspectionInput, ResearchMemoryInspectionPreview, Re
 import type { ResearchIngestionPreview, ResearchIngestionPreviewInput, ResearchIngestionRecord, ResearchIngestionRecordInput, ResearchIngestionResult, ResearchIngestionSummary } from "../research/research-ingestion-types"
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityInput, CommanderMidMissionContinuityPacket, CommanderProposalContinuityInput, CommanderProposalContinuityPacket } from "../continuity/commander-continuity-types"
 import type { CommanderToolBootstrapPreview, CommanderToolDescriptor, CommanderToolDescriptorSummary, CommanderToolListInput, CommanderToolProfile, CommanderToolRegistrySummary, CommanderToolRegistryValidation, CommanderToolSearchInput, CommanderToolSearchPreview } from "../commander-tools/commander-tool-types"
+import type { CommanderDependencyManifestResult, CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusResult, CommanderInternalReadResult, CommanderOperationalMemorySearchPreview, CommanderRepoFileResult, CommanderRepoSearchResult, CommanderRepoSymbolResult, CommanderRepoTreeResult, CommanderTestManifestResult } from "../commander-tools/commander-read-types"
 import type { OpenCodeContinuationInput, OpenCodeContinuationPacket, OpenCodeSessionContinuityInput, OpenCodeSessionContinuityPacket } from "../opencode-session/opencode-session-continuity-types"
 import type { OpenCodeContextRefreshPreview, OpenCodeContextRefreshRecord, OpenCodeContextRefreshResult, OpenCodeContextRefreshSummary, OpenCodeContextRefreshWriteInput } from "../opencode-session/opencode-context-refresh-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
@@ -96,6 +97,16 @@ export interface RuntimeClient {
   command(name: "runtime.preview_commander_tool_profile", payload: { phase?: string }): Promise<CommanderToolProfile>
   command(name: "runtime.preview_commander_tool_bootstrap", payload: { phase?: string; provider_kind?: string; provider?: string; model_id?: string; model?: string; max_context_tokens?: number; max_context_bytes?: number }): Promise<CommanderToolBootstrapPreview>
   command(name: "runtime.validate_commander_tool_registry"): Promise<CommanderToolRegistryValidation>
+  command(name: "runtime.search_commander_operational_memory", payload: Record<string, unknown>): Promise<CommanderOperationalMemorySearchPreview>
+  command(name: "runtime.commander_repo_tree", payload?: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderRepoTreeResult>>
+  command(name: "runtime.commander_repo_search_text", payload: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderRepoSearchResult>>
+  command(name: "runtime.commander_repo_read_lines", payload: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderRepoFileResult>>
+  command(name: "runtime.commander_repo_find_symbol", payload: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderRepoSymbolResult>>
+  command(name: "runtime.commander_repo_git_status"): Promise<CommanderInternalReadResult<CommanderGitStatusResult>>
+  command(name: "runtime.commander_repo_git_diff", payload?: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderGitDiffResult>>
+  command(name: "runtime.commander_repo_git_log", payload?: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderGitLogResult>>
+  command(name: "runtime.commander_repo_test_manifest", payload?: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderTestManifestResult>>
+  command(name: "runtime.commander_repo_dependency_manifest", payload?: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderDependencyManifestResult>>
   command(name: "runtime.reasoning_provider_health"): Promise<ReasoningProviderHealth>
   command(name: "runtime.preview_reasoning_provider_smoke", payload?: { surface?: string; requestedBy?: string; requested_by?: string }): Promise<ReasoningProviderSmokePreview>
   command(name: "runtime.execute_reasoning_provider_smoke", payload?: { surface?: string; dryRun?: boolean; dry_run?: boolean; requestedBy?: string; requested_by?: string }): Promise<ReasoningProviderSmokeResult>

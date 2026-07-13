@@ -24174,7 +24174,10 @@ describe("ProcessOpenCodeAdapter", () => {
       expect.objectContaining({ tool_id: "runtime.mission_show", namespace: "runtime_read", authority_id: expect.stringContaining("command_authority_") }),
     ]))
     const repoTools = await server.command("runtime.list_commander_tools", { namespace: "repo_read" }) as Array<Record<string, any>>
-    expect(repoTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "repo.search_text", availability: "future_internal_read", runtime_command: undefined })]))
+    expect(repoTools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tool_id: "repo.search_text", availability: "implemented_read_surface", runtime_command: "runtime.commander_repo_search_text", trust_class: "repository_content_untrusted" }),
+      expect.objectContaining({ tool_id: "repo.git_diff", creates_external_process: true, execution_backend: "restricted_git_read", process_policy: "fixed_git_read_only" }),
+    ]))
     const githubTools = await server.command("runtime.list_commander_tools", { namespace: "github_read" }) as Array<Record<string, any>>
     expect(githubTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "github.pr_checks", availability: "future_external_read", requires_network: true })]))
     const governanceTools = await server.command("runtime.list_commander_tools", { namespace: "governance" }) as Array<Record<string, any>>
@@ -24202,6 +24205,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(profile.allowed_namespaces).toEqual(expect.arrayContaining(["memory", "continuity", "repo_read", "github_read", "external_research"]))
     expect(profile).not.toHaveProperty("workflow_steps")
     expect(profile.deferred_tool_ids).toEqual(expect.arrayContaining(["repo.search_text", "github.pr_checks", "external_research.search"]))
+    expect(profile).toMatchObject({ manual_internal_read_execution_enabled: true, provider_tool_loop_enabled: false })
     const governanceProfile = await server.command("runtime.preview_commander_tool_profile", { phase: "governance_review" }) as Record<string, any>
     const governanceProfileIds = [...governanceProfile.always_loaded_tool_ids, ...governanceProfile.deferred_tool_ids, ...governanceProfile.unavailable_tool_ids, ...governanceProfile.staged_intent_tool_ids]
     expect(governanceProfile.allowed_namespaces).toEqual(["core", "authority", "runtime_read", "opencode_read", "github_read", "governance"])
@@ -24261,6 +24265,7 @@ describe("ProcessOpenCodeAdapter", () => {
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_list")!, allowed_phases: ["not_a_phase" as any] },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.near_duplicates")!, runtime_command: "runtime.submit_user_message" },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, runtime_command: "runtime.fake_repo_tree" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "github.pr_checks")!, slash_command: "/github-pr-checks", runtime_command: "runtime.github_pr_checks" },
       ],
       now: () => new Date(0),
     })
@@ -24276,6 +24281,84 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(validation.errors.join("\n")).toContain("future descriptor must not pretend to be executable")
   })
 
+  test("Commander internal read tools search typed operational memory without appending events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "internal read continuity objective token=secret-value", createdBy: "tester" }) as Record<string, any>
+    await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, writtenBy: "tester" })
+    await server.command("runtime.launch_opencode_session", { sessionId: session.session_id, dryRun: false, launchedBy: "tester" })
+    await server.command("runtime.record_opencode_progress", { sessionId: session.session_id, report_summary: "working through prior continuity decision token=abc123", files_touched: ["agentcore/runtime/src/server.ts"], commands_run: ["bun test"], tests_run: ["runtime"], recordedBy: "tester" })
+    const before = await server.eventStore.readAll()
+    const search = await server.command("runtime.search_commander_operational_memory", { query: "prior continuity decision", session_id: session.session_id }) as Record<string, any>
+    expect(search).toMatchObject({ tool_id: "continuity.search", status: "ready", trust_class: "runtime_authoritative", instruction_semantics: "none", events_appended: false })
+    expect(search.result.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ source_kind: "opencode_progress", pointer_only: true, matched_fields: expect.arrayContaining(["summary"]) })]))
+    expect(JSON.stringify(search)).not.toContain("abc123")
+    expect(search.warnings.join(" ")).toContain("Raw event-log content was not searched")
+    const after = await server.eventStore.readAll()
+    expect(after).toHaveLength(before.length)
+    await server.shutdown()
+  })
+
+  test("Commander repository reads enforce path policy, bounds, redaction, and manifests", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(join(dir, "src", "sample.ts"), [
+      "export class CommanderToolServiceSample {}",
+      "const tokenName = 'not a secret assignment shape'",
+      "const api_key = super-secret-value",
+      "function runTests() { return true }",
+    ].join("\n"))
+    await writeFile(join(dir, ".env"), "TOKEN=hidden")
+    await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
+    await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n]\n")
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const before = await server.eventStore.readAll()
+    const tree = await server.command("runtime.commander_repo_tree", { path: ".", depth: 2 }) as Record<string, any>
+    expect(tree).toMatchObject({ tool_id: "repo.tree", trust_class: "repository_content_untrusted", instruction_semantics: "none", filesystem_written: false, events_appended: false, shell_used: false })
+    expect(tree.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ path: ".nxl", readable: false, excluded_reason: "excluded by traversal policy" })]))
+    expect(tree.result.entries.some((entry: any) => entry.path.startsWith(".nxl/"))).toBe(false)
+    const search = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
+    expect(search.result.matches[0]).toMatchObject({ path: "src/sample.ts", line_number: 1 })
+    const read = await server.command("runtime.commander_repo_read_lines", { path: "src/sample.ts", start_line: 1, end_line: 4 }) as Record<string, any>
+    expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("[REDACTED]")
+    expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("tokenName")
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "../outside" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["path traversal outside the project root is not allowed"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    const symbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
+    expect(symbol.result.candidates[0]).toMatchObject({ declaration_kind: "class", confidence: "exact_declaration" })
+    const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
+    expect(JSON.stringify(tests.result)).toContain("bun test")
+    const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
+    expect(await server.eventStore.readAll()).toHaveLength(before.length)
+  })
+
+  test("Commander restricted Git reads use fixed read-only process commands", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "tracked.txt"), "first\n")
+    expect(Bun.spawnSync({ cmd: ["git", "init"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "tracked.txt"), "first\napi_key = top-secret\n")
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const before = await server.eventStore.readAll()
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status).toMatchObject({ tool_id: "repo.git_status", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false, events_appended: false })
+    expect(status.result.unstaged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
+    const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
+    expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
+    expect(diff.result.patch_preview).toContain("[REDACTED]")
+    const log = await server.command("runtime.commander_repo_git_log", { limit: 3 }) as Record<string, any>
+    expect(log.result.commits[0]).toMatchObject({ subject_preview: "initial" })
+    expect(await server.eventStore.readAll()).toHaveLength(before.length)
+  })
+
   test("Commander tool commands do not auto-start runtime clients", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -24289,6 +24372,8 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(client.command("runtime.preview_commander_tool_profile", { phase: "general_read" })).resolves.toMatchObject({ execution_enabled: false })
     await expect(client.command("runtime.preview_commander_tool_bootstrap", { phase: "general_read" })).resolves.toMatchObject({ execution_enabled: false })
     await expect(client.command("runtime.validate_commander_tool_registry")).resolves.toMatchObject({ status: "ready" })
+    await expect(client.command("runtime.commander_repo_tree", { path: "." })).resolves.toMatchObject({ tool_id: "repo.tree" })
+    await expect(client.command("runtime.search_commander_operational_memory", { query: "anything" })).resolves.toMatchObject({ tool_id: "continuity.search" })
     expect(adapter.startCalls).toBe(0)
     await client.shutdown()
   })

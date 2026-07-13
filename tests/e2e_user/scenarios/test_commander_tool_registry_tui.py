@@ -75,7 +75,7 @@ def test_user_inspects_commander_tool_registry_without_execution(sandbox) -> Non
     assert "memory.search" in stdout
     assert "availability=implemented_read_surface" in stdout
     assert "repo.tree" in repo_stdout
-    assert "availability=future_internal_read" in repo_stdout
+    assert "availability=implemented_read_surface" in repo_stdout
     assert "github.pr_read" in github_stdout
     assert "availability=future_external_read" in github_stdout
     assert "governance.stage_pr_merge" in governance_stdout

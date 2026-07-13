@@ -58,6 +58,8 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     baseline === undefined || stableEqual(current.commanderContinuity, baseline.commanderContinuity)
   const canUpdateCommanderTools =
     baseline === undefined || stableEqual(current.commanderTools, baseline.commanderTools)
+  const canUpdateCommanderInternalReads =
+    baseline === undefined || stableEqual(current.commanderInternalReads, baseline.commanderInternalReads)
   const canUpdateOpenCodeContinuity =
     baseline === undefined || stableEqual(current.opencodeContinuity, baseline.opencodeContinuity)
   const canUpdateCommanderExecutorReview =
@@ -129,6 +131,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     researchMemory: canUpdateResearchMemory ? next.researchMemory : current.researchMemory,
     commanderContinuity: canUpdateCommanderContinuity ? next.commanderContinuity : current.commanderContinuity,
     commanderTools: canUpdateCommanderTools ? next.commanderTools : current.commanderTools,
+    commanderInternalReads: canUpdateCommanderInternalReads ? next.commanderInternalReads : current.commanderInternalReads,
     opencodeContinuity: canUpdateOpenCodeContinuity ? next.opencodeContinuity : current.opencodeContinuity,
     commanderExecutorReview: canUpdateCommanderExecutorReview ? next.commanderExecutorReview : current.commanderExecutorReview,
     executorReviewProposalDrafts: canUpdateExecutorReviewProposalDrafts ? next.executorReviewProposalDrafts : current.executorReviewProposalDrafts,
