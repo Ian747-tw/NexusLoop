@@ -24322,6 +24322,16 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(tree.result.entries.some((entry: any) => entry.path.startsWith(".nxl/"))).toBe(false)
     const search = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(search.result.matches[0]).toMatchObject({ path: "src/sample.ts", line_number: 1 })
+    await mkdir(join(dir, "many"), { recursive: true })
+    for (let index = 0; index < 120; index += 1) {
+      await writeFile(join(dir, "many", `match-${index}.ts`), `const hugeSearchNeedle${index} = "huge-search-needle ${"x".repeat(700)}"\n`)
+    }
+    const cappedSearch = await server.command("runtime.commander_repo_search_text", { query: "huge-search-needle", path: "many", limit: 100, context_lines: 3 }) as Record<string, any>
+    expect(cappedSearch.truncated).toBe(true)
+    expect(cappedSearch.output_bytes).toBeLessThanOrEqual(cappedSearch.max_output_bytes)
+    expect(Buffer.byteLength(JSON.stringify(cappedSearch.result))).toBeLessThanOrEqual(cappedSearch.max_output_bytes)
+    expect(cappedSearch.result.matches.length).toBeLessThan(100)
+    expect(cappedSearch.omitted_items).toBeGreaterThan(0)
     const read = await server.command("runtime.commander_repo_read_lines", { path: "src/sample.ts", start_line: 1, end_line: 4 }) as Record<string, any>
     expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("[REDACTED]")
     expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("tokenName")

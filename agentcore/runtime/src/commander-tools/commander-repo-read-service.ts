@@ -277,8 +277,11 @@ export class CommanderRepoReadService {
 
   private wrap<T>(toolId: string, sourceKind: CommanderEvidenceCard["source_kind"], trust: "repository_content_untrusted" | "runtime_authoritative", result: T, started: number, blockers: string[], warnings: string[], gitInvoked: boolean, scanned?: number, omitted?: number): CommanderInternalReadResult<T> {
     const generatedAt = this.now().toISOString()
-    const safeResult = redactValue(result)
+    const maxOutputBytes = toolId === "repo.git_diff" ? 64_000 : 32_000
+    const bounded = boundResultToBudget<T>(redactValue(result) as T, maxOutputBytes)
+    const safeResult = bounded.result
     const resultBytes = Buffer.byteLength(JSON.stringify(safeResult))
+    const boundedWarnings = bounded.truncated ? [...warnings, `Result payload truncated to fit max_output_bytes=${maxOutputBytes}`] : warnings
     const evidence: CommanderEvidenceCard[] = blockers.length ? [] : [{
       evidence_id: `evidence_${sha({ toolId, result: safeResult }).slice(0, 16)}`,
       tool_id: toolId,
@@ -290,14 +293,55 @@ export class CommanderRepoReadService {
       instruction_semantics: "none",
       source_refs: [],
       content_included: sourceKind === "repository_file" || sourceKind === "repository_search_match" || sourceKind === "git_diff",
-      content_truncated: resultBytes > MAX_RETURN_BYTES,
+      content_truncated: bounded.truncated,
       observed_at: generatedAt,
-      warnings,
+      warnings: boundedWarnings,
       evidence_hash: sha({ toolId, result: safeResult }),
     }]
     const flags: CommanderReadSafetyFlags = { filesystem_written: false, events_appended: false, network_called: false, provider_called: false, mcp_called: false, research_db_written: false, mission_mutated: false, proposal_mutated: false, opencode_action_performed: false, shell_used: false, arbitrary_command_executed: false, git_process_invoked: gitInvoked }
-    return redactValue({ call_id: `commander_internal_read_${sha({ toolId, result: safeResult, blockers }).slice(0, 16)}`, tool_id: toolId, status: blockers.length ? "blocked" : resultBytes === 0 ? "empty" : "ready", trust_class: trust, instruction_semantics: "none", result: blockers.length ? null : safeResult, evidence, output_bytes: resultBytes, max_output_bytes: toolId === "repo.git_diff" ? 64_000 : 32_000, truncated: resultBytes > (toolId === "repo.git_diff" ? 64_000 : 32_000), scanned_items: scanned, omitted_items: omitted, duration_ms: Math.max(0, Date.now() - started), blockers: blockers.map(redactText), warnings: warnings.map(redactText), generated_at: generatedAt, result_hash: sha({ toolId, result: safeResult, blockers }), ...flags } as CommanderInternalReadResult<T>)
+    return redactValue({ call_id: `commander_internal_read_${sha({ toolId, result: safeResult, blockers }).slice(0, 16)}`, tool_id: toolId, status: blockers.length ? "blocked" : resultBytes === 0 ? "empty" : "ready", trust_class: trust, instruction_semantics: "none", result: blockers.length ? null : safeResult, evidence, output_bytes: resultBytes, max_output_bytes: maxOutputBytes, truncated: bounded.truncated, scanned_items: scanned, omitted_items: (omitted ?? 0) + bounded.omitted_items, duration_ms: Math.max(0, Date.now() - started), blockers: blockers.map(redactText), warnings: boundedWarnings.map(redactText), generated_at: generatedAt, result_hash: sha({ toolId, result: safeResult, blockers }), ...flags } as CommanderInternalReadResult<T>)
   }
+}
+
+function boundResultToBudget<T>(input: T, maxBytes: number): { result: T; truncated: boolean; omitted_items: number } {
+  const result = cloneJson(input) as Record<string, unknown>
+  let omitted = 0
+  let truncated = false
+  const arrayKeys = ["entries", "matches", "lines", "candidates", "dependencies", "lockfiles", "commits", "files"] as const
+  for (const key of arrayKeys) {
+    const value = result[key]
+    if (!Array.isArray(value)) continue
+    while (value.length > 0 && jsonBytes(result) > maxBytes) {
+      value.pop()
+      omitted += 1
+      truncated = true
+    }
+  }
+  if (typeof result["patch_preview"] === "string") {
+    while (jsonBytes(result) > maxBytes && (result["patch_preview"] as string).length > 0) {
+      result["patch_preview"] = (result["patch_preview"] as string).slice(0, Math.floor((result["patch_preview"] as string).length * 0.75))
+      truncated = true
+    }
+  }
+  for (const key of Object.keys(result)) {
+    if (jsonBytes(result) <= maxBytes) break
+    if (typeof result[key] === "string") {
+      result[key] = bound(result[key] as string, 1000)
+      truncated = true
+    }
+  }
+  if ("omitted_entries" in result && typeof result["omitted_entries"] === "number") result["omitted_entries"] = (result["omitted_entries"] as number) + omitted
+  if ("omitted_files" in result && typeof result["omitted_files"] === "number") result["omitted_files"] = (result["omitted_files"] as number) + omitted
+  if ("truncated" in result && truncated) result["truncated"] = true
+  return { result: result as T, truncated, omitted_items: omitted }
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value))
 }
 
 type RootInfo = { root: string; realRoot: string }
