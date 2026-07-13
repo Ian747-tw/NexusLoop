@@ -24249,6 +24249,8 @@ describe("ProcessOpenCodeAdapter", () => {
       tools: [
         { ...COMMANDER_TOOL_REGISTRY[0], tool_id: "repo.shell" },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.search")!, risk: "medium_risk_write" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.profile")!, requires_network: true },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.summary")!, requires_credentials: true },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, runtime_command: "runtime.fake_repo_tree" },
       ],
       now: () => new Date(0),
@@ -24257,6 +24259,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(validation.status).toBe("blocked")
     expect(validation.errors.join("\n")).toContain("forbidden direct tool capability")
     expect(validation.errors.join("\n")).toContain("risk must match safe_read")
+    expect(validation.errors.join("\n")).toContain("unsafe requires_network")
+    expect(validation.errors.join("\n")).toContain("unsafe requires_credentials")
     expect(validation.errors.join("\n")).toContain("future descriptor must not pretend to be executable")
   })
 
