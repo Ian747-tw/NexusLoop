@@ -1,5 +1,6 @@
 const SENSITIVE_BASENAMES = new Set([
   ".env",
+  ".envrc",
   "minimax.env",
   ".npmrc",
   ".pypirc",

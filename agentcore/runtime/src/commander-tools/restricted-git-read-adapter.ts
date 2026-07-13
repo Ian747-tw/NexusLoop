@@ -60,7 +60,7 @@ export class RestrictedGitReadAdapter {
     if (pathFilter.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [pathFilter.error], warnings: [] }
     if (path && isDeniedRepositoryPath(path)) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: ["sensitive Git diff path is denied"], warnings: [] }
     const baseArgs = scope === "staged" ? ["diff", "--cached"] : scope === "head" ? ["diff", "HEAD"] : ["diff"]
-    const args = [...baseArgs, "--no-ext-diff", "--no-textconv", "--no-color", ...(statOnly ? ["--stat"] : [`--unified=${context}`]), ...(path ? ["--", path] : [])]
+    const args = [...baseArgs, "--no-ext-diff", "--no-textconv", "--no-color", ...(statOnly ? ["--numstat"] : [`--unified=${context}`]), ...(path ? ["--", path] : [])]
     const [head, diff] = await Promise.all([this.run(["rev-parse", "HEAD"]), this.run(args)])
     const blockers = [scope === "head" ? head.error : undefined, diff.error].filter((item): item is string => !!item)
     const filtered = statOnly ? filterSensitiveStatLines(diff.stdout) : filterSensitiveDiffSections(diff.stdout)
@@ -237,6 +237,18 @@ function parseDiffFiles(output: string): CommanderGitDiffResult["files"] {
 function parseStatFiles(output: string): CommanderGitDiffResult["files"] {
   const files: CommanderGitDiffResult["files"] = []
   for (const line of output.split(/\r?\n/)) {
+    const numeric = line.match(/^\s*(\d+|-)\s+(\d+|-)\s+(.+?)\s*$/)
+    if (numeric) {
+      const path = numeric[3].trim()
+      if (!path || isDeniedStatPath(path)) continue
+      files.push({
+        path,
+        additions: numeric[1] === "-" ? undefined : Number(numeric[1]),
+        deletions: numeric[2] === "-" ? undefined : Number(numeric[2]),
+        binary: numeric[1] === "-" && numeric[2] === "-",
+      })
+      continue
+    }
     const match = line.match(/^\s*(.+?)\s+\|\s+(?:(\d+|-)\s+([+\-]+)?|Bin\b.*)\s*$/)
     if (!match) continue
     const path = match[1].trim()
@@ -290,7 +302,8 @@ function filterSensitiveStatLines(output: string): { output: string; omitted: nu
   const kept: string[] = []
   let omitted = 0
   for (const line of output.split(/\r?\n/)) {
-    const statPath = line.match(/^\s*(.+?)\s+\|\s+(?:\d+|Bin\b)/)?.[1]?.trim()
+    const statPath = line.match(/^\s*(?:\d+|-)\s+(?:\d+|-)\s+(.+?)\s*$/)?.[1]?.trim()
+      ?? line.match(/^\s*(.+?)\s+\|\s+(?:\d+|Bin\b)/)?.[1]?.trim()
     if (statPath && isDeniedStatPath(statPath)) {
       omitted += 1
       continue
