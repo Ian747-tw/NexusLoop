@@ -24329,6 +24329,26 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(result.warnings.join(" ")).not.toContain("scan capped")
   })
 
+  test("Commander operational memory search enforces its output budget", async () => {
+    const records: CommanderOperationalMemoryRecord[] = []
+    for (let index = 0; index < 20; index += 1) {
+      records.push({
+        source_kind: "opencode_progress",
+        source_id: `progress-${index}-${"x".repeat(1200)}`,
+        label: `progress-${index}-${"y".repeat(400)}`,
+        status: "active",
+        summary_preview: `budget needle ${index} ${"z".repeat(4000)}`,
+      })
+    }
+    const service = new CommanderOperationalMemorySearchService({ collectRecords: async () => records, now: () => new Date("2026-01-01T00:00:00.000Z") })
+    const result = await service.search({ query: "budget needle", limit: 20 })
+    expect(result.status).toBe("ready")
+    expect(result.output_bytes).toBeLessThanOrEqual(result.max_output_bytes)
+    expect(Buffer.byteLength(JSON.stringify(result.result))).toBeLessThanOrEqual(result.max_output_bytes)
+    expect(result.truncated).toBe(true)
+    expect(result.warnings.join(" ")).toContain("operational memory output capped")
+  })
+
   test("Commander repository reads enforce path policy, bounds, redaction, and manifests", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -24345,6 +24365,10 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, ".env"), "TOKEN=hidden")
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
     await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n]\n")
+    await mkdir(join(dir, "aaa-filler"), { recursive: true })
+    for (let index = 0; index < 1250; index += 1) {
+      await writeFile(join(dir, "aaa-filler", `filler-${index}.txt`), "not a manifest\n")
+    }
     const outsideLock = join(await mkdtemp(join(tmpdir(), "nxl-lock-outside-")), "bun.lock")
     await writeFile(outsideLock, "external lock")
     await symlink(outsideLock, join(dir, "bun.lock"))

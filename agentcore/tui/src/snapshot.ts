@@ -223,6 +223,13 @@ function commanderInternalReadLines(state: UiState): string[] {
       for (const match of (result.matches ?? []).slice(0, 8)) out.push(`  match=${match.path}:${match.line_number} ${preview(redactText(String(match.line_preview ?? "")))}`)
       for (const line of (result.lines ?? []).slice(0, 8)) out.push(`  line=${line.line_number}: ${preview(redactText(String(line.text ?? "")))}`)
       for (const candidate of (result.candidates ?? []).slice(0, 8)) out.push(`  candidate=${preview(redactText(String(candidate.source_id ?? candidate.symbol ?? "")))} score=${candidate.relevance_score ?? candidate.confidence ?? ""} fields=${arraySummary(candidate.matched_fields ?? [])}`)
+      for (const status of (result.staged ?? []).slice(0, 6)) out.push(`  staged=${preview(redactText(String(status.path ?? "")))} status=${preview(redactText(String(status.status ?? "")))}`)
+      for (const status of (result.unstaged ?? []).slice(0, 6)) out.push(`  unstaged=${preview(redactText(String(status.path ?? "")))} status=${preview(redactText(String(status.status ?? "")))}`)
+      for (const status of (result.untracked ?? []).slice(0, 6)) out.push(`  untracked=${preview(redactText(String(status.path ?? status ?? "")))}`)
+      for (const status of (result.conflicted ?? []).slice(0, 6)) out.push(`  conflicted=${preview(redactText(String(status.path ?? "")))} status=${preview(redactText(String(status.status ?? "")))}`)
+      for (const file of (result.files ?? []).slice(0, 8)) out.push(`  git_file=${preview(redactText(String(file.path ?? "")))} additions=${file.additions ?? ""} deletions=${file.deletions ?? ""} binary=${file.binary ?? false}`)
+      if (result.stat_preview) out.push(`  git_stat=${preview(redactText(String(result.stat_preview)))}`)
+      if (result.patch_preview) out.push(`  git_patch=${preview(redactText(String(result.patch_preview)))}`)
       for (const commit of (result.commits ?? []).slice(0, 5)) out.push(`  commit=${commit.short_sha} ${preview(redactText(String(commit.subject_preview ?? "")))}`)
       for (const dep of (result.dependencies ?? []).slice(0, 8)) out.push(`  dependency=${preview(redactText(String(dep.package_name)))} group=${preview(redactText(String(dep.dependency_group)))}`)
     }

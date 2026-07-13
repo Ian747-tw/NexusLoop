@@ -6719,6 +6719,9 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("trust_class=repository_content_untrusted")
     expect(snapshot).toContain("instruction_semantics=none")
     expect(snapshot).toContain("git_process_invoked=true")
+    expect(snapshot).toContain("unstaged=agentcore/runtime/src/commander-tools/commander-tool-service.ts status=M")
+    expect(snapshot).toContain("git_file=agentcore/runtime/src/commander-tools/commander-tool-service.ts additions=2 deletions=0 binary=false")
+    expect(snapshot).toContain("git_stat=commander-tool-service.ts +2/-0")
     expect(snapshot).toContain("filesystem_written=false")
     expect(snapshot).not.toContain("sk-test")
 

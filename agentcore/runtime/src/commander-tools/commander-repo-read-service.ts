@@ -468,11 +468,14 @@ function isDeniedPath(path: string): boolean {
 }
 
 async function manifestFiles(root: RootInfo, includeUpstream: boolean): Promise<string[]> {
-  const files = (await collectFiles(root, root.root, includeUpstream, 1200)).files
+  const isManifest = (rel: string) => {
+    const name = basename(rel)
+    return ["pyproject.toml", "pytest.ini", "tox.ini", "package.json", "bunfig.toml", "Makefile"].includes(name) || rel.startsWith(".github/workflows/")
+  }
+  const files = (await collectFiles(root, root.root, includeUpstream, 1200, isManifest)).files
   return files.filter((file) => {
     const rel = toRelative(root, file)
-    const name = basename(file)
-    return ["pyproject.toml", "pytest.ini", "tox.ini", "package.json", "bunfig.toml", "Makefile"].includes(name) || rel.startsWith(".github/workflows/")
+    return isManifest(rel)
   })
 }
 
