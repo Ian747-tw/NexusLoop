@@ -6693,6 +6693,8 @@ describe("runtime UI effects", () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-continuity-search", args: ["query=prior", "continuity", "decision"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-continuity-search", args: ["query=prior", "include_closed=false"] })
+    expect(state.commanderInternalReads?.commandError).toBeUndefined()
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-tree", args: ["path=agentcore/runtime/src/commander-tools", "depth=2"] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-search", args: ["query=CommanderToolService", "path=agentcore/runtime/src"] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-read", args: ["path=agentcore/runtime/src/commander-tools/commander-tool-service.ts", "start=1", "end=20"] })

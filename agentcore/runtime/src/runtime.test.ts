@@ -73,7 +73,7 @@ import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-regist
 import { CommandAuthorityService } from "./authority/command-authority-service"
 import { CommanderToolService } from "./commander-tools/commander-tool-service"
 import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
-import { restrictedGitReadEnv } from "./commander-tools/restricted-git-read-adapter"
+import { restrictedGitLogArgs, restrictedGitReadEnv } from "./commander-tools/restricted-git-read-adapter"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -24493,6 +24493,10 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "secret.p12"), new Uint8Array([0, 1, 2, 3]))
     expect(Bun.spawnSync({ cmd: ["git", "add", "secret.p12"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track binary secret"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "mode-only.sh"), "#!/bin/sh\nexit 0\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "mode-only.sh"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track mode only file"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await chmod(join(dir, "mode-only.sh"), 0o755)
     expect(Bun.spawnSync({ cmd: ["git", "mv", "rename-source.txt", "rename-target.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     await rm(join(dir, "delete-me.txt"))
     await writeFile(join(dir, "secret.p12"), new Uint8Array([0, 1, 2, 3, 4, 5]))
@@ -24520,7 +24524,9 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "*.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git wildcard path filters are not supported"]) })
     const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
     expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "delete-me.txt", deletions: 1 })]))
+    expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "mode-only.sh" })]))
     expect(wholeDiff.result.stat_preview).toContain("delete-me.txt")
+    expect(wholeDiff.result.stat_preview).toContain("mode-only.sh")
     expect(JSON.stringify(wholeDiff.result)).not.toContain(".env")
     expect(JSON.stringify(wholeDiff.result)).not.toContain("secret.p12")
     expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK")
@@ -24536,7 +24542,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(stagedStatOnlyDiff.result)).not.toContain("public.txt")
     expect(stagedStatOnlyDiff.warnings.join(" ")).toContain("Suppressed")
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain("public.txt")
-    const log = await server.command("runtime.commander_repo_git_log", { limit: 10 }) as Record<string, any>
+    const log = await server.command("runtime.commander_repo_git_log", { limit: 15 }) as Record<string, any>
     expect(log.result.commits).toEqual(expect.arrayContaining([expect.objectContaining({ subject_preview: "initial" })]))
     await expect(server.command("runtime.commander_repo_git_log", { path: "/tmp/tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter must be project-relative"]) })
     await expect(server.command("runtime.commander_repo_git_log", { path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
@@ -24619,6 +24625,7 @@ describe("ProcessOpenCodeAdapter", () => {
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_CONFIG_SYSTEM: "/dev/null",
     })
+    expect(restrictedGitLogArgs(10)).toContain("--no-show-signature")
   })
 
   test("Commander tool commands do not auto-start runtime clients", async () => {

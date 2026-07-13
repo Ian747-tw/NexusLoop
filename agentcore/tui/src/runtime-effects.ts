@@ -6110,7 +6110,7 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return executeCommanderToolCommand(commandState, runtime, "runtime.validate_commander_tool_registry", {}, "validation")
     case "commander-continuity-search":
     case "continuity-search":
-      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.search_commander_operational_memory", parseFreeTextPayload(args, "query", ["query", "phase", "session", "session_id", "launch", "launch_id", "mission", "mission_id", "source_kinds", "statuses", "limit"]), "continuitySearch")
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.search_commander_operational_memory", parseFreeTextPayload(args, "query", ["query", "phase", "session", "session_id", "launch", "launch_id", "mission", "mission_id", "source_kinds", "statuses", "include_closed", "limit"]), "continuitySearch")
     case "commander-repo-tree":
     case "repo-tree":
       return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_tree", parseCommanderRepoArgs(args), "repoTree")

@@ -15,6 +15,7 @@ const SAFE_GIT_CONFIG_ARGS = [
   "-c", "pager.status=false",
   "-c", "pager.diff=false",
   "-c", "pager.log=false",
+  "-c", "log.showSignature=false",
   "-c", "diff.external=",
 ] as const
 
@@ -37,6 +38,10 @@ export function restrictedGitReadEnv(): Record<string, string> {
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_SYSTEM: "/dev/null",
   }
+}
+
+export function restrictedGitLogArgs(limit: number, path?: string): string[] {
+  return ["log", `-${limit}`, "--no-show-signature", "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s", ...(path ? ["--", path] : [])]
 }
 
 export class RestrictedGitReadAdapter {
@@ -104,7 +109,7 @@ export class RestrictedGitReadAdapter {
     if (verified.error) return { result: { commits: [] }, blockers: [verified.error], warnings: [] }
     if (pathFilter.error) return { result: { commits: [] }, blockers: [pathFilter.error], warnings: [] }
     if (path && isDeniedRepositoryPath(path)) return { result: { commits: [] }, blockers: ["sensitive Git log path is denied"], warnings: [] }
-    const args = ["log", `-${limit}`, "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s", ...(path ? ["--", path] : [])]
+    const args = restrictedGitLogArgs(limit, path)
     const output = await this.run(args)
     const commits = output.stdout.split(/\r?\n/).filter(Boolean).map((line) => {
       const [commit_sha, short_sha, author_name, authored_at, subject] = line.split("\x1f")
@@ -222,7 +227,7 @@ function parseDiffFiles(output: string): CommanderGitDiffResult["files"] {
   for (const line of output.split(/\r?\n/)) {
     const header = line.match(/^diff --git a\/(.+) b\/(.+)$/)
     if (header) {
-      current = undefined
+      ensureFile(header[2])
       pendingOldPath = header[1]
       continue
     }
