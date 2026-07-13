@@ -24501,6 +24501,8 @@ describe("ProcessOpenCodeAdapter", () => {
     await rm(join(dir, "delete-me.txt"))
     await writeFile(join(dir, "secret.p12"), new Uint8Array([0, 1, 2, 3, 4, 5]))
     expect(Bun.spawnSync({ cmd: ["git", "mv", ".env", "public.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "token=abc"), "valid path that looks like assignment\n")
+    await writeFile(join(dir, "next-visible.txt"), "next status record\n")
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
     const before = await server.eventStore.readAll()
     const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
@@ -24511,6 +24513,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(status.result)).not.toContain(".env")
     expect(JSON.stringify(status.result)).not.toContain(".git-credentials")
     expect(JSON.stringify(status.result)).not.toContain("copy")
+    expect(status.result.untracked).toContain("next-visible.txt")
     expect(status.warnings.join(" ")).toContain("Suppressed")
     const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
     expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
@@ -24522,6 +24525,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked\t.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter contains unsupported control characters"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "../tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter cannot escape the project root"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "*.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git wildcard path filters are not supported"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "stage" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git diff scope is unsupported"]) })
     const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
     expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "delete-me.txt", deletions: 1 })]))
     expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "mode-only.sh" })]))

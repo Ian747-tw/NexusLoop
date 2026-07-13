@@ -71,12 +71,14 @@ export class RestrictedGitReadAdapter {
 
   async diff(input: Record<string, unknown> = {}): Promise<{ result: CommanderGitDiffResult; blockers: string[]; warnings: string[] }> {
     const verified = await this.verifyRoot()
-    const scope = readScope(input.scope)
+    const scopeInput = readScope(input.scope)
+    const scope = scopeInput.scope
     const context = clamp(input.contextLines ?? input.context_lines, 3, 0, 10)
     const statOnly = input.statOnly === true || input.stat_only === true || input.statOnly === "true" || input.stat_only === "true"
     const pathFilter = optionalPath(input.path)
     const path = pathFilter.path
     if (verified.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [verified.error], warnings: [] }
+    if (scopeInput.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [scopeInput.error], warnings: [] }
     if (pathFilter.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [pathFilter.error], warnings: [] }
     if (path && isDeniedRepositoryPath(path)) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: ["sensitive Git diff path is denied"], warnings: [] }
     const baseArgs = scope === "staged" ? ["diff", "--cached"] : scope === "head" ? ["diff", "HEAD"] : ["diff"]
@@ -142,7 +144,7 @@ export class RestrictedGitReadAdapter {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        resolvePromise({ stdout: redactText(stdout.toString("utf8")), stderr: redactText(stderr.toString("utf8")).slice(0, 1200), error, warnings, truncated })
+        resolvePromise({ stdout: stdout.toString("utf8"), stderr: redactText(stderr.toString("utf8")).slice(0, 1200), error, warnings, truncated })
       }
       const timer = setTimeout(() => {
         warnings.push("Git read timed out and was terminated")
@@ -348,9 +350,10 @@ function isDeniedStatPath(path: string): boolean {
   return normalized.split("=>").some((part) => isDeniedRepositoryPath(part.trim()))
 }
 
-function readScope(value: unknown): "working_tree" | "staged" | "head" {
-  if (value === "staged" || value === "head" || value === "working_tree") return value
-  return "working_tree"
+function readScope(value: unknown): { scope: "working_tree" | "staged" | "head"; error?: string } {
+  if (value === undefined || value === null || value === "") return { scope: "working_tree" }
+  if (value === "staged" || value === "head" || value === "working_tree") return { scope: value }
+  return { scope: "working_tree", error: "Git diff scope is unsupported" }
 }
 
 function optionalPath(value: unknown): { path?: string; error?: string } {
