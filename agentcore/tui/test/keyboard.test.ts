@@ -200,6 +200,16 @@ describe("TUI keyboard command model", () => {
       { type: "send-command", command: "commander-repo-read", args: ["path=agentcore/runtime/src/server.ts", "start=1", "end=20"] },
     ])
 
+    const spacedPathState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/commander-repo-read path=src/a b.ts start=1 end=20",
+    }
+    expect(applyKeyCommandWithEffects(spacedPathState, { type: "submit" }).effects).toEqual([
+      { type: "send-command", command: "commander-repo-read", args: ["path=src/a", "b.ts", "start=1", "end=20"] },
+    ])
+
     const gitState: UiState = { ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: "/repo-git-diff scope=working_tree stat_only=true" }
     expect(applyKeyCommandWithEffects(gitState, { type: "submit" }).effects).toEqual([
       { type: "send-command", command: "repo-git-diff", args: ["scope=working_tree", "stat_only=true"] },

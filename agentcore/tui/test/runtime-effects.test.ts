@@ -6772,5 +6772,11 @@ describe("runtime UI effects", () => {
     const state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
     await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-read", args: ["path=large.py", "start=12000", "end=12100"] })
     expect(calls[0]).toEqual({ name: "runtime.commander_repo_read_lines", payload: { path: "large.py", start: 12000, end: 12100 } })
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-read", args: ["path=src/a", "b.ts", "start=1", "end=2"] })
+    expect(calls[1]).toEqual({ name: "runtime.commander_repo_read_lines", payload: { path: "src/a b.ts", start: 1, end: 2 } })
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-search", args: ["query=needle", "path=src/a", "b.ts", "limit=5"] })
+    expect(calls[2]).toEqual({ name: "runtime.commander_repo_search_text", payload: { query: "needle", path: "src/a b.ts", limit: 5 } })
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-git-diff", args: ["scope=working_tree", "path=src/a", "b.ts", "stat_only=true"] })
+    expect(calls[3]).toEqual({ name: "runtime.commander_repo_git_diff", payload: { scope: "working_tree", path: "src/a b.ts", stat_only: true } })
   })
 })

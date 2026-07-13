@@ -6117,7 +6117,7 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "commander-repo-search":
     case "repo-search":
     case "code-search":
-      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_search_text", parseFreeTextPayload(args, "query", ["query", "path", "case_sensitive", "extensions", "include_upstream", "limit", "max_files", "context_lines"]), "repoSearch")
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_search_text", parseFreeTextPayload(args, "query", ["query", "path", "case_sensitive", "extensions", "include_upstream", "limit", "max_files", "context_lines"], ["query", "path"]), "repoSearch")
     case "commander-repo-read":
     case "repo-read":
     case "code-read":
@@ -6125,7 +6125,7 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "commander-repo-symbol":
     case "repo-symbol":
     case "code-symbol":
-      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_find_symbol", parseFreeTextPayload(args, "symbol", ["symbol", "path", "language", "include_upstream", "limit"]), "repoSymbol")
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_find_symbol", parseFreeTextPayload(args, "symbol", ["symbol", "path", "language", "include_upstream", "limit"], ["symbol", "path"]), "repoSymbol")
     case "commander-git-status":
     case "repo-git-status":
       return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_git_status", {}, "gitStatus")
@@ -18851,12 +18851,13 @@ function parseCommanderToolSearchArgs(args: string[]): Record<string, unknown> {
 }
 
 function parseCommanderRepoArgs(args: string[]): Record<string, unknown> {
+  const knownKeys = new Set(["path", "include_hidden", "include_upstream", "case_sensitive", "stat_only", "include_dev", "include_optional", "start", "end", "start_line", "end_line", "max_lines", "context_lines", "depth", "limit", "max_files", "max_file_bytes", "max_output_bytes", "scope"])
+  const freeTextKeys = new Set(["path"])
   const payload: Record<string, unknown> = {}
-  for (const arg of args) {
-    const index = arg.indexOf("=")
-    if (index < 0) continue
-    const key = arg.slice(0, index)
-    const value = arg.slice(index + 1)
+  let index = 0
+  while (index < args.length) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "repo read args must use supported key=<value> filters")
+    index = nextIndex + 1
     if (["include_hidden", "include_upstream", "case_sensitive", "stat_only", "include_dev", "include_optional"].includes(key)) payload[key] = readBooleanText(value, key)
     else if (["start", "end", "start_line", "end_line"].includes(key)) payload[key] = readPositiveInteger(value, key, 1_000_000)
     else if (["max_lines"].includes(key)) payload[key] = readPositiveInteger(value, key, 200)
@@ -18868,9 +18869,10 @@ function parseCommanderRepoArgs(args: string[]): Record<string, unknown> {
   return payload
 }
 
-function parseFreeTextPayload(args: string[], requiredKey: string, knownKeys: string[]): Record<string, unknown> {
+function parseFreeTextPayload(args: string[], requiredKey: string, knownKeys: string[], freeTextKeysOverride?: string[]): Record<string, unknown> {
   if (args.length === 0) throw new Error(`${requiredKey} is required`)
   const known = new Set(knownKeys)
+  const freeTextKeys = new Set(freeTextKeysOverride ?? [requiredKey])
   const payload: Record<string, unknown> = {}
   let index = 0
   while (index < args.length) {
@@ -18881,7 +18883,7 @@ function parseFreeTextPayload(args: string[], requiredKey: string, knownKeys: st
       payload[requiredKey] = values.join(" ")
       continue
     }
-    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, known, new Set([requiredKey]), `${requiredKey}=<text> is required`)
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, known, freeTextKeys, `${requiredKey}=<text> is required`)
     index = nextIndex + 1
     if (["include_upstream", "case_sensitive", "include_closed"].includes(key)) payload[key] = readBooleanText(value, key)
     else if (["limit", "max_files", "context_lines"].includes(key)) payload[key] = readPositiveInteger(value, key, 5000)
