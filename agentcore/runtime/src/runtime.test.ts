@@ -24311,9 +24311,15 @@ describe("ProcessOpenCodeAdapter", () => {
       "const api_key = super-secret-value",
       "function runTests() { return true }",
     ].join("\n"))
+    await writeFile(join(dir, "src", "whitespace.py"), "def outer():\n    if True:\n        return 'indented'\n")
+    await mkdir(join(dir, ".aws"), { recursive: true })
+    await writeFile(join(dir, ".aws", "credentials"), "aws_access_key_id = SHOULD_NOT_LEAK")
     await writeFile(join(dir, ".env"), "TOKEN=hidden")
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
     await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n]\n")
+    const outsideLock = join(await mkdtemp(join(tmpdir(), "nxl-lock-outside-")), "bun.lock")
+    await writeFile(outsideLock, "external lock")
+    await symlink(outsideLock, join(dir, "bun.lock"))
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
     const before = await server.eventStore.readAll()
     const tree = await server.command("runtime.commander_repo_tree", { path: ".", depth: 2 }) as Record<string, any>
@@ -24335,8 +24341,11 @@ describe("ProcessOpenCodeAdapter", () => {
     const read = await server.command("runtime.commander_repo_read_lines", { path: "src/sample.ts", start_line: 1, end_line: 4 }) as Record<string, any>
     expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("[REDACTED]")
     expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("tokenName")
+    const whitespaceRead = await server.command("runtime.commander_repo_read_lines", { path: "src/whitespace.py", start_line: 1, end_line: 3 }) as Record<string, any>
+    expect(whitespaceRead.result.lines.map((line: any) => line.text)).toEqual(["def outer():", "    if True:", "        return 'indented'"])
     await expect(server.command("runtime.commander_repo_read_lines", { path: "../outside" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["path traversal outside the project root is not allowed"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: ".aws/credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     const symbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(symbol.result.candidates[0]).toMatchObject({ declaration_kind: "class", confidence: "exact_declaration" })
     const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
@@ -24344,6 +24353,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "click", dependency_group: "project.dependencies", direct: true })]))
+    expect(deps.result.lockfiles).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: "bun.lock" })]))
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
   })
 
@@ -24357,6 +24367,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     await writeFile(join(dir, "tracked.txt"), "first\napi_key = top-secret\n")
+    await writeFile(join(dir, ".env"), "aws_access_key_id = SHOULD_NOT_LEAK\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, ".env"), "aws_access_key_id = STILL_SHOULD_NOT_LEAK\n")
     const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
     const before = await server.eventStore.readAll()
     const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
@@ -24365,8 +24379,12 @@ describe("ProcessOpenCodeAdapter", () => {
     const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
     expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
     expect(diff.result.patch_preview).toContain("[REDACTED]")
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
+    expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK")
+    expect(wholeDiff.warnings.join(" ")).toContain("Suppressed")
     const log = await server.command("runtime.commander_repo_git_log", { limit: 3 }) as Record<string, any>
-    expect(log.result.commits[0]).toMatchObject({ subject_preview: "initial" })
+    expect(log.result.commits).toEqual(expect.arrayContaining([expect.objectContaining({ subject_preview: "initial" })]))
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
   })
 

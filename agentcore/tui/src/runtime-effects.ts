@@ -18858,7 +18858,11 @@ function parseCommanderRepoArgs(args: string[]): Record<string, unknown> {
     const key = arg.slice(0, index)
     const value = arg.slice(index + 1)
     if (["include_hidden", "include_upstream", "case_sensitive", "stat_only", "include_dev", "include_optional"].includes(key)) payload[key] = readBooleanText(value, key)
-    else if (["depth", "limit", "max_files", "context_lines", "start", "end", "start_line", "end_line", "max_lines", "max_file_bytes", "max_output_bytes"].includes(key)) payload[key] = readPositiveInteger(value, key, 5000)
+    else if (["start", "end", "start_line", "end_line"].includes(key)) payload[key] = readPositiveInteger(value, key, 1_000_000)
+    else if (["max_lines"].includes(key)) payload[key] = readPositiveInteger(value, key, 200)
+    else if (["context_lines"].includes(key)) payload[key] = readPositiveInteger(value, key, 10)
+    else if (["depth"].includes(key)) payload[key] = readPositiveInteger(value, key, 8)
+    else if (["limit", "max_files", "max_file_bytes", "max_output_bytes"].includes(key)) payload[key] = readPositiveInteger(value, key, 5000)
     else payload[key] = value
   }
   return payload

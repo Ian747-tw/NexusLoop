@@ -6725,4 +6725,48 @@ describe("runtime UI effects", () => {
     const errorState = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-search", args: [] })
     expect(errorState.commanderInternalReads?.commandError).toContain("query is required")
   })
+
+  test("Commander repo read parser preserves large line ranges", async () => {
+    const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        calls.push({ name, payload })
+        return {
+          call_id: "read-large-line-range",
+          tool_id: "repo.read_lines",
+          status: "ready",
+          trust_class: "repository_content_untrusted",
+          instruction_semantics: "none",
+          result: { path: "large.py", start_line: payload?.start, end_line: payload?.end, lines: [], content_hash: "hash", encoding: "utf-8", truncated: false },
+          evidence: [],
+          output_bytes: 2,
+          max_output_bytes: 32000,
+          truncated: false,
+          duration_ms: 0,
+          blockers: [],
+          warnings: [],
+          generated_at: "2026-07-13T00:00:00Z",
+          result_hash: "hash",
+          filesystem_written: false,
+          events_appended: false,
+          network_called: false,
+          provider_called: false,
+          mcp_called: false,
+          research_db_written: false,
+          mission_mutated: false,
+          proposal_mutated: false,
+          opencode_action_performed: false,
+          shell_used: false,
+          arbitrary_command_executed: false,
+          git_process_invoked: false,
+        }
+      },
+    }
+    const state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-read", args: ["path=large.py", "start=12000", "end=12100"] })
+    expect(calls[0]).toEqual({ name: "runtime.commander_repo_read_lines", payload: { path: "large.py", start: 12000, end: 12100 } })
+  })
 })

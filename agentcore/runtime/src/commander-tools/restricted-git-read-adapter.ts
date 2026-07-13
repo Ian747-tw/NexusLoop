@@ -3,6 +3,7 @@ import { realpath } from "node:fs/promises"
 import { resolve } from "node:path"
 import { redactText } from "../security/redaction"
 import type { CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusResult } from "./commander-read-types"
+import { isDeniedRepositoryPath } from "./commander-repo-path-policy"
 
 const TIMEOUT_MS = 2500
 const MAX_STDOUT = 96_000
@@ -52,22 +53,26 @@ export class RestrictedGitReadAdapter {
     const statOnly = input.statOnly === true || input.stat_only === true || input.statOnly === "true" || input.stat_only === "true"
     const path = optionalPath(input.path)
     if (verified.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [verified.error], warnings: [] }
+    if (path && isDeniedRepositoryPath(path)) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: ["sensitive Git diff path is denied"], warnings: [] }
     const baseArgs = scope === "staged" ? ["diff", "--cached"] : scope === "head" ? ["diff", "HEAD"] : ["diff"]
     const args = [...baseArgs, "--no-ext-diff", "--no-textconv", "--no-color", `--unified=${context}`, ...(statOnly ? ["--stat"] : []), ...(path ? ["--", path] : [])]
     const [head, diff] = await Promise.all([this.run(["rev-parse", "HEAD"]), this.run(args)])
     const blockers = [head.error, diff.error].filter((item): item is string => !!item)
-    const patch = redactText(diff.stdout).slice(0, 64_000)
+    const filtered = statOnly ? { output: diff.stdout, omitted: 0 } : filterSensitiveDiffSections(diff.stdout)
+    const patch = redactText(filtered.output).slice(0, 64_000)
+    const warnings = [...head.warnings, ...diff.warnings]
+    if (filtered.omitted > 0) warnings.push(`Suppressed ${filtered.omitted} sensitive Git diff file(s) from patch output`)
     const result: CommanderGitDiffResult = {
       scope,
       head_sha: head.stdout.trim() || undefined,
       path_filter: path,
-      files: parseDiffFiles(diff.stdout).slice(0, 80),
-      stat_preview: statOnly ? patch : summarizeDiffStat(diff.stdout),
+      files: parseDiffFiles(filtered.output).slice(0, 80),
+      stat_preview: statOnly ? patch : summarizeDiffStat(filtered.output),
       patch_preview: statOnly ? undefined : patch,
       truncated: diff.truncated || Buffer.byteLength(diff.stdout) > 64_000,
       output_bytes: Buffer.byteLength(patch),
     }
-    return { result, blockers, warnings: [...head.warnings, ...diff.warnings] }
+    return { result, blockers, warnings }
   }
 
   async log(input: Record<string, unknown> = {}): Promise<{ result: CommanderGitLogResult; blockers: string[]; warnings: string[] }> {
@@ -193,6 +198,40 @@ function parseDiffFiles(output: string): CommanderGitDiffResult["files"] {
     if (current && line.startsWith("-") && !line.startsWith("---")) files.get(current)!.deletions += 1
   }
   return [...files.values()]
+}
+
+function filterSensitiveDiffSections(output: string): { output: string; omitted: number } {
+  const kept: string[] = []
+  let section: string[] = []
+  let denySection = false
+  let omitted = 0
+  const flush = () => {
+    if (section.length === 0) return
+    if (denySection) omitted += 1
+    else kept.push(...section)
+    section = []
+    denySection = false
+  }
+  for (const line of output.split(/\r?\n/)) {
+    const header = line.match(/^diff --git a\/(.+) b\/(.+)$/)
+    if (header) {
+      flush()
+      section = [line]
+      denySection = isDeniedRepositoryPath(header[1]) || isDeniedRepositoryPath(header[2])
+      continue
+    }
+    if (section.length > 0) {
+      section.push(line)
+      const newFile = line.match(/^\+\+\+ b\/(.+)/)
+      const oldFile = line.match(/^--- a\/(.+)/)
+      if (newFile && isDeniedRepositoryPath(newFile[1])) denySection = true
+      if (oldFile && isDeniedRepositoryPath(oldFile[1])) denySection = true
+    } else {
+      kept.push(line)
+    }
+  }
+  flush()
+  return { output: kept.join("\n"), omitted }
 }
 
 function summarizeDiffStat(output: string): string {
