@@ -42,8 +42,10 @@ export class RestrictedGitReadAdapter {
       this.run(["status", "--porcelain=v1", "-z", "--untracked-files=normal"]),
     ])
     const blockers = [head.error, branch.error, porcelain.error].filter((item): item is string => !!item)
-    const result = parseStatus(porcelain.stdout, head.stdout.trim(), branch.stdout.trim())
-    return { result, blockers, warnings: [...head.warnings, ...branch.warnings, ...porcelain.warnings] }
+    const parsed = parseStatus(porcelain.stdout, head.stdout.trim(), branch.stdout.trim())
+    const warnings = [...head.warnings, ...branch.warnings, ...porcelain.warnings]
+    if (parsed.omittedSensitive > 0) warnings.push(`Suppressed ${parsed.omittedSensitive} sensitive Git status path(s)`)
+    return { result: parsed.result, blockers, warnings }
   }
 
   async diff(input: Record<string, unknown> = {}): Promise<{ result: CommanderGitDiffResult; blockers: string[]; warnings: string[] }> {
@@ -68,7 +70,7 @@ export class RestrictedGitReadAdapter {
       scope,
       head_sha: head.stdout.trim() || undefined,
       path_filter: path,
-      files: parseDiffFiles(filtered.output).slice(0, 80),
+      files: (statOnly ? parseStatFiles(filtered.output) : parseDiffFiles(filtered.output)).slice(0, 80),
       stat_preview: statOnly ? patch : summarizeDiffStat(filtered.output),
       patch_preview: statOnly ? undefined : patch,
       truncated: diff.truncated || Buffer.byteLength(diff.stdout) > 64_000,
@@ -158,12 +160,13 @@ function emptyStatus(): CommanderGitStatusResult {
   return { is_git_repository: false, detached_head: false, staged: [], unstaged: [], untracked: [], conflicted: [], counts: {}, truncated: false }
 }
 
-function parseStatus(output: string, head: string, branch: string): CommanderGitStatusResult {
+function parseStatus(output: string, head: string, branch: string): { result: CommanderGitStatusResult; omittedSensitive: number } {
   const staged: Array<{ path: string; status: string }> = []
   const unstaged: Array<{ path: string; status: string }> = []
   const untracked: string[] = []
   const conflicted: string[] = []
   const parts = output.split("\0").filter(Boolean)
+  let omittedSensitive = 0
   let parsedEntries = 0
   let index = 0
   for (; index < parts.length && parsedEntries < 300; index += 1) {
@@ -171,8 +174,14 @@ function parseStatus(output: string, head: string, branch: string): CommanderGit
     const entry = parts[index]
     const status = entry.slice(0, 2)
     const path = entry.slice(3)
+    let oldPath: string | undefined
     if ((status.includes("R") || status.includes("C")) && index + 1 < parts.length) {
+      oldPath = parts[index + 1]
       index += 1
+    }
+    if (isDeniedRepositoryPath(path) || (oldPath && isDeniedRepositoryPath(oldPath))) {
+      omittedSensitive += 1
+      continue
     }
     if (status === "??") untracked.push(path)
     else if (status.includes("U")) conflicted.push(path)
@@ -181,7 +190,7 @@ function parseStatus(output: string, head: string, branch: string): CommanderGit
       if (status[1] !== " ") unstaged.push({ path, status: status[1] })
     }
   }
-  return {
+  return { result: {
     is_git_repository: true,
     branch: branch === "HEAD" ? undefined : branch,
     head_sha: head || undefined,
@@ -192,7 +201,7 @@ function parseStatus(output: string, head: string, branch: string): CommanderGit
     conflicted,
     counts: { staged: staged.length, unstaged: unstaged.length, untracked: untracked.length, conflicted: conflicted.length },
     truncated: index < parts.length,
-  }
+  }, omittedSensitive }
 }
 
 function parseDiffFiles(output: string): CommanderGitDiffResult["files"] {
@@ -210,6 +219,24 @@ function parseDiffFiles(output: string): CommanderGitDiffResult["files"] {
     if (current && line.startsWith("-") && !line.startsWith("---")) files.get(current)!.deletions += 1
   }
   return [...files.values()]
+}
+
+function parseStatFiles(output: string): CommanderGitDiffResult["files"] {
+  const files: CommanderGitDiffResult["files"] = []
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^\s*(.+?)\s+\|\s+(\d+|-)\s+([+\-]+|Bin\b.*)?\s*$/)
+    if (!match) continue
+    const path = match[1].trim()
+    if (!path || isDeniedRepositoryPath(path)) continue
+    const markers = match[3] ?? ""
+    files.push({
+      path,
+      additions: (markers.match(/\+/g) ?? []).length || undefined,
+      deletions: (markers.match(/-/g) ?? []).length || undefined,
+      binary: /Bin\b/.test(markers),
+    })
+  }
+  return files
 }
 
 function filterSensitiveDiffSections(output: string): { output: string; omitted: number } {

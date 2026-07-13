@@ -24383,15 +24383,19 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(status.result.unstaged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
     expect(status.result.staged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "rename-target.txt", status: "R" })]))
     expect(JSON.stringify(status.result.staged)).not.toContain("rename-source.txt")
+    expect(JSON.stringify(status.result)).not.toContain(".env")
+    expect(status.warnings.join(" ")).toContain("Suppressed")
     const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
     expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
     expect(diff.result.patch_preview).toContain("[REDACTED]")
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "../tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter cannot escape the project root"]) })
     const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
+    expect(JSON.stringify(wholeDiff.result)).not.toContain(".env")
     expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK")
     expect(wholeDiff.warnings.join(" ")).toContain("Suppressed")
     const statOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", stat_only: true }) as Record<string, any>
+    expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain(".env")
     expect(statOnlyDiff.warnings.join(" ")).toContain("Suppressed")
     const log = await server.command("runtime.commander_repo_git_log", { limit: 3 }) as Record<string, any>
