@@ -62,7 +62,7 @@ export class CommanderRepoReadService {
     if (!includeUpstream && path === ".") warnings.push("agentcore/upstream omitted by default; pass include_upstream=true or an explicit upstream path for bounded traversal")
     let omitted = 0
     if (!checked.error && checked.absolute) {
-      await walkTree(root, checked.absolute, checked.relative, depth, includeHidden, includeUpstream, limit, entries, () => { omitted += 1 })
+      await walkTree(root, checked.absolute, checked.relative, depth, includeHidden, includeUpstream, isExplicitUpstreamPath(checked.relative), limit, entries, () => { omitted += 1 })
     }
     const result: CommanderRepoTreeResult = { root: ".", path: checked.relative ?? path, depth, entries, omitted_entries: omitted }
     return this.wrap("repo.tree", "repository_directory", "repository_content_untrusted", result, started, blockers, warnings, false, entries.length + omitted, omitted)
@@ -397,18 +397,18 @@ async function rejectSymlinkComponents(root: string, absolute: string): Promise<
   }
 }
 
-async function walkTree(root: RootInfo, absolute: string, rel: string | undefined, depth: number, includeHidden: boolean, includeUpstream: boolean, limit: number, entries: CommanderRepoTreeEntry[], omit: () => void): Promise<void> {
+async function walkTree(root: RootInfo, absolute: string, rel: string | undefined, depth: number, includeHidden: boolean, includeUpstream: boolean, explicitUpstreamStart: boolean, limit: number, entries: CommanderRepoTreeEntry[], omit: () => void): Promise<void> {
   if (entries.length >= limit) { omit(); return }
   const info = await lstat(absolute)
   const name = basename(absolute)
   const currentRel = rel ?? toRelative(root, absolute)
-  if (shouldSkip(currentRel, name, info.isDirectory(), includeHidden, includeUpstream)) { entries.push({ path: currentRel, kind: info.isDirectory() ? "directory" : info.isSymbolicLink() ? "symlink" : "file", depth: depthOf(currentRel), readable: false, excluded_reason: "excluded by traversal policy" }); return }
+  if (shouldSkip(currentRel, name, info.isDirectory(), includeHidden, includeUpstream, explicitUpstreamStart)) { entries.push({ path: currentRel, kind: info.isDirectory() ? "directory" : info.isSymbolicLink() ? "symlink" : "file", depth: depthOf(currentRel), readable: false, excluded_reason: "excluded by traversal policy" }); return }
   entries.push({ path: currentRel, kind: info.isDirectory() ? "directory" : info.isSymbolicLink() ? "symlink" : "file", size_bytes: info.isFile() ? info.size : undefined, depth: depthOf(currentRel), extension: info.isFile() ? extname(currentRel) : undefined, readable: info.isFile() || info.isDirectory(), content_hash: info.isFile() && info.size <= 64_000 ? sha(await readFile(absolute)) : undefined })
   if (!info.isDirectory() || depth <= 0 || info.isSymbolicLink()) return
   const children = (await readdir(absolute)).sort((a, b) => a.localeCompare(b))
   for (const child of children) {
     if (entries.length >= limit) { omit(); continue }
-    await walkTree(root, join(absolute, child), toRelative(root, join(absolute, child)), depth - 1, includeHidden, includeUpstream, limit, entries, omit)
+    await walkTree(root, join(absolute, child), toRelative(root, join(absolute, child)), depth - 1, includeHidden, includeUpstream, explicitUpstreamStart, limit, entries, omit)
   }
 }
 
@@ -416,12 +416,13 @@ async function collectFiles(root: RootInfo, start: string, includeUpstream: bool
   const out: string[] = []
   let omitted = 0
   let capped = false
+  const explicitUpstreamStart = isExplicitUpstreamPath(toRelative(root, start))
   async function visit(path: string): Promise<void> {
     if (out.length >= maxFiles) { capped = true; return }
     const info = await lstat(path)
     const rel = toRelative(root, path)
     const name = basename(path)
-    if (shouldSkip(rel, name, info.isDirectory(), false, includeUpstream)) return
+    if (shouldSkip(rel, name, info.isDirectory(), false, includeUpstream, explicitUpstreamStart)) return
     if (info.isSymbolicLink()) return
     if (info.isDirectory()) {
       for (const child of (await readdir(path)).sort((a, b) => a.localeCompare(b))) await visit(join(path, child))
@@ -455,12 +456,16 @@ function hasReadError(value: { text: string; bytes: number } | { error: string }
   return "error" in value
 }
 
-function shouldSkip(rel: string, name: string, isDir: boolean, includeHidden: boolean, includeUpstream: boolean): boolean {
+function shouldSkip(rel: string, name: string, isDir: boolean, includeHidden: boolean, includeUpstream: boolean, explicitUpstreamStart = false): boolean {
   if (isDeniedPath(rel)) return true
   if (isDir && DEFAULT_EXCLUDED_DIRS.has(name)) return true
-  if (!includeUpstream && (rel === "agentcore/upstream" || rel.startsWith("agentcore/upstream/"))) return true
+  if (!includeUpstream && !explicitUpstreamStart && (rel === "agentcore/upstream" || rel.startsWith("agentcore/upstream/"))) return true
   if (!includeHidden && name.startsWith(".") && name !== ".github") return true
   return false
+}
+
+function isExplicitUpstreamPath(rel: string | undefined): boolean {
+  return !!rel && rel.startsWith("agentcore/upstream/")
 }
 
 function isDeniedPath(path: string): boolean {

@@ -24392,6 +24392,15 @@ describe("ProcessOpenCodeAdapter", () => {
     const extensionSearch = await server.command("runtime.commander_repo_search_text", { query: "extension-filter-needle", path: "mixed", extensions: "ts", max_files: 3 }) as Record<string, any>
     expect(extensionSearch.result.matches).toEqual([expect.objectContaining({ path: "mixed/z-target.ts", line_number: 1 })])
     expect(extensionSearch.result.scanned_files).toBe(1)
+    await mkdir(join(dir, "agentcore", "upstream", "packages", "opencode"), { recursive: true })
+    await writeFile(join(dir, "agentcore", "upstream", "packages", "opencode", "tool.ts"), "export const upstreamNeedle = true\n")
+    const upstreamTree = await server.command("runtime.commander_repo_tree", { path: "agentcore/upstream/packages/opencode", depth: 1 }) as Record<string, any>
+    expect(upstreamTree.result.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "agentcore/upstream/packages/opencode", readable: true }),
+      expect.objectContaining({ path: "agentcore/upstream/packages/opencode/tool.ts", readable: true }),
+    ]))
+    const upstreamSearch = await server.command("runtime.commander_repo_search_text", { query: "upstreamNeedle", path: "agentcore/upstream/packages/opencode", max_files: 3 }) as Record<string, any>
+    expect(upstreamSearch.result.matches).toEqual([expect.objectContaining({ path: "agentcore/upstream/packages/opencode/tool.ts", line_number: 1 })])
     await mkdir(join(dir, "many"), { recursive: true })
     for (let index = 0; index < 120; index += 1) {
       await writeFile(join(dir, "many", `match-${index}.ts`), `const hugeSearchNeedle${index} = "huge-search-needle ${"x".repeat(700)}"\n`)
