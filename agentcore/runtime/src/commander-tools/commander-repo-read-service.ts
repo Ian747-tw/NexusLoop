@@ -235,7 +235,7 @@ export class CommanderRepoReadService {
         try {
           const json = JSON.parse(text.text) as Record<string, Record<string, string> | undefined>
           for (const [group, values] of Object.entries({ dependencies: json.dependencies, devDependencies: includeDev ? json.devDependencies : undefined, optionalDependencies: includeOptional ? json.optionalDependencies : undefined })) {
-            for (const [name, version] of Object.entries(values ?? {})) dependencies.push({ ecosystem: "npm", manifest_path: rel, package_name: name, version_constraint: String(version), dependency_group: group, direct: true, content_hash: sha(text.text) })
+            for (const [name, version] of Object.entries(values ?? {})) dependencies.push({ ecosystem: "npm", manifest_path: rel, package_name: name, version_constraint: sanitizeDependencyConstraint(String(version)), dependency_group: group, direct: true, content_hash: sha(text.text) })
           }
         } catch {
           // ignored: bounded preview only
@@ -552,7 +552,11 @@ function parseTomlStringArray(text: string): string[] {
 function addPythonDependency(out: Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }>, path: string, raw: string, group: string): void {
   const name = raw.match(/^\s*([A-Za-z0-9_.-]+)/)?.[1]
   if (!name) return
-  out.push({ ecosystem: "python", manifest_path: path, package_name: name, version_constraint: bound(raw, 120), dependency_group: group, direct: true })
+  out.push({ ecosystem: "python", manifest_path: path, package_name: name, version_constraint: sanitizeDependencyConstraint(raw), dependency_group: group, direct: true })
+}
+
+function sanitizeDependencyConstraint(value: string): string {
+  return bound(redactText(value.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/@\s]+)@/gi, "$1[REDACTED]@")), 120)
 }
 
 function declarationPattern(symbol: string): RegExp {

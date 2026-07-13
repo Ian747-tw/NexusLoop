@@ -30,6 +30,7 @@ const SENSITIVE_DIRECTORIES = new Set([
 ])
 
 export function isDeniedRepositoryPath(path: string): boolean {
+  if (/[\x00-\x1f\x7f]/.test(path)) return true
   const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase()
   const parts = normalized.split("/").filter(Boolean)
   if (parts.includes(".git") || parts.includes(".nxl")) return true

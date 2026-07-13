@@ -24373,7 +24373,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await mkdir(join(dir, "nested", ".config", "gcloud"), { recursive: true })
     await writeFile(join(dir, "nested", ".config", "gcloud", "configurations"), "credential_file_override = SHOULD_NOT_LEAK\n")
     await writeFile(join(dir, ".env"), "TOKEN=hidden")
-    await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
+    await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0", "private-url": "git+https://user:SHOULD_NOT_LEAK@example.com/repo.git" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
     const packageLockText = `{"lockfileVersion":3,"packages":{"large":"${"x".repeat(1_100_000)}"}}`
     await writeFile(join(dir, "package-lock.json"), packageLockText)
     await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n]\n")
@@ -24446,6 +24446,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(tests.result)).toContain("bun test")
     const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "private-url", version_constraint: "git+https://[REDACTED]@example.com/repo.git" })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "click", dependency_group: "project.dependencies", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "rich", dependency_group: "project.optional-dependencies.extra", direct: true })]))
     expect(deps.result.lockfiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "package-lock.json", size_bytes: packageLockText.length, hash_omitted: true, omitted_reason: "lockfile exceeds hash cap" })]))
@@ -24470,6 +24471,11 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, ".env"), "aws_access_key_id = SHOULD_NOT_LEAK\n")
     expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    const quotedEnvPath = join(dir, ".env\ncopy")
+    await writeFile(quotedEnvPath, "aws_access_key_id = SHOULD_NOT_LEAK_QUOTED\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".env\ncopy"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track quoted env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(quotedEnvPath, "aws_access_key_id = SHOULD_NOT_LEAK_QUOTED_CHANGED\n")
     await writeFile(join(dir, ".git-credentials"), "https://user:SHOULD_NOT_LEAK@example.com\n")
     expect(Bun.spawnSync({ cmd: ["git", "add", ".git-credentials"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     await writeFile(join(dir, "rename-source.txt"), "rename me\n")
@@ -24494,6 +24500,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(status.result.staged)).not.toContain("rename-source.txt")
     expect(JSON.stringify(status.result)).not.toContain(".env")
     expect(JSON.stringify(status.result)).not.toContain(".git-credentials")
+    expect(JSON.stringify(status.result)).not.toContain("copy")
     expect(status.warnings.join(" ")).toContain("Suppressed")
     const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
     expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
@@ -24511,6 +24518,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(wholeDiff.result)).not.toContain(".env")
     expect(JSON.stringify(wholeDiff.result)).not.toContain("secret.p12")
     expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK")
+    expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK_QUOTED")
+    expect(wholeDiff.warnings.join(" ")).toContain("Suppressed")
     const statOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", stat_only: true }) as Record<string, any>
     expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt", additions: 21, deletions: 0 })]))
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain(".env")
@@ -24521,7 +24530,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(stagedStatOnlyDiff.result)).not.toContain("public.txt")
     expect(stagedStatOnlyDiff.warnings.join(" ")).toContain("Suppressed")
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain("public.txt")
-    const log = await server.command("runtime.commander_repo_git_log", { limit: 5 }) as Record<string, any>
+    const log = await server.command("runtime.commander_repo_git_log", { limit: 10 }) as Record<string, any>
     expect(log.result.commits).toEqual(expect.arrayContaining([expect.objectContaining({ subject_preview: "initial" })]))
     await expect(server.command("runtime.commander_repo_git_log", { path: "/tmp/tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter must be project-relative"]) })
     await expect(server.command("runtime.commander_repo_git_log", { path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })

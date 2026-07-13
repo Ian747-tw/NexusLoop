@@ -277,25 +277,36 @@ function filterSensitiveDiffSections(output: string): { output: string; omitted:
     denySection = false
   }
   for (const line of output.split(/\r?\n/)) {
+    if (/^diff --git\s+"/.test(line)) {
+      flush()
+      section = [line]
+      denySection = true
+      continue
+    }
     const header = line.match(/^diff --git a\/(.+) b\/(.+)$/)
     if (header) {
       flush()
       section = [line]
-      denySection = isDeniedRepositoryPath(header[1]) || isDeniedRepositoryPath(header[2])
+      denySection = isUnsafeDiffPath(header[1]) || isUnsafeDiffPath(header[2]) || isDeniedRepositoryPath(header[1]) || isDeniedRepositoryPath(header[2])
       continue
     }
     if (section.length > 0) {
       section.push(line)
+      if (/^(?:\+\+\+|---)\s+"/.test(line)) denySection = true
       const newFile = line.match(/^\+\+\+ b\/(.+)/)
       const oldFile = line.match(/^--- a\/(.+)/)
-      if (newFile && isDeniedRepositoryPath(newFile[1])) denySection = true
-      if (oldFile && isDeniedRepositoryPath(oldFile[1])) denySection = true
+      if (newFile && (isUnsafeDiffPath(newFile[1]) || isDeniedRepositoryPath(newFile[1]))) denySection = true
+      if (oldFile && (isUnsafeDiffPath(oldFile[1]) || isDeniedRepositoryPath(oldFile[1]))) denySection = true
     } else {
       kept.push(line)
     }
   }
   flush()
   return { output: kept.join("\n"), omitted }
+}
+
+function isUnsafeDiffPath(path: string): boolean {
+  return /[\x00-\x1f\x7f]/.test(path) || path.includes("\\")
 }
 
 function filterSensitiveStatLines(output: string): { output: string; omitted: number } {
@@ -320,6 +331,7 @@ function summarizeDiffStat(output: string): string {
 }
 
 function isDeniedStatPath(path: string): boolean {
+  if (isUnsafeDiffPath(path) || path.includes("\"")) return true
   if (isDeniedRepositoryPath(path)) return true
   if (!path.includes("=>")) return false
   const normalized = path.replace(/[{}]/g, "")
