@@ -5,6 +5,7 @@ const SENSITIVE_BASENAMES = new Set([
   ".npmrc",
   ".pypirc",
   ".netrc",
+  ".git-credentials",
   "id_rsa",
   "id_ed25519",
   "credentials",
