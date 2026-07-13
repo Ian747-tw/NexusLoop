@@ -25,6 +25,27 @@ Python remains important, but only as a library/tooling surface for MCPs,
 schemas, replay verification, extraction pipelines, and similar deterministic
 components. Python is not the primary runtime brain.
 
+### Commander Tool Architecture
+
+The Commander investigation architecture uses one authoritative runtime with
+separate Commander and OpenCode model contexts. "Single Brain" means one TS
+runtime authority, one event ledger, one write-barrier system, and rebuildable
+projections. It does not require Commander to share OpenCode's native chat
+history or context window.
+
+Commander tools follow a broad-read, narrow-act contract. Runtime may expose
+curated, bounded read capabilities for research memory, continuity, runtime
+records, OpenCode session metadata, and future repository/GitHub/external
+research reads. Runtime must not expose direct shell, edit, patch, commit, push,
+provider call, MCP execution, OpenCode prompt send, process control, or direct
+GitHub mutation tools as Commander tools.
+
+Capability profiles are envelopes, not workflows. They define allowed
+namespaces, load policies, and budgets for a future provider-neutral
+investigation loop; they do not prescribe which query Commander runs first or
+which evidence it must value. Initial Commander bootstrap loads only a small
+core schema set and uses deferred schema discovery for the rest.
+
 ## Authority Model
 
 ### Event Log Is Source Of Truth
@@ -137,3 +158,4 @@ The target architecture is **not**:
 - `agentcore/adr/ADR-014-spec-and-custom-policy-backend.md`
 - `agentcore/adr/ADR-015-research-db-results-registry.md`
 - `agentcore/adr/ADR-016-opentui-product-shell.md`
+- `agentcore/adr/ADR-018-commander-tool-capability-and-investigation.md`

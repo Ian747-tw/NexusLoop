@@ -70,6 +70,8 @@ import { stableWakeSchedulerNavigationWriteRunOutcomeHash } from "./schedules/wa
 import { stableWakeSchedulerNavigationCheckpointWriteOutcomeHash } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-service"
 import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-registry"
 import { CommandAuthorityService } from "./authority/command-authority-service"
+import { CommanderToolService } from "./commander-tools/commander-tool-service"
+import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -1024,6 +1026,8 @@ describe("CommandAuthorityService", () => {
     expect(service.get("/opencode-result-review")).toMatchObject({ risk: "medium_risk_write", gate: "opencode_runtime", owner: "opencode_handoff", mutates_events: true, expected_event_kinds: ["opencode_result_review_recorded"] })
     expect(service.get("/opencode-result-reviews")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_opencode_result_reviews", mutates_events: false })
     expect(service.get("/result-review-summary")).toMatchObject({ slash_command: "/opencode-result-review-summary", risk: "safe_read", runtime_command: "runtime.opencode_result_review_summary", owner: "opencode_handoff", mutates_events: false })
+    expect(service.list({ command: "/commander-capabilities" })).toHaveLength(1)
+    expect(service.get("/commander-capabilities")).toMatchObject({ slash_command: "/commander-tool-summary", runtime_command: "runtime.commander_tool_catalog_summary", owner: "commander_tools" })
     expect(service.get("/research-ingestion-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_research_ingestion", owner: "research", mutates_events: false })
     expect(service.get("/research-ingestion-dry-run")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.record_research_ingestion", owner: "research", mutates_events: false })
     expect(service.get("/research-ingestion")).toMatchObject({ risk: "high_impact_write", gate: "opencode_runtime", owner: "research", mutates_events: true, expected_event_kinds: ["research_event", "research_memory_ingestion_recorded"] })
@@ -16816,7 +16820,8 @@ describe("Context budget registry", () => {
     expect(commander.budget.max_output_tokens).toBeGreaterThan(0)
     expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "raw_logs", inclusion_policy: "excluded_by_default", priority: "excluded" }))
     expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "research_memory", inclusion_policy: "if_relevant" }))
-    expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "tool_or_mcp_schema", inclusion_policy: "excluded_by_default" }))
+    expect(commander.budget.allocations).toContainEqual(expect.objectContaining({ section: "tool_or_mcp_schema", inclusion_policy: "if_relevant", priority: "medium" }))
+    expect(commander.budget.allocations.filter((item) => item.section === "tool_or_mcp_schema")).toHaveLength(1)
 
     const tokenCapped = await server.command("runtime.preview_context_budget", {
       purpose: "commander_research_decision",
@@ -24148,5 +24153,143 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(omittedResearch.source_refs).toHaveLength(0)
     expect(omitted.source_refs.some((ref: any) => ref.source_kind === "research_memory")).toBe(false)
     await server.shutdown()
+  })
+
+  test("Commander tool registry is curated, safe-read, searchable, deferred, and budgeted", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const before = await server.eventStore.readAll()
+    const validation = await server.command("runtime.validate_commander_tool_registry") as Record<string, any>
+    expect(validation).toMatchObject({ status: "ready", unsafe_exposure_count: 0, authority_mismatch_count: 0 })
+    const summary = await server.command("runtime.commander_tool_catalog_summary") as Record<string, any>
+    expect(summary).toMatchObject({ direct_external_write_count: 0, provider_call_count: 0 })
+    expect(summary.implemented_tools).toBeGreaterThan(10)
+    const memoryTools = await server.command("runtime.list_commander_tools", { namespace: "memory" }) as Array<Record<string, any>>
+    expect(memoryTools.map((tool) => tool.tool_id)).toContain("memory.search")
+    expect(memoryTools.every((tool) => tool.schema_metadata.schema_loaded === false)).toBe(true)
+    const runtimeReadTools = await server.command("runtime.list_commander_tools", { namespace: "runtime_read" }) as Array<Record<string, any>>
+    expect(runtimeReadTools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tool_id: "runtime.status", namespace: "runtime_read", availability: "implemented_read_surface" }),
+      expect.objectContaining({ tool_id: "runtime.mission_show", namespace: "runtime_read", authority_id: expect.stringContaining("command_authority_") }),
+    ]))
+    const repoTools = await server.command("runtime.list_commander_tools", { namespace: "repo_read" }) as Array<Record<string, any>>
+    expect(repoTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "repo.search_text", availability: "future_internal_read", runtime_command: undefined })]))
+    const githubTools = await server.command("runtime.list_commander_tools", { namespace: "github_read" }) as Array<Record<string, any>>
+    expect(githubTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "github.pr_checks", availability: "future_external_read", requires_network: true })]))
+    const governanceTools = await server.command("runtime.list_commander_tools", { namespace: "governance" }) as Array<Record<string, any>>
+    expect(governanceTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "governance.stage_pr_merge", availability: "future_governance_intent", side_effect_class: "governance_intent" })]))
+    const allToolIds = COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id)
+    expect(allToolIds).not.toContain("github.merge")
+    expect(allToolIds).not.toContain("github.approve")
+    expect(allToolIds.some((id) => /\.(shell|edit|patch|commit|push)$/.test(id))).toBe(false)
+    const selected = await server.command("runtime.get_commander_tool", { toolId: "memory.search" }) as Record<string, any>
+    expect(selected).toMatchObject({ tool_id: "memory.search", schema_metadata: expect.objectContaining({ schema_loaded: true }), instruction_semantics: "none" })
+    expect(Object.keys(selected.input_schema.properties)).toContain("query")
+    const search = await server.command("runtime.search_commander_tools", { query: "memory.search", phase: "proposal_investigation" }) as Record<string, any>
+    expect(search).toMatchObject({ execution_enabled: false, status: "ready" })
+    expect(search.matches[0]).toMatchObject({ tool_id: "memory.search", schema_loaded: false })
+    const noMatchSearch = await server.command("runtime.search_commander_tools", { query: "zzzz", phase: "proposal_investigation" }) as Record<string, any>
+    expect(noMatchSearch).toMatchObject({ execution_enabled: false, status: "empty", total_matches: 0, returned_matches: 0 })
+    expect(noMatchSearch.matches).toEqual([])
+    const crossPhaseSearch = await server.command("runtime.search_commander_tools", { query: "memory.show", phase: "general_read", allowed_in_phase_only: false }) as Record<string, any>
+    expect(crossPhaseSearch.matches[0]).toMatchObject({ tool_id: "memory.show", allowed_in_phase: false })
+    const schemaSearch = await server.command("runtime.search_commander_tools", { query: "research memory", include_schema: true, limit: 10 }) as Record<string, any>
+    expect(schemaSearch.matches.length).toBeLessThanOrEqual(3)
+    expect(schemaSearch.schema_bytes_returned).toBeGreaterThan(0)
+    const profile = await server.command("runtime.preview_commander_tool_profile", { phase: "proposal_investigation" }) as Record<string, any>
+    expect(profile).toMatchObject({ execution_enabled: false })
+    expect(profile.allowed_namespaces).toEqual(expect.arrayContaining(["memory", "continuity", "repo_read", "github_read", "external_research"]))
+    expect(profile).not.toHaveProperty("workflow_steps")
+    expect(profile.deferred_tool_ids).toEqual(expect.arrayContaining(["repo.search_text", "github.pr_checks", "external_research.search"]))
+    const governanceProfile = await server.command("runtime.preview_commander_tool_profile", { phase: "governance_review" }) as Record<string, any>
+    const governanceProfileIds = [...governanceProfile.always_loaded_tool_ids, ...governanceProfile.deferred_tool_ids, ...governanceProfile.unavailable_tool_ids, ...governanceProfile.staged_intent_tool_ids]
+    expect(governanceProfile.allowed_namespaces).toEqual(["core", "authority", "runtime_read", "opencode_read", "github_read", "governance"])
+    expect(governanceProfileIds.some((id: string) => id.startsWith("memory.") || id.startsWith("continuity."))).toBe(false)
+    expect(governanceProfileIds).toContain("governance.stage_pr_merge")
+    const governancePhaseTools = await server.command("runtime.list_commander_tools", { phase: "governance_review", limit: 50 }) as Array<Record<string, any>>
+    expect(governancePhaseTools.some((tool) => tool.namespace === "memory" || tool.namespace === "continuity")).toBe(false)
+    expect(governancePhaseTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "governance.stage_pr_merge", namespace: "governance" })]))
+    const governanceMemorySearch = await server.command("runtime.search_commander_tools", { query: "memory.summary", phase: "governance_review" }) as Record<string, any>
+    expect(governanceMemorySearch.matches.map((match: any) => match.tool_id)).not.toContain("memory.summary")
+    expect(governanceMemorySearch.matches.every((match: any) => match.allowed_in_phase === true)).toBe(true)
+    const governanceCrossProfileMemorySearch = await server.command("runtime.search_commander_tools", { query: "memory.summary", phase: "governance_review", allowed_in_phase_only: false }) as Record<string, any>
+    expect(governanceCrossProfileMemorySearch.matches[0]).toMatchObject({ tool_id: "memory.summary", allowed_in_phase: false })
+    const emergencyTools = await server.command("runtime.list_commander_tools", { phase: "emergency_inspection", limit: 50 }) as Array<Record<string, any>>
+    expect(emergencyTools.some((tool) => ["memory", "repo_read", "github_read", "external_research", "governance"].includes(tool.namespace))).toBe(false)
+    const generalReadProfile = await server.command("runtime.preview_commander_tool_profile", { phase: "general_read" }) as Record<string, any>
+    const generalReadToolIds = [...generalReadProfile.always_loaded_tool_ids, ...generalReadProfile.deferred_tool_ids, ...generalReadProfile.unavailable_tool_ids, ...generalReadProfile.staged_intent_tool_ids]
+    expect(generalReadToolIds).not.toContain("memory.show")
+    expect(generalReadToolIds).toContain("memory.search")
+    const bootstrap = await server.command("runtime.preview_commander_tool_bootstrap", { phase: "proposal_investigation", provider: "local", model: "local-medium" }) as Record<string, any>
+    expect(bootstrap).toMatchObject({ execution_enabled: false, over_budget: false })
+    expect(bootstrap.always_loaded_tools.map((tool: any) => tool.tool_id)).toContain("commander.tool_search")
+    expect(bootstrap.always_loaded_tools.every((tool: any) => tool.schema_metadata.schema_loaded === true)).toBe(true)
+    expect(bootstrap.deferred_namespaces.length).toBeGreaterThan(0)
+    expect(bootstrap.deferred_namespaces.map((item: any) => item.namespace)).toEqual(expect.arrayContaining(["core", "authority"]))
+    expect(bootstrap.deferred_namespaces.map((item: any) => item.namespace)).not.toContain("opencode_read")
+    expect(bootstrap.deferred_namespaces.every((item: any) => item.implemented_count + item.future_count + item.blocked_count > 0)).toBe(true)
+    const governanceBootstrap = await server.command("runtime.preview_commander_tool_bootstrap", { phase: "governance_review", provider: "local", model: "local-medium" }) as Record<string, any>
+    expect(governanceBootstrap.deferred_namespaces.map((item: any) => item.namespace)).not.toEqual(expect.arrayContaining(["memory", "continuity", "opencode_read"]))
+    expect(governanceBootstrap.deferred_namespaces.map((item: any) => item.namespace)).toEqual(expect.arrayContaining(["github_read", "governance"]))
+    expect(governanceBootstrap.deferred_namespaces.every((item: any) => item.implemented_count + item.future_count + item.blocked_count > 0)).toBe(true)
+    expect(bootstrap.tool_schema_allocation_tokens).toBeGreaterThan(0)
+    const budget = await server.command("runtime.preview_context_budget", { purpose: "commander_research_decision", role: "commander", provider: "local", model: "local-medium" }) as Record<string, any>
+    const allocations = budget.budget.allocations.filter((item: any) => item.section === "tool_or_mcp_schema")
+    expect(allocations).toHaveLength(1)
+    expect(allocations[0].max_tokens).toBeGreaterThan(0)
+    const executorBudget = await server.command("runtime.preview_context_budget", { purpose: "opencode_executor_session", role: "executor", provider: "opencode", model: "opencode-default" }) as Record<string, any>
+    expect(executorBudget.budget.allocations.filter((item: any) => item.section === "tool_or_mcp_schema")).toEqual([expect.objectContaining({ inclusion_policy: "excluded_by_default", max_tokens: undefined })])
+    const after = await server.eventStore.readAll()
+    expect(after).toHaveLength(before.length)
+    await expect(server.command("runtime.search_commander_tools", {})).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["commander tool search requires query"]) })
+    await expect(server.command("runtime.get_commander_tool", { toolId: "provider.call" })).rejects.toThrow("not found")
+    await expect(server.command("runtime.preview_commander_tool_profile", { phase: "unknown" })).rejects.toThrow("unsupported")
+  })
+
+  test("Commander tool registry validation rejects malformed, forbidden, and authority-mismatched descriptors", () => {
+    const service = new CommanderToolService({
+      contextBudgetService: {} as any,
+      tools: [
+        { ...COMMANDER_TOOL_REGISTRY[0], tool_id: "repo.shell" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, tool_id: "repo.write_file" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, tool_id: "repo.commit_changes" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.search")!, risk: "medium_risk_write" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.profile")!, requires_network: true },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.summary")!, requires_credentials: true },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.show")!, allowed_phases: [] },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_list")!, allowed_phases: ["not_a_phase" as any] },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.near_duplicates")!, runtime_command: "runtime.submit_user_message" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, runtime_command: "runtime.fake_repo_tree" },
+      ],
+      now: () => new Date(0),
+    })
+    const validation = service.validate()
+    expect(validation.status).toBe("blocked")
+    expect(validation.errors.join("\n")).toContain("forbidden direct tool capability")
+    expect(validation.invalid_tool_ids).toEqual(expect.arrayContaining(["repo.write_file", "repo.commit_changes"]))
+    expect(validation.errors.join("\n")).toContain("allowed_phases must contain known Commander phases")
+    expect(validation.errors.join("\n")).toContain("risk must match safe_read")
+    expect(validation.errors.join("\n")).toContain("runtime command must match authority record")
+    expect(validation.errors.join("\n")).toContain("unsafe requires_network")
+    expect(validation.errors.join("\n")).toContain("unsafe requires_credentials")
+    expect(validation.errors.join("\n")).toContain("future descriptor must not pretend to be executable")
+  })
+
+  test("Commander tool commands do not auto-start runtime clients", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter, researchProjectionMode: "disabled" })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+    await expect(client.command("runtime.commander_tool_catalog_summary")).resolves.toMatchObject({ provider_call_count: 0 })
+    await expect(client.command("runtime.list_commander_tools", { namespace: "memory" })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "memory.search" })]))
+    await expect(client.command("runtime.get_commander_tool", { toolId: "memory.search" })).resolves.toMatchObject({ schema_metadata: expect.objectContaining({ schema_loaded: true }) })
+    await expect(client.command("runtime.search_commander_tools", { query: "research memory" })).resolves.toMatchObject({ execution_enabled: false })
+    await expect(client.command("runtime.preview_commander_tool_profile", { phase: "general_read" })).resolves.toMatchObject({ execution_enabled: false })
+    await expect(client.command("runtime.preview_commander_tool_bootstrap", { phase: "general_read" })).resolves.toMatchObject({ execution_enabled: false })
+    await expect(client.command("runtime.validate_commander_tool_registry")).resolves.toMatchObject({ status: "ready" })
+    expect(adapter.startCalls).toBe(0)
+    await client.shutdown()
   })
 })

@@ -205,8 +205,8 @@ function sectionRules(purpose: ContextBudgetPurpose): Array<ContextBudgetAllocat
     { section: "raw_logs", priority: "excluded", inclusion_policy: "excluded_by_default", notes: "raw logs are excluded by default", weight: 0 },
     { section: "reserved_output", priority: "required", inclusion_policy: "always", notes: "reserved output space; not input context", weight: 0 },
     { section: "safety_margin", priority: "required", inclusion_policy: "always", notes: "reserved safety margin; not input context", weight: 0 },
-    { section: "tool_or_mcp_schema", priority: "low", inclusion_policy: "excluded_by_default", notes: "tool/MCP schemas are excluded unless a future route selects specific tools", weight: 0 },
   ]
+  const excludedToolSchema: ContextBudgetAllocation & { weight: number } = { section: "tool_or_mcp_schema", priority: "low", inclusion_policy: "excluded_by_default", notes: "tool/MCP schemas are excluded unless a route selects specific tools", weight: 0 }
   if (purpose === "opencode_executor_session") return [
     { section: "role_kernel", priority: "required", inclusion_policy: "always", weight: 14 },
     { section: "approved_spec", priority: "medium", inclusion_policy: "if_relevant", notes: "bounded spec excerpt only", weight: 8 },
@@ -217,6 +217,7 @@ function sectionRules(purpose: ContextBudgetPurpose): Array<ContextBudgetAllocat
     { section: "research_memory", priority: "low", inclusion_policy: "pointer_only", notes: "no full research.db dump", weight: 4 },
     { section: "active_sessions", priority: "low", inclusion_policy: "pointer_only", weight: 3 },
     { section: "recent_deltas", priority: "medium", inclusion_policy: "if_relevant", weight: 5 },
+    excludedToolSchema,
     ...common,
   ]
   if (purpose === "wake_supervisor") return [
@@ -227,6 +228,7 @@ function sectionRules(purpose: ContextBudgetPurpose): Array<ContextBudgetAllocat
     { section: "recent_deltas", priority: "high", inclusion_policy: "always", weight: 12 },
     { section: "commander_guidance", priority: "medium", inclusion_policy: "if_relevant", weight: 8 },
     { section: "research_memory", priority: "low", inclusion_policy: "if_relevant", notes: "bounded retrieval only", weight: 4 },
+    excludedToolSchema,
     ...common,
   ]
   if (purpose === "research_retrieval") return [
@@ -235,6 +237,21 @@ function sectionRules(purpose: ContextBudgetPurpose): Array<ContextBudgetAllocat
     { section: "external_research", priority: "medium", inclusion_policy: "if_relevant", weight: 12 },
     { section: "artifact_summaries", priority: "medium", inclusion_policy: "pointer_only", weight: 8 },
     { section: "mission_state", priority: "medium", inclusion_policy: "if_relevant", weight: 8 },
+    excludedToolSchema,
+    ...common,
+  ]
+  if (purpose === "commander_research_decision") return [
+    { section: "role_kernel", priority: "required", inclusion_policy: "always", weight: 10 },
+    { section: "approved_spec", priority: "high", inclusion_policy: "always", weight: 12 },
+    { section: "mission_state", priority: "high", inclusion_policy: "if_relevant", weight: 14 },
+    { section: "research_memory", priority: "high", inclusion_policy: "if_relevant", notes: "bounded retrieved findings; never full research.db", weight: 16 },
+    { section: "external_research", priority: "low", inclusion_policy: "pointer_only", weight: 4 },
+    { section: "active_sessions", priority: "medium", inclusion_policy: "if_relevant", weight: 8 },
+    { section: "executor_progress", priority: "medium", inclusion_policy: "if_relevant", weight: 7 },
+    { section: "commander_guidance", priority: "medium", inclusion_policy: "if_relevant", weight: 6 },
+    { section: "human_interventions", priority: "medium", inclusion_policy: "if_relevant", weight: 5 },
+    { section: "recent_deltas", priority: "high", inclusion_policy: "if_relevant", weight: 10 },
+    { section: "tool_or_mcp_schema", priority: "medium", inclusion_policy: "if_relevant", notes: "bounded Commander tool bootstrap schemas; execution remains disabled", weight: 6 },
     ...common,
   ]
   return [
@@ -248,6 +265,7 @@ function sectionRules(purpose: ContextBudgetPurpose): Array<ContextBudgetAllocat
     { section: "commander_guidance", priority: "medium", inclusion_policy: "if_relevant", weight: 6 },
     { section: "human_interventions", priority: "medium", inclusion_policy: "if_relevant", weight: 5 },
     { section: "recent_deltas", priority: "high", inclusion_policy: "if_relevant", weight: 10 },
+    excludedToolSchema,
     ...common,
   ]
 }
