@@ -169,12 +169,9 @@ export class CommanderToolService {
       bytes += toolBytes
     }
     const eligibleTools = this.tools.filter((tool) => isToolAllowedInPhase(tool, phase))
-    const loadedAlwaysLoadedNamespaces = new Set(loaded.filter((tool) => tool.load_policy === "always_loaded").map((tool) => tool.namespace))
-    const deferred = namespaceSummaries(eligibleTools).filter((item) =>
-      namespaceByPhase(phase).includes(item.namespace)
-      && !loadedAlwaysLoadedNamespaces.has(item.namespace)
-      && namespaceSummaryHasRecords(item)
-    )
+    const loadedToolIds = new Set(loaded.map((tool) => tool.tool_id))
+    const deferredTools = eligibleTools.filter((tool) => tool.load_policy === "deferred" && !loadedToolIds.has(tool.tool_id))
+    const deferred = namespaceSummaries(deferredTools).filter((item) => namespaceByPhase(phase).includes(item.namespace) && namespaceSummaryHasRecords(item))
     return {
       preview_id: `commander_tool_bootstrap_${hash({ phase, loaded: loaded.map((tool) => tool.tool_id), budget: budget.budget.budget_id }).slice(0, 16)}`,
       phase,

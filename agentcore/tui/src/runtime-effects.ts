@@ -18763,7 +18763,11 @@ function parseCommanderToolArgs(args: string[], limitMax = 20): Record<string, u
 
 function parseCommanderToolSearchArgs(args: string[]): Record<string, unknown> {
   if (args.length === 0) throw new Error("commander tool search requires query")
-  if (!args.some((arg) => arg.startsWith("query="))) return { ...parseCommanderToolArgs(args.filter((arg) => arg.includes("="))), query: args.filter((arg) => !arg.includes("=")).join(" ") || args.join(" ") }
+  if (!args.some((arg) => arg.startsWith("query="))) {
+    const queryParts = args.filter((arg) => !arg.includes("="))
+    if (queryParts.length === 0) throw new Error("commander tool search requires query")
+    return { ...parseCommanderToolArgs(args.filter((arg) => arg.includes("="))), query: queryParts.join(" ") }
+  }
   const known = new Set(["query", "phase", "namespace", "risk", "side_effect_class", "availability", "implemented_only", "allowed_in_phase_only", "include_schema", "limit"])
   const payload: Record<string, unknown> = {}
   let index = 0

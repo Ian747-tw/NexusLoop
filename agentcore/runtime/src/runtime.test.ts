@@ -24226,6 +24226,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(bootstrap.always_loaded_tools.map((tool: any) => tool.tool_id)).toContain("commander.tool_search")
     expect(bootstrap.always_loaded_tools.every((tool: any) => tool.schema_metadata.schema_loaded === true)).toBe(true)
     expect(bootstrap.deferred_namespaces.length).toBeGreaterThan(0)
+    expect(bootstrap.deferred_namespaces.map((item: any) => item.namespace)).toEqual(expect.arrayContaining(["core", "authority"]))
     expect(bootstrap.deferred_namespaces.map((item: any) => item.namespace)).not.toContain("opencode_read")
     expect(bootstrap.deferred_namespaces.every((item: any) => item.implemented_count + item.future_count + item.blocked_count > 0)).toBe(true)
     const governanceBootstrap = await server.command("runtime.preview_commander_tool_bootstrap", { phase: "governance_review", provider: "local", model: "local-medium" }) as Record<string, any>
