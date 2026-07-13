@@ -24251,6 +24251,8 @@ describe("ProcessOpenCodeAdapter", () => {
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.search")!, risk: "medium_risk_write" },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.profile")!, requires_network: true },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.summary")!, requires_credentials: true },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.show")!, allowed_phases: [] },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_list")!, allowed_phases: ["not_a_phase" as any] },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.near_duplicates")!, runtime_command: "runtime.submit_user_message" },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, runtime_command: "runtime.fake_repo_tree" },
       ],
@@ -24259,6 +24261,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const validation = service.validate()
     expect(validation.status).toBe("blocked")
     expect(validation.errors.join("\n")).toContain("forbidden direct tool capability")
+    expect(validation.errors.join("\n")).toContain("allowed_phases must contain known Commander phases")
     expect(validation.errors.join("\n")).toContain("risk must match safe_read")
     expect(validation.errors.join("\n")).toContain("runtime command must match authority record")
     expect(validation.errors.join("\n")).toContain("unsafe requires_network")

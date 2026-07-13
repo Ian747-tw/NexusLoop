@@ -208,6 +208,7 @@ export class CommanderToolService {
       seen.add(tool.tool_id)
       if (!/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(tool.tool_id)) mark(tool.tool_id, "tool_id must be lowercase namespace-qualified identifier")
       if (!COMMANDER_TOOL_NAMESPACES.includes(tool.namespace)) mark(tool.tool_id, "unknown namespace")
+      if (tool.allowed_phases.length === 0 || tool.allowed_phases.some((phase) => !COMMANDER_TOOL_PHASES.includes(phase))) mark(tool.tool_id, "descriptor allowed_phases must contain known Commander phases")
       if (!tool.version || tool.input_schema?.schema_version !== "nxl-commander-tool-v1" || tool.output_schema?.schema_version !== "nxl-commander-tool-v1") {
         schemaViolation += 1
         mark(tool.tool_id, "schema version is missing or unsupported")
