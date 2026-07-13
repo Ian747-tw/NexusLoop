@@ -24333,6 +24333,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(tests.result)).toContain("bun test")
     const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "click", dependency_group: "project.dependencies", direct: true })]))
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
   })
 
@@ -24357,6 +24358,24 @@ describe("ProcessOpenCodeAdapter", () => {
     const log = await server.command("runtime.commander_repo_git_log", { limit: 3 }) as Record<string, any>
     expect(log.result.commits[0]).toMatchObject({ subject_preview: "initial" })
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
+  })
+
+  test("Commander restricted Git reads disable configured fsmonitor hooks", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "tracked.txt"), "first\n")
+    await writeFile(join(dir, "fsmonitor-hook.sh"), "#!/bin/sh\nprintf touched > fsmonitor-ran\n")
+    await chmod(join(dir, "fsmonitor-hook.sh"), 0o755)
+    expect(Bun.spawnSync({ cmd: ["git", "init"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "core.fsmonitor", join(dir, "fsmonitor-hook.sh")], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status).toMatchObject({ tool_id: "repo.git_status", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false })
+    await expect(Bun.file(join(dir, "fsmonitor-ran")).exists()).resolves.toBe(false)
   })
 
   test("Commander tool commands do not auto-start runtime clients", async () => {

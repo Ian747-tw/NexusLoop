@@ -428,14 +428,60 @@ async function manifestFiles(root: RootInfo, includeUpstream: boolean): Promise<
 function parsePyprojectDependencies(path: string, text: string, includeDev: boolean): Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }> {
   const out: Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }> = []
   let group = "project"
+  let arrayGroup: string | undefined
+  let arrayBuffer = ""
+  const flushArray = () => {
+    if (!arrayGroup) return
+    for (const dep of parseTomlStringArray(arrayBuffer)) addPythonDependency(out, path, dep, arrayGroup)
+    arrayGroup = undefined
+    arrayBuffer = ""
+  }
   for (const line of text.split(/\r?\n/)) {
     const section = line.match(/^\[([^\]]+)\]/)
-    if (section) group = section[1]
+    if (section) {
+      flushArray()
+      group = section[1]
+      continue
+    }
+    if (arrayGroup) {
+      arrayBuffer += `\n${line}`
+      if (line.includes("]")) flushArray()
+      continue
+    }
     if (!includeDev && /dev|test/i.test(group)) continue
-    const dep = line.match(/^\s*["']?([A-Za-z0-9_.-]+)(?:[<>=!~ ].*)?["']?\s*,?\s*$/)
-    if (dep && /dependencies|optional-dependencies|dependency-groups/.test(group)) out.push({ ecosystem: "python", manifest_path: path, package_name: dep[1], version_constraint: bound(line.replace(/[",]/g, ""), 120), dependency_group: group, direct: true })
+    const assignment = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=\s*(\[.*)$/)
+    if (assignment) {
+      const key = assignment[1]
+      const value = assignment[2]
+      const dependencyGroup = group === "project" && key === "dependencies"
+        ? "project.dependencies"
+        : group === "project.optional-dependencies"
+          ? `project.optional-dependencies.${key}`
+          : group === "dependency-groups"
+            ? `dependency-groups.${key}`
+            : undefined
+      if (dependencyGroup && (includeDev || !/dev|test/i.test(dependencyGroup))) {
+        arrayGroup = dependencyGroup
+        arrayBuffer = value
+        if (value.includes("]")) flushArray()
+        continue
+      }
+    }
+    const dep = line.match(/^\s*["']([^"']+)["']\s*,?\s*$/)
+    if (dep && /dependencies|optional-dependencies|dependency-groups/.test(group)) addPythonDependency(out, path, dep[1], group)
   }
+  flushArray()
   return out.slice(0, 120)
+}
+
+function parseTomlStringArray(text: string): string[] {
+  return [...text.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]).filter(Boolean)
+}
+
+function addPythonDependency(out: Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }>, path: string, raw: string, group: string): void {
+  const name = raw.match(/^\s*([A-Za-z0-9_.-]+)/)?.[1]
+  if (!name) return
+  out.push({ ecosystem: "python", manifest_path: path, package_name: name, version_constraint: bound(raw, 120), dependency_group: group, direct: true })
 }
 
 function declarationPattern(symbol: string): RegExp {

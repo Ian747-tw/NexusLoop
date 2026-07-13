@@ -6,6 +6,16 @@ import type { CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusR
 
 const TIMEOUT_MS = 2500
 const MAX_STDOUT = 96_000
+const SAFE_GIT_CONFIG_ARGS = [
+  "-c", "core.fsmonitor=false",
+  "-c", "core.fsmonitorHookVersion=0",
+  "-c", "core.untrackedCache=false",
+  "-c", "core.pager=cat",
+  "-c", "pager.status=false",
+  "-c", "pager.diff=false",
+  "-c", "pager.log=false",
+  "-c", "diff.external=",
+] as const
 
 export type RestrictedGitReadAdapterOptions = {
   projectDir: string
@@ -95,13 +105,15 @@ export class RestrictedGitReadAdapter {
       GIT_PAGER: "cat",
       PAGER: "cat",
       GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
     }
     return new Promise((resolvePromise) => {
       let stdout = Buffer.alloc(0)
       let stderr = Buffer.alloc(0)
       let settled = false
       let truncated = false
-      const child = spawn("git", args, { cwd: projectRoot, shell: false, env })
+      const child = spawn("git", [...SAFE_GIT_CONFIG_ARGS, ...args], { cwd: projectRoot, shell: false, env })
       const finish = (error?: string) => {
         if (settled) return
         settled = true
