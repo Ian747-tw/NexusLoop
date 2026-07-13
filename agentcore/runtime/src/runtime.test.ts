@@ -24201,6 +24201,22 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(profile).toMatchObject({ execution_enabled: false })
     expect(profile.allowed_namespaces).toEqual(expect.arrayContaining(["memory", "continuity", "repo_read", "github_read", "external_research"]))
     expect(profile).not.toHaveProperty("workflow_steps")
+    expect(profile.deferred_tool_ids).toEqual(expect.arrayContaining(["repo.search_text", "github.pr_checks", "external_research.search"]))
+    const governanceProfile = await server.command("runtime.preview_commander_tool_profile", { phase: "governance_review" }) as Record<string, any>
+    const governanceProfileIds = [...governanceProfile.always_loaded_tool_ids, ...governanceProfile.deferred_tool_ids, ...governanceProfile.unavailable_tool_ids, ...governanceProfile.staged_intent_tool_ids]
+    expect(governanceProfile.allowed_namespaces).toEqual(["core", "authority", "runtime_read", "opencode_read", "github_read", "governance"])
+    expect(governanceProfileIds.some((id: string) => id.startsWith("memory.") || id.startsWith("continuity."))).toBe(false)
+    expect(governanceProfileIds).toContain("governance.stage_pr_merge")
+    const governancePhaseTools = await server.command("runtime.list_commander_tools", { phase: "governance_review", limit: 50 }) as Array<Record<string, any>>
+    expect(governancePhaseTools.some((tool) => tool.namespace === "memory" || tool.namespace === "continuity")).toBe(false)
+    expect(governancePhaseTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "governance.stage_pr_merge", namespace: "governance" })]))
+    const governanceMemorySearch = await server.command("runtime.search_commander_tools", { query: "memory.summary", phase: "governance_review" }) as Record<string, any>
+    expect(governanceMemorySearch.matches.map((match: any) => match.tool_id)).not.toContain("memory.summary")
+    expect(governanceMemorySearch.matches.every((match: any) => match.allowed_in_phase === true)).toBe(true)
+    const governanceCrossProfileMemorySearch = await server.command("runtime.search_commander_tools", { query: "memory.summary", phase: "governance_review", allowed_in_phase_only: false }) as Record<string, any>
+    expect(governanceCrossProfileMemorySearch.matches[0]).toMatchObject({ tool_id: "memory.summary", allowed_in_phase: false })
+    const emergencyTools = await server.command("runtime.list_commander_tools", { phase: "emergency_inspection", limit: 50 }) as Array<Record<string, any>>
+    expect(emergencyTools.some((tool) => ["memory", "repo_read", "github_read", "external_research", "governance"].includes(tool.namespace))).toBe(false)
     const generalReadProfile = await server.command("runtime.preview_commander_tool_profile", { phase: "general_read" }) as Record<string, any>
     const generalReadToolIds = [...generalReadProfile.always_loaded_tool_ids, ...generalReadProfile.deferred_tool_ids, ...generalReadProfile.unavailable_tool_ids, ...generalReadProfile.staged_intent_tool_ids]
     expect(generalReadToolIds).not.toContain("memory.show")
@@ -24210,6 +24226,9 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(bootstrap.always_loaded_tools.map((tool: any) => tool.tool_id)).toContain("commander.tool_search")
     expect(bootstrap.always_loaded_tools.every((tool: any) => tool.schema_metadata.schema_loaded === true)).toBe(true)
     expect(bootstrap.deferred_namespaces.length).toBeGreaterThan(0)
+    const governanceBootstrap = await server.command("runtime.preview_commander_tool_bootstrap", { phase: "governance_review", provider: "local", model: "local-medium" }) as Record<string, any>
+    expect(governanceBootstrap.deferred_namespaces.map((item: any) => item.namespace)).not.toEqual(expect.arrayContaining(["memory", "continuity"]))
+    expect(governanceBootstrap.deferred_namespaces.map((item: any) => item.namespace)).toEqual(expect.arrayContaining(["github_read", "governance"]))
     expect(bootstrap.tool_schema_allocation_tokens).toBeGreaterThan(0)
     const budget = await server.command("runtime.preview_context_budget", { purpose: "commander_research_decision", role: "commander", provider: "local", model: "local-medium" }) as Record<string, any>
     const allocations = budget.budget.allocations.filter((item: any) => item.section === "tool_or_mcp_schema")

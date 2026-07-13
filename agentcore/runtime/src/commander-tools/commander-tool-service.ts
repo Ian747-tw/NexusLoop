@@ -110,8 +110,8 @@ export class CommanderToolService {
     const generatedAt = this.now().toISOString()
     const contract = profileContract(phase)
     const allowed = namespaceByPhase(phase)
-    const tools = this.tools.filter((tool) => allowed.includes(tool.namespace) && tool.allowed_phases.includes(phase))
-    const always = CORE_ORDER.filter((id) => this.tools.some((tool) => tool.tool_id === id && tool.allowed_phases.includes(phase)))
+    const tools = this.tools.filter((tool) => isToolAllowedInPhase(tool, phase))
+    const always = CORE_ORDER.filter((id) => this.tools.some((tool) => tool.tool_id === id && isToolAllowedInPhase(tool, phase)))
     return {
       profile_id: `commander_tool_profile_${phase}`,
       phase,
@@ -150,7 +150,7 @@ export class CommanderToolService {
     let tokens = 0
     let bytes = 0
     for (const toolId of CORE_ORDER) {
-      const tool = this.tools.find((item) => item.tool_id === toolId && item.allowed_phases.includes(phase))
+      const tool = this.tools.find((item) => item.tool_id === toolId && isToolAllowedInPhase(item, phase))
       if (!tool) continue
       const toolBytes = tool.schema_metadata.input_schema_bytes + tool.schema_metadata.output_schema_bytes
       const toolTokens = tool.schema_metadata.estimated_schema_tokens
@@ -168,7 +168,8 @@ export class CommanderToolService {
       tokens += toolTokens
       bytes += toolBytes
     }
-    const deferred = namespaceSummaries(this.tools).filter((item) => namespaceByPhase(phase).includes(item.namespace) && !loaded.some((tool) => tool.namespace === item.namespace && tool.load_policy === "always_loaded"))
+    const eligibleTools = this.tools.filter((tool) => isToolAllowedInPhase(tool, phase))
+    const deferred = namespaceSummaries(eligibleTools).filter((item) => namespaceByPhase(phase).includes(item.namespace) && !loaded.some((tool) => tool.namespace === item.namespace && tool.load_policy === "always_loaded"))
     return {
       preview_id: `commander_tool_bootstrap_${hash({ phase, loaded: loaded.map((tool) => tool.tool_id), budget: budget.budget.budget_id }).slice(0, 16)}`,
       phase,
@@ -179,7 +180,7 @@ export class CommanderToolService {
       tool_schema_allocation_bytes: allocation?.max_bytes,
       always_loaded_tools: loaded,
       deferred_namespaces: deferred,
-      deferred_tool_count: this.tools.filter((tool) => tool.load_policy === "deferred").length,
+      deferred_tool_count: eligibleTools.filter((tool) => tool.load_policy === "deferred").length,
       initial_schema_tokens: tokens,
       initial_schema_bytes: bytes,
       over_budget: Boolean((tokenCap && tokens > tokenCap) || (byteCap && bytes > byteCap)),
@@ -239,7 +240,7 @@ export class CommanderToolService {
       const profile = this.profile({ phase })
       for (const toolId of profile.always_loaded_tool_ids) {
         const tool = tools.find((item) => item.tool_id === toolId)
-        if (!tool || !tool.allowed_phases.includes(phase)) mark(toolId, `always-loaded tool is not valid for phase ${phase}`)
+        if (!tool || !isToolAllowedInPhase(tool, phase)) mark(toolId, `always-loaded tool is not valid for phase ${phase}`)
       }
       if (profile.always_loaded_tool_ids.length > 4) errors.push(`phase ${phase} has too many always-loaded tools`)
     }
@@ -275,7 +276,7 @@ export class CommanderToolService {
   private filterTools(input: CommanderToolListInput | CommanderToolSearchInput): CommanderToolDescriptor[] {
     const applyPhaseFilter = !("query" in input) || input.allowed_in_phase_only !== false
     return this.tools
-      .filter((tool) => !applyPhaseFilter || !input.phase || tool.allowed_phases.includes(input.phase))
+      .filter((tool) => !applyPhaseFilter || !input.phase || isToolAllowedInPhase(tool, input.phase))
       .filter((tool) => !input.namespace || tool.namespace === input.namespace)
       .filter((tool) => !input.risk || tool.risk === input.risk)
       .filter((tool) => !input.side_effect_class || tool.side_effect_class === input.side_effect_class)
@@ -345,7 +346,7 @@ function scoreTool(tool: CommanderToolDescriptor, query: string, phase?: Command
     if (tool.keywords.some((keyword) => keyword.includes(term))) { score += 8; matchedFields.add("keywords") }
     if (tool.description.toLowerCase().includes(term)) { score += 4; matchedFields.add("description") }
   }
-  const allowed = phase ? tool.allowed_phases.includes(phase) : true
+  const allowed = phase ? isToolAllowedInPhase(tool, phase) : true
   if (matchedFields.size > 0) {
     if (allowed) score += 3
     if (tool.availability === "implemented_read_surface") score += 2
@@ -368,6 +369,10 @@ function scoreTool(tool: CommanderToolDescriptor, query: string, phase?: Command
     schema_hash: tool.schema_metadata.input_schema_hash,
     recommended_command: `/commander-tool-show ${tool.tool_id}`,
   }
+}
+
+function isToolAllowedInPhase(tool: CommanderToolDescriptor, phase: CommanderToolPhase): boolean {
+  return namespaceByPhase(phase).includes(tool.namespace) && tool.allowed_phases.includes(phase)
 }
 
 function namespaceByPhase(phase: CommanderToolPhase): CommanderToolNamespace[] {
