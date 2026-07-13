@@ -24,6 +24,21 @@ export type RestrictedGitReadAdapterOptions = {
   maxStdoutBytes?: number
 }
 
+export function restrictedGitReadEnv(): Record<string, string> {
+  return {
+    PATH: process.env.PATH ?? "",
+    HOME: process.env.HOME ?? "",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_PAGER: "cat",
+    PAGER: "cat",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+  }
+}
+
 export class RestrictedGitReadAdapter {
   private readonly timeoutMs: number
   private readonly maxStdoutBytes: number
@@ -111,17 +126,7 @@ export class RestrictedGitReadAdapter {
   private run(args: string[]): Promise<{ stdout: string; stderr: string; error?: string; warnings: string[]; truncated: boolean }> {
     const warnings: string[] = []
     const projectRoot = resolve(this.options.projectDir)
-    const env: Record<string, string> = {
-      PATH: process.env.PATH ?? "",
-      HOME: process.env.HOME ?? "",
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_OPTIONAL_LOCKS: "0",
-      GIT_PAGER: "cat",
-      PAGER: "cat",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_CONFIG_SYSTEM: "/dev/null",
-    }
+    const env = restrictedGitReadEnv()
     return new Promise((resolvePromise) => {
       let stdout = Buffer.alloc(0)
       let stderr = Buffer.alloc(0)

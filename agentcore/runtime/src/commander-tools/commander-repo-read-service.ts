@@ -84,10 +84,10 @@ export class CommanderRepoReadService {
     const includeUpstream = boolean(input.includeUpstream ?? input.include_upstream, false)
     const extensions = csv(input.extensions).map((item) => item.startsWith(".") ? item : `.${item}`)
     const root = await rootInfo(this.options.projectDir)
-    const checked = await resolveSafePath(root, rootPath, { allowDirectory: true, includeUpstream })
+    const checked = blockers.length === 0 ? await resolveSafePath(root, rootPath, { allowDirectory: true, includeUpstream }) : { error: undefined, relative: rootPath, absolute: undefined }
     if (checked.error) blockers.push(checked.error)
     let fileScan: { files: string[]; omitted: number; capped: boolean } = { files: [], omitted: 0, capped: false }
-    if (!checked.error && checked.absolute) fileScan = await collectFiles(root, checked.absolute, includeUpstream, maxFiles, (rel) => extensions.length === 0 || extensions.includes(extname(rel)))
+    if (blockers.length === 0 && !checked.error && checked.absolute) fileScan = await collectFiles(root, checked.absolute, includeUpstream, maxFiles, (rel) => extensions.length === 0 || extensions.includes(extname(rel)))
     const files = fileScan.files
     let scannedFiles = 0
     let scannedBytes = 0

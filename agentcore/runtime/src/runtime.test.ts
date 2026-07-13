@@ -73,6 +73,7 @@ import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-regist
 import { CommandAuthorityService } from "./authority/command-authority-service"
 import { CommanderToolService } from "./commander-tools/commander-tool-service"
 import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
+import { restrictedGitReadEnv } from "./commander-tools/restricted-git-read-adapter"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -24395,6 +24396,11 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.config/gcloud")
     const search = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(search.result.matches[0]).toMatchObject({ path: "src/sample.ts", line_number: 1 })
+    const missingQuerySearch = await server.command("runtime.commander_repo_search_text", { path: "." }) as Record<string, any>
+    expect(missingQuerySearch.status).toBe("blocked")
+    expect(missingQuerySearch.blockers).toContain("repo text search requires query")
+    expect(missingQuerySearch.result).toBeNull()
+    expect(missingQuerySearch.scanned_items).toBe(0)
     await mkdir(join(dir, "mixed"), { recursive: true })
     for (let index = 0; index < 8; index += 1) {
       await writeFile(join(dir, "mixed", `a-${index}.md`), "CommanderToolServiceSample in ignored markdown\n")
@@ -24602,6 +24608,17 @@ describe("ProcessOpenCodeAdapter", () => {
     const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
     expect(status).toMatchObject({ tool_id: "repo.git_status", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false })
     await expect(Bun.file(join(dir, "fsmonitor-ran")).exists()).resolves.toBe(false)
+  })
+
+  test("Commander restricted Git reads disable lazy network fetches", () => {
+    expect(restrictedGitReadEnv()).toMatchObject({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_OPTIONAL_LOCKS: "0",
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+    })
   })
 
   test("Commander tool commands do not auto-start runtime clients", async () => {
