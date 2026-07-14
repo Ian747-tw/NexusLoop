@@ -24387,6 +24387,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await mkdir(join(dir, "nested", ".terraform.d"), { recursive: true })
     await writeFile(join(dir, "nested", ".terraform.d", "credentials.tfrc.json"), "{\"credentials\":\"SHOULD_NOT_LEAK\"}\n")
     await writeFile(join(dir, ".env"), "TOKEN=hidden")
+    await writeFile(join(dir, "prod.env"), "DATABASE_URL=SHOULD_NOT_LEAK_DB\n")
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0", "private-url": "git+https://user:SHOULD_NOT_LEAK@example.com/repo.git" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
     const packageLockText = `{"lockfileVersion":3,"packages":{"large":"${"x".repeat(1_100_000)}"}}`
     await writeFile(join(dir, "package-lock.json"), packageLockText)
@@ -24406,6 +24407,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(tree).toMatchObject({ tool_id: "repo.tree", trust_class: "repository_content_untrusted", instruction_semantics: "none", filesystem_written: false, events_appended: false, shell_used: false })
     expect(tree.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ path: ".nxl", readable: false, excluded_reason: "excluded by traversal policy" })]))
     expect(tree.result.entries.some((entry: any) => entry.path.startsWith(".nxl/"))).toBe(false)
+    expect(JSON.stringify(tree.result)).not.toContain("prod.env")
     const sensitiveTree = await server.command("runtime.commander_repo_tree", { path: "nested", depth: 3, include_hidden: true }) as Record<string, any>
     expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.ssh")
     expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.config/gcloud")
@@ -24428,6 +24430,9 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(missingQuerySearch.blockers).toContain("repo text search requires query")
     expect(missingQuerySearch.result).toBeNull()
     expect(missingQuerySearch.scanned_items).toBe(0)
+    const envSearch = await server.command("runtime.commander_repo_search_text", { query: "DATABASE_URL", path: "." }) as Record<string, any>
+    expect(JSON.stringify(envSearch.result)).not.toContain("prod.env")
+    expect(JSON.stringify(envSearch.result)).not.toContain("SHOULD_NOT_LEAK_DB")
     await mkdir(join(dir, "mixed"), { recursive: true })
     for (let index = 0; index < 8; index += 1) {
       await writeFile(join(dir, "mixed", `a-${index}.md`), "CommanderToolServiceSample in ignored markdown\n")
@@ -24479,6 +24484,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_repo_read_lines", { path: "../outside" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["path traversal outside the project root is not allowed"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "prod.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".envrc" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".git-credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: ".aws/credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
@@ -24536,16 +24542,6 @@ describe("ProcessOpenCodeAdapter", () => {
       await writeFile(join(dir, "bulk-symbol", `sym-${String(index).padStart(3, "0")}.ts`), symbolFiller)
     }
     await writeFile(join(dir, "bulk-symbol", "zz-after-cap.ts"), "export class AfterCapSymbol {}\n")
-    await mkdir(join(dir, "asset-heavy-symbol"), { recursive: true })
-    for (let index = 0; index < 3010; index += 1) {
-      await writeFile(join(dir, "asset-heavy-symbol", `asset-${String(index).padStart(4, "0")}.md`), "asset metadata\n")
-    }
-    await writeFile(join(dir, "asset-heavy-symbol", "zz-source.ts"), "export class AssetHeavySymbol {}\n")
-    await mkdir(join(dir, "asset-capped-symbol"), { recursive: true })
-    for (let index = 0; index < 4010; index += 1) {
-      await writeFile(join(dir, "asset-capped-symbol", `asset-${String(index).padStart(4, "0")}.md`), "asset metadata\n")
-    }
-    await writeFile(join(dir, "asset-capped-symbol", "zz-source.ts"), "export class AssetCappedSymbol {}\n")
     await mkdir(join(dir, "hashes"), { recursive: true })
     const firstSecret = "export const api_key = first-secret-value\nexport const visibleHashNeedle = true\n"
     const secondSecret = "export const api_key = second-secret-value\nexport const visibleHashNeedle = true\n"
@@ -24561,13 +24557,6 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(symbol.result.candidates).toHaveLength(0)
     expect(symbol.omitted_items).toBeGreaterThan(0)
     expect(symbol.warnings.join(" ")).toContain("repository scan byte/time cap reached")
-    const assetHeavySymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetHeavySymbol", path: "asset-heavy-symbol", limit: 5 }) as Record<string, any>
-    expect(assetHeavySymbol.result.candidates).toEqual([expect.objectContaining({ path: "asset-heavy-symbol/zz-source.ts", declaration_kind: "class", confidence: "exact_declaration" })])
-    expect(assetHeavySymbol.warnings.join(" ")).not.toContain("candidate collection capped")
-    const assetCappedSymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetCappedSymbol", path: "asset-capped-symbol", limit: 5 }) as Record<string, any>
-    expect(assetCappedSymbol.result.candidates).toHaveLength(0)
-    expect(assetCappedSymbol.omitted_items).toBeGreaterThan(0)
-    expect(assetCappedSymbol.warnings.join(" ")).toContain("repo symbol candidate collection capped before traversal completed")
     const firstRead = await server.command("runtime.commander_repo_read_lines", { path: "hashes/first.ts", start_line: 1, end_line: 2 }) as Record<string, any>
     const secondRead = await server.command("runtime.commander_repo_read_lines", { path: "hashes/second.ts", start_line: 1, end_line: 2 }) as Record<string, any>
     expect(firstRead.result.lines[0].text).toBe(secondRead.result.lines[0].text)
@@ -24583,6 +24572,29 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(hashSymbol.result.candidates.find((candidate: any) => candidate.path === "hashes/first.ts").content_hash).toBe(firstRead.result.content_hash)
   })
 
+  test("Commander repository symbol scans filter non-code before the file cap and report traversal caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await mkdir(join(dir, "asset-heavy-symbol"), { recursive: true })
+    for (let index = 0; index < 3010; index += 1) {
+      await writeFile(join(dir, "asset-heavy-symbol", `asset-${String(index).padStart(4, "0")}.md`), "asset metadata\n")
+    }
+    await writeFile(join(dir, "asset-heavy-symbol", "zz-source.ts"), "export class AssetHeavySymbol {}\n")
+    await mkdir(join(dir, "asset-capped-symbol"), { recursive: true })
+    for (let index = 0; index < 4010; index += 1) {
+      await writeFile(join(dir, "asset-capped-symbol", `asset-${String(index).padStart(4, "0")}.md`), "asset metadata\n")
+    }
+    await writeFile(join(dir, "asset-capped-symbol", "zz-source.ts"), "export class AssetCappedSymbol {}\n")
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const assetHeavySymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetHeavySymbol", path: "asset-heavy-symbol", limit: 5 }) as Record<string, any>
+    expect(assetHeavySymbol.result.candidates).toEqual([expect.objectContaining({ path: "asset-heavy-symbol/zz-source.ts", declaration_kind: "class", confidence: "exact_declaration" })])
+    expect(assetHeavySymbol.warnings.join(" ")).not.toContain("candidate collection capped")
+    const assetCappedSymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetCappedSymbol", path: "asset-capped-symbol", limit: 5 }) as Record<string, any>
+    expect(assetCappedSymbol.result.candidates).toHaveLength(0)
+    expect(assetCappedSymbol.omitted_items).toBeGreaterThan(0)
+    expect(assetCappedSymbol.warnings.join(" ")).toContain("repo symbol candidate collection capped before traversal completed")
+  })
+
   test("Commander restricted Git reads use fixed read-only process commands", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -24594,6 +24606,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     await writeFile(join(dir, "tracked.txt"), `first\napi_key = top-secret\nAWS_ACCESS_KEY_ID = GITCLOUDACCESS123\nAWS_SECRET_ACCESS_KEY = GITCLOUDSECRET456\nAWS_SESSION_TOKEN = GITCLOUDSESSION789\n${Array.from({ length: 20 }, (_, index) => `added-${index}`).join("\n")}\n`)
     await writeFile(join(dir, ".env"), "aws_access_key_id = SHOULD_NOT_LEAK\n")
+    await writeFile(join(dir, "prod.env"), "DATABASE_URL=SHOULD_NOT_LEAK_DB\n")
     expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     const quotedEnvPath = join(dir, ".env\ncopy")
@@ -24636,6 +24649,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(status.result.staged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "rename-target.txt", status: "R" })]))
     expect(JSON.stringify(status.result.staged)).not.toContain("rename-source.txt")
     expect(JSON.stringify(status.result)).not.toContain(".env")
+    expect(JSON.stringify(status.result)).not.toContain("prod.env")
     expect(JSON.stringify(status.result)).not.toContain(".git-credentials")
     expect(JSON.stringify(status.result)).not.toContain(".docker")
     expect(JSON.stringify(status.result)).not.toContain(".config/gh")
@@ -24653,6 +24667,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(zeroContextDiff.result.patch_preview).not.toContain("\n first\n")
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "prod.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".envrc" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".git-credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".docker/config.json" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })

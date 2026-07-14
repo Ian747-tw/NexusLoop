@@ -61,6 +61,7 @@ export function isDeniedRepositoryPath(path: string): boolean {
   }
   if (parts.some((part) => SENSITIVE_BASENAMES.has(part))) return true
   if (parts.some((part) => /^\.env(?:\.|$)/.test(part))) return true
+  if (parts.some((part) => /\.env$/.test(part))) return true
   if (parts.some((part) => /\.env\.local$/.test(part))) return true
   const name = parts.at(-1) ?? normalized
   if (/\.(pem|key|p12|pfx)$/i.test(name)) return true
