@@ -24377,6 +24377,8 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "nested", ".env.production", "token.txt"), "TOKEN=SHOULD_NOT_LEAK\n")
     await mkdir(join(dir, "nested", "credentials"), { recursive: true })
     await writeFile(join(dir, "nested", "credentials", "token.txt"), "TOKEN=SHOULD_NOT_LEAK\n")
+    await mkdir(join(dir, "nested", ".kube"), { recursive: true })
+    await writeFile(join(dir, "nested", ".kube", "config"), "client-key-data: SHOULD_NOT_LEAK\n")
     await writeFile(join(dir, ".env"), "TOKEN=hidden")
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0", "private-url": "git+https://user:SHOULD_NOT_LEAK@example.com/repo.git" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
     const packageLockText = `{"lockfileVersion":3,"packages":{"large":"${"x".repeat(1_100_000)}"}}`
@@ -24400,6 +24402,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.config/gcloud")
     expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.env.production")
     expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/credentials")
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.kube")
     const search = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(search.result.matches[0]).toMatchObject({ path: "src/sample.ts", line_number: 1 })
     const missingQuerySearch = await server.command("runtime.commander_repo_search_text", { path: "." }) as Record<string, any>
@@ -24454,6 +24457,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.config/gcloud/configurations" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.env.production/token.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/credentials/token.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.kube/config" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     const symbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(symbol.result.candidates[0]).toMatchObject({ declaration_kind: "class", confidence: "exact_declaration" })
     const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>

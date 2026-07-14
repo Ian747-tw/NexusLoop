@@ -26,6 +26,7 @@ const SENSITIVE_DIRECTORIES = new Set([
   ".config/gcloud",
   ".gcloud",
   ".gnupg",
+  ".kube",
   ".ssh",
 ])
 
