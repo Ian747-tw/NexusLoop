@@ -143,7 +143,7 @@ export class CommanderRepoReadService {
       }
       if (matches.length >= limit) break
     }
-    if (fileScan.capped) warnings.push(`repo search file scan capped at ${maxFiles} matching files`)
+    if (fileScan.capped) warnings.push("repo search candidate collection capped before traversal completed")
     if (scanCapped) warnings.push("repository scan byte/time cap reached")
     const result: CommanderRepoSearchResult = { query_preview: redactText(query ?? ""), path: checked.relative ?? rootPath, matches, scanned_files: scannedFiles, scanned_bytes: scannedBytes, omitted_files: omittedFiles }
     return this.wrap("repo.search_text", "repository_search_match", "repository_content_untrusted", result, started, blockers, warnings, false, scannedFiles, omittedFiles)
@@ -198,7 +198,7 @@ export class CommanderRepoReadService {
     const declaration = declarationPattern(symbol ?? "")
     let scannedBytes = 0
     let omittedFiles = fileScan.omitted
-    let scanCapped = fileScan.capped
+    let scanCapped = false
     for (const file of files) {
       if (Date.now() - started > REPO_SCAN_TIME_MS) {
         scanCapped = true
@@ -230,7 +230,7 @@ export class CommanderRepoReadService {
       }
       if (candidates.length >= limit) break
     }
-    if (fileScan.capped) warnings.push("repo symbol code-file scan capped at 3000 matching files")
+    if (fileScan.capped) warnings.push("repo symbol candidate collection capped before traversal completed")
     if (scanCapped) warnings.push("repository scan byte/time cap reached")
     const result: CommanderRepoSymbolResult = { symbol: redactText(symbol ?? ""), candidates }
     return this.wrap("repo.find_symbol", "repository_symbol", "repository_content_untrusted", result, started, blockers, warnings, false, files.length, omittedFiles)
@@ -266,12 +266,14 @@ export class CommanderRepoReadService {
     const includeDev = boolean(input.includeDev ?? input.include_dev, true)
     const includeOptional = boolean(input.includeOptional ?? input.include_optional, true)
     const root = await rootInfo(this.options.projectDir)
-    const files = await manifestFiles(root, boolean(input.includeUpstream ?? input.include_upstream, false))
+    const manifestScan = await manifestFiles(root, boolean(input.includeUpstream ?? input.include_upstream, false))
+    const files = manifestScan.files
     const dependencies: CommanderDependencyManifestResult["dependencies"] = []
     const lockfiles: CommanderDependencyManifestResult["lockfiles"] = []
     const warnings = [EVIDENCE_WARNING, REPO_WARNING, "Direct dependency declarations only; lockfile contents are not dumped."]
     let scannedManifestBytes = 0
-    let omittedManifestFiles = 0
+    let omittedManifestFiles = manifestScan.omitted
+    if (manifestScan.capped) warnings.push("manifest candidate collection capped before traversal completed")
     for (const file of files) {
       const info = await stat(file).catch(() => undefined)
       if (!info || !info.isFile()) {
@@ -285,7 +287,11 @@ export class CommanderRepoReadService {
       }
       const rel = toRelative(root, file)
       const text = await readTextFile(file, 256_000)
-      if (hasReadError(text)) continue
+      if (hasReadError(text)) {
+        omittedManifestFiles += 1
+        pushManifestSkipWarning(warnings, rel, text.error)
+        continue
+      }
       scannedManifestBytes += text.bytes
       if (basename(file) === "package.json") {
         try {
@@ -322,11 +328,13 @@ export class CommanderRepoReadService {
 
   private async manifestEntries(kind: "test", input: Record<string, unknown>): Promise<CommanderTestManifestResult & { warnings?: string[]; omitted?: number }> {
     const root = await rootInfo(this.options.projectDir)
-    const files = await manifestFiles(root, boolean(input.includeUpstream ?? input.include_upstream, false))
+    const manifestScan = await manifestFiles(root, boolean(input.includeUpstream ?? input.include_upstream, false))
+    const files = manifestScan.files
     const entries: CommanderTestManifestResult["entries"] = []
     const warnings: string[] = []
     let scannedManifestBytes = 0
-    let omitted = 0
+    let omitted = manifestScan.omitted
+    if (manifestScan.capped) warnings.push("manifest candidate collection capped before traversal completed")
     for (const file of files) {
       const info = await stat(file).catch(() => undefined)
       if (!info || !info.isFile()) {
@@ -340,7 +348,11 @@ export class CommanderRepoReadService {
       }
       const rel = toRelative(root, file)
       const text = await readTextFile(file, 256_000)
-      if (hasReadError(text)) continue
+      if (hasReadError(text)) {
+        omitted += 1
+        pushManifestSkipWarning(warnings, rel, text.error)
+        continue
+      }
       scannedManifestBytes += text.bytes
       if (basename(file) === "package.json") {
         try {
@@ -505,15 +517,27 @@ async function collectFiles(root: RootInfo, start: string, includeUpstream: bool
   let omitted = 0
   let capped = false
   const explicitUpstreamStart = isExplicitUpstreamPath(toRelative(root, start))
+  const started = Date.now()
+  const maxVisitedEntries = maxFiles + 1000
+  let visitedEntries = 0
   async function visit(path: string): Promise<void> {
-    if (out.length >= maxFiles) { capped = true; return }
+    if (capped) return
+    if (out.length >= maxFiles || visitedEntries >= maxVisitedEntries || Date.now() - started > REPO_SCAN_TIME_MS) {
+      omitted += 1
+      capped = true
+      return
+    }
+    visitedEntries += 1
     const info = await lstat(path)
     const rel = toRelative(root, path)
     const name = basename(path)
     if (shouldSkip(rel, name, info.isDirectory(), false, includeUpstream, explicitUpstreamStart)) return
     if (info.isSymbolicLink()) return
     if (info.isDirectory()) {
-      for (const child of (await readdir(path)).sort((a, b) => a.localeCompare(b))) await visit(join(path, child))
+      for (const child of (await readdir(path)).sort((a, b) => a.localeCompare(b))) {
+        if (capped) break
+        await visit(join(path, child))
+      }
       return
     }
     if (info.isFile() && includeFile(rel)) {
@@ -561,16 +585,23 @@ function isDeniedPath(path: string): boolean {
   return isDeniedRepositoryPath(path)
 }
 
-async function manifestFiles(root: RootInfo, includeUpstream: boolean): Promise<string[]> {
+async function manifestFiles(root: RootInfo, includeUpstream: boolean): Promise<{ files: string[]; omitted: number; capped: boolean }> {
   const isManifest = (rel: string) => {
     const name = basename(rel)
     return ["pyproject.toml", "pytest.ini", "tox.ini", "package.json", "bunfig.toml", "Makefile"].includes(name) || rel.startsWith(".github/workflows/")
   }
-  const files = (await collectFiles(root, root.root, includeUpstream, 1200, isManifest)).files
-  return files.filter((file) => {
+  const scan = await collectFiles(root, root.root, includeUpstream, 1200, isManifest)
+  const files = scan.files.filter((file) => {
     const rel = toRelative(root, file)
     return isManifest(rel)
   })
+  return { files, omitted: scan.omitted, capped: scan.capped }
+}
+
+function pushManifestSkipWarning(warnings: string[], rel: string, reason: string): void {
+  const existing = warnings.filter((warning) => warning.startsWith("manifest read skipped for ")).length
+  if (existing < 5) warnings.push(`manifest read skipped for ${rel}: ${reason}`)
+  else if (!warnings.includes("additional manifest read skips omitted")) warnings.push("additional manifest read skips omitted")
 }
 
 function parsePyprojectDependencies(path: string, text: string, includeDev: boolean, includeOptional: boolean): Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }> {

@@ -24390,6 +24390,8 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0", "private-url": "git+https://user:SHOULD_NOT_LEAK@example.com/repo.git" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
     const packageLockText = `{"lockfileVersion":3,"packages":{"large":"${"x".repeat(1_100_000)}"}}`
     await writeFile(join(dir, "package-lock.json"), packageLockText)
+    await mkdir(join(dir, "oversized-manifest"), { recursive: true })
+    await writeFile(join(dir, "oversized-manifest", "package.json"), JSON.stringify({ scripts: { test: "bun test" }, dependencies: { too_large: "x".repeat(300_000) } }))
     await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n  'requests[security]>=2',\n  'flask>=3',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n  'uvicorn[standard]>=0.20',\n]\n")
     await mkdir(join(dir, "aaa-filler"), { recursive: true })
     for (let index = 0; index < 1250; index += 1) {
@@ -24498,6 +24500,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDOAUTH000")
     const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
     expect(JSON.stringify(tests.result)).toContain("bun test")
+    expect(tests.omitted_items).toBeGreaterThan(0)
+    expect(tests.warnings.join(" ")).toContain("manifest read skipped for oversized-manifest/package.json: file exceeds read cap")
     const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "private-url", version_constraint: "git+https://[REDACTED]@example.com/repo.git" })]))
@@ -24508,6 +24512,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "uvicorn", dependency_group: "project.optional-dependencies.extra", version_constraint: "uvicorn[standard]>=0.20", direct: true })]))
     expect(deps.result.lockfiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "package-lock.json", size_bytes: packageLockText.length, hash_omitted: true, omitted_reason: "lockfile exceeds hash cap" })]))
     expect(deps.warnings.join(" ")).toContain("package-lock.json exceeds lockfile hash cap")
+    expect(deps.omitted_items).toBeGreaterThan(0)
+    expect(deps.warnings.join(" ")).toContain("manifest read skipped for oversized-manifest/package.json: file exceeds read cap")
     expect(JSON.stringify(deps.result)).not.toContain("large")
     const runtimeOnlyDeps = await server.command("runtime.commander_repo_dependency_manifest", { include_optional: false }) as Record<string, any>
     expect(JSON.stringify(runtimeOnlyDeps.result.dependencies)).not.toContain("rich")
@@ -24535,6 +24541,11 @@ describe("ProcessOpenCodeAdapter", () => {
       await writeFile(join(dir, "asset-heavy-symbol", `asset-${String(index).padStart(4, "0")}.md`), "asset metadata\n")
     }
     await writeFile(join(dir, "asset-heavy-symbol", "zz-source.ts"), "export class AssetHeavySymbol {}\n")
+    await mkdir(join(dir, "asset-capped-symbol"), { recursive: true })
+    for (let index = 0; index < 4010; index += 1) {
+      await writeFile(join(dir, "asset-capped-symbol", `asset-${String(index).padStart(4, "0")}.md`), "asset metadata\n")
+    }
+    await writeFile(join(dir, "asset-capped-symbol", "zz-source.ts"), "export class AssetCappedSymbol {}\n")
     await mkdir(join(dir, "hashes"), { recursive: true })
     const firstSecret = "export const api_key = first-secret-value\nexport const visibleHashNeedle = true\n"
     const secondSecret = "export const api_key = second-secret-value\nexport const visibleHashNeedle = true\n"
@@ -24552,7 +24563,11 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(symbol.warnings.join(" ")).toContain("repository scan byte/time cap reached")
     const assetHeavySymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetHeavySymbol", path: "asset-heavy-symbol", limit: 5 }) as Record<string, any>
     expect(assetHeavySymbol.result.candidates).toEqual([expect.objectContaining({ path: "asset-heavy-symbol/zz-source.ts", declaration_kind: "class", confidence: "exact_declaration" })])
-    expect(assetHeavySymbol.warnings.join(" ")).not.toContain("code-file scan capped")
+    expect(assetHeavySymbol.warnings.join(" ")).not.toContain("candidate collection capped")
+    const assetCappedSymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetCappedSymbol", path: "asset-capped-symbol", limit: 5 }) as Record<string, any>
+    expect(assetCappedSymbol.result.candidates).toHaveLength(0)
+    expect(assetCappedSymbol.omitted_items).toBeGreaterThan(0)
+    expect(assetCappedSymbol.warnings.join(" ")).toContain("repo symbol candidate collection capped before traversal completed")
     const firstRead = await server.command("runtime.commander_repo_read_lines", { path: "hashes/first.ts", start_line: 1, end_line: 2 }) as Record<string, any>
     const secondRead = await server.command("runtime.commander_repo_read_lines", { path: "hashes/second.ts", start_line: 1, end_line: 2 }) as Record<string, any>
     expect(firstRead.result.lines[0].text).toBe(secondRead.result.lines[0].text)
