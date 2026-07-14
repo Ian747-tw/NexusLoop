@@ -96,7 +96,7 @@ export class CommanderRepoReadService {
     let scannedFiles = 0
     let scannedBytes = 0
     let omittedFiles = fileScan.omitted
-    let scanCapped = fileScan.capped
+    let scanCapped = false
     const matches: CommanderRepoSearchResult["matches"] = []
     const needle = caseSensitive ? query ?? "" : (query ?? "").toLowerCase()
     for (const file of files.slice(0, maxFiles)) {
@@ -192,14 +192,14 @@ export class CommanderRepoReadService {
     const root = await rootInfo(this.options.projectDir)
     const checked = await resolveSafePath(root, path, { allowDirectory: true, includeUpstream })
     if (checked.error) blockers.push(checked.error)
-    const files = !checked.error && checked.absolute ? (await collectFiles(root, checked.absolute, includeUpstream, 3000)).files : []
+    const fileScan = !checked.error && checked.absolute ? await collectFiles(root, checked.absolute, includeUpstream, 3000, isCodePath) : { files: [], omitted: 0, capped: false }
+    const files = fileScan.files
     const candidates: CommanderRepoSymbolResult["candidates"] = []
     const declaration = declarationPattern(symbol ?? "")
     let scannedBytes = 0
-    let omittedFiles = Math.max(0, files.length - 3000)
-    let scanCapped = false
+    let omittedFiles = fileScan.omitted
+    let scanCapped = fileScan.capped
     for (const file of files) {
-      if (!isCodePath(file)) continue
       if (Date.now() - started > REPO_SCAN_TIME_MS) {
         scanCapped = true
         omittedFiles += 1
@@ -230,6 +230,7 @@ export class CommanderRepoReadService {
       }
       if (candidates.length >= limit) break
     }
+    if (fileScan.capped) warnings.push("repo symbol code-file scan capped at 3000 matching files")
     if (scanCapped) warnings.push("repository scan byte/time cap reached")
     const result: CommanderRepoSymbolResult = { symbol: redactText(symbol ?? ""), candidates }
     return this.wrap("repo.find_symbol", "repository_symbol", "repository_content_untrusted", result, started, blockers, warnings, false, files.length, omittedFiles)
@@ -592,7 +593,7 @@ function parsePyprojectDependencies(path: string, text: string, includeDev: bool
     }
     if (arrayGroup) {
       arrayBuffer += `\n${line}`
-      if (line.includes("]")) flushArray()
+      if (tomlArrayIsClosed(arrayBuffer)) flushArray()
       continue
     }
     if (!includeDev && /dev|test/i.test(group)) continue
@@ -611,7 +612,7 @@ function parsePyprojectDependencies(path: string, text: string, includeDev: bool
       if (dependencyGroup && (includeDev || !/dev|test/i.test(dependencyGroup)) && (includeOptional || !dependencyGroup.startsWith("project.optional-dependencies."))) {
         arrayGroup = dependencyGroup
         arrayBuffer = value
-        if (value.includes("]")) flushArray()
+        if (tomlArrayIsClosed(value)) flushArray()
         continue
       }
     }
@@ -624,6 +625,33 @@ function parsePyprojectDependencies(path: string, text: string, includeDev: bool
 
 function parseTomlStringArray(text: string): string[] {
   return [...text.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]).filter(Boolean)
+}
+
+function tomlArrayIsClosed(text: string): boolean {
+  let depth = 0
+  let quote: "\"" | "'" | undefined
+  let escaped = false
+  for (const char of text) {
+    if (quote) {
+      if (quote === "\"" && !escaped && char === "\\") {
+        escaped = true
+        continue
+      }
+      if (!escaped && char === quote) quote = undefined
+      escaped = false
+      continue
+    }
+    if (char === "\"" || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === "[") depth += 1
+    else if (char === "]") {
+      depth -= 1
+      if (depth <= 0) return true
+    }
+  }
+  return false
 }
 
 function addPythonDependency(out: Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }>, path: string, raw: string, group: string): void {

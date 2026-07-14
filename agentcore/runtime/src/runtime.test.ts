@@ -24390,7 +24390,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0", "private-url": "git+https://user:SHOULD_NOT_LEAK@example.com/repo.git" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
     const packageLockText = `{"lockfileVersion":3,"packages":{"large":"${"x".repeat(1_100_000)}"}}`
     await writeFile(join(dir, "package-lock.json"), packageLockText)
-    await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n]\n")
+    await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n  'requests[security]>=2',\n  'flask>=3',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n  'uvicorn[standard]>=0.20',\n]\n")
     await mkdir(join(dir, "aaa-filler"), { recursive: true })
     for (let index = 0; index < 1250; index += 1) {
       await writeFile(join(dir, "aaa-filler", `filler-${index}.txt`), "not a manifest\n")
@@ -24502,7 +24502,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "private-url", version_constraint: "git+https://[REDACTED]@example.com/repo.git" })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "click", dependency_group: "project.dependencies", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "requests", dependency_group: "project.dependencies", version_constraint: "requests[security]>=2", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "flask", dependency_group: "project.dependencies", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "rich", dependency_group: "project.optional-dependencies.extra", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "uvicorn", dependency_group: "project.optional-dependencies.extra", version_constraint: "uvicorn[standard]>=0.20", direct: true })]))
     expect(deps.result.lockfiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "package-lock.json", size_bytes: packageLockText.length, hash_omitted: true, omitted_reason: "lockfile exceeds hash cap" })]))
     expect(deps.warnings.join(" ")).toContain("package-lock.json exceeds lockfile hash cap")
     expect(JSON.stringify(deps.result)).not.toContain("large")
@@ -24527,6 +24530,11 @@ describe("ProcessOpenCodeAdapter", () => {
       await writeFile(join(dir, "bulk-symbol", `sym-${String(index).padStart(3, "0")}.ts`), symbolFiller)
     }
     await writeFile(join(dir, "bulk-symbol", "zz-after-cap.ts"), "export class AfterCapSymbol {}\n")
+    await mkdir(join(dir, "asset-heavy-symbol"), { recursive: true })
+    for (let index = 0; index < 3010; index += 1) {
+      await writeFile(join(dir, "asset-heavy-symbol", `asset-${String(index).padStart(4, "0")}.md`), "asset metadata\n")
+    }
+    await writeFile(join(dir, "asset-heavy-symbol", "zz-source.ts"), "export class AssetHeavySymbol {}\n")
     await mkdir(join(dir, "hashes"), { recursive: true })
     const firstSecret = "export const api_key = first-secret-value\nexport const visibleHashNeedle = true\n"
     const secondSecret = "export const api_key = second-secret-value\nexport const visibleHashNeedle = true\n"
@@ -24542,6 +24550,9 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(symbol.result.candidates).toHaveLength(0)
     expect(symbol.omitted_items).toBeGreaterThan(0)
     expect(symbol.warnings.join(" ")).toContain("repository scan byte/time cap reached")
+    const assetHeavySymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetHeavySymbol", path: "asset-heavy-symbol", limit: 5 }) as Record<string, any>
+    expect(assetHeavySymbol.result.candidates).toEqual([expect.objectContaining({ path: "asset-heavy-symbol/zz-source.ts", declaration_kind: "class", confidence: "exact_declaration" })])
+    expect(assetHeavySymbol.warnings.join(" ")).not.toContain("code-file scan capped")
     const firstRead = await server.command("runtime.commander_repo_read_lines", { path: "hashes/first.ts", start_line: 1, end_line: 2 }) as Record<string, any>
     const secondRead = await server.command("runtime.commander_repo_read_lines", { path: "hashes/second.ts", start_line: 1, end_line: 2 }) as Record<string, any>
     expect(firstRead.result.lines[0].text).toBe(secondRead.result.lines[0].text)
