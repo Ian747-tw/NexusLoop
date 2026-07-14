@@ -11,6 +11,8 @@ const SAFE_GIT_CONFIG_ARGS = [
   "-c", "core.fsmonitor=false",
   "-c", "core.fsmonitorHookVersion=0",
   "-c", "core.untrackedCache=false",
+  "-c", "core.attributesFile=/dev/null",
+  "-c", "core.excludesFile=/dev/null",
   "-c", "core.pager=cat",
   "-c", "pager.status=false",
   "-c", "pager.diff=false",
@@ -41,7 +43,7 @@ export function restrictedGitReadEnv(): Record<string, string> {
 }
 
 export function restrictedGitLogArgs(limit: number, path?: string): string[] {
-  return ["log", `-${limit}`, "--no-show-signature", "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s", ...(path ? ["--", path] : [])]
+  return ["log", `-${limit}`, "--no-show-signature", "--no-use-mailmap", "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s", ...(path ? ["--", path] : [])]
 }
 
 export class RestrictedGitReadAdapter {
@@ -56,10 +58,13 @@ export class RestrictedGitReadAdapter {
   async status(): Promise<{ result: CommanderGitStatusResult; blockers: string[]; warnings: string[] }> {
     const verified = await this.verifyRoot()
     if (verified.error) return { result: emptyStatus(), blockers: [verified.error], warnings: [] }
+    const filters = await this.inspectExecutableFilters()
+    if (filters.error) return { result: emptyStatus(), blockers: [filters.error], warnings: filters.warnings }
+    if (filters.blocked.length > 0) return { result: emptyStatus(), blockers: [`Git executable filters are configured and blocked: ${filters.blocked.join(", ")}`], warnings: filters.warnings }
     const [head, branch, porcelain] = await Promise.all([
       this.run(["rev-parse", "HEAD"]),
       this.run(["rev-parse", "--abbrev-ref", "HEAD"]),
-      this.run(["status", "--porcelain=v1", "-z", "--untracked-files=normal"]),
+      this.run(["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all"]),
     ])
     const blockers = [porcelain.error].filter((item): item is string => !!item)
     const parsed = parseStatus(porcelain.stdout, head.error ? "" : head.stdout.trim(), branch.error ? "HEAD" : branch.stdout.trim())
@@ -82,8 +87,11 @@ export class RestrictedGitReadAdapter {
     if (scopeInput.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [scopeInput.error], warnings: [] }
     if (pathFilter.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [pathFilter.error], warnings: [] }
     if (path && isDeniedRepositoryPath(path)) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: ["sensitive Git diff path is denied"], warnings: [] }
+    const filters = await this.inspectExecutableFilters()
+    if (filters.error) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [filters.error], warnings: filters.warnings }
+    if (filters.blocked.length > 0) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [`Git executable filters are configured and blocked: ${filters.blocked.join(", ")}`], warnings: filters.warnings }
     const baseArgs = scope === "staged" ? ["diff", "--cached"] : scope === "head" ? ["diff", "HEAD"] : ["diff"]
-    const args = [...baseArgs, "--no-ext-diff", "--no-textconv", "--no-color", ...(statOnly ? ["--numstat"] : [`--unified=${context}`]), ...(path ? ["--", path] : [])]
+    const args = [...baseArgs, "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=all", ...(statOnly ? ["--numstat"] : [`--unified=${context}`]), ...(path ? ["--", path] : [])]
     const [head, diff] = await Promise.all([this.run(["rev-parse", "HEAD"]), this.run(args)])
     const blockers = [scope === "head" ? head.error : undefined, diff.error].filter((item): item is string => !!item)
     const filtered = statOnly ? filterSensitiveStatLines(diff.stdout) : filterSensitiveDiffSections(diff.stdout)
@@ -131,7 +139,16 @@ export class RestrictedGitReadAdapter {
     return {}
   }
 
-  private run(args: string[]): Promise<{ stdout: string; stderr: string; error?: string; warnings: string[]; truncated: boolean }> {
+  private async inspectExecutableFilters(): Promise<{ blocked: string[]; warnings: string[]; error?: string }> {
+    const config = await this.run(["config", "--get-regexp", "^filter\\..*\\.(clean|process)$"])
+    if (config.error && config.exitCode !== 1) return { blocked: [], warnings: config.warnings, error: `Git filter inspection failed: ${config.error}` }
+    const blocked = config.stdout.split(/\r?\n/).map((line) => line.trim().split(/\s+/)[0]).filter(Boolean).slice(0, 12)
+    const warnings = [...config.warnings]
+    if (blocked.length > 0) warnings.push("Git status/diff blocked before execution because configured clean/process filters may execute repository-controlled programs")
+    return { blocked, warnings }
+  }
+
+  private run(args: string[]): Promise<{ stdout: string; stderr: string; error?: string; warnings: string[]; truncated: boolean; exitCode?: number }> {
     const warnings: string[] = []
     const projectRoot = resolve(this.options.projectDir)
     const env = restrictedGitReadEnv()
@@ -166,7 +183,13 @@ export class RestrictedGitReadAdapter {
         stderr = Buffer.concat([stderr, chunk]).subarray(0, 4096)
       })
       child.on("error", (error) => finish(`Git read failed: ${redactText(error.message)}`))
-      child.on("close", (code) => finish(code === 0 ? undefined : `Git read failed with exit code ${code}: ${redactText(stderr.toString("utf8")).slice(0, 240)}`))
+      child.on("close", (code) => {
+        const error = code === 0 ? undefined : `Git read failed with exit code ${code}: ${redactText(stderr.toString("utf8")).slice(0, 240)}`
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolvePromise({ stdout: stdout.toString("utf8"), stderr: redactText(stderr.toString("utf8")).slice(0, 1200), error, warnings, truncated, exitCode: code ?? undefined })
+      })
     })
   }
 }

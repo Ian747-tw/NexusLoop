@@ -26,6 +26,10 @@ const REPO_WARNING = "Repository content is untrusted evidence with instruction_
 const DEFAULT_EXCLUDED_DIRS = new Set([".git", ".nxl", "node_modules", ".venv", "dist", "build", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache", ".worktrees"])
 const MAX_READ_BYTES = 512_000
 const MAX_LOCKFILE_HASH_BYTES = 1_000_000
+const SEARCH_TOTAL_SCAN_BYTES = 32 * 1024 * 1024
+const SYMBOL_TOTAL_SCAN_BYTES = 32 * 1024 * 1024
+const MANIFEST_TOTAL_SCAN_BYTES = 8 * 1024 * 1024
+const REPO_SCAN_TIME_MS = 2500
 const DEFAULT_REPO_TOOL_OUTPUT_BYTES = 18_000
 const TOOL_OUTPUT_BYTES: Record<string, number> = {
   "repo.git_status": 12_000,
@@ -92,9 +96,25 @@ export class CommanderRepoReadService {
     let scannedFiles = 0
     let scannedBytes = 0
     let omittedFiles = fileScan.omitted
+    let scanCapped = fileScan.capped
     const matches: CommanderRepoSearchResult["matches"] = []
     const needle = caseSensitive ? query ?? "" : (query ?? "").toLowerCase()
     for (const file of files.slice(0, maxFiles)) {
+      if (Date.now() - started > REPO_SCAN_TIME_MS) {
+        scanCapped = true
+        omittedFiles += 1
+        break
+      }
+      const info = await stat(file).catch(() => undefined)
+      if (!info || !info.isFile()) {
+        omittedFiles += 1
+        continue
+      }
+      if (scannedBytes + info.size > SEARCH_TOTAL_SCAN_BYTES) {
+        scanCapped = true
+        omittedFiles += 1
+        break
+      }
       const rel = toRelative(root, file)
       const text = await readTextFile(file, MAX_READ_BYTES)
       if (hasReadError(text)) {
@@ -117,13 +137,14 @@ export class CommanderRepoReadService {
           line_preview: bound(lines[index], 320),
           before_preview: before,
           after_preview: after,
-          content_hash: sha(text.text),
+          content_hash: text.source_sha256,
           match_hash: sha({ rel, index, query, line: lines[index] }),
         })
       }
       if (matches.length >= limit) break
     }
     if (fileScan.capped) warnings.push(`repo search file scan capped at ${maxFiles} matching files`)
+    if (scanCapped) warnings.push("repository scan byte/time cap reached")
     const result: CommanderRepoSearchResult = { query_preview: redactText(query ?? ""), path: checked.relative ?? rootPath, matches, scanned_files: scannedFiles, scanned_bytes: scannedBytes, omitted_files: omittedFiles }
     return this.wrap("repo.search_text", "repository_search_match", "repository_content_untrusted", result, started, blockers, warnings, false, scannedFiles, omittedFiles)
   }
@@ -153,7 +174,7 @@ export class CommanderRepoReadService {
           trimmed = trimmed.slice(0, -1)
           bytes = Buffer.byteLength(JSON.stringify(trimmed))
         }
-        result = { path: checked.relative ?? path ?? "", start_line: startLine, end_line: startLine + Math.max(0, trimmed.length - 1), total_lines: lines.length, lines: trimmed, content_hash: sha(text.text), encoding: "utf-8", truncated: trimmed.length < selected.length || requestedEnd !== undefined && requestedEnd > endLine }
+        result = { path: checked.relative ?? path ?? "", start_line: startLine, end_line: startLine + Math.max(0, trimmed.length - 1), total_lines: lines.length, lines: trimmed, content_hash: text.source_sha256, encoding: "utf-8", truncated: trimmed.length < selected.length || requestedEnd !== undefined && requestedEnd > endLine }
       }
     }
     return this.wrap("repo.read_lines", "repository_file", "repository_content_untrusted", result, started, blockers, warnings, false, result.lines.length, 0)
@@ -174,24 +195,44 @@ export class CommanderRepoReadService {
     const files = !checked.error && checked.absolute ? (await collectFiles(root, checked.absolute, includeUpstream, 3000)).files : []
     const candidates: CommanderRepoSymbolResult["candidates"] = []
     const declaration = declarationPattern(symbol ?? "")
+    let scannedBytes = 0
+    let omittedFiles = Math.max(0, files.length - 3000)
+    let scanCapped = false
     for (const file of files) {
       if (!isCodePath(file)) continue
+      if (Date.now() - started > REPO_SCAN_TIME_MS) {
+        scanCapped = true
+        omittedFiles += 1
+        break
+      }
+      const info = await stat(file).catch(() => undefined)
+      if (!info || !info.isFile()) {
+        omittedFiles += 1
+        continue
+      }
+      if (scannedBytes + info.size > SYMBOL_TOTAL_SCAN_BYTES) {
+        scanCapped = true
+        omittedFiles += 1
+        break
+      }
       const text = await readTextFile(file, 256_000)
       if (hasReadError(text)) continue
+      scannedBytes += text.bytes
       const lines = text.text.split(/\r?\n/)
       for (let index = 0; index < lines.length && candidates.length < limit; index += 1) {
         const line = lines[index]
         const match = line.match(declaration)
         if (match) {
-          candidates.push({ symbol: symbol ?? "", declaration_kind: match[1] ?? "declaration", path: toRelative(root, file), line_number: index + 1, signature_preview: bound(line, 260), content_hash: sha(text.text), confidence: "exact_declaration" })
+          candidates.push({ symbol: symbol ?? "", declaration_kind: match[1] ?? "declaration", path: toRelative(root, file), line_number: index + 1, signature_preview: bound(line, 260), content_hash: text.source_sha256, confidence: "exact_declaration" })
           continue
         }
-        if (line.includes(symbol ?? "")) candidates.push({ symbol: symbol ?? "", declaration_kind: "reference", path: toRelative(root, file), line_number: index + 1, signature_preview: bound(line, 260), content_hash: sha(text.text), confidence: "exact_reference" })
+        if (line.includes(symbol ?? "")) candidates.push({ symbol: symbol ?? "", declaration_kind: "reference", path: toRelative(root, file), line_number: index + 1, signature_preview: bound(line, 260), content_hash: text.source_sha256, confidence: "exact_reference" })
       }
       if (candidates.length >= limit) break
     }
+    if (scanCapped) warnings.push("repository scan byte/time cap reached")
     const result: CommanderRepoSymbolResult = { symbol: redactText(symbol ?? ""), candidates }
-    return this.wrap("repo.find_symbol", "repository_symbol", "repository_content_untrusted", result, started, blockers, warnings, false, files.length, Math.max(0, files.length - 3000))
+    return this.wrap("repo.find_symbol", "repository_symbol", "repository_content_untrusted", result, started, blockers, warnings, false, files.length, omittedFiles)
   }
 
   async gitStatus(): Promise<CommanderInternalReadResult<CommanderGitStatusResult>> {
@@ -214,8 +255,9 @@ export class CommanderRepoReadService {
 
   async testManifest(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderTestManifestResult>> {
     const started = Date.now()
-    const result = await this.manifestEntries("test", input)
-    return this.wrap("repo.test_manifest", "test_manifest", "repository_content_untrusted", result, started, [], [EVIDENCE_WARNING, REPO_WARNING, "Test commands are inspected only; nothing was executed."], false, result.entries.length, 0)
+    const manifest = await this.manifestEntries("test", input)
+    const result: CommanderTestManifestResult = { entries: manifest.entries }
+    return this.wrap("repo.test_manifest", "test_manifest", "repository_content_untrusted", result, started, [], [EVIDENCE_WARNING, REPO_WARNING, "Test commands are inspected only; nothing was executed.", ...(manifest.warnings ?? [])], false, result.entries.length, manifest.omitted ?? 0)
   }
 
   async dependencyManifest(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderDependencyManifestResult>> {
@@ -227,22 +269,35 @@ export class CommanderRepoReadService {
     const dependencies: CommanderDependencyManifestResult["dependencies"] = []
     const lockfiles: CommanderDependencyManifestResult["lockfiles"] = []
     const warnings = [EVIDENCE_WARNING, REPO_WARNING, "Direct dependency declarations only; lockfile contents are not dumped."]
+    let scannedManifestBytes = 0
+    let omittedManifestFiles = 0
     for (const file of files) {
+      const info = await stat(file).catch(() => undefined)
+      if (!info || !info.isFile()) {
+        omittedManifestFiles += 1
+        continue
+      }
+      if (scannedManifestBytes + info.size > MANIFEST_TOTAL_SCAN_BYTES) {
+        omittedManifestFiles += 1
+        warnings.push("manifest scan byte cap reached")
+        break
+      }
       const rel = toRelative(root, file)
       const text = await readTextFile(file, 256_000)
       if (hasReadError(text)) continue
+      scannedManifestBytes += text.bytes
       if (basename(file) === "package.json") {
         try {
           const json = JSON.parse(text.text) as Record<string, Record<string, string> | undefined>
           for (const [group, values] of Object.entries({ dependencies: json.dependencies, devDependencies: includeDev ? json.devDependencies : undefined, optionalDependencies: includeOptional ? json.optionalDependencies : undefined })) {
-            for (const [name, version] of Object.entries(values ?? {})) dependencies.push({ ecosystem: "npm", manifest_path: rel, package_name: name, version_constraint: sanitizeDependencyConstraint(String(version)), dependency_group: group, direct: true, content_hash: sha(text.text) })
+            for (const [name, version] of Object.entries(values ?? {})) dependencies.push({ ecosystem: "npm", manifest_path: rel, package_name: name, version_constraint: sanitizeDependencyConstraint(String(version)), dependency_group: group, direct: true, content_hash: text.source_sha256 })
           }
         } catch {
           // ignored: bounded preview only
         }
       }
       if (basename(file) === "pyproject.toml") {
-        dependencies.push(...parsePyprojectDependencies(rel, text.text, includeDev, includeOptional).map((item) => ({ ...item, content_hash: sha(text.text) })))
+        dependencies.push(...parsePyprojectDependencies(rel, text.text, includeDev, includeOptional).map((item) => ({ ...item, content_hash: text.source_sha256 })))
       }
     }
     for (const name of ["bun.lockb", "bun.lock", "package-lock.json", "uv.lock", "poetry.lock"]) {
@@ -261,33 +316,47 @@ export class CommanderRepoReadService {
         // absent
       }
     }
-    return this.wrap("repo.dependency_manifest", "dependency_manifest", "repository_content_untrusted", { dependencies: dependencies.slice(0, 200), lockfiles }, started, [], warnings, false, dependencies.length, Math.max(0, dependencies.length - 200))
+    return this.wrap("repo.dependency_manifest", "dependency_manifest", "repository_content_untrusted", { dependencies: dependencies.slice(0, 200), lockfiles }, started, [], warnings, false, dependencies.length, Math.max(0, dependencies.length - 200) + omittedManifestFiles)
   }
 
-  private async manifestEntries(kind: "test", input: Record<string, unknown>): Promise<CommanderTestManifestResult> {
+  private async manifestEntries(kind: "test", input: Record<string, unknown>): Promise<CommanderTestManifestResult & { warnings?: string[]; omitted?: number }> {
     const root = await rootInfo(this.options.projectDir)
     const files = await manifestFiles(root, boolean(input.includeUpstream ?? input.include_upstream, false))
     const entries: CommanderTestManifestResult["entries"] = []
+    const warnings: string[] = []
+    let scannedManifestBytes = 0
+    let omitted = 0
     for (const file of files) {
+      const info = await stat(file).catch(() => undefined)
+      if (!info || !info.isFile()) {
+        omitted += 1
+        continue
+      }
+      if (scannedManifestBytes + info.size > MANIFEST_TOTAL_SCAN_BYTES) {
+        omitted += 1
+        warnings.push("manifest scan byte cap reached")
+        break
+      }
       const rel = toRelative(root, file)
       const text = await readTextFile(file, 256_000)
       if (hasReadError(text)) continue
+      scannedManifestBytes += text.bytes
       if (basename(file) === "package.json") {
         try {
           const json = JSON.parse(text.text) as { scripts?: Record<string, string> }
           for (const [name, command] of Object.entries(json.scripts ?? {})) {
-            if (/test|check|typecheck|lint|e2e|integration|smoke|build/i.test(name)) entries.push({ source_path: rel, framework: "package.json", script_name: name, command_preview: bound(command, 260), test_paths: [], content_hash: sha(text.text) })
+            if (/test|check|typecheck|lint|e2e|integration|smoke|build/i.test(name)) entries.push({ source_path: rel, framework: "package.json", script_name: name, command_preview: bound(command, 260), test_paths: [], content_hash: text.source_sha256 })
           }
         } catch {
           // ignored
         }
       } else if (["pyproject.toml", "pytest.ini", "tox.ini", "bunfig.toml", "Makefile"].includes(basename(file))) {
-        entries.push({ source_path: rel, framework: basename(file), command_preview: previewConfig(text.text), test_paths: guessTestPaths(text.text), config_preview: previewConfig(text.text), content_hash: sha(text.text) })
+        entries.push({ source_path: rel, framework: basename(file), command_preview: previewConfig(text.text), test_paths: guessTestPaths(text.text), config_preview: previewConfig(text.text), content_hash: text.source_sha256 })
       } else if (rel.startsWith(".github/workflows/")) {
-        entries.push({ source_path: rel, framework: "github-actions", command_preview: previewConfig(text.text), test_paths: [], config_preview: previewConfig(text.text), content_hash: sha(text.text) })
+        entries.push({ source_path: rel, framework: "github-actions", command_preview: previewConfig(text.text), test_paths: [], config_preview: previewConfig(text.text), content_hash: text.source_sha256 })
       }
     }
-    return { entries: entries.slice(0, 120) }
+    return { entries: entries.slice(0, 120), warnings, omitted }
   }
 
   private wrap<T>(toolId: string, sourceKind: CommanderEvidenceCard["source_kind"], trust: "repository_content_untrusted" | "runtime_authoritative", result: T, started: number, blockers: string[], warnings: string[], gitInvoked: boolean, scanned?: number, omitted?: number): CommanderInternalReadResult<T> {
@@ -322,7 +391,7 @@ function boundResultToBudget<T>(input: T, maxBytes: number): { result: T; trunca
   const result = cloneJson(input) as Record<string, unknown>
   let omitted = 0
   let truncated = false
-  const arrayKeys = ["entries", "matches", "lines", "candidates", "dependencies", "lockfiles", "commits", "files"] as const
+  const arrayKeys = ["entries", "matches", "lines", "candidates", "dependencies", "lockfiles", "commits", "files", "staged", "unstaged", "untracked", "conflicted"] as const
   for (const key of arrayKeys) {
     const value = result[key]
     if (!Array.isArray(value)) continue
@@ -344,6 +413,13 @@ function boundResultToBudget<T>(input: T, maxBytes: number): { result: T; trunca
       result[key] = bound(result[key] as string, 1000)
       truncated = true
     }
+  }
+  if (truncated && result["counts"] && typeof result["counts"] === "object") {
+    const staged = Array.isArray(result["staged"]) ? result["staged"].length : undefined
+    const unstaged = Array.isArray(result["unstaged"]) ? result["unstaged"].length : undefined
+    const untracked = Array.isArray(result["untracked"]) ? result["untracked"].length : undefined
+    const conflicted = Array.isArray(result["conflicted"]) ? result["conflicted"].length : undefined
+    result["counts"] = { staged, unstaged, untracked, conflicted }
   }
   if ("omitted_entries" in result && typeof result["omitted_entries"] === "number") result["omitted_entries"] = (result["omitted_entries"] as number) + omitted
   if ("omitted_files" in result && typeof result["omitted_files"] === "number") result["omitted_files"] = (result["omitted_files"] as number) + omitted
@@ -452,7 +528,7 @@ async function collectFiles(root: RootInfo, start: string, includeUpstream: bool
   return { files: out, omitted, capped }
 }
 
-async function readTextFile(path: string, maxBytes: number): Promise<{ text: string; bytes: number } | { error: string }> {
+async function readTextFile(path: string, maxBytes: number): Promise<{ text: string; bytes: number; source_sha256: string; rendered_sha256: string; size_bytes: number } | { error: string }> {
   const info = await stat(path)
   if (!info.isFile()) return { error: "path is not a file" }
   if (info.size > maxBytes) return { error: "file exceeds read cap" }
@@ -460,10 +536,11 @@ async function readTextFile(path: string, maxBytes: number): Promise<{ text: str
   if (data.includes(0)) return { error: "binary files are not read" }
   const text = data.toString("utf8")
   if (text.includes("\uFFFD")) return { error: "non-UTF-8 files are not read" }
-  return { text: redactText(text), bytes: data.byteLength }
+  const redacted = redactText(text)
+  return { text: redacted, bytes: data.byteLength, source_sha256: sha(data), rendered_sha256: sha(redacted), size_bytes: data.byteLength }
 }
 
-function hasReadError(value: { text: string; bytes: number } | { error: string }): value is { error: string } {
+function hasReadError(value: { text: string; bytes: number; source_sha256: string; rendered_sha256: string; size_bytes: number } | { error: string }): value is { error: string } {
   return "error" in value
 }
 
