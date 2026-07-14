@@ -40,10 +40,10 @@ export function isDeniedRepositoryPath(path: string): boolean {
       if (sensitiveParts.every((part, offset) => parts[index + offset] === part)) return true
     }
   }
+  if (parts.some((part) => SENSITIVE_BASENAMES.has(part))) return true
+  if (parts.some((part) => /^\.env(?:\.|$)/.test(part))) return true
+  if (parts.some((part) => /\.env\.local$/.test(part))) return true
   const name = parts.at(-1) ?? normalized
-  if (SENSITIVE_BASENAMES.has(name)) return true
-  if (/^\.env(?:\.|$)/.test(name)) return true
-  if (/\.env\.local$/.test(name)) return true
   if (/\.(pem|key|p12|pfx)$/i.test(name)) return true
   return false
 }
