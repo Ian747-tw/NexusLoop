@@ -18861,7 +18861,7 @@ function parseCommanderRepoArgs(args: string[]): Record<string, unknown> {
     if (["include_hidden", "include_upstream", "case_sensitive", "stat_only", "include_dev", "include_optional"].includes(key)) payload[key] = readBooleanText(value, key)
     else if (["start", "end", "start_line", "end_line"].includes(key)) payload[key] = readPositiveInteger(value, key, 1_000_000)
     else if (["max_lines"].includes(key)) payload[key] = readPositiveInteger(value, key, 200)
-    else if (["context_lines"].includes(key)) payload[key] = readPositiveInteger(value, key, 10)
+    else if (["context_lines"].includes(key)) payload[key] = readNonnegativeInteger(value, key, 10)
     else if (["depth"].includes(key)) payload[key] = readPositiveInteger(value, key, 8)
     else if (["limit", "max_files", "max_file_bytes", "max_output_bytes"].includes(key)) payload[key] = readPositiveInteger(value, key, 5000)
     else payload[key] = value
@@ -18886,7 +18886,8 @@ function parseFreeTextPayload(args: string[], requiredKey: string, knownKeys: st
     const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, known, freeTextKeys, `${requiredKey}=<text> is required`)
     index = nextIndex + 1
     if (["include_upstream", "case_sensitive", "include_closed"].includes(key)) payload[key] = readBooleanText(value, key)
-    else if (["limit", "max_files", "context_lines"].includes(key)) payload[key] = readPositiveInteger(value, key, 5000)
+    else if (key === "context_lines") payload[key] = readNonnegativeInteger(value, key, 10)
+    else if (["limit", "max_files"].includes(key)) payload[key] = readPositiveInteger(value, key, 5000)
     else payload[key] = value
   }
   if (!payload[requiredKey]) throw new Error(`${requiredKey} is required`)
@@ -19081,6 +19082,12 @@ function requiredIndex(args: string[], index: number): number {
 function readPositiveInteger(value: string, field: string, max: number): number {
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${field} must be a positive integer`)
+  return Math.min(parsed, max)
+}
+
+function readNonnegativeInteger(value: string, field: string, max: number): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${field} must be a nonnegative integer`)
   return Math.min(parsed, max)
 }
 

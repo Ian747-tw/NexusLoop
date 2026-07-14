@@ -24362,6 +24362,7 @@ describe("ProcessOpenCodeAdapter", () => {
       "export class CommanderToolServiceSample {}",
       "const tokenName = 'not a secret assignment shape'",
       "const api_key = super-secret-value",
+      "export const CloudCredentialSample = { AWS_ACCESS_KEY_ID: CLOUDACCESS123, AWS_SECRET_ACCESS_KEY: CLOUDSECRET456, AWS_SESSION_TOKEN: CLOUDSESSION789, oauth_token: CLOUDOAUTH000 }",
       "function runTests() { return true }",
     ].join("\n"))
     await writeFile(join(dir, "src", "whitespace.py"), "def outer():\n    if True:\n        return 'indented'\n")
@@ -24414,6 +24415,12 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.terraform.d")
     const search = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(search.result.matches[0]).toMatchObject({ path: "src/sample.ts", line_number: 1 })
+    const cloudSearch = await server.command("runtime.commander_repo_search_text", { query: "CloudCredentialSample", path: "src" }) as Record<string, any>
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDACCESS123")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDSECRET456")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDSESSION789")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDOAUTH000")
+    expect(JSON.stringify(cloudSearch.result)).toContain("[REDACTED]")
     const missingQuerySearch = await server.command("runtime.commander_repo_search_text", { path: "." }) as Record<string, any>
     expect(missingQuerySearch.status).toBe("blocked")
     expect(missingQuerySearch.blockers).toContain("repo text search requires query")
@@ -24450,6 +24457,18 @@ describe("ProcessOpenCodeAdapter", () => {
     const read = await server.command("runtime.commander_repo_read_lines", { path: "src/sample.ts", start_line: 1, end_line: 4 }) as Record<string, any>
     expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("[REDACTED]")
     expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("tokenName")
+    const cloudRead = await server.command("runtime.commander_repo_read_lines", { path: "src/sample.ts", start_line: 4, end_line: 4 }) as Record<string, any>
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDACCESS123")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDSECRET456")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDSESSION789")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDOAUTH000")
+    expect(cloudRead.result.content_hash).toBe(createHash("sha256").update([
+      "export class CommanderToolServiceSample {}",
+      "const tokenName = 'not a secret assignment shape'",
+      "const api_key = super-secret-value",
+      "export const CloudCredentialSample = { AWS_ACCESS_KEY_ID: CLOUDACCESS123, AWS_SECRET_ACCESS_KEY: CLOUDSECRET456, AWS_SESSION_TOKEN: CLOUDSESSION789, oauth_token: CLOUDOAUTH000 }",
+      "function runTests() { return true }",
+    ].join("\n")).digest("hex"))
     const whitespaceRead = await server.command("runtime.commander_repo_read_lines", { path: "src/whitespace.py", start_line: 1, end_line: 3 }) as Record<string, any>
     expect(whitespaceRead.result.lines.map((line: any) => line.text)).toEqual(["def outer():", "    if True:", "        return 'indented'"])
     const spacedPathRead = await server.command("runtime.commander_repo_read_lines", { path: "src/a  b.ts", start_line: 1, end_line: 1 }) as Record<string, any>
@@ -24472,6 +24491,11 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.terraform.d/credentials.tfrc.json" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
     const symbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
     expect(symbol.result.candidates[0]).toMatchObject({ declaration_kind: "class", confidence: "exact_declaration" })
+    const cloudSymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "CloudCredentialSample", path: "src" }) as Record<string, any>
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDACCESS123")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDSECRET456")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDSESSION789")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDOAUTH000")
     const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
     expect(JSON.stringify(tests.result)).toContain("bun test")
     const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
@@ -24542,7 +24566,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
-    await writeFile(join(dir, "tracked.txt"), `first\napi_key = top-secret\n${Array.from({ length: 20 }, (_, index) => `added-${index}`).join("\n")}\n`)
+    await writeFile(join(dir, "tracked.txt"), `first\napi_key = top-secret\nAWS_ACCESS_KEY_ID = GITCLOUDACCESS123\nAWS_SECRET_ACCESS_KEY = GITCLOUDSECRET456\nAWS_SESSION_TOKEN = GITCLOUDSESSION789\n${Array.from({ length: 20 }, (_, index) => `added-${index}`).join("\n")}\n`)
     await writeFile(join(dir, ".env"), "aws_access_key_id = SHOULD_NOT_LEAK\n")
     expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
@@ -24595,6 +24619,9 @@ describe("ProcessOpenCodeAdapter", () => {
     const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
     expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
     expect(diff.result.patch_preview).toContain("[REDACTED]")
+    expect(JSON.stringify(diff.result)).not.toContain("GITCLOUDACCESS123")
+    expect(JSON.stringify(diff.result)).not.toContain("GITCLOUDSECRET456")
+    expect(JSON.stringify(diff.result)).not.toContain("GITCLOUDSESSION789")
     const zeroContextDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt", context_lines: 0 }) as Record<string, any>
     expect(zeroContextDiff.result.patch_preview).toContain("[REDACTED]")
     expect(zeroContextDiff.result.patch_preview).not.toContain("\n first\n")
@@ -24619,7 +24646,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK_QUOTED")
     expect(wholeDiff.warnings.join(" ")).toContain("Suppressed")
     const statOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", stat_only: true }) as Record<string, any>
-    expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt", additions: 21, deletions: 0 })]))
+    expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt", additions: 24, deletions: 0 })]))
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain(".env")
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain("secret.p12")
     expect(statOnlyDiff.warnings.join(" ")).toContain("Suppressed")

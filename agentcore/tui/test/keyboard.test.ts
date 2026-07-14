@@ -215,6 +215,11 @@ describe("TUI keyboard command model", () => {
       { type: "send-command", command: "repo-git-diff", args: ["scope=working_tree", "stat_only=true"] },
     ])
 
+    const zeroContextGitState: UiState = { ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: "/commander-git-diff scope=working_tree context_lines=0" }
+    expect(applyKeyCommandWithEffects(zeroContextGitState, { type: "submit" }).effects).toEqual([
+      { type: "send-command", command: "commander-git-diff", args: ["scope=working_tree", "context_lines=0"] },
+    ])
+
     for (const message of ["/tmp/repo-search", ".repo-read path=server.ts", ":repo-tree path=."]) {
       const pathState: UiState = { ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: message }
       expect(applyKeyCommandWithEffects(pathState, { type: "submit" }).effects).toEqual([{ type: "send-user-message", message }])

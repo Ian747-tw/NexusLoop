@@ -2,6 +2,7 @@ const SECRET_PATTERNS: RegExp[] = [
   /\bsk-[A-Za-z0-9_-]{8,}\b/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi,
   /\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[^"',\s}]+/gi,
+  /\b(?:aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|aws[_-]?security[_-]?token|access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|client[_-]?key[_-]?data|private[_-]?key|auth)\s*[:=]\s*["']?[^"',\s}]+/gi,
 ]
 
 export function redactText(value: string): string {
@@ -15,7 +16,7 @@ export function redactValue<T>(value: T): T {
     const output: Record<string, unknown> = {}
     for (const [key, item] of Object.entries(value)) {
       const safeNumericTokenMetadata = typeof item === "number" && /(?:_tokens|_token_count)$/i.test(key)
-      output[key] = /secret|token|api[_-]?key|password/i.test(key) && !safeNumericTokenMetadata ? "[REDACTED]" : redactValue(item)
+      output[key] = /secret|token|api[_-]?key|password|aws[_-]?access[_-]?key[_-]?id|^auth$|private[_-]?key/i.test(key) && !safeNumericTokenMetadata ? "[REDACTED]" : redactValue(item)
     }
     return output as T
   }
