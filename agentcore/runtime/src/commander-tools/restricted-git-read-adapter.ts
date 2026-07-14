@@ -63,6 +63,7 @@ export class RestrictedGitReadAdapter {
     ])
     const blockers = [porcelain.error].filter((item): item is string => !!item)
     const parsed = parseStatus(porcelain.stdout, head.error ? "" : head.stdout.trim(), branch.error ? "HEAD" : branch.stdout.trim())
+    parsed.result.truncated = parsed.result.truncated || porcelain.truncated
     const warnings = [...head.warnings, ...branch.warnings, ...porcelain.warnings]
     if (head.error || branch.error) warnings.push("Git HEAD is unborn; status metadata is limited")
     if (parsed.omittedSensitive > 0) warnings.push(`Suppressed ${parsed.omittedSensitive} sensitive Git status path(s)`)
@@ -373,6 +374,6 @@ function isUnmergedStatus(status: string): boolean {
 
 function clamp(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : undefined
-  if (!parsed || !Number.isFinite(parsed)) return fallback
+  if (parsed === undefined || !Number.isFinite(parsed)) return fallback
   return Math.max(min, Math.min(max, Math.floor(parsed)))
 }

@@ -73,7 +73,7 @@ import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-regist
 import { CommandAuthorityService } from "./authority/command-authority-service"
 import { CommanderToolService } from "./commander-tools/commander-tool-service"
 import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
-import { restrictedGitLogArgs, restrictedGitReadEnv } from "./commander-tools/restricted-git-read-adapter"
+import { RestrictedGitReadAdapter, restrictedGitLogArgs, restrictedGitReadEnv } from "./commander-tools/restricted-git-read-adapter"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -24530,6 +24530,9 @@ describe("ProcessOpenCodeAdapter", () => {
     const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
     expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
     expect(diff.result.patch_preview).toContain("[REDACTED]")
+    const zeroContextDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt", context_lines: 0 }) as Record<string, any>
+    expect(zeroContextDiff.result.patch_preview).toContain("[REDACTED]")
+    expect(zeroContextDiff.result.patch_preview).not.toContain("\n first\n")
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".envrc" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
@@ -24612,6 +24615,24 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(stagedDiff.blockers).toEqual([])
     expect(stagedDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "new-file.txt" })]))
     expect(stagedDiff.warnings.join(" ")).toContain("Git HEAD is unborn")
+  })
+
+  test("Commander restricted Git status propagates adapter truncation", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "tracked.txt"), "tracked\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    for (let index = 0; index < 20; index += 1) {
+      await writeFile(join(dir, `untracked-${index}.txt`), `untracked ${index}\n`)
+    }
+    const adapter = new RestrictedGitReadAdapter({ projectDir: dir, maxStdoutBytes: 64 })
+    const status = await adapter.status()
+    expect(status.result.truncated).toBe(true)
+    expect(status.warnings).toContain("Git stdout exceeded output cap and was truncated")
   })
 
   test("Commander restricted Git reads disable configured fsmonitor hooks", async () => {
