@@ -24459,7 +24459,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "package-lock.json"), packageLockText)
     await mkdir(join(dir, "oversized-manifest"), { recursive: true })
     await writeFile(join(dir, "oversized-manifest", "package.json"), JSON.stringify({ scripts: { test: "bun test" }, dependencies: { too_large: "x".repeat(300_000) } }))
-    await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n  'requests[security]>=2',\n  'flask>=3',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n  'uvicorn[standard]>=0.20',\n]\n")
+    await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n  'requests[security]>=2',\n  'flask>=3',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n  'uvicorn[standard]>=0.20',\n]\n[tool.poetry.dependencies]\npython = '^3.11'\nhttpx = '^0.27'\npendulum = { version = '^3.0', extras = ['test'] }\n[tool.poetry.group.dev.dependencies]\npytest = '^8.0'\n")
     await mkdir(join(dir, "aaa-filler"), { recursive: true })
     for (let index = 0; index < 1250; index += 1) {
       await writeFile(join(dir, "aaa-filler", `filler-${index}.txt`), "not a manifest\n")
@@ -24618,6 +24618,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "flask", dependency_group: "project.dependencies", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "rich", dependency_group: "project.optional-dependencies.extra", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "uvicorn", dependency_group: "project.optional-dependencies.extra", version_constraint: "uvicorn[standard]>=0.20", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "httpx", dependency_group: "tool.poetry.dependencies", version_constraint: "^0.27", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "pendulum", dependency_group: "tool.poetry.dependencies", version_constraint: "^3.0", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "pytest", dependency_group: "tool.poetry.group.dev.dependencies", version_constraint: "^8.0", direct: true })]))
+    expect(deps.result.dependencies.map((dependency: any) => dependency.package_name)).not.toContain("python")
     expect(deps.result.lockfiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "package-lock.json", size_bytes: packageLockText.length, hash_omitted: true, omitted_reason: "lockfile exceeds hash cap" })]))
     expect(deps.warnings.join(" ")).toContain("package-lock.json exceeds lockfile hash cap")
     expect(deps.omitted_items).toBeGreaterThan(0)
@@ -24628,6 +24632,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(deps.result)).not.toContain("SHOULD_NOT_BREAK_JSON")
     const runtimeOnlyDeps = await server.command("runtime.commander_repo_dependency_manifest", { include_optional: false }) as Record<string, any>
     expect(JSON.stringify(runtimeOnlyDeps.result.dependencies)).not.toContain("rich")
+    const noDevDeps = await server.command("runtime.commander_repo_dependency_manifest", { include_dev: false }) as Record<string, any>
+    expect(JSON.stringify(noDevDeps.result.dependencies)).not.toContain("pytest")
     expect(deps.result.lockfiles).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: "bun.lock" })]))
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
   })

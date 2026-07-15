@@ -724,6 +724,14 @@ function parsePyprojectDependencies(path: string, text: string, includeDev: bool
     }
     if (!includeDev && /dev|test/i.test(group)) continue
     if (!includeOptional && group === "project.optional-dependencies") continue
+    const poetryGroup = poetryDependencyGroup(group)
+    if (poetryGroup) {
+      const tableDep = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=\s*(.+?)\s*(?:#.*)?$/)
+      if (tableDep && tableDep[1] !== "python" && (includeDev || !/dev|test/i.test(poetryGroup))) {
+        addPythonNamedDependency(out, path, tableDep[1], parsePoetryDependencyConstraint(tableDep[2]), poetryGroup)
+      }
+      continue
+    }
     const assignment = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=\s*(\[.*)$/)
     if (assignment) {
       const key = assignment[1]
@@ -747,6 +755,22 @@ function parsePyprojectDependencies(path: string, text: string, includeDev: bool
   }
   flushArray()
   return out.slice(0, 120)
+}
+
+function poetryDependencyGroup(group: string): string | undefined {
+  if (group === "tool.poetry.dependencies") return group
+  const grouped = group.match(/^tool\.poetry\.group\.([A-Za-z0-9_.-]+)\.dependencies$/)
+  if (grouped) return `tool.poetry.group.${grouped[1]}.dependencies`
+  return undefined
+}
+
+function parsePoetryDependencyConstraint(raw: string): string {
+  const trimmed = raw.trim()
+  const quoted = trimmed.match(/^["']([^"']+)["']/)
+  if (quoted) return quoted[1]
+  const version = trimmed.match(/\bversion\s*=\s*["']([^"']+)["']/)
+  if (version) return version[1]
+  return trimmed
 }
 
 function parseTomlStringArray(text: string): string[] {
@@ -783,7 +807,11 @@ function tomlArrayIsClosed(text: string): boolean {
 function addPythonDependency(out: Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }>, path: string, raw: string, group: string): void {
   const name = raw.match(/^\s*([A-Za-z0-9_.-]+)/)?.[1]
   if (!name) return
-  out.push({ ecosystem: "python", manifest_path: path, package_name: name, version_constraint: sanitizeDependencyConstraint(raw), dependency_group: group, direct: true })
+  addPythonNamedDependency(out, path, name, raw, group)
+}
+
+function addPythonNamedDependency(out: Array<{ ecosystem: string; manifest_path: string; package_name: string; version_constraint: string; dependency_group: string; direct: true }>, path: string, name: string, version: string, group: string): void {
+  out.push({ ecosystem: "python", manifest_path: path, package_name: name, version_constraint: sanitizeDependencyConstraint(version), dependency_group: group, direct: true })
 }
 
 function sanitizeDependencyConstraint(value: string): string {
