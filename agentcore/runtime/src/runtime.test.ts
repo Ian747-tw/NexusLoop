@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { delimiter, join } from "node:path"
 import { tmpdir } from "node:os"
 import { Database } from "bun:sqlite"
 import { RuntimeServer } from "./server"
@@ -24804,6 +24804,38 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.commander_repo_git_log", { path: ":(glob).env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git pathspec magic is not supported"]) })
     await expect(server.command("runtime.commander_repo_git_log", { path: "*.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git wildcard path filters are not supported"]) })
     expect(await server.eventStore.readAll()).toHaveLength(before.length)
+  })
+
+  test("Commander restricted Git reads resolve Git outside the project PATH", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "tracked.txt"), "first\n")
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "tracked.txt"), "first\nsecond\n")
+    await writeFile(join(dir, "git"), "#!/bin/sh\nprintf executed > git-path-hijack-ran\nexit 42\n")
+    await chmod(join(dir, "git"), 0o755)
+
+    const originalPath = process.env.PATH
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ""}`
+    try {
+      const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+      const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+      expect(status).toMatchObject({ status: "ready", tool_id: "repo.git_status", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false })
+      expect(status.result.unstaged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
+      const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
+      expect(diff).toMatchObject({ status: "ready", tool_id: "repo.git_diff", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false })
+      expect(diff.result.patch_preview).toContain("second")
+      const log = await server.command("runtime.commander_repo_git_log", { limit: 1 }) as Record<string, any>
+      expect(log).toMatchObject({ status: "ready", tool_id: "repo.git_log", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false })
+      expect(log.result.commits).toEqual([expect.objectContaining({ subject_preview: "initial" })])
+      expect(existsSync(join(dir, "git-path-hijack-ran"))).toBe(false)
+    } finally {
+      process.env.PATH = originalPath
+    }
   })
 
   test("Commander restricted Git status classifies add-add conflicts", async () => {

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
-import { realpath } from "node:fs/promises"
-import { resolve } from "node:path"
+import { constants } from "node:fs"
+import { access, realpath } from "node:fs/promises"
+import { delimiter, join, relative, resolve } from "node:path"
 import { redactText } from "../security/redaction"
 import type { CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusResult } from "./commander-read-types"
 import { isDeniedRepositoryPath } from "./commander-repo-path-policy"
@@ -49,6 +50,7 @@ export function restrictedGitLogArgs(limit: number, path?: string): string[] {
 export class RestrictedGitReadAdapter {
   private readonly timeoutMs: number
   private readonly maxStdoutBytes: number
+  private trustedGitResolution?: Promise<{ executable: string; path: string }>
 
   constructor(private readonly options: RestrictedGitReadAdapterOptions) {
     this.timeoutMs = options.timeoutMs ?? TIMEOUT_MS
@@ -148,16 +150,23 @@ export class RestrictedGitReadAdapter {
     return { blocked, warnings }
   }
 
-  private run(args: string[]): Promise<{ stdout: string; stderr: string; error?: string; warnings: string[]; truncated: boolean; exitCode?: number }> {
+  private async run(args: string[]): Promise<{ stdout: string; stderr: string; error?: string; warnings: string[]; truncated: boolean; exitCode?: number }> {
     const warnings: string[] = []
     const projectRoot = resolve(this.options.projectDir)
     const env = restrictedGitReadEnv()
+    let gitResolution: { executable: string; path: string }
+    try {
+      gitResolution = await this.resolveTrustedGitExecutable(projectRoot)
+      env.PATH = gitResolution.path
+    } catch (error) {
+      return { stdout: "", stderr: "", error: error instanceof Error ? error.message : "trusted Git executable could not be resolved", warnings, truncated: false }
+    }
     return new Promise((resolvePromise) => {
       let stdout = Buffer.alloc(0)
       let stderr = Buffer.alloc(0)
       let settled = false
       let truncated = false
-      const child = spawn("git", [...SAFE_GIT_CONFIG_ARGS, ...args], { cwd: projectRoot, shell: false, env })
+      const child = spawn(gitResolution.executable, [...SAFE_GIT_CONFIG_ARGS, ...args], { cwd: projectRoot, shell: false, env })
       const finish = (error?: string) => {
         if (settled) return
         settled = true
@@ -192,6 +201,43 @@ export class RestrictedGitReadAdapter {
       })
     })
   }
+
+  private resolveTrustedGitExecutable(projectRoot: string): Promise<{ executable: string; path: string }> {
+    this.trustedGitResolution ??= findTrustedGitExecutable(projectRoot)
+    return this.trustedGitResolution
+  }
+}
+
+async function findTrustedGitExecutable(projectRoot: string): Promise<{ executable: string; path: string }> {
+  const projectRootReal = await realpath(projectRoot).catch(() => projectRoot)
+  const names = process.platform === "win32" ? ["git.exe", "git.cmd", "git"] : ["git"]
+  const trustedPathEntries: string[] = []
+  let executable: string | undefined
+  for (const entry of (process.env.PATH ?? "").split(delimiter)) {
+    if (!entry) continue
+    const dir = await realpath(resolve(entry)).catch(() => undefined)
+    if (!dir || isInsideOrEqual(dir, projectRootReal)) continue
+    trustedPathEntries.push(dir)
+    for (const name of names) {
+      const candidate = join(dir, name)
+      const candidateReal = await realpath(candidate).catch(() => undefined)
+      if (!candidateReal || isInsideOrEqual(candidateReal, projectRootReal)) continue
+      try {
+        await access(candidateReal, constants.X_OK)
+        executable ??= candidateReal
+        break
+      } catch {
+        // continue searching PATH
+      }
+    }
+  }
+  if (!executable) throw new Error("trusted Git executable could not be resolved outside the project root")
+  return { executable, path: trustedPathEntries.join(delimiter) }
+}
+
+function isInsideOrEqual(path: string, root: string): boolean {
+  const rel = relative(root, path)
+  return rel === "" || !!rel && !rel.startsWith("..") && !rel.startsWith("/") && !rel.startsWith("\\")
 }
 
 function emptyStatus(): CommanderGitStatusResult {
