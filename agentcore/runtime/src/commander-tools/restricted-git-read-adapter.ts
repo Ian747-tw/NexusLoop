@@ -297,15 +297,21 @@ function parseDiffFiles(output: string): CommanderGitDiffResult["files"] {
     if (!files.has(current)) files.set(current, { path: current, additions: 0, deletions: 0, binary: false })
   }
   for (const line of output.split(/\r?\n/)) {
-    const header = line.match(/^diff --git a\/(.+) b\/(.+)$/)
+    const header = parseDiffGitHeader(line)
     if (header) {
-      ensureFile(header[2])
-      pendingOldPath = header[1]
+      ensureFile(header.newPath)
+      pendingOldPath = header.oldPath
       continue
     }
     const file = line.match(/^\+\+\+ b\/(.+)/)
     if (file) {
-      ensureFile(file[1])
+      ensureFile(stripDiffPathMetadata(file[1]))
+      continue
+    }
+    const binary = parseBinaryFilesLine(line)
+    if (binary) {
+      ensureFile(binary.newPath)
+      files.get(current!)!.binary = true
       continue
     }
     if (line === "+++ /dev/null" && pendingOldPath) ensureFile(pendingOldPath)
@@ -365,11 +371,11 @@ function filterSensitiveDiffSections(output: string): { output: string; omitted:
       denySection = true
       continue
     }
-    const header = line.match(/^diff --git a\/(.+) b\/(.+)$/)
+    const header = parseDiffGitHeader(line)
     if (header) {
       flush()
       section = [line]
-      denySection = isUnsafeDiffPath(header[1]) || isUnsafeDiffPath(header[2]) || isDeniedRepositoryPath(header[1]) || isDeniedRepositoryPath(header[2])
+      denySection = isUnsafeDiffPath(header.oldPath) || isUnsafeDiffPath(header.newPath) || isDeniedRepositoryPath(header.oldPath) || isDeniedRepositoryPath(header.newPath)
       continue
     }
     const combinedHeader = line.match(/^diff --(?:cc|combined)\s+(.+)$/)
@@ -384,14 +390,48 @@ function filterSensitiveDiffSections(output: string): { output: string; omitted:
       if (/^(?:\+\+\+|---)\s+"/.test(line)) denySection = true
       const newFile = line.match(/^\+\+\+ b\/(.+)/)
       const oldFile = line.match(/^--- a\/(.+)/)
-      if (newFile && (isUnsafeDiffPath(newFile[1]) || isDeniedRepositoryPath(newFile[1]))) denySection = true
-      if (oldFile && (isUnsafeDiffPath(oldFile[1]) || isDeniedRepositoryPath(oldFile[1]))) denySection = true
+      const binary = parseBinaryFilesLine(line)
+      if (newFile) {
+        const path = stripDiffPathMetadata(newFile[1])
+        if (isUnsafeDiffPath(path) || isDeniedRepositoryPath(path)) denySection = true
+      }
+      if (oldFile) {
+        const path = stripDiffPathMetadata(oldFile[1])
+        if (isUnsafeDiffPath(path) || isDeniedRepositoryPath(path)) denySection = true
+      }
+      if (binary && (isUnsafeDiffPath(binary.oldPath) || isUnsafeDiffPath(binary.newPath) || isDeniedRepositoryPath(binary.oldPath) || isDeniedRepositoryPath(binary.newPath))) denySection = true
     } else {
       kept.push(line)
     }
   }
   flush()
   return { output: kept.join("\n"), omitted }
+}
+
+function parseDiffGitHeader(line: string): { oldPath: string; newPath: string } | null {
+  const prefix = "diff --git a/"
+  if (!line.startsWith(prefix)) return null
+  const tail = line.slice(prefix.length)
+  const candidates: Array<{ oldPath: string; newPath: string }> = []
+  let index = tail.indexOf(" b/")
+  while (index >= 0) {
+    const oldPath = tail.slice(0, index)
+    const newPath = tail.slice(index + 3)
+    if (oldPath && newPath) candidates.push({ oldPath, newPath })
+    index = tail.indexOf(" b/", index + 1)
+  }
+  if (candidates.length === 0) return null
+  return candidates.find((candidate) => candidate.oldPath === candidate.newPath) ?? candidates[candidates.length - 1]
+}
+
+function parseBinaryFilesLine(line: string): { oldPath: string; newPath: string } | null {
+  const match = line.match(/^Binary files a\/(.+?) and b\/(.+) differ$/)
+  if (!match) return null
+  return { oldPath: match[1], newPath: match[2] }
+}
+
+function stripDiffPathMetadata(path: string): string {
+  return path.split("\t")[0] ?? path
 }
 
 function isUnsafeDiffPath(path: string): boolean {

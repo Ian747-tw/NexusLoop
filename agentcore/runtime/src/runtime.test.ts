@@ -24763,7 +24763,14 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "mode-only.sh"), "#!/bin/sh\nexit 0\n")
     expect(Bun.spawnSync({ cmd: ["git", "add", "mode-only.sh"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track mode only file"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await mkdir(join(dir, "space dir"), { recursive: true })
+    await writeFile(join(dir, "space dir", "spaced file.ts"), "export const spacedDiff = 1\n")
+    await writeFile(join(dir, "space dir", "asset.bin"), new Uint8Array([0, 1, 2, 3]))
+    expect(Bun.spawnSync({ cmd: ["git", "add", "space dir/spaced file.ts", "space dir/asset.bin"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track spaced paths"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     await chmod(join(dir, "mode-only.sh"), 0o755)
+    await writeFile(join(dir, "space dir", "spaced file.ts"), "export const spacedDiff = 2\n")
+    await writeFile(join(dir, "space dir", "asset.bin"), new Uint8Array([0, 1, 2, 3, 4]))
     expect(Bun.spawnSync({ cmd: ["git", "mv", "rename-source.txt", "rename-target.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     await rm(join(dir, "delete-me.txt"))
     await writeFile(join(dir, "secret.p12"), new Uint8Array([0, 1, 2, 3, 4, 5]))
@@ -24800,6 +24807,14 @@ describe("ProcessOpenCodeAdapter", () => {
     const zeroContextDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt", context_lines: 0 }) as Record<string, any>
     expect(zeroContextDiff.result.patch_preview).toContain("[REDACTED]")
     expect(zeroContextDiff.result.patch_preview).not.toContain("\n first\n")
+    const spacedTextDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "space dir/spaced file.ts" }) as Record<string, any>
+    expect(spacedTextDiff.result.files).toEqual([expect.objectContaining({ path: "space dir/spaced file.ts", additions: 1, deletions: 1 })])
+    expect(spacedTextDiff.result.patch_preview).toContain("space dir/spaced file.ts")
+    expect(spacedTextDiff.warnings.join(" ")).not.toContain("Suppressed")
+    const spacedBinaryDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "space dir/asset.bin" }) as Record<string, any>
+    expect(spacedBinaryDiff.result.files).toEqual([expect.objectContaining({ path: "space dir/asset.bin", binary: true })])
+    expect(spacedBinaryDiff.result.stat_preview).toContain("space dir/asset.bin")
+    expect(spacedBinaryDiff.warnings.join(" ")).not.toContain("Suppressed")
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
     await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "prod.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
@@ -24817,6 +24832,8 @@ describe("ProcessOpenCodeAdapter", () => {
     const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
     expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "delete-me.txt", deletions: 1 })]))
     expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "mode-only.sh" })]))
+    expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "space dir/spaced file.ts" })]))
+    expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "space dir/asset.bin", binary: true })]))
     expect(wholeDiff.result.stat_preview).toContain("delete-me.txt")
     expect(wholeDiff.result.stat_preview).toContain("mode-only.sh")
     expect(JSON.stringify(wholeDiff.result)).not.toContain(".env")
