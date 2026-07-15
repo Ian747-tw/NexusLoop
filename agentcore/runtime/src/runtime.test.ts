@@ -73,6 +73,7 @@ import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-regist
 import { CommandAuthorityService } from "./authority/command-authority-service"
 import { CommanderToolService } from "./commander-tools/commander-tool-service"
 import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
+import { readBoundedDirectoryEntries } from "./commander-tools/commander-repo-read-service"
 import { RestrictedGitReadAdapter, restrictedGitLogArgs, restrictedGitReadEnv } from "./commander-tools/restricted-git-read-adapter"
 
 const cleanup: string[] = []
@@ -24354,6 +24355,35 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(result.warnings.join(" ")).toContain("operational memory output capped")
   })
 
+  test("Commander repository directory enumeration reads only bounded batches", async () => {
+    let yielded = 0
+    let closed = false
+    const oversizedReader = async function* (): AsyncIterable<string> {
+      try {
+        for (let index = 0; index < 100_000; index += 1) {
+          yielded += 1
+          yield `entry-${String(100_000 - index).padStart(6, "0")}.ts`
+        }
+      } finally {
+        closed = true
+      }
+    }
+    const capped = await readBoundedDirectoryEntries("/unused", { maxEntries: 7, reader: oversizedReader })
+    expect(capped.names).toHaveLength(7)
+    expect(capped.names).toEqual([...capped.names].sort((a, b) => a.localeCompare(b)))
+    expect(capped.capped).toBe(true)
+    expect(yielded).toBe(7)
+    expect(closed).toBe(true)
+
+    const ordered = await readBoundedDirectoryEntries("/unused", { maxEntries: 10, reader: async function* () {
+      yield "zeta.ts"
+      yield "alpha.ts"
+      yield "middle.ts"
+    } })
+    expect(ordered.names).toEqual(["alpha.ts", "middle.ts", "zeta.ts"])
+    expect(ordered.capped).toBe(false)
+  })
+
   test("Commander repository reads enforce path policy, bounds, redaction, and manifests", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -24398,6 +24428,14 @@ describe("ProcessOpenCodeAdapter", () => {
     for (let index = 0; index < 1250; index += 1) {
       await writeFile(join(dir, "aaa-filler", `filler-${index}.txt`), "not a manifest\n")
     }
+    await mkdir(join(dir, "tree-cap"), { recursive: true })
+    for (let index = 0; index < 12; index += 1) {
+      await writeFile(join(dir, "tree-cap", `entry-${String(index).padStart(2, "0")}.ts`), "export const treeCap = true\n")
+    }
+    await mkdir(join(dir, "zzz-manifest-cap"), { recursive: true })
+    for (let index = 0; index < 1100; index += 1) {
+      await writeFile(join(dir, "zzz-manifest-cap", `filler-${index}.txt`), "not a manifest\n")
+    }
     const outsideLock = join(await mkdtemp(join(tmpdir(), "nxl-lock-outside-")), "bun.lock")
     await writeFile(outsideLock, "external lock")
     await symlink(outsideLock, join(dir, "bun.lock"))
@@ -24408,6 +24446,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(tree.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ path: ".nxl", readable: false, excluded_reason: "excluded by traversal policy" })]))
     expect(tree.result.entries.some((entry: any) => entry.path.startsWith(".nxl/"))).toBe(false)
     expect(JSON.stringify(tree.result)).not.toContain("prod.env")
+    const cappedTree = await server.command("runtime.commander_repo_tree", { path: "tree-cap", depth: 1, limit: 3 }) as Record<string, any>
+    expect(cappedTree.result.entries).toHaveLength(3)
+    expect(cappedTree.result.omitted_entries).toBeGreaterThan(0)
+    expect(cappedTree.warnings.join(" ")).toContain("repo tree traversal capped before traversal completed")
     const sensitiveTree = await server.command("runtime.commander_repo_tree", { path: "nested", depth: 3, include_hidden: true }) as Record<string, any>
     expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.ssh")
     expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.config/gcloud")
@@ -24441,6 +24483,9 @@ describe("ProcessOpenCodeAdapter", () => {
     const extensionSearch = await server.command("runtime.commander_repo_search_text", { query: "extension-filter-needle", path: "mixed", extensions: "ts", max_files: 3 }) as Record<string, any>
     expect(extensionSearch.result.matches).toEqual([expect.objectContaining({ path: "mixed/z-target.ts", line_number: 1 })])
     expect(extensionSearch.result.scanned_files).toBe(1)
+    const cappedCandidateSearch = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "mixed", max_files: 1 }) as Record<string, any>
+    expect(cappedCandidateSearch.result.omitted_files).toBeGreaterThan(0)
+    expect(cappedCandidateSearch.warnings.join(" ")).toContain("repo search candidate collection capped before traversal completed")
     await mkdir(join(dir, "agentcore", "upstream", "packages", "opencode"), { recursive: true })
     await writeFile(join(dir, "agentcore", "upstream", "packages", "opencode", "tool.ts"), "export const upstreamNeedle = true\n")
     const upstreamTree = await server.command("runtime.commander_repo_tree", { path: "agentcore/upstream/packages/opencode", depth: 1 }) as Record<string, any>
@@ -24507,6 +24552,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
     expect(JSON.stringify(tests.result)).toContain("bun test")
     expect(tests.omitted_items).toBeGreaterThan(0)
+    expect(tests.warnings.join(" ")).toContain("manifest candidate collection capped before traversal completed")
     expect(tests.warnings.join(" ")).toContain("manifest read skipped for oversized-manifest/package.json: file exceeds read cap")
     const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
@@ -24519,6 +24565,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(deps.result.lockfiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "package-lock.json", size_bytes: packageLockText.length, hash_omitted: true, omitted_reason: "lockfile exceeds hash cap" })]))
     expect(deps.warnings.join(" ")).toContain("package-lock.json exceeds lockfile hash cap")
     expect(deps.omitted_items).toBeGreaterThan(0)
+    expect(deps.warnings.join(" ")).toContain("manifest candidate collection capped before traversal completed")
     expect(deps.warnings.join(" ")).toContain("manifest read skipped for oversized-manifest/package.json: file exceeds read cap")
     expect(JSON.stringify(deps.result)).not.toContain("large")
     const runtimeOnlyDeps = await server.command("runtime.commander_repo_dependency_manifest", { include_optional: false }) as Record<string, any>
@@ -24590,7 +24637,6 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(assetHeavySymbol.result.candidates).toEqual([expect.objectContaining({ path: "asset-heavy-symbol/zz-source.ts", declaration_kind: "class", confidence: "exact_declaration" })])
     expect(assetHeavySymbol.warnings.join(" ")).not.toContain("candidate collection capped")
     const assetCappedSymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetCappedSymbol", path: "asset-capped-symbol", limit: 5 }) as Record<string, any>
-    expect(assetCappedSymbol.result.candidates).toHaveLength(0)
     expect(assetCappedSymbol.omitted_items).toBeGreaterThan(0)
     expect(assetCappedSymbol.warnings.join(" ")).toContain("repo symbol candidate collection capped before traversal completed")
   })

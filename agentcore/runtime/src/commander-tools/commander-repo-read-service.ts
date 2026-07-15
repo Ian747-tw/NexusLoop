@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { createReadStream } from "node:fs"
-import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises"
+import { lstat, opendir, readFile, realpath, stat } from "node:fs/promises"
 import { basename, extname, join, relative, resolve, sep } from "node:path"
 import { redactText, redactValue } from "../security/redaction"
 import type {
@@ -66,12 +66,13 @@ export class CommanderRepoReadService {
     const checked = await resolveSafePath(root, path, { allowDirectory: true, includeUpstream })
     if (checked.error) blockers.push(checked.error)
     if (!includeUpstream && path === ".") warnings.push("agentcore/upstream omitted by default; pass include_upstream=true or an explicit upstream path for bounded traversal")
-    let omitted = 0
+    const treeStats = { omitted: 0, capped: false }
     if (!checked.error && checked.absolute) {
-      await walkTree(root, checked.absolute, checked.relative, depth, includeHidden, includeUpstream, isExplicitUpstreamPath(checked.relative), limit, entries, () => { omitted += 1 })
+      await walkTree(root, checked.absolute, checked.relative, depth, includeHidden, includeUpstream, isExplicitUpstreamPath(checked.relative), limit, entries, treeStats, started)
     }
-    const result: CommanderRepoTreeResult = { root: ".", path: checked.relative ?? path, depth, entries, omitted_entries: omitted }
-    return this.wrap("repo.tree", "repository_directory", "repository_content_untrusted", result, started, blockers, warnings, false, entries.length + omitted, omitted)
+    if (treeStats.capped) warnings.push("repo tree traversal capped before traversal completed")
+    const result: CommanderRepoTreeResult = { root: ".", path: checked.relative ?? path, depth, entries, omitted_entries: treeStats.omitted }
+    return this.wrap("repo.tree", "repository_directory", "repository_content_untrusted", result, started, blockers, warnings, false, entries.length + treeStats.omitted, treeStats.omitted)
   }
 
   async searchText(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderRepoSearchResult>> {
@@ -496,8 +497,12 @@ async function rejectSymlinkComponents(root: string, absolute: string): Promise<
   }
 }
 
-async function walkTree(root: RootInfo, absolute: string, rel: string | undefined, depth: number, includeHidden: boolean, includeUpstream: boolean, explicitUpstreamStart: boolean, limit: number, entries: CommanderRepoTreeEntry[], omit: () => void): Promise<void> {
-  if (entries.length >= limit) { omit(); return }
+async function walkTree(root: RootInfo, absolute: string, rel: string | undefined, depth: number, includeHidden: boolean, includeUpstream: boolean, explicitUpstreamStart: boolean, limit: number, entries: CommanderRepoTreeEntry[], stats: { omitted: number; capped: boolean }, started: number): Promise<void> {
+  if (entries.length >= limit) {
+    stats.omitted += 1
+    stats.capped = true
+    return
+  }
   const info = await lstat(absolute)
   const name = basename(absolute)
   const currentRel = rel ?? toRelative(root, absolute)
@@ -505,10 +510,19 @@ async function walkTree(root: RootInfo, absolute: string, rel: string | undefine
   if (shouldSkip(currentRel, name, info.isDirectory(), includeHidden, includeUpstream, explicitUpstreamStart)) { entries.push({ path: currentRel, kind: info.isDirectory() ? "directory" : info.isSymbolicLink() ? "symlink" : "file", depth: depthOf(currentRel), readable: false, excluded_reason: "excluded by traversal policy" }); return }
   entries.push({ path: currentRel, kind: info.isDirectory() ? "directory" : info.isSymbolicLink() ? "symlink" : "file", size_bytes: info.isFile() ? info.size : undefined, depth: depthOf(currentRel), extension: info.isFile() ? extname(currentRel) : undefined, readable: info.isFile() || info.isDirectory(), content_hash: info.isFile() && info.size <= 64_000 ? sha(await readFile(absolute)) : undefined })
   if (!info.isDirectory() || depth <= 0 || info.isSymbolicLink()) return
-  const children = (await readdir(absolute)).sort((a, b) => a.localeCompare(b))
+  const remainingEntries = Math.max(0, limit - entries.length)
+  const children = await readBoundedDirectoryEntries(absolute, { maxEntries: remainingEntries, started, timeoutMs: REPO_SCAN_TIME_MS })
+  if (children.capped) {
+    stats.omitted += 1
+    stats.capped = true
+  }
   for (const child of children) {
-    if (entries.length >= limit) { omit(); continue }
-    await walkTree(root, join(absolute, child), toRelative(root, join(absolute, child)), depth - 1, includeHidden, includeUpstream, explicitUpstreamStart, limit, entries, omit)
+    if (entries.length >= limit) {
+      stats.omitted += 1
+      stats.capped = true
+      break
+    }
+    await walkTree(root, join(absolute, child), toRelative(root, join(absolute, child)), depth - 1, includeHidden, includeUpstream, explicitUpstreamStart, limit, entries, stats, started)
   }
 }
 
@@ -534,9 +548,15 @@ async function collectFiles(root: RootInfo, start: string, includeUpstream: bool
     if (shouldSkip(rel, name, info.isDirectory(), false, includeUpstream, explicitUpstreamStart)) return
     if (info.isSymbolicLink()) return
     if (info.isDirectory()) {
-      for (const child of (await readdir(path)).sort((a, b) => a.localeCompare(b))) {
+      const remainingVisits = Math.max(0, maxVisitedEntries - visitedEntries)
+      const children = await readBoundedDirectoryEntries(path, { maxEntries: remainingVisits, started, timeoutMs: REPO_SCAN_TIME_MS })
+      for (const child of children) {
         if (capped) break
         await visit(join(path, child))
+      }
+      if (children.capped) {
+        omitted += 1
+        capped = true
       }
       return
     }
@@ -551,6 +571,56 @@ async function collectFiles(root: RootInfo, start: string, includeUpstream: bool
   }
   await visit(start)
   return { files: out, omitted, capped }
+}
+
+export type BoundedDirectoryReader = (path: string) => AsyncIterable<string>
+
+export async function readBoundedDirectoryEntries(path: string, options: { maxEntries: number; started?: number; timeoutMs?: number; now?: () => number; reader?: BoundedDirectoryReader }): Promise<{ names: string[]; capped: boolean; [Symbol.iterator](): IterableIterator<string> }> {
+  const maxEntries = Math.max(0, Math.floor(options.maxEntries))
+  const now = options.now ?? (() => Date.now())
+  const started = options.started ?? now()
+  const timeoutMs = options.timeoutMs ?? REPO_SCAN_TIME_MS
+  if (maxEntries <= 0 || now() - started > timeoutMs) return directoryBatch([], true)
+  const iterable = (options.reader ?? streamDirectoryEntries)(path)
+  const iterator = iterable[Symbol.asyncIterator]()
+  const names: string[] = []
+  let capped = false
+  try {
+    while (names.length < maxEntries) {
+      if (now() - started > timeoutMs) {
+        capped = true
+        break
+      }
+      const next = await iterator.next()
+      if (next.done) return directoryBatch(names.sort((a, b) => a.localeCompare(b)), false)
+      names.push(next.value)
+    }
+    capped = true
+    return directoryBatch(names.sort((a, b) => a.localeCompare(b)), capped)
+  } finally {
+    await iterator.return?.()
+  }
+}
+
+function directoryBatch(names: string[], capped: boolean): { names: string[]; capped: boolean; [Symbol.iterator](): IterableIterator<string> } {
+  return {
+    names,
+    capped,
+    [Symbol.iterator]: function* () {
+      yield* names
+    },
+  }
+}
+
+async function* streamDirectoryEntries(path: string): AsyncIterable<string> {
+  const dir = await opendir(path)
+  try {
+    for await (const entry of dir) {
+      yield entry.name
+    }
+  } finally {
+    await Promise.resolve(dir.close()).catch(() => undefined)
+  }
 }
 
 async function readTextFile(path: string, maxBytes: number): Promise<{ text: string; bytes: number; source_sha256: string; rendered_sha256: string; size_bytes: number } | { error: string }> {
