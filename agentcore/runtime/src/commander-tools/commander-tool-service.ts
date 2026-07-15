@@ -128,6 +128,10 @@ export class CommanderToolService {
       warnings: phase === "governance_review" ? ["Governance descriptors are staged intents only; no GitHub mutation is executable in 9U."] : [],
       generated_at: generatedAt,
       profile_hash: hash({ phase, allowed, always, contract }),
+      manual_internal_read_execution_enabled: true,
+      provider_tool_loop_enabled: false,
+      external_read_execution_enabled: false,
+      governance_execution_enabled: false,
     }
   }
 
@@ -188,6 +192,10 @@ export class CommanderToolService {
       over_budget: Boolean((tokenCap && tokens > tokenCap) || (byteCap && bytes > byteCap)),
       omitted_core_tools: omitted,
       execution_enabled: false,
+      manual_internal_read_execution_enabled: true,
+      provider_tool_loop_enabled: false,
+      external_read_execution_enabled: false,
+      governance_execution_enabled: false,
       blockers: budget.blockers,
       warnings: [...budget.warnings, "bootstrap preview does not execute Commander tools, call providers, call MCPs, or read repositories"],
       generated_at: generatedAt,
@@ -231,11 +239,21 @@ export class CommanderToolService {
             authorityMismatch += 1
             mark(tool.tool_id, "implemented descriptor runtime command must match authority record")
           }
+          const allowGitProcess = isAllowedGitProcessDescriptor(tool, authority)
           for (const [field, expected] of Object.entries({ mutates_events: false, creates_external_process: false, calls_provider: false, requires_approval: false, requires_run_lock: false, requires_network: false, requires_credentials: false }) as Array<[keyof CommanderToolDescriptor, false]>) {
+            if (field === "creates_external_process" && allowGitProcess) continue
             if (tool[field] !== expected) {
               unsafe += 1
               mark(tool.tool_id, `implemented descriptor has unsafe ${field}`)
             }
+          }
+          if (tool.creates_external_process && !allowGitProcess) {
+            unsafe += 1
+            mark(tool.tool_id, "process-backed implemented descriptor is not an allowed fixed Git read tool")
+          }
+          if (allowGitProcess && (tool.execution_backend !== "restricted_git_read" || tool.process_policy !== "fixed_git_read_only" || authority.creates_external_process !== true)) {
+            unsafe += 1
+            mark(tool.tool_id, "Git read descriptor must use restricted_git_read/fixed_git_read_only and matching authority process metadata")
           }
         }
       }
@@ -414,6 +432,22 @@ function profileContract(phase: CommanderToolPhase) {
 
 function authorityFor(command: string) {
   return COMMAND_AUTHORITY_REGISTRY.find((record) => record.slash_command === command || record.aliases.includes(command))
+}
+
+function isAllowedGitProcessDescriptor(tool: CommanderToolDescriptor, authority: { creates_external_process: boolean } | undefined): boolean {
+  return tool.namespace === "repo_read"
+    && ["repo.git_status", "repo.git_diff", "repo.git_log"].includes(tool.tool_id)
+    && tool.execution_backend === "restricted_git_read"
+    && tool.process_policy === "fixed_git_read_only"
+    && tool.side_effect_class === "internal_read"
+    && tool.risk === "safe_read"
+    && tool.requires_network === false
+    && tool.requires_credentials === false
+    && tool.mutates_events === false
+    && tool.calls_provider === false
+    && tool.requires_approval === false
+    && tool.requires_run_lock === false
+    && authority?.creates_external_process === true
 }
 
 function countBy<T extends Record<string, unknown>>(items: T[], key: keyof T): Record<string, number> {

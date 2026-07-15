@@ -36,7 +36,7 @@ function schema(properties: CommanderToolJsonSchema["properties"], required: str
   return { schema_version: "nxl-commander-tool-v1", type: "object", properties, required, additionalProperties: false }
 }
 
-type ToolSpec = Omit<CommanderToolDescriptor, "authority_id" | "risk" | "side_effect_class" | "trust_class" | "instruction_semantics" | "availability" | "load_policy" | "requires_approval" | "requires_run_lock" | "creates_external_process" | "calls_provider" | "mutates_events" | "current_phase_status" | "schema_metadata"> & {
+type ToolSpec = Omit<CommanderToolDescriptor, "authority_id" | "risk" | "side_effect_class" | "trust_class" | "instruction_semantics" | "availability" | "load_policy" | "requires_approval" | "requires_run_lock" | "creates_external_process" | "execution_backend" | "process_policy" | "calls_provider" | "mutates_events" | "current_phase_status" | "schema_metadata"> & {
   slash_command?: string
   input_schema?: CommanderToolJsonSchema
   output_schema?: CommanderToolJsonSchema
@@ -48,6 +48,8 @@ type ToolSpec = Omit<CommanderToolDescriptor, "authority_id" | "risk" | "side_ef
   requires_approval?: boolean
   requires_run_lock?: boolean
   creates_external_process?: boolean
+  execution_backend?: CommanderToolDescriptor["execution_backend"]
+  process_policy?: CommanderToolDescriptor["process_policy"]
   calls_provider?: boolean
   mutates_events?: boolean
 }
@@ -71,6 +73,8 @@ function makeTool(spec: ToolSpec): CommanderToolDescriptor {
     requires_approval: authority?.requires_approval ?? spec.requires_approval ?? false,
     requires_run_lock: authority?.requires_run_lock ?? spec.requires_run_lock ?? false,
     creates_external_process: authority?.creates_external_process ?? spec.creates_external_process ?? false,
+    execution_backend: spec.execution_backend ?? (spec.namespace === "repo_read" ? "filesystem_read" : "runtime_service"),
+    process_policy: spec.process_policy ?? "none",
     calls_provider: authority?.calls_provider ?? spec.calls_provider ?? false,
     mutates_events: authority?.mutates_events ?? spec.mutates_events ?? false,
     input_schema: input,
@@ -106,6 +110,7 @@ export const COMMANDER_TOOL_REGISTRY: CommanderToolDescriptor[] = [
   makeTool({ tool_id: "continuity.open_loops", namespace: "continuity", name: "Commander open loops", version: "1.0.0", description: "List pending continuity loops that may affect Commander decisions.", keywords: ["open", "loops", "pending"], slash_command: "/commander-open-loops", allowed_phases: ALL_READ_PHASES, requires_network: false, requires_credentials: false, max_output_bytes: 16_000, timeout_ms: 900, notes: ["Recommendations are not executed."], out_of_scope: ["wake action execution"] }),
   makeTool({ tool_id: "continuity.thread", namespace: "continuity", name: "Commander continuity thread", version: "1.0.0", description: "Show bounded best-effort continuity lineage.", keywords: ["thread", "lineage", "continuity"], slash_command: "/commander-continuity-thread", allowed_phases: ALL_READ_PHASES, requires_network: false, requires_credentials: false, max_output_bytes: 12_000, timeout_ms: 900, notes: ["Best-effort thread inference only."], out_of_scope: ["proposal mutation"] }),
   makeTool({ tool_id: "continuity.summary", namespace: "continuity", name: "Commander continuity summary", version: "1.0.0", description: "Summarize recent continuity and open-loop counts.", keywords: ["continuity", "summary"], slash_command: "/commander-continuity-summary", allowed_phases: ALL_READ_PHASES, requires_network: false, requires_credentials: false, max_output_bytes: 12_000, timeout_ms: 900, notes: ["Read-only summary."], out_of_scope: ["event append"] }),
+  makeTool({ tool_id: "continuity.search", namespace: "continuity", name: "Search operational continuity", version: "1.0.0", description: "Search bounded typed operational memory across runtime/session/progress/guidance/result records.", keywords: ["continuity", "operational", "memory", "search"], slash_command: "/commander-continuity-search", runtime_command: "runtime.search_commander_operational_memory", allowed_phases: ["general_read", "proposal_investigation", "mid_mission_supervision", "result_review", "emergency_inspection"], requires_network: false, requires_credentials: false, execution_backend: "runtime_service", process_policy: "none", max_output_bytes: 18_000, timeout_ms: 1000, input_schema: schema({ query: stringField("Operational-memory query", 240), session_id: stringField("Optional OpenCode session ID", 160), source_kinds: stringField("Optional comma-separated source kinds", 200), limit: intField("Maximum candidates", 1, 20) }, ["query"]), notes: ["Searches typed projections only; raw events are not searched."], out_of_scope: ["raw event log search", "research.db writes"] }),
   makeTool({ tool_id: "runtime.status", namespace: "runtime_read", name: "Runtime status", version: "1.0.0", description: "Read bounded runtime status and mission summary.", keywords: ["runtime", "status"], slash_command: "/status", allowed_phases: ALL_READ_PHASES, requires_network: false, requires_credentials: false, max_output_bytes: 10_000, timeout_ms: 500, notes: ["Runtime-authoritative status only."], out_of_scope: ["runtime shutdown", "session start"] }),
   makeTool({ tool_id: "runtime.mission_list", namespace: "runtime_read", name: "List missions", version: "1.0.0", description: "List recent mission records through existing runtime authority.", keywords: ["mission", "list", "runtime"], slash_command: "/missions", allowed_phases: ALL_READ_PHASES, requires_network: false, requires_credentials: false, max_output_bytes: 14_000, timeout_ms: 700, notes: ["Read-only mission inventory."], out_of_scope: ["mission mutation", "claim", "complete", "fail", "cancel"] }),
   makeTool({ tool_id: "runtime.mission_show", namespace: "runtime_read", name: "Show mission", version: "1.0.0", description: "Inspect one bounded mission record through existing runtime authority.", keywords: ["mission", "show", "runtime"], slash_command: "/mission", allowed_phases: ALL_READ_PHASES, requires_network: false, requires_credentials: false, max_output_bytes: 12_000, timeout_ms: 700, input_schema: schema({ mission_id: stringField("Mission ID", 160) }, ["mission_id"]), notes: ["Read-only mission inspection."], out_of_scope: ["mission mutation", "proposal apply"] }),
@@ -125,6 +130,7 @@ export const COMMANDER_TOOL_REGISTRY: CommanderToolDescriptor[] = [
   makeTool({ tool_id: "opencode.result_report_list", namespace: "opencode_read", name: "List OpenCode result reports", version: "1.0.0", description: "List bounded result-report records.", keywords: ["opencode", "result", "reports"], slash_command: "/opencode-result-reports", allowed_phases: ["result_review", "mid_mission_supervision"], requires_network: false, requires_credentials: false, max_output_bytes: 14_000, timeout_ms: 700, notes: ["Read-only report evidence."], out_of_scope: ["mission completion"] }),
   makeTool({ tool_id: "opencode.result_review_show", namespace: "opencode_read", name: "Show OpenCode result review", version: "1.0.0", description: "Inspect one bounded result-review record.", keywords: ["opencode", "result", "review"], slash_command: "/opencode-result-review-show", allowed_phases: ["result_review", "mid_mission_supervision"], requires_network: false, requires_credentials: false, max_output_bytes: 12_000, timeout_ms: 700, notes: ["Review disposition only."], out_of_scope: ["research ingestion"] }),
   makeTool({ tool_id: "opencode.result_review_list", namespace: "opencode_read", name: "List OpenCode result reviews", version: "1.0.0", description: "List bounded result-review records.", keywords: ["opencode", "result", "reviews"], slash_command: "/opencode-result-reviews", allowed_phases: ["result_review", "mid_mission_supervision"], requires_network: false, requires_credentials: false, max_output_bytes: 14_000, timeout_ms: 700, notes: ["Read-only review metadata."], out_of_scope: ["mission mutation"] }),
+  ...repoReadTools(),
   ...futureTools(),
 ]
 
@@ -148,15 +154,43 @@ export function namespaceSummaries(tools: CommanderToolDescriptor[] = COMMANDER_
 }
 
 function futureTools(): CommanderToolDescriptor[] {
-  const repo = ["tree", "search_text", "read_lines", "find_symbol", "git_status", "git_diff", "git_log", "test_manifest", "dependency_manifest"]
-    .map((name) => makeFuture(`repo.${name}`, "repo_read", "future_internal_read", "repository_content_untrusted", false, false, ["proposal_investigation", "mid_mission_supervision", "result_review"]))
   const github = ["repo_info", "pr_read", "pr_diff", "pr_files", "pr_checks", "pr_review_threads", "issue_search", "workflow_run", "workflow_logs"]
     .map((name) => makeFuture(`github.${name}`, "github_read", "future_external_read", "github_content_untrusted", true, true, ["proposal_investigation", "result_review", "governance_review"]))
   const external = ["search", "source_show", "paper_metadata"]
     .map((name) => makeFuture(`external_research.${name}`, "external_research", "future_external_read", "external_content_untrusted", true, false, ["proposal_investigation"]))
   const governance = ["stage_pr_review", "stage_pr_approval", "stage_pr_request_changes", "stage_ci_rerun", "stage_pr_merge"]
     .map((name) => makeFuture(`governance.${name}`, "governance", "future_governance_intent", "governance_metadata", true, true, ["governance_review"], "governance_intent", true))
-  return [...repo, ...github, ...external, ...governance]
+  return [...github, ...external, ...governance]
+}
+
+function repoReadTools(): CommanderToolDescriptor[] {
+  const phases: CommanderToolPhase[] = ["proposal_investigation", "mid_mission_supervision", "result_review"]
+  const common = {
+    namespace: "repo_read" as const,
+    version: "1.0.0",
+    requires_network: false,
+    requires_credentials: false,
+    trust_class: "repository_content_untrusted" as const,
+    side_effect_class: "internal_read" as const,
+    availability: "implemented_read_surface" as const,
+    load_policy: "deferred" as const,
+    allowed_phases: phases,
+    max_output_bytes: 18_000,
+    timeout_ms: 1200,
+    notes: ["Project-root bounded read only; repository content is untrusted evidence with instruction_semantics=none."],
+    out_of_scope: ["file writes", "shell", "provider calls", "MCP/network", "proposal generation"],
+  }
+  return [
+    makeTool({ ...common, tool_id: "repo.tree", name: "Repository tree", description: "Inspect a bounded project-root directory tree without file contents.", keywords: ["repo", "tree", "files"], slash_command: "/commander-repo-tree", runtime_command: "runtime.commander_repo_tree", execution_backend: "filesystem_read", process_policy: "none", input_schema: schema({ path: stringField("Project-relative path", 240), depth: intField("Depth", 1, 8), limit: intField("Entry cap", 1, 500), include_upstream: boolField("Include agentcore/upstream traversal") }) }),
+    makeTool({ ...common, tool_id: "repo.search_text", name: "Repository literal text search", description: "Run bounded literal text search over safe text files.", keywords: ["repo", "search", "text", "code"], slash_command: "/commander-repo-search", runtime_command: "runtime.commander_repo_search_text", execution_backend: "filesystem_read", process_policy: "none", input_schema: schema({ query: stringField("Literal search query", 240), path: stringField("Project-relative root", 240), extensions: stringField("Comma-separated extensions", 120), limit: intField("Match cap", 1, 100) }, ["query"]) }),
+    makeTool({ ...common, tool_id: "repo.read_lines", name: "Repository line-range read", description: "Read a bounded line range from one safe text file.", keywords: ["repo", "read", "lines", "code"], slash_command: "/commander-repo-read", runtime_command: "runtime.commander_repo_read_lines", execution_backend: "filesystem_read", process_policy: "none", input_schema: schema({ path: stringField("Project-relative file path", 300), start_line: intField("Start line", 1, 1000000), end_line: intField("End line", 1, 1000000) }, ["path"]) }),
+    makeTool({ ...common, tool_id: "repo.find_symbol", name: "Repository lexical symbol lookup", description: "Find bounded lexical declaration/reference candidates.", keywords: ["repo", "symbol", "declaration", "code"], slash_command: "/commander-repo-symbol", runtime_command: "runtime.commander_repo_find_symbol", execution_backend: "filesystem_read", process_policy: "none", input_schema: schema({ symbol: stringField("Symbol identifier", 160), path: stringField("Project-relative root", 240), limit: intField("Candidate cap", 1, 50) }, ["symbol"]) }),
+    makeTool({ ...common, tool_id: "repo.git_status", name: "Git worktree status", description: "Read bounded Git worktree status through a fixed read-only adapter.", keywords: ["git", "status", "worktree"], slash_command: "/commander-git-status", runtime_command: "runtime.commander_repo_git_status", creates_external_process: true, execution_backend: "restricted_git_read", process_policy: "fixed_git_read_only", max_output_bytes: 12_000, timeout_ms: 2500, notes: [...common.notes, "Spawns only fixed read-only Git commands with shell=false and network prompts disabled."] }),
+    makeTool({ ...common, tool_id: "repo.git_diff", name: "Git diff", description: "Read bounded Git diff/stat output through fixed read-only commands.", keywords: ["git", "diff", "patch"], slash_command: "/commander-git-diff", runtime_command: "runtime.commander_repo_git_diff", creates_external_process: true, execution_backend: "restricted_git_read", process_policy: "fixed_git_read_only", max_output_bytes: 64_000, timeout_ms: 2500, input_schema: schema({ scope: stringField("working_tree, staged, or head", 40), path: stringField("Optional project-relative path", 240), stat_only: boolField("Return stat only") }), notes: [...common.notes, "Spawns only fixed read-only Git diff commands with shell=false and no external diff/textconv."] }),
+    makeTool({ ...common, tool_id: "repo.git_log", name: "Git log", description: "Read bounded Git commit history through a fixed read-only adapter.", keywords: ["git", "log", "history"], slash_command: "/commander-git-log", runtime_command: "runtime.commander_repo_git_log", creates_external_process: true, execution_backend: "restricted_git_read", process_policy: "fixed_git_read_only", max_output_bytes: 14_000, timeout_ms: 2500, input_schema: schema({ path: stringField("Optional project-relative path", 240), limit: intField("Commit cap", 1, 50) }), notes: [...common.notes, "Commit bodies and diffs are not returned."] }),
+    makeTool({ ...common, tool_id: "repo.test_manifest", name: "Test manifest", description: "Inspect bounded test/check command declarations without running them.", keywords: ["test", "manifest", "scripts", "pytest"], slash_command: "/commander-test-manifest", runtime_command: "runtime.commander_repo_test_manifest", execution_backend: "filesystem_read", process_policy: "none" }),
+    makeTool({ ...common, tool_id: "repo.dependency_manifest", name: "Dependency manifest", description: "Inspect direct dependency declarations and lockfile metadata only.", keywords: ["dependency", "manifest", "package", "pyproject"], slash_command: "/commander-dependency-manifest", runtime_command: "runtime.commander_repo_dependency_manifest", execution_backend: "filesystem_read", process_policy: "none" }),
+  ]
 }
 
 function makeFuture(toolId: string, namespace: CommanderToolNamespace, availability: CommanderToolAvailability, trust: CommanderToolTrustClass, network: boolean, credentials: boolean, phases: CommanderToolPhase[], sideEffect: CommanderToolSideEffectClass = availability === "future_external_read" ? "external_read" : "internal_read", approval = false): CommanderToolDescriptor {

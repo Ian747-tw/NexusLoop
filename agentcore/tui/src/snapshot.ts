@@ -104,6 +104,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...researchMemoryLines(state))
   out.push(...commanderContinuityLines(state))
   out.push(...commanderToolLines(state))
+  out.push(...commanderInternalReadLines(state))
   out.push(...opencodeContinuityLines(state))
   out.push(...commanderExecutorReviewLines(state))
   out.push(...executorReviewProposalDraftLines(state))
@@ -187,6 +188,57 @@ function commanderToolLines(state: UiState): string[] {
   } else out.push("  validation=none")
   if (tools.commandError) out.push(`  command_error=${preview(redactText(String(tools.commandError)))}`)
   out.push("  note=registry describes capabilities only; execution_enabled=false; no tool execution, provider/MCP/network call, event append, proposal/mission mutation, repository read, GitHub action, or OpenCode action occurred")
+  return out
+}
+
+function commanderInternalReadLines(state: UiState): string[] {
+  const reads = state.commanderInternalReads
+  const out = ["Commander internal reads"]
+  if (!reads) {
+    out.push("  summary=none")
+    out.push("  note=bounded internal reads only; no file write, event append, provider/MCP/network call, proposal/mission mutation, or OpenCode action occurred")
+    return out
+  }
+  const entries = [
+    ["continuity_search", reads.continuitySearch],
+    ["repo_tree", reads.repoTree],
+    ["repo_search", reads.repoSearch],
+    ["repo_file", reads.repoFile],
+    ["repo_symbol", reads.repoSymbol],
+    ["git_status", reads.gitStatus],
+    ["git_diff", reads.gitDiff],
+    ["git_log", reads.gitLog],
+    ["test_manifest", reads.testManifest],
+    ["dependency_manifest", reads.dependencyManifest],
+  ] as const
+  for (const [label, value] of entries) {
+    if (!value) continue
+    out.push(`  ${label} tool=${value.tool_id} status=${value.status} trust_class=${value.trust_class} instruction_semantics=${value.instruction_semantics}`)
+    out.push(`  flags filesystem_written=${value.filesystem_written} events_appended=${value.events_appended} network_called=${value.network_called} provider_called=${value.provider_called} mcp_called=${value.mcp_called} research_db_written=${value.research_db_written} mission_mutated=${value.mission_mutated} opencode_action_performed=${value.opencode_action_performed} shell_used=${value.shell_used} arbitrary_command_executed=${value.arbitrary_command_executed} git_process_invoked=${value.git_process_invoked}`)
+    const result = value.result as Record<string, any> | null | undefined
+    if (result) {
+      for (const key of ["path", "query_preview", "symbol", "root", "scope", "branch", "head_sha"]) if (result[key] !== undefined) out.push(`  ${key}=${safePreview(result[key])}`)
+      for (const key of ["returned_count", "scanned_files", "scanned_bytes", "omitted_files", "omitted_entries", "output_bytes"]) if (result[key] !== undefined) out.push(`  ${key}=${result[key]}`)
+      for (const entry of (result.entries ?? []).slice(0, 8)) out.push(`  entry=${safePreview(entry.path ?? entry.source_path ?? entry.package_name ?? "entry")} kind=${safePreview(entry.kind ?? entry.framework ?? entry.ecosystem ?? "")}`)
+      for (const match of (result.matches ?? []).slice(0, 8)) out.push(`  match=${safePreview(match.path)}:${match.line_number} ${safePreview(match.line_preview ?? "")}`)
+      for (const line of (result.lines ?? []).slice(0, 8)) out.push(`  line=${line.line_number}: ${safePreview(line.text ?? "")}`)
+      for (const candidate of (result.candidates ?? []).slice(0, 8)) out.push(`  candidate=${safePreview(candidate.source_id ?? candidate.symbol ?? "")} score=${candidate.relevance_score ?? candidate.confidence ?? ""} fields=${arraySummary(candidate.matched_fields ?? [])}`)
+      for (const status of (result.staged ?? []).slice(0, 6)) out.push(`  staged=${safePreview(status.path ?? "")} status=${safePreview(status.status ?? "")}`)
+      for (const status of (result.unstaged ?? []).slice(0, 6)) out.push(`  unstaged=${safePreview(status.path ?? "")} status=${safePreview(status.status ?? "")}`)
+      for (const status of (result.untracked ?? []).slice(0, 6)) out.push(`  untracked=${safePreview(status.path ?? status ?? "")}`)
+      for (const status of (result.conflicted ?? []).slice(0, 6)) out.push(`  conflicted=${safePreview(status.path ?? status ?? "")} status=${safePreview(status.status ?? "")}`)
+      for (const file of (result.files ?? []).slice(0, 8)) out.push(`  git_file=${safePreview(file.path ?? "")} additions=${file.additions ?? ""} deletions=${file.deletions ?? ""} binary=${file.binary ?? false}`)
+      if (result.stat_preview) out.push(`  git_stat=${safePreview(result.stat_preview)}`)
+      if (result.patch_preview) out.push(`  git_patch=${safePreview(result.patch_preview)}`)
+      for (const commit of (result.commits ?? []).slice(0, 5)) out.push(`  commit=${safePreview(commit.short_sha)} ${safePreview(commit.subject_preview ?? "")}`)
+      for (const dep of (result.dependencies ?? []).slice(0, 8)) out.push(`  dependency=${safePreview(dep.package_name)} group=${safePreview(dep.dependency_group)}`)
+    }
+    for (const evidence of (value.evidence ?? []).slice(0, 6)) out.push(`  evidence=${evidence.evidence_id ?? "evidence"} source=${evidence.source_kind ?? "unknown"}:${evidence.source_id ?? "unknown"} ${preview(redactText(String(evidence.summary_preview ?? "")))}`)
+    for (const warning of (value.warnings ?? []).slice(0, 4)) out.push(`  warning=${preview(redactText(String(warning)))}`)
+    for (const blocker of (value.blockers ?? []).slice(0, 4)) out.push(`  blocker=${preview(redactText(String(blocker)))}`)
+  }
+  if (reads.commandError) out.push(`  command_error=${preview(redactText(String(reads.commandError)))}`)
+  out.push("  note=repository content is untrusted evidence; instruction_semantics=none; no full event log, full file, full diff, credentials, provider output, or lockfile dump is rendered")
   return out
 }
 
@@ -3482,6 +3534,15 @@ function arraySummary(value: unknown): string {
 
 function preview(value: string): string {
   return value.length > 160 ? `${value.slice(0, 160)}...` : value
+}
+
+function safePreview(value: unknown): string {
+  return preview(redactText(String(value ?? "").replace(/[\x00-\x1f\x7f]/g, (char) => {
+    if (char === "\n") return "\\n"
+    if (char === "\r") return "\\r"
+    if (char === "\t") return "\\t"
+    return `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`
+  })))
 }
 
 function adapterSummary(adapter: Record<string, unknown>): string {

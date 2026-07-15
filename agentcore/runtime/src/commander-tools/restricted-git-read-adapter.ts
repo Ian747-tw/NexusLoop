@@ -1,0 +1,495 @@
+import { spawn } from "node:child_process"
+import { constants } from "node:fs"
+import { access, realpath } from "node:fs/promises"
+import { delimiter, join, relative, resolve } from "node:path"
+import { redactText } from "../security/redaction"
+import type { CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusResult } from "./commander-read-types"
+import { isDeniedRepositoryPath } from "./commander-repo-path-policy"
+
+const TIMEOUT_MS = 2500
+const MAX_STDOUT = 96_000
+const SAFE_GIT_CONFIG_ARGS = [
+  "-c", "core.fsmonitor=false",
+  "-c", "core.fsmonitorHookVersion=0",
+  "-c", "core.untrackedCache=false",
+  "-c", "core.attributesFile=/dev/null",
+  "-c", "core.excludesFile=/dev/null",
+  "-c", "core.pager=cat",
+  "-c", "pager.status=false",
+  "-c", "pager.diff=false",
+  "-c", "pager.log=false",
+  "-c", "log.showSignature=false",
+  "-c", "diff.external=",
+] as const
+
+export type RestrictedGitReadAdapterOptions = {
+  projectDir: string
+  timeoutMs?: number
+  maxStdoutBytes?: number
+}
+
+export function restrictedGitReadEnv(): Record<string, string> {
+  return {
+    PATH: process.env.PATH ?? "",
+    HOME: process.env.HOME ?? "",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_PAGER: "cat",
+    PAGER: "cat",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+  }
+}
+
+export function restrictedGitLogArgs(limit: number, path?: string): string[] {
+  return ["log", `-${limit}`, "--no-show-signature", "--no-use-mailmap", "--date=iso-strict", "--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s", ...(path ? ["--", path] : [])]
+}
+
+export class RestrictedGitReadAdapter {
+  private readonly timeoutMs: number
+  private readonly maxStdoutBytes: number
+  private trustedGitResolution?: Promise<{ executable: string; path: string }>
+
+  constructor(private readonly options: RestrictedGitReadAdapterOptions) {
+    this.timeoutMs = options.timeoutMs ?? TIMEOUT_MS
+    this.maxStdoutBytes = options.maxStdoutBytes ?? MAX_STDOUT
+  }
+
+  async status(): Promise<{ result: CommanderGitStatusResult; blockers: string[]; warnings: string[] }> {
+    const verified = await this.verifyRoot()
+    if (verified.error) return { result: emptyStatus(), blockers: [verified.error], warnings: [] }
+    const filters = await this.inspectExecutableFilters()
+    if (filters.error) return { result: emptyStatus(), blockers: [filters.error], warnings: filters.warnings }
+    if (filters.blocked.length > 0) return { result: emptyStatus(), blockers: [`Git executable filters are configured and blocked: ${filters.blocked.join(", ")}`], warnings: filters.warnings }
+    const [head, branch, porcelain] = await Promise.all([
+      this.run(["rev-parse", "HEAD"]),
+      this.run(["rev-parse", "--abbrev-ref", "HEAD"]),
+      this.run(["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all"]),
+    ])
+    const blockers = [porcelain.error].filter((item): item is string => !!item)
+    const parsed = parseStatus(porcelain.stdout, head.error ? "" : head.stdout.trim(), branch.error ? "HEAD" : branch.stdout.trim())
+    parsed.result.truncated = parsed.result.truncated || porcelain.truncated
+    const warnings = [...head.warnings, ...branch.warnings, ...porcelain.warnings]
+    if (head.error || branch.error) warnings.push("Git HEAD is unborn; status metadata is limited")
+    if (parsed.omittedSensitive > 0) warnings.push(`Suppressed ${parsed.omittedSensitive} sensitive Git status path(s)`)
+    return { result: parsed.result, blockers, warnings }
+  }
+
+  async diff(input: Record<string, unknown> = {}): Promise<{ result: CommanderGitDiffResult; blockers: string[]; warnings: string[] }> {
+    const verified = await this.verifyRoot()
+    const scopeInput = readScope(input.scope)
+    const scope = scopeInput.scope
+    const context = clamp(input.contextLines ?? input.context_lines, 3, 0, 10)
+    const statOnly = input.statOnly === true || input.stat_only === true || input.statOnly === "true" || input.stat_only === "true"
+    const pathFilter = optionalPath(input.path)
+    const path = pathFilter.path
+    if (verified.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [verified.error], warnings: [] }
+    if (scopeInput.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [scopeInput.error], warnings: [] }
+    if (pathFilter.error) return { result: { scope, files: [], stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [pathFilter.error], warnings: [] }
+    if (path && isDeniedRepositoryPath(path)) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: ["sensitive Git diff path is denied"], warnings: [] }
+    const filters = await this.inspectExecutableFilters()
+    if (filters.error) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [filters.error], warnings: filters.warnings }
+    if (filters.blocked.length > 0) return { result: { scope, files: [], path_filter: path, stat_preview: "", truncated: false, output_bytes: 0 }, blockers: [`Git executable filters are configured and blocked: ${filters.blocked.join(", ")}`], warnings: filters.warnings }
+    const baseArgs = scope === "staged" ? ["diff", "--cached"] : scope === "head" ? ["diff", "HEAD"] : ["diff"]
+    const args = [...baseArgs, "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=all", ...(statOnly ? ["--numstat"] : [`--unified=${context}`]), ...(path ? ["--", path] : [])]
+    const [head, diff] = await Promise.all([this.run(["rev-parse", "HEAD"]), this.run(args)])
+    const blockers = [scope === "head" ? head.error : undefined, diff.error].filter((item): item is string => !!item)
+    const filtered = statOnly ? filterSensitiveStatLines(diff.stdout) : filterSensitiveDiffSections(diff.stdout)
+    const patch = redactText(filtered.output).slice(0, 64_000)
+    const warnings = [...head.warnings, ...diff.warnings]
+    if (head.error && scope !== "head") warnings.push("Git HEAD is unborn; diff metadata is limited")
+    if (filtered.omitted > 0) warnings.push(`Suppressed ${filtered.omitted} sensitive Git diff file(s) from patch output`)
+    const result: CommanderGitDiffResult = {
+      scope,
+      head_sha: head.stdout.trim() || undefined,
+      path_filter: path,
+      files: (statOnly ? parseStatFiles(filtered.output) : parseDiffFiles(filtered.output)).slice(0, 80),
+      stat_preview: statOnly ? patch : summarizeDiffStat(filtered.output),
+      patch_preview: statOnly ? undefined : patch,
+      truncated: diff.truncated || Buffer.byteLength(diff.stdout) > 64_000,
+      output_bytes: Buffer.byteLength(patch),
+    }
+    return { result, blockers, warnings }
+  }
+
+  async log(input: Record<string, unknown> = {}): Promise<{ result: CommanderGitLogResult; blockers: string[]; warnings: string[] }> {
+    const verified = await this.verifyRoot()
+    const limit = clamp(input.limit, 10, 1, 50)
+    const pathFilter = optionalPath(input.path)
+    const path = pathFilter.path
+    if (verified.error) return { result: { commits: [] }, blockers: [verified.error], warnings: [] }
+    if (pathFilter.error) return { result: { commits: [] }, blockers: [pathFilter.error], warnings: [] }
+    if (path && isDeniedRepositoryPath(path)) return { result: { commits: [] }, blockers: ["sensitive Git log path is denied"], warnings: [] }
+    const args = restrictedGitLogArgs(limit, path)
+    const output = await this.run(args)
+    const commits = output.stdout.split(/\r?\n/).filter(Boolean).map((line) => {
+      const [commit_sha, short_sha, author_name, authored_at, subject] = line.split("\x1f")
+      return { commit_sha, short_sha, author_name: redactText(author_name ?? ""), authored_at, subject_preview: redactText(subject ?? "").slice(0, 180) }
+    })
+    return { result: { commits }, blockers: output.error ? [output.error] : [], warnings: output.warnings }
+  }
+
+  private async verifyRoot(): Promise<{ error?: string }> {
+    const projectRoot = resolve(this.options.projectDir)
+    const git = await this.run(["rev-parse", "--show-toplevel"])
+    if (git.error) return { error: "project is not a Git repository" }
+    const actual = await realpath(git.stdout.trim()).catch(() => "")
+    const expected = await realpath(projectRoot).catch(() => projectRoot)
+    if (actual !== expected) return { error: "Git top-level does not match project root" }
+    return {}
+  }
+
+  private async inspectExecutableFilters(): Promise<{ blocked: string[]; warnings: string[]; error?: string }> {
+    const config = await this.run(["config", "--get-regexp", "^filter\\..*\\.(clean|process)$"])
+    if (config.error && config.exitCode !== 1) return { blocked: [], warnings: config.warnings, error: `Git filter inspection failed: ${config.error}` }
+    const blocked = config.stdout.split(/\r?\n/).map((line) => line.trim().split(/\s+/)[0]).filter(Boolean).slice(0, 12)
+    const warnings = [...config.warnings]
+    if (blocked.length > 0) warnings.push("Git status/diff blocked before execution because configured clean/process filters may execute repository-controlled programs")
+    return { blocked, warnings }
+  }
+
+  private async run(args: string[]): Promise<{ stdout: string; stderr: string; error?: string; warnings: string[]; truncated: boolean; exitCode?: number }> {
+    const warnings: string[] = []
+    const projectRoot = resolve(this.options.projectDir)
+    const env = restrictedGitReadEnv()
+    let gitResolution: { executable: string; path: string }
+    try {
+      gitResolution = await this.resolveTrustedGitExecutable(projectRoot)
+      env.PATH = gitResolution.path
+    } catch (error) {
+      return { stdout: "", stderr: "", error: error instanceof Error ? error.message : "trusted Git executable could not be resolved", warnings, truncated: false }
+    }
+    return new Promise((resolvePromise) => {
+      let stdout = Buffer.alloc(0)
+      let stderr = Buffer.alloc(0)
+      let settled = false
+      let truncated = false
+      const child = spawn(gitResolution.executable, [...SAFE_GIT_CONFIG_ARGS, ...args], { cwd: projectRoot, shell: false, env })
+      const finish = (error?: string) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolvePromise({ stdout: stdout.toString("utf8"), stderr: redactText(stderr.toString("utf8")).slice(0, 1200), error, warnings, truncated })
+      }
+      const timer = setTimeout(() => {
+        warnings.push("Git read timed out and was terminated")
+        try { child.kill("SIGTERM") } catch { /* noop */ }
+        finish("Git read timed out")
+      }, this.timeoutMs)
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout = Buffer.concat([stdout, chunk])
+        if (stdout.byteLength > this.maxStdoutBytes) {
+          truncated = true
+          warnings.push("Git stdout exceeded output cap and was truncated")
+          stdout = stdout.subarray(0, this.maxStdoutBytes)
+          try { child.kill("SIGTERM") } catch { /* noop */ }
+          finish(undefined)
+        }
+      })
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr = Buffer.concat([stderr, chunk]).subarray(0, 4096)
+      })
+      child.on("error", (error) => finish(`Git read failed: ${redactText(error.message)}`))
+      child.on("close", (code) => {
+        const error = code === 0 ? undefined : `Git read failed with exit code ${code}: ${redactText(stderr.toString("utf8")).slice(0, 240)}`
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolvePromise({ stdout: stdout.toString("utf8"), stderr: redactText(stderr.toString("utf8")).slice(0, 1200), error, warnings, truncated, exitCode: code ?? undefined })
+      })
+    })
+  }
+
+  private resolveTrustedGitExecutable(projectRoot: string): Promise<{ executable: string; path: string }> {
+    this.trustedGitResolution ??= findTrustedGitExecutable(projectRoot)
+    return this.trustedGitResolution
+  }
+}
+
+async function findTrustedGitExecutable(projectRoot: string): Promise<{ executable: string; path: string }> {
+  const projectRootReal = await realpath(projectRoot).catch(() => projectRoot)
+  const names = process.platform === "win32" ? ["git.exe", "git.cmd", "git"] : ["git"]
+  const trustedPathEntries: string[] = []
+  let executable: string | undefined
+  for (const entry of (process.env.PATH ?? "").split(delimiter)) {
+    if (!entry) continue
+    const dir = await realpath(resolve(entry)).catch(() => undefined)
+    if (!dir || isInsideOrEqual(dir, projectRootReal)) continue
+    trustedPathEntries.push(dir)
+    for (const name of names) {
+      const candidate = join(dir, name)
+      const candidateReal = await realpath(candidate).catch(() => undefined)
+      if (!candidateReal || isInsideOrEqual(candidateReal, projectRootReal)) continue
+      try {
+        await access(candidateReal, constants.X_OK)
+        executable ??= candidateReal
+        break
+      } catch {
+        // continue searching PATH
+      }
+    }
+  }
+  if (!executable) throw new Error("trusted Git executable could not be resolved outside the project root")
+  return { executable, path: trustedPathEntries.join(delimiter) }
+}
+
+function isInsideOrEqual(path: string, root: string): boolean {
+  const rel = relative(root, path)
+  return rel === "" || !!rel && !rel.startsWith("..") && !rel.startsWith("/") && !rel.startsWith("\\")
+}
+
+function emptyStatus(): CommanderGitStatusResult {
+  return { is_git_repository: false, detached_head: false, staged: [], unstaged: [], untracked: [], conflicted: [], counts: {}, truncated: false }
+}
+
+function parseStatus(output: string, head: string, branch: string): { result: CommanderGitStatusResult; omittedSensitive: number } {
+  const staged: Array<{ path: string; status: string }> = []
+  const unstaged: Array<{ path: string; status: string }> = []
+  const untracked: string[] = []
+  const conflicted: string[] = []
+  const parts = output.split("\0").filter(Boolean)
+  let omittedSensitive = 0
+  let parsedEntries = 0
+  let index = 0
+  for (; index < parts.length && parsedEntries < 300; index += 1) {
+    parsedEntries += 1
+    const entry = parts[index]
+    const status = entry.slice(0, 2)
+    const path = entry.slice(3)
+    let oldPath: string | undefined
+    if ((status.includes("R") || status.includes("C")) && index + 1 < parts.length) {
+      oldPath = parts[index + 1]
+      index += 1
+    }
+    if (isDeniedRepositoryPath(path) || (oldPath && isDeniedRepositoryPath(oldPath))) {
+      omittedSensitive += 1
+      continue
+    }
+    if (status === "??") untracked.push(path)
+    else if (isUnmergedStatus(status)) conflicted.push(path)
+    else {
+      if (status[0] !== " ") staged.push({ path, status: status[0] })
+      if (status[1] !== " ") unstaged.push({ path, status: status[1] })
+    }
+  }
+  return { result: {
+    is_git_repository: true,
+    branch: branch === "HEAD" ? undefined : branch,
+    head_sha: head || undefined,
+    detached_head: branch === "HEAD",
+    staged,
+    unstaged,
+    untracked,
+    conflicted,
+    counts: { staged: staged.length, unstaged: unstaged.length, untracked: untracked.length, conflicted: conflicted.length },
+    truncated: index < parts.length,
+  }, omittedSensitive }
+}
+
+function parseDiffFiles(output: string): CommanderGitDiffResult["files"] {
+  const files = new Map<string, { path: string; additions: number; deletions: number; binary: boolean }>()
+  let current: string | undefined
+  let pendingOldPath: string | undefined
+  const ensureFile = (path: string) => {
+    current = path
+    if (!files.has(current)) files.set(current, { path: current, additions: 0, deletions: 0, binary: false })
+  }
+  for (const line of output.split(/\r?\n/)) {
+    const header = parseDiffGitHeader(line)
+    if (header) {
+      ensureFile(header.newPath)
+      pendingOldPath = header.oldPath
+      continue
+    }
+    const file = line.match(/^\+\+\+ b\/(.+)/)
+    if (file) {
+      ensureFile(stripDiffPathMetadata(file[1]))
+      continue
+    }
+    const binary = parseBinaryFilesLine(line)
+    if (binary) {
+      ensureFile(binary.newPath)
+      files.get(current!)!.binary = true
+      continue
+    }
+    if (line === "+++ /dev/null" && pendingOldPath) ensureFile(pendingOldPath)
+    if (/^Binary files /.test(line) && current) files.get(current)!.binary = true
+    if (current && line.startsWith("+") && !line.startsWith("+++")) files.get(current)!.additions += 1
+    if (current && line.startsWith("-") && !line.startsWith("---")) files.get(current)!.deletions += 1
+  }
+  return [...files.values()]
+}
+
+function parseStatFiles(output: string): CommanderGitDiffResult["files"] {
+  const files: CommanderGitDiffResult["files"] = []
+  for (const line of output.split(/\r?\n/)) {
+    const numeric = line.match(/^\s*(\d+|-)\s+(\d+|-)\s+(.+?)\s*$/)
+    if (numeric) {
+      const path = numeric[3].trim()
+      if (!path || isDeniedStatPath(path)) continue
+      files.push({
+        path,
+        additions: numeric[1] === "-" ? undefined : Number(numeric[1]),
+        deletions: numeric[2] === "-" ? undefined : Number(numeric[2]),
+        binary: numeric[1] === "-" && numeric[2] === "-",
+      })
+      continue
+    }
+    const match = line.match(/^\s*(.+?)\s+\|\s+(?:(\d+|-)\s+([+\-]+)?|Bin\b.*)\s*$/)
+    if (!match) continue
+    const path = match[1].trim()
+    if (!path || isDeniedStatPath(path)) continue
+    const markers = match[3] ?? ""
+    files.push({
+      path,
+      additions: (markers.match(/\+/g) ?? []).length || undefined,
+      deletions: (markers.match(/-/g) ?? []).length || undefined,
+      binary: /\|\s+Bin\b/.test(line),
+    })
+  }
+  return files
+}
+
+function filterSensitiveDiffSections(output: string): { output: string; omitted: number } {
+  const kept: string[] = []
+  let section: string[] = []
+  let denySection = false
+  let omitted = 0
+  const flush = () => {
+    if (section.length === 0) return
+    if (denySection) omitted += 1
+    else kept.push(...section)
+    section = []
+    denySection = false
+  }
+  for (const line of output.split(/\r?\n/)) {
+    if (/^diff --git\s+"/.test(line)) {
+      flush()
+      section = [line]
+      denySection = true
+      continue
+    }
+    const header = parseDiffGitHeader(line)
+    if (header) {
+      flush()
+      section = [line]
+      denySection = isUnsafeDiffPath(header.oldPath) || isUnsafeDiffPath(header.newPath) || isDeniedRepositoryPath(header.oldPath) || isDeniedRepositoryPath(header.newPath)
+      continue
+    }
+    const combinedHeader = line.match(/^diff --(?:cc|combined)\s+(.+)$/)
+    if (combinedHeader) {
+      flush()
+      section = [line]
+      denySection = isUnsafeDiffPath(combinedHeader[1]) || isDeniedRepositoryPath(combinedHeader[1])
+      continue
+    }
+    if (section.length > 0) {
+      section.push(line)
+      if (/^(?:\+\+\+|---)\s+"/.test(line)) denySection = true
+      const newFile = line.match(/^\+\+\+ b\/(.+)/)
+      const oldFile = line.match(/^--- a\/(.+)/)
+      const binary = parseBinaryFilesLine(line)
+      if (newFile) {
+        const path = stripDiffPathMetadata(newFile[1])
+        if (isUnsafeDiffPath(path) || isDeniedRepositoryPath(path)) denySection = true
+      }
+      if (oldFile) {
+        const path = stripDiffPathMetadata(oldFile[1])
+        if (isUnsafeDiffPath(path) || isDeniedRepositoryPath(path)) denySection = true
+      }
+      if (binary && (isUnsafeDiffPath(binary.oldPath) || isUnsafeDiffPath(binary.newPath) || isDeniedRepositoryPath(binary.oldPath) || isDeniedRepositoryPath(binary.newPath))) denySection = true
+    } else {
+      kept.push(line)
+    }
+  }
+  flush()
+  return { output: kept.join("\n"), omitted }
+}
+
+function parseDiffGitHeader(line: string): { oldPath: string; newPath: string } | null {
+  const prefix = "diff --git a/"
+  if (!line.startsWith(prefix)) return null
+  const tail = line.slice(prefix.length)
+  const candidates: Array<{ oldPath: string; newPath: string }> = []
+  let index = tail.indexOf(" b/")
+  while (index >= 0) {
+    const oldPath = tail.slice(0, index)
+    const newPath = tail.slice(index + 3)
+    if (oldPath && newPath) candidates.push({ oldPath, newPath })
+    index = tail.indexOf(" b/", index + 1)
+  }
+  if (candidates.length === 0) return null
+  return candidates.find((candidate) => candidate.oldPath === candidate.newPath) ?? candidates[candidates.length - 1]
+}
+
+function parseBinaryFilesLine(line: string): { oldPath: string; newPath: string } | null {
+  const match = line.match(/^Binary files a\/(.+?) and b\/(.+) differ$/)
+  if (!match) return null
+  return { oldPath: match[1], newPath: match[2] }
+}
+
+function stripDiffPathMetadata(path: string): string {
+  return path.split("\t")[0] ?? path
+}
+
+function isUnsafeDiffPath(path: string): boolean {
+  return /[\x00-\x1f\x7f]/.test(path) || path.includes("\\")
+}
+
+function filterSensitiveStatLines(output: string): { output: string; omitted: number } {
+  const kept: string[] = []
+  let omitted = 0
+  for (const line of output.split(/\r?\n/)) {
+    const statPath = line.match(/^\s*(?:\d+|-)\s+(?:\d+|-)\s+(.+?)\s*$/)?.[1]?.trim()
+      ?? line.match(/^\s*(.+?)\s+\|\s+(?:\d+|Bin\b)/)?.[1]?.trim()
+    if (statPath && isDeniedStatPath(statPath)) {
+      omitted += 1
+      continue
+    }
+    kept.push(line)
+  }
+  return { output: kept.join("\n"), omitted }
+}
+
+function summarizeDiffStat(output: string): string {
+  const files = parseDiffFiles(output)
+  if (files.length === 0) return "no diff"
+  return files.slice(0, 40).map((file) => `${file.path} +${file.additions}/-${file.deletions}${file.binary ? " binary" : ""}`).join("; ")
+}
+
+function isDeniedStatPath(path: string): boolean {
+  if (isUnsafeDiffPath(path) || path.includes("\"")) return true
+  if (isDeniedRepositoryPath(path)) return true
+  if (!path.includes("=>")) return false
+  const normalized = path.replace(/[{}]/g, "")
+  return normalized.split("=>").some((part) => isDeniedRepositoryPath(part.trim()))
+}
+
+function readScope(value: unknown): { scope: "working_tree" | "staged" | "head"; error?: string } {
+  if (value === undefined || value === null || value === "") return { scope: "working_tree" }
+  if (value === "staged" || value === "head" || value === "working_tree") return { scope: value }
+  return { scope: "working_tree", error: "Git diff scope is unsupported" }
+}
+
+function optionalPath(value: unknown): { path?: string; error?: string } {
+  if (typeof value !== "string" || value.length === 0) return {}
+  const path = value.length > 500 ? value.slice(0, 500) : value
+  if (/[\x00-\x1f]/.test(path)) return { error: "Git path filter contains unsupported control characters" }
+  if (path.startsWith(":")) return { error: "Git pathspec magic is not supported" }
+  if (/[*?\[\]]/.test(path)) return { error: "Git wildcard path filters are not supported" }
+  if (path.startsWith("/") || resolve(path) === path) return { error: "Git path filter must be project-relative" }
+  if (path.split(/[\\/]+/).includes("..")) return { error: "Git path filter cannot escape the project root" }
+  return { path }
+}
+
+function isUnmergedStatus(status: string): boolean {
+  return status.includes("U") || status === "AA" || status === "DD"
+}
+
+function clamp(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : undefined
+  if (parsed === undefined || !Number.isFinite(parsed)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(parsed)))
+}

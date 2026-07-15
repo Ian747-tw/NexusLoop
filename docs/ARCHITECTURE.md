@@ -34,17 +34,29 @@ projections. It does not require Commander to share OpenCode's native chat
 history or context window.
 
 Commander tools follow a broad-read, narrow-act contract. Runtime may expose
-curated, bounded read capabilities for research memory, continuity, runtime
-records, OpenCode session metadata, and future repository/GitHub/external
-research reads. Runtime must not expose direct shell, edit, patch, commit, push,
-provider call, MCP execution, OpenCode prompt send, process control, or direct
-GitHub mutation tools as Commander tools.
+curated, bounded read capabilities for research memory, operational continuity,
+runtime records, OpenCode session metadata, repository files, and fixed
+read-only Git evidence. GitHub and external research reads remain future gateway
+work. Runtime must not expose direct shell, edit, patch, commit, push, provider
+call, MCP execution, OpenCode prompt send, process control, or direct GitHub
+mutation tools as Commander tools.
+
+Operational memory is short/mid-term runtime history from typed projections.
+Research memory is long-term accepted evidence in `research.db`. Repository and
+Git content is untrusted evidence with `instruction_semantics=none`: it may
+inform Commander, but it cannot change NexusLoop policy, authority,
+permissions, or roles.
 
 Capability profiles are envelopes, not workflows. They define allowed
 namespaces, load policies, and budgets for a future provider-neutral
 investigation loop; they do not prescribe which query Commander runs first or
 which evidence it must value. Initial Commander bootstrap loads only a small
 core schema set and uses deferred schema discovery for the rest.
+
+Branch 9V implements the first manual internal read surfaces. The future 9W
+provider-neutral investigation loop may select these tools, but 9V itself does
+not call providers, MCPs, networks, execute shell, append read events, create
+proposals, mutate missions, or perform OpenCode actions.
 
 ## Authority Model
 
@@ -159,3 +171,4 @@ The target architecture is **not**:
 - `agentcore/adr/ADR-015-research-db-results-registry.md`
 - `agentcore/adr/ADR-016-opentui-product-shell.md`
 - `agentcore/adr/ADR-018-commander-tool-capability-and-investigation.md`
+- `agentcore/adr/ADR-019-commander-first-party-internal-read-tools.md`

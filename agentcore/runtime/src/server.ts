@@ -119,6 +119,9 @@ import { CommanderContinuityService, readCommanderContinuityOpenLoopInput, readC
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityPacket, CommanderProposalContinuityPacket } from "./continuity/commander-continuity-types"
 import { CommanderToolService, readCommanderToolGetInput, readCommanderToolListInput, readCommanderToolSearchInput } from "./commander-tools/commander-tool-service"
 import type { CommanderToolBootstrapPreview, CommanderToolDescriptor, CommanderToolDescriptorSummary, CommanderToolProfile, CommanderToolRegistrySummary, CommanderToolRegistryValidation, CommanderToolSearchPreview } from "./commander-tools/commander-tool-types"
+import { CommanderOperationalMemorySearchService, readCommanderOperationalMemorySearchInput, type CommanderOperationalMemoryRecord } from "./commander-tools/commander-operational-memory-search-service"
+import { CommanderRepoReadService } from "./commander-tools/commander-repo-read-service"
+import type { CommanderDependencyManifestResult, CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusResult, CommanderInternalReadResult, CommanderOperationalMemorySearchPreview, CommanderRepoFileResult, CommanderRepoSearchResult, CommanderRepoSymbolResult, CommanderRepoTreeResult, CommanderTestManifestResult } from "./commander-tools/commander-read-types"
 import { OpenCodeSessionContinuityService, readOpenCodeContinuationInput, readOpenCodeSessionContinuityInput } from "./opencode-session/opencode-session-continuity-service"
 import type { OpenCodeContinuationPacket, OpenCodeSessionContinuityPacket } from "./opencode-session/opencode-session-continuity-types"
 import { OpenCodeContextRefreshService, readOpenCodeContextRefreshWriteInput } from "./opencode-session/opencode-context-refresh-service"
@@ -379,6 +382,8 @@ export class RuntimeServer {
   private researchIngestionReadServiceInstance: Pick<ResearchIngestionService, "list" | "latest"> | null = null
   private commanderContinuityServiceInstance: CommanderContinuityService | null = null
   private commanderToolServiceInstance: CommanderToolService | null = null
+  private commanderOperationalMemorySearchServiceInstance: CommanderOperationalMemorySearchService | null = null
+  private commanderRepoReadServiceInstance: CommanderRepoReadService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -661,6 +666,26 @@ export class RuntimeServer {
         })
       case "runtime.validate_commander_tool_registry":
         return this.validateCommanderToolRegistry()
+      case "runtime.search_commander_operational_memory":
+        return this.searchCommanderOperationalMemory(readCommanderOperationalMemorySearchInput(payload))
+      case "runtime.commander_repo_tree":
+        return this.commanderRepoTree(payload)
+      case "runtime.commander_repo_search_text":
+        return this.commanderRepoSearchText(payload)
+      case "runtime.commander_repo_read_lines":
+        return this.commanderRepoReadLines(payload)
+      case "runtime.commander_repo_find_symbol":
+        return this.commanderRepoFindSymbol(payload)
+      case "runtime.commander_repo_git_status":
+        return this.commanderRepoGitStatus()
+      case "runtime.commander_repo_git_diff":
+        return this.commanderRepoGitDiff(payload)
+      case "runtime.commander_repo_git_log":
+        return this.commanderRepoGitLog(payload)
+      case "runtime.commander_repo_test_manifest":
+        return this.commanderRepoTestManifest(payload)
+      case "runtime.commander_repo_dependency_manifest":
+        return this.commanderRepoDependencyManifest(payload)
       case "runtime.reasoning_provider_health":
         return this.reasoningProviderHealth()
       case "runtime.preview_reasoning_provider_smoke":
@@ -2535,6 +2560,46 @@ export class RuntimeServer {
 
   validateCommanderToolRegistry(): CommanderToolRegistryValidation {
     return this.commanderToolService().validate()
+  }
+
+  searchCommanderOperationalMemory(input: Parameters<CommanderOperationalMemorySearchService["search"]>[0] = {}): Promise<CommanderOperationalMemorySearchPreview> {
+    return this.commanderOperationalMemorySearchService().search(input)
+  }
+
+  commanderRepoTree(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderRepoTreeResult>> {
+    return this.commanderRepoReadService().tree(input)
+  }
+
+  commanderRepoSearchText(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderRepoSearchResult>> {
+    return this.commanderRepoReadService().searchText(input)
+  }
+
+  commanderRepoReadLines(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderRepoFileResult>> {
+    return this.commanderRepoReadService().readLines(input)
+  }
+
+  commanderRepoFindSymbol(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderRepoSymbolResult>> {
+    return this.commanderRepoReadService().findSymbol(input)
+  }
+
+  commanderRepoGitStatus(): Promise<CommanderInternalReadResult<CommanderGitStatusResult>> {
+    return this.commanderRepoReadService().gitStatus()
+  }
+
+  commanderRepoGitDiff(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderGitDiffResult>> {
+    return this.commanderRepoReadService().gitDiff(input)
+  }
+
+  commanderRepoGitLog(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderGitLogResult>> {
+    return this.commanderRepoReadService().gitLog(input)
+  }
+
+  commanderRepoTestManifest(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderTestManifestResult>> {
+    return this.commanderRepoReadService().testManifest(input)
+  }
+
+  commanderRepoDependencyManifest(input: Record<string, unknown> = {}): Promise<CommanderInternalReadResult<CommanderDependencyManifestResult>> {
+    return this.commanderRepoReadService().dependencyManifest(input)
   }
 
   previewCommanderProposalContinuity(input: Parameters<CommanderContinuityService["proposal"]>[0] = {}): Promise<CommanderProposalContinuityPacket> {
@@ -4460,6 +4525,64 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
     })
     return this.commanderToolServiceInstance
+  }
+
+  private commanderOperationalMemorySearchService(): CommanderOperationalMemorySearchService {
+    this.commanderOperationalMemorySearchServiceInstance ??= new CommanderOperationalMemorySearchService({
+      now: this.researchSynthesisNow,
+      collectRecords: () => this.collectCommanderOperationalMemoryRecords(),
+    })
+    return this.commanderOperationalMemorySearchServiceInstance
+  }
+
+  private commanderRepoReadService(): CommanderRepoReadService {
+    this.commanderRepoReadServiceInstance ??= new CommanderRepoReadService({
+      projectDir: this.projectDir,
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderRepoReadServiceInstance
+  }
+
+  private async collectCommanderOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {
+    const records: CommanderOperationalMemoryRecord[] = []
+    const push = (record: CommanderOperationalMemoryRecord | null | undefined) => { if (record) records.push(record) }
+    const missions = await this.listRecentMissions(100)
+    for (const mission of missions) {
+      push({ source_kind: "mission", source_id: mission.mission_id, label: "mission", status: mission.status, summary_preview: mission.objective, mission_id: mission.mission_id, occurred_at: mission.updated_at ?? mission.created_at, fields: { objective: mission.objective, intent_id: mission.intent_id } })
+    }
+    const proposals = await this.listCommanderProposals({ limit: 100 })
+    for (const proposal of proposals) {
+      push({ source_kind: "proposal", source_id: proposal.proposal_id, label: "proposal", status: proposal.status, summary_preview: `${proposal.title}: ${proposal.summary}`, mission_id: proposal.mission_id, occurred_at: proposal.updated_at ?? proposal.created_at, fields: { action_kind: proposal.action_kind, proposed_by: proposal.proposed_by } })
+    }
+    const reviews = await this.listReviewRequests({ limit: 100 })
+    for (const review of reviews) {
+      push({ source_kind: "proposal_review", source_id: review.review_id, label: "review", status: review.status, summary_preview: `${review.title}: ${review.summary}`, mission_id: review.mission_id, occurred_at: review.updated_at ?? review.created_at, fields: { request_type: review.request_type, requested_by: review.requested_by } })
+    }
+    const sessions = await this.listOpenCodeSessions({ limit: 100 })
+    for (const session of sessions) {
+      push({ source_kind: "opencode_session", source_id: session.session_id, label: "OpenCode session", status: session.status, summary_preview: session.summary_preview, session_id: session.session_id, mission_id: session.mission_id, occurred_at: session.updated_at ?? session.created_at, fields: { source_kind: session.source_kind, proposal_id: session.proposal_id, title: session.title } })
+    }
+    const launches = await this.listOpenCodeSessionLaunches({ limit: 100 })
+    for (const launchRecord of launches) {
+      const launch = await this.getOpenCodeSessionLaunch(launchRecord.launch_id)
+      push({ source_kind: "opencode_launch", source_id: launchRecord.launch_id, label: "OpenCode launch", status: launchRecord.status, summary_preview: `launch ${launchRecord.launch_id} for session ${launch?.session_id ?? "unknown"}; mode ${launch?.launch_mode ?? "unknown"}`, session_id: launch?.session_id, launch_id: launchRecord.launch_id, occurred_at: launch?.started_at, fields: { launch_mode: launch?.launch_mode, native_session_id: launch?.native_session_id } })
+    }
+    for (const progress of await this.listOpenCodeProgress({ limit: 100 })) {
+      const full = await this.getOpenCodeProgress(progress.progress_id)
+      push({ source_kind: "opencode_progress", source_id: progress.progress_id, label: "OpenCode progress", status: progress.execution_state, summary_preview: full?.report_summary_preview ?? progress.report_summary_preview, session_id: progress.session_id, launch_id: progress.launch_id, occurred_at: progress.recorded_at, fields: { kind: progress.kind, current_step: full?.current_step_preview, question: full?.question_preview, next_action: full?.next_action_preview, files: full?.files_touched_preview.join(" "), tests: full?.tests_run_preview.join(" "), blockers: full?.blockers_preview.join(" ") } })
+    }
+    for (const watchdog of await this.listOpenCodeWatchdogs({ limit: 100 })) push({ source_kind: "opencode_watchdog", source_id: watchdog.watchdog_id, label: "OpenCode watchdog", status: watchdog.watchdog_status, summary_preview: `watchdog ${watchdog.watchdog_status}; recommended ${watchdog.recommended_action}`, session_id: watchdog.session_id, launch_id: watchdog.launch_id, occurred_at: watchdog.recorded_at, fields: { recommendation: watchdog.recommended_action } })
+    for (const question of await this.listOpenCodeCommanderQuestions({ limit: 100 })) push({ source_kind: "commander_question", source_id: question.question_id, label: "Commander question", status: question.status, summary_preview: question.question_preview, session_id: question.session_id, launch_id: question.launch_id, occurred_at: question.created_at, fields: { urgency: question.urgency, question_type: question.question_type } })
+    for (const guidance of await this.listCommanderGuidance({ limit: 100 })) push({ source_kind: "commander_guidance", source_id: guidance.guidance_id, label: "Commander guidance", status: guidance.status, summary_preview: guidance.answer_preview, session_id: guidance.session_id, launch_id: guidance.launch_id, occurred_at: guidance.created_at, fields: { delivery_status: guidance.delivery_status, guidance_scope: guidance.guidance_scope } })
+    for (const delivery of await this.listCommanderGuidanceDeliveries({ limit: 100 })) push({ source_kind: "guidance_delivery", source_id: delivery.delivery_id, label: "Guidance delivery", status: delivery.status, summary_preview: delivery.summary_preview, session_id: delivery.session_id, launch_id: delivery.launch_id, occurred_at: delivery.created_at, fields: { delivery_mode: delivery.delivery_mode, guidance_id: delivery.guidance_id } })
+    for (const control of await this.listOpenCodeHumanControls({ limit: 100 })) push({ source_kind: "human_control", source_id: control.control_id, label: "Human control", status: control.projected_state_after, summary_preview: control.human_note_preview ?? `${control.control_kind} ${control.projected_state_after}`, session_id: control.session_id, launch_id: control.launch_id, occurred_at: control.recorded_at, fields: { control_kind: control.control_kind, urgency: control.urgency } })
+    for (const wake of await this.listOpenCodeWakeSupervisorExecutions({ limit: 100 })) push({ source_kind: "wake_execution", source_id: wake.execution_id, label: "Wake execution", status: wake.action_execution_status, summary_preview: wake.summary_preview, session_id: wake.session_id, launch_id: wake.launch_id, occurred_at: wake.recorded_at, fields: { recommended_action: wake.recommended_action, execution_mode: wake.execution_mode } })
+    for (const action of await this.listOpenCodeWakeActionExecutions({ limit: 100 })) push({ source_kind: "wake_action", source_id: action.action_execution_id, label: "Wake action", status: action.status, summary_preview: action.summary_preview, session_id: action.session_id, launch_id: action.launch_id, occurred_at: action.recorded_at, fields: { action_kind: action.action_kind, effect_kind: action.effect_kind } })
+    for (const report of await this.listOpenCodeResultReports({ limit: 100 })) push({ source_kind: "result_report", source_id: report.report_id, label: "Result report", status: report.review_state, summary_preview: report.summary_preview, session_id: report.session_id, launch_id: report.launch_id, occurred_at: report.recorded_at, fields: { result_kind: report.result_kind, result_disposition: report.result_disposition } })
+    for (const review of await this.listOpenCodeResultReviews({ limit: 100 })) push({ source_kind: "result_review", source_id: review.review_id, label: "Result review", status: review.review_disposition, summary_preview: `${review.decision}: ${review.rationale_preview}`, session_id: review.session_id, launch_id: review.launch_id, occurred_at: review.recorded_at, fields: { decision: review.decision, next_step: review.next_step, report_id: review.report_id } })
+    for (const ingestion of await this.listResearchIngestions({ limit: 100 })) push({ source_kind: "research_ingestion", source_id: ingestion.ingestion_id, label: "Research ingestion", status: ingestion.research_db_written ? "research_db_written" : "not_written", summary_preview: ingestion.research_title_preview, session_id: ingestion.session_id, launch_id: ingestion.launch_id, occurred_at: ingestion.recorded_at, fields: { evidence_kind: ingestion.evidence_kind, review_id: ingestion.review_id, report_id: ingestion.report_id } })
+    for (const refresh of await this.listOpenCodeContextRefreshes({ limit: 100 })) push({ source_kind: "context_refresh", source_id: refresh.refresh_id, label: "Context refresh", status: refresh.status, summary_preview: refresh.summary_preview, session_id: refresh.target_session_id, launch_id: refresh.launch_id, occurred_at: refresh.written_at, fields: { mode: refresh.continuity_mode, packet_kind: refresh.packet_kind, previous_refresh_id: refresh.previous_refresh_id } })
+    return records
   }
 
   private opencodeSessionContinuityService(): OpenCodeSessionContinuityService {

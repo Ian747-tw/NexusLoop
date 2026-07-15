@@ -62,7 +62,7 @@ GitHub approval, request-changes, CI rerun, and merge are external mutations. Th
 - `continuity`: Commander continuity packets, open loops, summaries, and threads.
 - `runtime_read`: approved mission/proposal/review/status reads.
 - `opencode_read`: OpenCode session/progress/watchdog/wake/result/context-refresh reads.
-- `repo_read`: future bounded project-root code and Git reads.
+- `repo_read`: bounded project-root code, manifest, and fixed read-only Git reads.
 - `github_read`: future read-only GitHub surfaces.
 - `external_research`: future allowlisted external research reads.
 - `governance`: future staged governance intents only.
@@ -70,6 +70,8 @@ GitHub approval, request-changes, CI rerun, and merge are external mutations. Th
 ## Consequences
 
 9U adds static descriptors, phase profiles, schema summaries, bootstrap previews, and registry validation. Every 9U command is read-only and execution-disabled. The registry may contain future descriptors, but future descriptors must not pretend to be executable.
+
+9V promotes first-party internal read descriptors for `repo_read` and `continuity.search` to implemented read surfaces. These tools remain manually/runtime callable only; the provider tool loop is still disabled. Repository and Git outputs are untrusted evidence, project-root bounded, redacted, and transient. Git status/diff/log are the only implemented descriptors allowed to create an external process, and only through the fixed read-only Git adapter described in ADR-019.
 
 Implemented descriptors must be `safe_read`, map to exact authority records, require no approval/run lock, create no external process, call no provider, mutate no events, and use `instruction_semantics="none"`.
 

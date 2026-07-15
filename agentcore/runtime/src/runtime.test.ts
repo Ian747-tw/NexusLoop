@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { delimiter, join } from "node:path"
 import { tmpdir } from "node:os"
 import { Database } from "bun:sqlite"
 import { RuntimeServer } from "./server"
@@ -43,6 +43,7 @@ import { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-
 import { OpenCodeWakeSupervisorExecutionService } from "./opencode-session/opencode-wake-supervisor-execution-service"
 import { buildContinuityDelta, continuitySectionHash, type PreviousRefreshSnapshot } from "./opencode-session/opencode-session-continuity-service"
 import type { OpenCodeContinuitySection, OpenCodeContinuitySourceRef } from "./opencode-session/opencode-session-continuity-types"
+import { CommanderOperationalMemorySearchService, type CommanderOperationalMemoryRecord } from "./commander-tools/commander-operational-memory-search-service"
 import { readOpenCodeContextRefreshWriteInput, validateContextRefreshTarget } from "./opencode-session/opencode-context-refresh-service"
 import { ResearchMemoryService } from "./research-memory/research-memory-service"
 import type { MissionPacket } from "./missions/mission-types"
@@ -72,6 +73,8 @@ import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-regist
 import { CommandAuthorityService } from "./authority/command-authority-service"
 import { CommanderToolService } from "./commander-tools/commander-tool-service"
 import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
+import { readBoundedDirectoryEntries } from "./commander-tools/commander-repo-read-service"
+import { RestrictedGitReadAdapter, restrictedGitLogArgs, restrictedGitReadEnv } from "./commander-tools/restricted-git-read-adapter"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -24174,7 +24177,10 @@ describe("ProcessOpenCodeAdapter", () => {
       expect.objectContaining({ tool_id: "runtime.mission_show", namespace: "runtime_read", authority_id: expect.stringContaining("command_authority_") }),
     ]))
     const repoTools = await server.command("runtime.list_commander_tools", { namespace: "repo_read" }) as Array<Record<string, any>>
-    expect(repoTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "repo.search_text", availability: "future_internal_read", runtime_command: undefined })]))
+    expect(repoTools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tool_id: "repo.search_text", availability: "implemented_read_surface", runtime_command: "runtime.commander_repo_search_text", trust_class: "repository_content_untrusted" }),
+      expect.objectContaining({ tool_id: "repo.git_diff", creates_external_process: true, execution_backend: "restricted_git_read", process_policy: "fixed_git_read_only" }),
+    ]))
     const githubTools = await server.command("runtime.list_commander_tools", { namespace: "github_read" }) as Array<Record<string, any>>
     expect(githubTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "github.pr_checks", availability: "future_external_read", requires_network: true })]))
     const governanceTools = await server.command("runtime.list_commander_tools", { namespace: "governance" }) as Array<Record<string, any>>
@@ -24202,6 +24208,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(profile.allowed_namespaces).toEqual(expect.arrayContaining(["memory", "continuity", "repo_read", "github_read", "external_research"]))
     expect(profile).not.toHaveProperty("workflow_steps")
     expect(profile.deferred_tool_ids).toEqual(expect.arrayContaining(["repo.search_text", "github.pr_checks", "external_research.search"]))
+    expect(profile).toMatchObject({ manual_internal_read_execution_enabled: true, provider_tool_loop_enabled: false })
     const governanceProfile = await server.command("runtime.preview_commander_tool_profile", { phase: "governance_review" }) as Record<string, any>
     const governanceProfileIds = [...governanceProfile.always_loaded_tool_ids, ...governanceProfile.deferred_tool_ids, ...governanceProfile.unavailable_tool_ids, ...governanceProfile.staged_intent_tool_ids]
     expect(governanceProfile.allowed_namespaces).toEqual(["core", "authority", "runtime_read", "opencode_read", "github_read", "governance"])
@@ -24261,6 +24268,7 @@ describe("ProcessOpenCodeAdapter", () => {
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_list")!, allowed_phases: ["not_a_phase" as any] },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.near_duplicates")!, runtime_command: "runtime.submit_user_message" },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, runtime_command: "runtime.fake_repo_tree" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "github.pr_checks")!, slash_command: "/github-pr-checks", runtime_command: "runtime.github_pr_checks" },
       ],
       now: () => new Date(0),
     })
@@ -24276,6 +24284,809 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(validation.errors.join("\n")).toContain("future descriptor must not pretend to be executable")
   })
 
+  test("Commander internal read tools search typed operational memory without appending events", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "internal read continuity objective token=secret-value", createdBy: "tester" }) as Record<string, any>
+    await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, writtenBy: "tester" })
+    await server.command("runtime.launch_opencode_session", { sessionId: session.session_id, dryRun: false, launchedBy: "tester" })
+    await server.command("runtime.record_opencode_progress", { sessionId: session.session_id, report_summary: "working through prior continuity decision token=abc123", files_touched: ["agentcore/runtime/src/server.ts"], commands_run: ["bun test"], tests_run: ["runtime"], recordedBy: "tester" })
+    const before = await server.eventStore.readAll()
+    const search = await server.command("runtime.search_commander_operational_memory", { query: "prior continuity decision", session_id: session.session_id }) as Record<string, any>
+    expect(search).toMatchObject({ tool_id: "continuity.search", status: "ready", trust_class: "runtime_authoritative", instruction_semantics: "none", events_appended: false })
+    expect(search.result.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ source_kind: "opencode_progress", pointer_only: true, matched_fields: expect.arrayContaining(["summary"]) })]))
+    expect(JSON.stringify(search)).not.toContain("abc123")
+    expect(search.warnings.join(" ")).toContain("Raw event-log content was not searched")
+    const after = await server.eventStore.readAll()
+    expect(after).toHaveLength(before.length)
+    await server.shutdown()
+  })
+
+  test("Commander operational memory search filters before applying the scan cap", async () => {
+    const records: CommanderOperationalMemoryRecord[] = []
+    for (let index = 0; index < 850; index += 1) {
+      records.push({
+        source_kind: "opencode_progress",
+        source_id: `other-${index}`,
+        label: "progress",
+        status: "closed",
+        summary_preview: `other session continuity target ${index}`,
+        session_id: "session-other",
+      })
+    }
+    records.push({
+      source_kind: "opencode_progress",
+      source_id: "wanted-progress",
+      label: "progress",
+      status: "active",
+      summary_preview: "needle continuity target",
+      session_id: "session-wanted",
+    })
+    const service = new CommanderOperationalMemorySearchService({ collectRecords: async () => records, now: () => new Date("2026-01-01T00:00:00.000Z") })
+    const result = await service.search({ query: "needle continuity target", session_id: "session-wanted", limit: 5 })
+    expect(result).toMatchObject({ status: "ready", scanned_items: 1 })
+    expect(result.result?.candidates).toEqual([expect.objectContaining({ source_id: "wanted-progress", session_id: "session-wanted" })])
+    expect(result.warnings.join(" ")).not.toContain("scan capped")
+    const activeOnly = await service.search({ query: "continuity target", include_closed: false, limit: 5 })
+    expect(activeOnly).toMatchObject({ status: "ready", scanned_items: 1 })
+    expect(activeOnly.result?.candidates).toEqual([expect.objectContaining({ source_id: "wanted-progress", status: "active" })])
+    expect(JSON.stringify(activeOnly.result)).not.toContain("other-")
+  })
+
+  test("Commander operational memory search enforces its output budget", async () => {
+    const records: CommanderOperationalMemoryRecord[] = []
+    for (let index = 0; index < 20; index += 1) {
+      records.push({
+        source_kind: "opencode_progress",
+        source_id: `progress-${index}-${"x".repeat(1200)}`,
+        label: `progress-${index}-${"y".repeat(400)}`,
+        status: "active",
+        summary_preview: `budget needle ${index} ${"z".repeat(4000)}`,
+      })
+    }
+    const service = new CommanderOperationalMemorySearchService({ collectRecords: async () => records, now: () => new Date("2026-01-01T00:00:00.000Z") })
+    const result = await service.search({ query: "budget needle", limit: 20 })
+    expect(result.status).toBe("ready")
+    expect(result.output_bytes).toBeLessThanOrEqual(result.max_output_bytes)
+    expect(Buffer.byteLength(JSON.stringify(result.result))).toBeLessThanOrEqual(result.max_output_bytes)
+    expect(result.truncated).toBe(true)
+    expect(result.warnings.join(" ")).toContain("operational memory output capped")
+  })
+
+  test("Commander repository directory enumeration reads only bounded batches", async () => {
+    let yielded = 0
+    let closed = false
+    const oversizedReader = async function* (): AsyncIterable<string> {
+      try {
+        for (let index = 0; index < 100_000; index += 1) {
+          yielded += 1
+          yield `entry-${String(100_000 - index).padStart(6, "0")}.ts`
+        }
+      } finally {
+        closed = true
+      }
+    }
+    const capped = await readBoundedDirectoryEntries("/unused", { maxEntries: 7, reader: oversizedReader })
+    expect(capped.names).toHaveLength(7)
+    expect(capped.names).toEqual([...capped.names].sort((a, b) => a.localeCompare(b)))
+    expect(capped.capped).toBe(true)
+    expect(yielded).toBe(8)
+    expect(closed).toBe(true)
+
+    let exactYielded = 0
+    const exact = await readBoundedDirectoryEntries("/unused", { maxEntries: 3, reader: async function* () {
+      exactYielded += 1
+      yield "gamma.ts"
+      exactYielded += 1
+      yield "alpha.ts"
+      exactYielded += 1
+      yield "beta.ts"
+    } })
+    expect(exact.names).toEqual(["alpha.ts", "beta.ts", "gamma.ts"])
+    expect(exact.capped).toBe(false)
+    expect(exactYielded).toBe(3)
+
+    const ordered = await readBoundedDirectoryEntries("/unused", { maxEntries: 10, reader: async function* () {
+      yield "zeta.ts"
+      yield "alpha.ts"
+      yield "middle.ts"
+    } })
+    expect(ordered.names).toEqual(["alpha.ts", "middle.ts", "zeta.ts"])
+    expect(ordered.capped).toBe(false)
+  })
+
+  test("Commander repository reads do not treat a hidden project root as hidden content", async () => {
+    const dir = await mkdtemp(join(tmpdir(), ".nxl-hidden-runtime-"))
+    cleanup.push(dir)
+    await makeProject(dir, { approvedSpec: true })
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(join(dir, "src", "visible.ts"), "export const HiddenRootNeedle = true\n")
+    await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test" }, dependencies: { zod: "^3.0.0" } }, null, 2))
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const tree = await server.command("runtime.commander_repo_tree", { path: ".", depth: 2 }) as Record<string, any>
+    expect(tree.result.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: ".", readable: true }),
+      expect.objectContaining({ path: "src", readable: true }),
+      expect.objectContaining({ path: "src/visible.ts", readable: true }),
+    ]))
+    const search = await server.command("runtime.commander_repo_search_text", { query: "HiddenRootNeedle", path: "." }) as Record<string, any>
+    expect(search.result.matches).toEqual([expect.objectContaining({ path: "src/visible.ts", line_number: 1 })])
+    const manifest = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
+    expect(manifest.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ source_path: "package.json", command_preview: "bun test" })]))
+  })
+
+  test("Commander repository reads enforce path policy, bounds, redaction, and manifests", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(join(dir, "src", "sample.ts"), [
+      "export class CommanderToolServiceSample {}",
+      "const tokenName = 'not a secret assignment shape'",
+      "const api_key = super-secret-value",
+      "export const CloudCredentialSample = { AWS_ACCESS_KEY_ID: CLOUDACCESS123, AWS_SECRET_ACCESS_KEY: CLOUDSECRET456, AWS_SESSION_TOKEN: CLOUDSESSION789, oauth_token: CLOUDOAUTH000, password: \"CORRECT HORSE BATTERY STAPLE\", \"auth\":\"CLOUDJSONAUTH111\", \"client_secret\":\"CLOUD JSON CLIENT 222\" }",
+      "function runTests() { return true }",
+    ].join("\n"))
+    await writeFile(join(dir, "src", "whitespace.py"), "def outer():\n    if True:\n        return 'indented'\n")
+    await writeFile(join(dir, "src", "a  b.ts"), "export const spacedPath = true\n")
+    await mkdir(join(dir, ".aws"), { recursive: true })
+    await writeFile(join(dir, ".aws", "credentials"), "aws_access_key_id = SHOULD_NOT_LEAK")
+    await writeFile(join(dir, ".git-credentials"), "https://user:SHOULD_NOT_LEAK@example.com\n")
+    await mkdir(join(dir, "nested", ".ssh"), { recursive: true })
+    await writeFile(join(dir, "nested", ".ssh", "config"), "Host secret\n  IdentityFile /tmp/secret\n")
+    await mkdir(join(dir, "nested", ".config", "gcloud"), { recursive: true })
+    await writeFile(join(dir, "nested", ".config", "gcloud", "configurations"), "credential_file_override = SHOULD_NOT_LEAK\n")
+    await mkdir(join(dir, "nested", ".env.production"), { recursive: true })
+    await writeFile(join(dir, "nested", ".env.production", "token.txt"), "TOKEN=SHOULD_NOT_LEAK\n")
+    await mkdir(join(dir, "nested", "credentials"), { recursive: true })
+    await writeFile(join(dir, "nested", "credentials", "token.txt"), "TOKEN=SHOULD_NOT_LEAK\n")
+    await mkdir(join(dir, "nested", ".kube"), { recursive: true })
+    await writeFile(join(dir, "nested", ".kube", "config"), "client-key-data: SHOULD_NOT_LEAK\n")
+    await mkdir(join(dir, "nested", ".docker"), { recursive: true })
+    await writeFile(join(dir, "nested", ".docker", "config.json"), "{\"auths\":{\"registry\":{\"auth\":\"SHOULD_NOT_LEAK\"}}}\n")
+    await mkdir(join(dir, "nested", ".config", "gh"), { recursive: true })
+    await writeFile(join(dir, "nested", ".config", "gh", "hosts.yml"), "oauth_token: SHOULD_NOT_LEAK\n")
+    await mkdir(join(dir, "nested", ".terraform.d"), { recursive: true })
+    await writeFile(join(dir, "nested", ".terraform.d", "credentials.tfrc.json"), "{\"credentials\":\"SHOULD_NOT_LEAK\"}\n")
+    await writeFile(join(dir, ".env"), "TOKEN=hidden")
+    await writeFile(join(dir, "prod.env"), "DATABASE_URL=SHOULD_NOT_LEAK_DB\n")
+    await writeFile(join(dir, "id_ecdsa"), "-----BEGIN OPENSSH PRIVATE KEY-----\nSHOULD_NOT_LEAK_ECDSA\n")
+    await writeFile(join(dir, "id_dsa"), "-----BEGIN OPENSSH PRIVATE KEY-----\nSHOULD_NOT_LEAK_DSA\n")
+    await writeFile(join(dir, "id_ed25519_sk"), "-----BEGIN OPENSSH PRIVATE KEY-----\nSHOULD_NOT_LEAK_SK\n")
+    await writeFile(join(dir, "package.json"), JSON.stringify({ auth: "SHOULD_NOT_BREAK_JSON", scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0", token: "^1.2.3", "private-url": "git+https://user:SHOULD_NOT_LEAK@example.com/repo.git" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
+    const packageLockText = `{"lockfileVersion":3,"packages":{"large":"${"x".repeat(1_100_000)}"}}`
+    await writeFile(join(dir, "package-lock.json"), packageLockText)
+    await mkdir(join(dir, "oversized-manifest"), { recursive: true })
+    await writeFile(join(dir, "oversized-manifest", "package.json"), JSON.stringify({ scripts: { test: "bun test" }, dependencies: { too_large: "x".repeat(300_000) } }))
+    await writeFile(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = ['tests']\n[project]\ndependencies = [\n  'click>=8',\n  'requests[security]>=2',\n  'flask>=3',\n]\n[project.optional-dependencies]\nextra = [\n  'rich>=13',\n  'uvicorn[standard]>=0.20',\n]\n[tool.poetry.dependencies]\npython = '^3.11'\nhttpx = '^0.27'\npendulum = { version = '^3.0', extras = ['test'] }\n[tool.poetry.group.dev.dependencies]\npytest = '^8.0'\n")
+    await mkdir(join(dir, "aaa-filler"), { recursive: true })
+    for (let index = 0; index < 1250; index += 1) {
+      await writeFile(join(dir, "aaa-filler", `filler-${index}.txt`), "not a manifest\n")
+    }
+    await mkdir(join(dir, "tree-cap"), { recursive: true })
+    for (let index = 0; index < 12; index += 1) {
+      await writeFile(join(dir, "tree-cap", `entry-${String(index).padStart(2, "0")}.ts`), "export const treeCap = true\n")
+    }
+    await mkdir(join(dir, "zzz-manifest-cap"), { recursive: true })
+    for (let index = 0; index < 1100; index += 1) {
+      await writeFile(join(dir, "zzz-manifest-cap", `filler-${index}.txt`), "not a manifest\n")
+    }
+    const outsideLock = join(await mkdtemp(join(tmpdir(), "nxl-lock-outside-")), "bun.lock")
+    await writeFile(outsideLock, "external lock")
+    await symlink(outsideLock, join(dir, "bun.lock"))
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const before = await server.eventStore.readAll()
+    const tree = await server.command("runtime.commander_repo_tree", { path: ".", depth: 2 }) as Record<string, any>
+    expect(tree).toMatchObject({ tool_id: "repo.tree", trust_class: "repository_content_untrusted", instruction_semantics: "none", filesystem_written: false, events_appended: false, shell_used: false })
+    expect(tree.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ path: ".nxl", readable: false, excluded_reason: "excluded by traversal policy" })]))
+    expect(tree.result.entries.some((entry: any) => entry.path.startsWith(".nxl/"))).toBe(false)
+    expect(JSON.stringify(tree.result)).not.toContain("prod.env")
+    expect(JSON.stringify(tree.result)).not.toContain("id_ecdsa")
+    expect(JSON.stringify(tree.result)).not.toContain("id_dsa")
+    expect(JSON.stringify(tree.result)).not.toContain("id_ed25519_sk")
+    const cappedTree = await server.command("runtime.commander_repo_tree", { path: "tree-cap", depth: 1, limit: 3 }) as Record<string, any>
+    expect(cappedTree.result.entries).toHaveLength(3)
+    expect(cappedTree.result.omitted_entries).toBeGreaterThan(0)
+    expect(cappedTree.warnings.join(" ")).toContain("repo tree traversal capped before traversal completed")
+    const sensitiveTree = await server.command("runtime.commander_repo_tree", { path: "nested", depth: 3, include_hidden: true }) as Record<string, any>
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.ssh")
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.config/gcloud")
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.env.production")
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/credentials")
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.kube")
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.docker")
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.config/gh")
+    expect(JSON.stringify(sensitiveTree.result)).not.toContain("nested/.terraform.d")
+    const search = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
+    expect(search.result.matches[0]).toMatchObject({ path: "src/sample.ts", line_number: 1 })
+    const cloudSearch = await server.command("runtime.commander_repo_search_text", { query: "CloudCredentialSample", path: "src" }) as Record<string, any>
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDACCESS123")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDSECRET456")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDSESSION789")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDOAUTH000")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDJSONAUTH111")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CORRECT HORSE BATTERY STAPLE")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUD JSON CLIENT 222")
+    expect(JSON.stringify(cloudSearch.result)).toContain("[REDACTED]")
+    const missingQuerySearch = await server.command("runtime.commander_repo_search_text", { path: "." }) as Record<string, any>
+    expect(missingQuerySearch.status).toBe("blocked")
+    expect(missingQuerySearch.blockers).toContain("repo text search requires query")
+    expect(missingQuerySearch.result).toBeNull()
+    expect(missingQuerySearch.scanned_items).toBe(0)
+    const envSearch = await server.command("runtime.commander_repo_search_text", { query: "DATABASE_URL", path: "." }) as Record<string, any>
+    expect(JSON.stringify(envSearch.result)).not.toContain("prod.env")
+    expect(JSON.stringify(envSearch.result)).not.toContain("SHOULD_NOT_LEAK_DB")
+    await mkdir(join(dir, "mixed"), { recursive: true })
+    for (let index = 0; index < 8; index += 1) {
+      await writeFile(join(dir, "mixed", `a-${index}.md`), "CommanderToolServiceSample in ignored markdown\n")
+    }
+    await writeFile(join(dir, "mixed", "z-target.ts"), "export const filteredNeedle = 'extension-filter-needle'\n")
+    const extensionSearch = await server.command("runtime.commander_repo_search_text", { query: "extension-filter-needle", path: "mixed", extensions: "ts", max_files: 3 }) as Record<string, any>
+    expect(extensionSearch.result.matches).toEqual([expect.objectContaining({ path: "mixed/z-target.ts", line_number: 1 })])
+    expect(extensionSearch.result.scanned_files).toBe(1)
+    const cappedCandidateSearch = await server.command("runtime.commander_repo_search_text", { query: "CommanderToolServiceSample", path: "mixed", max_files: 1 }) as Record<string, any>
+    expect(cappedCandidateSearch.result.omitted_files).toBeGreaterThan(0)
+    expect(cappedCandidateSearch.warnings.join(" ")).toContain("repo search candidate collection capped before traversal completed")
+    await mkdir(join(dir, "agentcore", "upstream", "packages", "opencode"), { recursive: true })
+    await writeFile(join(dir, "agentcore", "upstream", "packages", "opencode", "tool.ts"), "export const upstreamNeedle = true\n")
+    const upstreamTree = await server.command("runtime.commander_repo_tree", { path: "agentcore/upstream/packages/opencode", depth: 1 }) as Record<string, any>
+    expect(upstreamTree.result.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "agentcore/upstream/packages/opencode", readable: true }),
+      expect.objectContaining({ path: "agentcore/upstream/packages/opencode/tool.ts", readable: true }),
+    ]))
+    const upstreamSearch = await server.command("runtime.commander_repo_search_text", { query: "upstreamNeedle", path: "agentcore/upstream/packages/opencode", max_files: 3 }) as Record<string, any>
+    expect(upstreamSearch.result.matches).toEqual([expect.objectContaining({ path: "agentcore/upstream/packages/opencode/tool.ts", line_number: 1 })])
+    await mkdir(join(dir, "many"), { recursive: true })
+    for (let index = 0; index < 120; index += 1) {
+      await writeFile(join(dir, "many", `match-${index}.ts`), `const hugeSearchNeedle${index} = "huge-search-needle ${"x".repeat(700)}"\n`)
+    }
+    const cappedSearch = await server.command("runtime.commander_repo_search_text", { query: "huge-search-needle", path: "many", limit: 100, context_lines: 3 }) as Record<string, any>
+    expect(cappedSearch.truncated).toBe(true)
+    expect(cappedSearch.max_output_bytes).toBe(18_000)
+    expect(cappedSearch.output_bytes).toBeLessThanOrEqual(cappedSearch.max_output_bytes)
+    expect(Buffer.byteLength(JSON.stringify(cappedSearch.result))).toBeLessThanOrEqual(cappedSearch.max_output_bytes)
+    expect(cappedSearch.result.matches.length).toBeLessThan(100)
+    expect(cappedSearch.omitted_items).toBeGreaterThan(0)
+    const read = await server.command("runtime.commander_repo_read_lines", { path: "src/sample.ts", start_line: 1, end_line: 4 }) as Record<string, any>
+    expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("[REDACTED]")
+    expect(read.result.lines.map((line: any) => line.text).join("\n")).toContain("tokenName")
+    const cloudRead = await server.command("runtime.commander_repo_read_lines", { path: "src/sample.ts", start_line: 4, end_line: 4 }) as Record<string, any>
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDACCESS123")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDSECRET456")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDSESSION789")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDOAUTH000")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDJSONAUTH111")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CORRECT HORSE BATTERY STAPLE")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUD JSON CLIENT 222")
+    expect(cloudRead.result.content_hash).toBe(createHash("sha256").update([
+      "export class CommanderToolServiceSample {}",
+      "const tokenName = 'not a secret assignment shape'",
+      "const api_key = super-secret-value",
+      "export const CloudCredentialSample = { AWS_ACCESS_KEY_ID: CLOUDACCESS123, AWS_SECRET_ACCESS_KEY: CLOUDSECRET456, AWS_SESSION_TOKEN: CLOUDSESSION789, oauth_token: CLOUDOAUTH000, password: \"CORRECT HORSE BATTERY STAPLE\", \"auth\":\"CLOUDJSONAUTH111\", \"client_secret\":\"CLOUD JSON CLIENT 222\" }",
+      "function runTests() { return true }",
+    ].join("\n")).digest("hex"))
+    const whitespaceRead = await server.command("runtime.commander_repo_read_lines", { path: "src/whitespace.py", start_line: 1, end_line: 3 }) as Record<string, any>
+    expect(whitespaceRead.result.lines.map((line: any) => line.text)).toEqual(["def outer():", "    if True:", "        return 'indented'"])
+    const spacedPathRead = await server.command("runtime.commander_repo_read_lines", { path: "src/a  b.ts", start_line: 1, end_line: 1 }) as Record<string, any>
+    expect(spacedPathRead).toMatchObject({ status: "ready", result: { path: "src/a  b.ts" } })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "src/a\tb.ts" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["path contains unsupported control characters"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "../outside" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["path traversal outside the project root is not allowed"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "prod.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: ".envrc" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: ".git-credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "id_ecdsa" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "id_dsa" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "id_ed25519_sk" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: ".aws/credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.SSH/config" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.ssh/config" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.config/gcloud/configurations" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.env.production/token.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/credentials/token.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.kube/config" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.docker/config.json" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.config/gh/hosts.yml" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    await expect(server.command("runtime.commander_repo_read_lines", { path: "nested/.terraform.d/credentials.tfrc.json" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive repository path is denied"]) })
+    const symbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "CommanderToolServiceSample", path: "src" }) as Record<string, any>
+    expect(symbol.result.candidates[0]).toMatchObject({ declaration_kind: "class", confidence: "exact_declaration" })
+    const cloudSymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "CloudCredentialSample", path: "src" }) as Record<string, any>
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDACCESS123")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDSECRET456")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDSESSION789")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDOAUTH000")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDJSONAUTH111")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CORRECT HORSE BATTERY STAPLE")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUD JSON CLIENT 222")
+    const missingSymbol = await server.command("runtime.commander_repo_find_symbol", { path: "." }) as Record<string, any>
+    expect(missingSymbol.status).toBe("blocked")
+    expect(missingSymbol.blockers).toContain("repo symbol lookup requires symbol")
+    expect(missingSymbol.scanned_items).toBe(0)
+    const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
+    expect(JSON.stringify(tests.result)).toContain("bun test")
+    expect(tests.omitted_items).toBeGreaterThan(0)
+    expect(tests.warnings.join(" ")).toContain("manifest candidate collection capped before traversal completed")
+    expect(tests.warnings.join(" ")).toContain("manifest read skipped for oversized-manifest/package.json: file exceeds read cap")
+    const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "token", version_constraint: "^1.2.3", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "private-url", version_constraint: "git+https://[REDACTED]@example.com/repo.git" })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "click", dependency_group: "project.dependencies", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "requests", dependency_group: "project.dependencies", version_constraint: "requests[security]>=2", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "flask", dependency_group: "project.dependencies", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "rich", dependency_group: "project.optional-dependencies.extra", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "uvicorn", dependency_group: "project.optional-dependencies.extra", version_constraint: "uvicorn[standard]>=0.20", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "httpx", dependency_group: "tool.poetry.dependencies", version_constraint: "^0.27", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "pendulum", dependency_group: "tool.poetry.dependencies", version_constraint: "^3.0", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "pytest", dependency_group: "tool.poetry.group.dev.dependencies", version_constraint: "^8.0", direct: true })]))
+    expect(deps.result.dependencies.map((dependency: any) => dependency.package_name)).not.toContain("python")
+    expect(deps.result.lockfiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "package-lock.json", size_bytes: packageLockText.length, hash_omitted: true, omitted_reason: "lockfile exceeds hash cap" })]))
+    expect(deps.warnings.join(" ")).toContain("package-lock.json exceeds lockfile hash cap")
+    expect(deps.omitted_items).toBeGreaterThan(0)
+    expect(deps.warnings.join(" ")).toContain("manifest candidate collection capped before traversal completed")
+    expect(deps.warnings.join(" ")).toContain("manifest read skipped for oversized-manifest/package.json: file exceeds read cap")
+    expect(JSON.stringify(deps.result)).not.toContain("large")
+    expect(JSON.stringify(tests.result)).not.toContain("SHOULD_NOT_BREAK_JSON")
+    expect(JSON.stringify(deps.result)).not.toContain("SHOULD_NOT_BREAK_JSON")
+    const runtimeOnlyDeps = await server.command("runtime.commander_repo_dependency_manifest", { include_optional: false }) as Record<string, any>
+    expect(JSON.stringify(runtimeOnlyDeps.result.dependencies)).not.toContain("rich")
+    const noDevDeps = await server.command("runtime.commander_repo_dependency_manifest", { include_dev: false }) as Record<string, any>
+    expect(JSON.stringify(noDevDeps.result.dependencies)).not.toContain("pytest")
+    expect(deps.result.lockfiles).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: "bun.lock" })]))
+    expect(await server.eventStore.readAll()).toHaveLength(before.length)
+  })
+
+  test("Commander repository scans enforce cumulative byte caps and source hashes", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await mkdir(join(dir, "bulk-search"), { recursive: true })
+    const filler = `// ${"x".repeat(479_000)}\n`
+    for (let index = 0; index < 72; index += 1) {
+      await writeFile(join(dir, "bulk-search", `scan-${String(index).padStart(3, "0")}.ts`), filler)
+    }
+    await writeFile(join(dir, "bulk-search", "zz-after-cap.ts"), "export const afterCapNeedle = true\n")
+    await mkdir(join(dir, "bulk-symbol"), { recursive: true })
+    const symbolFiller = `// ${"y".repeat(249_000)}\n`
+    for (let index = 0; index < 140; index += 1) {
+      await writeFile(join(dir, "bulk-symbol", `sym-${String(index).padStart(3, "0")}.ts`), symbolFiller)
+    }
+    await writeFile(join(dir, "bulk-symbol", "zz-after-cap.ts"), "export class AfterCapSymbol {}\n")
+    await mkdir(join(dir, "hashes"), { recursive: true })
+    const firstSecret = "export const api_key = first-secret-value\nexport const visibleHashNeedle = true\n"
+    const secondSecret = "export const api_key = second-secret-value\nexport const visibleHashNeedle = true\n"
+    await writeFile(join(dir, "hashes", "first.ts"), firstSecret)
+    await writeFile(join(dir, "hashes", "second.ts"), secondSecret)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const search = await server.command("runtime.commander_repo_search_text", { query: "afterCapNeedle", path: "bulk-search", max_files: 100 }) as Record<string, any>
+    expect(search.result.matches).toHaveLength(0)
+    expect(search.result.scanned_bytes).toBeLessThanOrEqual(32 * 1024 * 1024)
+    expect(search.result.omitted_files).toBeGreaterThan(0)
+    expect(search.warnings.join(" ")).toContain("repository scan byte/time cap reached")
+    const symbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AfterCapSymbol", path: "bulk-symbol", limit: 5 }) as Record<string, any>
+    expect(symbol.result.candidates).toHaveLength(0)
+    expect(symbol.omitted_items).toBeGreaterThan(0)
+    expect(symbol.warnings.join(" ")).toContain("repository scan byte/time cap reached")
+    const firstRead = await server.command("runtime.commander_repo_read_lines", { path: "hashes/first.ts", start_line: 1, end_line: 2 }) as Record<string, any>
+    const secondRead = await server.command("runtime.commander_repo_read_lines", { path: "hashes/second.ts", start_line: 1, end_line: 2 }) as Record<string, any>
+    expect(firstRead.result.lines[0].text).toBe(secondRead.result.lines[0].text)
+    expect(firstRead.result.lines[0].text).toContain("[REDACTED]")
+    expect(firstRead.result.content_hash).toBe(createHash("sha256").update(firstSecret).digest("hex"))
+    expect(secondRead.result.content_hash).toBe(createHash("sha256").update(secondSecret).digest("hex"))
+    expect(firstRead.result.content_hash).not.toBe(secondRead.result.content_hash)
+    const tree = await server.command("runtime.commander_repo_tree", { path: "hashes", depth: 1 }) as Record<string, any>
+    expect(tree.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ path: "hashes/first.ts", content_hash: firstRead.result.content_hash })]))
+    const hashSearch = await server.command("runtime.commander_repo_search_text", { query: "visibleHashNeedle", path: "hashes" }) as Record<string, any>
+    const hashSymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "visibleHashNeedle", path: "hashes" }) as Record<string, any>
+    expect(hashSearch.result.matches.find((match: any) => match.path === "hashes/first.ts").content_hash).toBe(firstRead.result.content_hash)
+    expect(hashSymbol.result.candidates.find((candidate: any) => candidate.path === "hashes/first.ts").content_hash).toBe(firstRead.result.content_hash)
+  })
+
+  test("Commander manifest readers prioritize root manifests before traversal caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test" }, dependencies: { zod: "^3.0.0" } }, null, 2))
+    await writeFile(join(dir, "pyproject.toml"), "[project]\ndependencies = [\n  'click>=8',\n]\n")
+    await mkdir(join(dir, "aaa"), { recursive: true })
+    for (let index = 0; index < 2300; index += 1) {
+      await writeFile(join(dir, "aaa", `filler-${String(index).padStart(4, "0")}.txt`), "not a manifest\n")
+    }
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
+    expect(tests.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ source_path: "package.json", command_preview: "bun test" })]))
+    expect(tests.warnings.join(" ")).toContain("manifest candidate collection capped before traversal completed")
+    const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ manifest_path: "package.json", package_name: "zod" })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ manifest_path: "pyproject.toml", package_name: "click" })]))
+    expect(deps.warnings.join(" ")).toContain("manifest candidate collection capped before traversal completed")
+  })
+
+  test("Commander repository symbol scans filter non-code before the file cap and report traversal caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await mkdir(join(dir, "asset-heavy-symbol"), { recursive: true })
+    for (let index = 0; index < 3010; index += 1) {
+      await writeFile(join(dir, "asset-heavy-symbol", `asset-${String(index).padStart(4, "0")}.md`), "asset metadata\n")
+    }
+    await writeFile(join(dir, "asset-heavy-symbol", "zz-source.ts"), "export class AssetHeavySymbol {}\n")
+    await mkdir(join(dir, "asset-capped-symbol"), { recursive: true })
+    for (let index = 0; index < 4010; index += 1) {
+      await writeFile(join(dir, "asset-capped-symbol", `asset-${String(index).padStart(4, "0")}.md`), "asset metadata\n")
+    }
+    await writeFile(join(dir, "asset-capped-symbol", "zz-source.ts"), "export class AssetCappedSymbol {}\n")
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const assetHeavySymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetHeavySymbol", path: "asset-heavy-symbol", limit: 5 }) as Record<string, any>
+    expect(assetHeavySymbol.result.candidates).toEqual([expect.objectContaining({ path: "asset-heavy-symbol/zz-source.ts", declaration_kind: "class", confidence: "exact_declaration" })])
+    expect(assetHeavySymbol.warnings.join(" ")).not.toContain("candidate collection capped")
+    const assetCappedSymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "AssetCappedSymbol", path: "asset-capped-symbol", limit: 5 }) as Record<string, any>
+    expect(assetCappedSymbol.omitted_items).toBeGreaterThan(0)
+    expect(assetCappedSymbol.warnings.join(" ")).toContain("repo symbol candidate collection capped before traversal completed")
+  })
+
+  test("Commander restricted Git reads use fixed read-only process commands", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "tracked.txt"), "first\n")
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "tracked.txt"), `first\napi_key = top-secret\nAWS_ACCESS_KEY_ID = GITCLOUDACCESS123\nAWS_SECRET_ACCESS_KEY = GITCLOUDSECRET456\nAWS_SESSION_TOKEN = GITCLOUDSESSION789\npassword = "GIT CORRECT HORSE BATTERY"\n{"auth":"GITJSONAUTH123","client_secret":"GIT JSON CLIENT 456"}\n${Array.from({ length: 20 }, (_, index) => `added-${index}`).join("\n")}\n`)
+    await writeFile(join(dir, ".env"), "aws_access_key_id = SHOULD_NOT_LEAK\n")
+    await writeFile(join(dir, "prod.env"), "DATABASE_URL=SHOULD_NOT_LEAK_DB\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    const quotedEnvPath = join(dir, ".env\ncopy")
+    await writeFile(quotedEnvPath, "aws_access_key_id = SHOULD_NOT_LEAK_QUOTED\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".env\ncopy"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track quoted env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(quotedEnvPath, "aws_access_key_id = SHOULD_NOT_LEAK_QUOTED_CHANGED\n")
+    await writeFile(join(dir, ".git-credentials"), "https://user:SHOULD_NOT_LEAK@example.com\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".git-credentials"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "id_ecdsa"), "-----BEGIN OPENSSH PRIVATE KEY-----\nSHOULD_NOT_LEAK_ECDSA\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "id_ecdsa"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "id_dsa"), "-----BEGIN OPENSSH PRIVATE KEY-----\nSHOULD_NOT_LEAK_DSA\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "id_dsa"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "id_ed25519_sk"), "-----BEGIN OPENSSH PRIVATE KEY-----\nSHOULD_NOT_LEAK_SK\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "id_ed25519_sk"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await mkdir(join(dir, ".docker"), { recursive: true })
+    await writeFile(join(dir, ".docker", "config.json"), "{\"auth\":\"SHOULD_NOT_LEAK_DOCKER\"}\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".docker/config.json"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await mkdir(join(dir, ".config", "gh"), { recursive: true })
+    await writeFile(join(dir, ".config", "gh", "hosts.yml"), "oauth_token: SHOULD_NOT_LEAK_GH\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".config/gh/hosts.yml"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "rename-source.txt"), "rename me\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "rename-source.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "add rename source"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "delete-me.txt"), "delete me\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "delete-me.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "add delete target"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "secret.p12"), new Uint8Array([0, 1, 2, 3]))
+    expect(Bun.spawnSync({ cmd: ["git", "add", "secret.p12"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track binary secret"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "mode-only.sh"), "#!/bin/sh\nexit 0\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "mode-only.sh"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track mode only file"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await mkdir(join(dir, "space dir"), { recursive: true })
+    await writeFile(join(dir, "space dir", "spaced file.ts"), "export const spacedDiff = 1\n")
+    await writeFile(join(dir, "space dir", "asset.bin"), new Uint8Array([0, 1, 2, 3]))
+    expect(Bun.spawnSync({ cmd: ["git", "add", "space dir/spaced file.ts", "space dir/asset.bin"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "track spaced paths"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await chmod(join(dir, "mode-only.sh"), 0o755)
+    await writeFile(join(dir, "space dir", "spaced file.ts"), "export const spacedDiff = 2\n")
+    await writeFile(join(dir, "space dir", "asset.bin"), new Uint8Array([0, 1, 2, 3, 4]))
+    expect(Bun.spawnSync({ cmd: ["git", "mv", "rename-source.txt", "rename-target.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await rm(join(dir, "delete-me.txt"))
+    await writeFile(join(dir, "secret.p12"), new Uint8Array([0, 1, 2, 3, 4, 5]))
+    expect(Bun.spawnSync({ cmd: ["git", "mv", ".env", "public.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "token=abc"), "valid path that looks like assignment\n")
+    await writeFile(join(dir, "next-visible.txt"), "next status record\n")
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const before = await server.eventStore.readAll()
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status).toMatchObject({ tool_id: "repo.git_status", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false, events_appended: false })
+    expect(status.result.unstaged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
+    expect(status.result.staged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "rename-target.txt", status: "R" })]))
+    expect(JSON.stringify(status.result.staged)).not.toContain("rename-source.txt")
+    expect(JSON.stringify(status.result)).not.toContain(".env")
+    expect(JSON.stringify(status.result)).not.toContain("prod.env")
+    expect(JSON.stringify(status.result)).not.toContain(".git-credentials")
+    expect(JSON.stringify(status.result)).not.toContain("id_ecdsa")
+    expect(JSON.stringify(status.result)).not.toContain("id_dsa")
+    expect(JSON.stringify(status.result)).not.toContain("id_ed25519_sk")
+    expect(JSON.stringify(status.result)).not.toContain(".docker")
+    expect(JSON.stringify(status.result)).not.toContain(".config/gh")
+    expect(JSON.stringify(status.result)).not.toContain("copy")
+    expect(status.result.untracked).toContain("next-visible.txt")
+    expect(status.warnings.join(" ")).toContain("Suppressed")
+    const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
+    expect(diff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, network_called: false })
+    expect(diff.result.patch_preview).toContain("[REDACTED]")
+    expect(JSON.stringify(diff.result)).not.toContain("GITCLOUDACCESS123")
+    expect(JSON.stringify(diff.result)).not.toContain("GITCLOUDSECRET456")
+    expect(JSON.stringify(diff.result)).not.toContain("GITCLOUDSESSION789")
+    expect(JSON.stringify(diff.result)).not.toContain("GITJSONAUTH123")
+    expect(JSON.stringify(diff.result)).not.toContain("GIT CORRECT HORSE BATTERY")
+    expect(JSON.stringify(diff.result)).not.toContain("GIT JSON CLIENT 456")
+    const zeroContextDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt", context_lines: 0 }) as Record<string, any>
+    expect(zeroContextDiff.result.patch_preview).toContain("[REDACTED]")
+    expect(zeroContextDiff.result.patch_preview).not.toContain("\n first\n")
+    const spacedTextDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "space dir/spaced file.ts" }) as Record<string, any>
+    expect(spacedTextDiff.result.files).toEqual([expect.objectContaining({ path: "space dir/spaced file.ts", additions: 1, deletions: 1 })])
+    expect(spacedTextDiff.result.patch_preview).toContain("space dir/spaced file.ts")
+    expect(spacedTextDiff.warnings.join(" ")).not.toContain("Suppressed")
+    const spacedBinaryDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "space dir/asset.bin" }) as Record<string, any>
+    expect(spacedBinaryDiff.result.files).toEqual([expect.objectContaining({ path: "space dir/asset.bin", binary: true })])
+    expect(spacedBinaryDiff.result.stat_preview).toContain("space dir/asset.bin")
+    expect(spacedBinaryDiff.warnings.join(" ")).not.toContain("Suppressed")
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "prod.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".envrc" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".git-credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "id_ecdsa" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "id_dsa" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "id_ed25519_sk" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".docker/config.json" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: ".config/gh/hosts.yml" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git diff path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked\t.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter contains unsupported control characters"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "../tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter cannot escape the project root"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "*.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git wildcard path filters are not supported"]) })
+    await expect(server.command("runtime.commander_repo_git_diff", { scope: "stage" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git diff scope is unsupported"]) })
+    const wholeDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
+    expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "delete-me.txt", deletions: 1 })]))
+    expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "mode-only.sh" })]))
+    expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "space dir/spaced file.ts" })]))
+    expect(wholeDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "space dir/asset.bin", binary: true })]))
+    expect(wholeDiff.result.stat_preview).toContain("delete-me.txt")
+    expect(wholeDiff.result.stat_preview).toContain("mode-only.sh")
+    expect(JSON.stringify(wholeDiff.result)).not.toContain(".env")
+    expect(JSON.stringify(wholeDiff.result)).not.toContain("secret.p12")
+    expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK")
+    expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK_QUOTED")
+    expect(wholeDiff.warnings.join(" ")).toContain("Suppressed")
+    const statOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", stat_only: true }) as Record<string, any>
+    expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt", additions: 26, deletions: 0 })]))
+    expect(JSON.stringify(statOnlyDiff.result)).not.toContain(".env")
+    expect(JSON.stringify(statOnlyDiff.result)).not.toContain("secret.p12")
+    expect(statOnlyDiff.warnings.join(" ")).toContain("Suppressed")
+    const stagedStatOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "staged", stat_only: true }) as Record<string, any>
+    expect(JSON.stringify(stagedStatOnlyDiff.result)).not.toContain(".env")
+    expect(JSON.stringify(stagedStatOnlyDiff.result)).not.toContain("public.txt")
+    expect(stagedStatOnlyDiff.warnings.join(" ")).toContain("Suppressed")
+    expect(JSON.stringify(statOnlyDiff.result)).not.toContain("public.txt")
+    const log = await server.command("runtime.commander_repo_git_log", { limit: 15 }) as Record<string, any>
+    expect(log.result.commits).toEqual(expect.arrayContaining([expect.objectContaining({ subject_preview: "initial" })]))
+    await expect(server.command("runtime.commander_repo_git_log", { path: "/tmp/tracked.txt" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git path filter must be project-relative"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: ".ENV" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: ".envrc" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: ".git-credentials" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: "id_ecdsa" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: "id_dsa" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: "id_ed25519_sk" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: ".docker/config.json" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: ".config/gh/hosts.yml" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["sensitive Git log path is denied"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: ":(glob).env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git pathspec magic is not supported"]) })
+    await expect(server.command("runtime.commander_repo_git_log", { path: "*.env" })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["Git wildcard path filters are not supported"]) })
+    expect(await server.eventStore.readAll()).toHaveLength(before.length)
+  })
+
+  test("Commander restricted Git reads resolve Git outside the project PATH", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "tracked.txt"), "first\n")
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "tracked.txt"), "first\nsecond\n")
+    await writeFile(join(dir, "git"), "#!/bin/sh\nprintf executed > git-path-hijack-ran\nexit 42\n")
+    await chmod(join(dir, "git"), 0o755)
+
+    const originalPath = process.env.PATH
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ""}`
+    try {
+      const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+      const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+      expect(status).toMatchObject({ status: "ready", tool_id: "repo.git_status", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false })
+      expect(status.result.unstaged).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt" })]))
+      const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt" }) as Record<string, any>
+      expect(diff).toMatchObject({ status: "ready", tool_id: "repo.git_diff", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false })
+      expect(diff.result.patch_preview).toContain("second")
+      const log = await server.command("runtime.commander_repo_git_log", { limit: 1 }) as Record<string, any>
+      expect(log).toMatchObject({ status: "ready", tool_id: "repo.git_log", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false })
+      expect(log.result.commits).toEqual([expect.objectContaining({ subject_preview: "initial" })])
+      expect(existsSync(join(dir, "git-path-hijack-ran"))).toBe(false)
+    } finally {
+      process.env.PATH = originalPath
+    }
+  })
+
+  test("Commander restricted Git status classifies add-add conflicts", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "base.txt"), "base\n")
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "base.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "base"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "checkout", "-b", "other"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "conflict.txt"), "other\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "conflict.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "other add"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "checkout", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "conflict.txt"), "master\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "conflict.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "master add"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "merge", "other"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).not.toBe(0)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status.result.conflicted).toEqual(expect.arrayContaining(["conflict.txt"]))
+    expect(JSON.stringify(status.result.staged)).not.toContain("conflict.txt")
+    expect(JSON.stringify(status.result.unstaged)).not.toContain("conflict.txt")
+  })
+
+  test("Commander restricted Git diff suppresses sensitive combined conflict sections", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "base.txt"), "base\n")
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "base.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "base"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "checkout", "-b", "other"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, ".env"), "AWS_SECRET_ACCESS_KEY=SHOULD_NOT_LEAK_OTHER\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "other env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "checkout", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, ".env"), "AWS_SECRET_ACCESS_KEY=SHOULD_NOT_LEAK_MASTER\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "master env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "merge", "other"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).not.toBe(0)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
+    const rendered = JSON.stringify(diff.result)
+    expect(diff.status).toBe("ready")
+    expect(rendered).not.toContain(".env")
+    expect(rendered).not.toContain("SHOULD_NOT_LEAK")
+    expect(diff.warnings.join(" ")).toContain("Suppressed")
+  })
+
+  test("Commander restricted Git status works on unborn HEAD", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "new-file.txt"), "new\n")
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status.status).toBe("ready")
+    expect(status.blockers).toEqual([])
+    expect(status.result.untracked).toEqual(expect.arrayContaining(["new-file.txt"]))
+    expect(status.result.head_sha).toBeUndefined()
+    expect(status.warnings.join(" ")).toContain("Git HEAD is unborn")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "new-file.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    const stagedDiff = await server.command("runtime.commander_repo_git_diff", { scope: "staged" }) as Record<string, any>
+    expect(stagedDiff.status).toBe("ready")
+    expect(stagedDiff.blockers).toEqual([])
+    expect(stagedDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "new-file.txt" })]))
+    expect(stagedDiff.warnings.join(" ")).toContain("Git HEAD is unborn")
+  })
+
+  test("Commander restricted Git status propagates adapter truncation", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "tracked.txt"), "tracked\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    for (let index = 0; index < 20; index += 1) {
+      await writeFile(join(dir, `untracked-${index}.txt`), `untracked ${index}\n`)
+    }
+    const adapter = new RestrictedGitReadAdapter({ projectDir: dir, maxStdoutBytes: 64 })
+    const status = await adapter.status()
+    expect(status.result.truncated).toBe(true)
+    expect(status.warnings).toContain("Git stdout exceeded output cap and was truncated")
+  })
+
+  test("Commander restricted Git reads block executable filters before status or diff", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "tracked.txt"), "first\n")
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, ".gitattributes"), "*.txt filter=evil\n")
+    await writeFile(join(dir, "marker.sh"), "#!/bin/sh\nprintf executed > git-filter-ran\ncat\n")
+    await chmod(join(dir, "marker.sh"), 0o755)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "filter.evil.clean", "./marker.sh"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "tracked.txt"), "first changed\n")
+    await rm(join(dir, "git-filter-ran"), { force: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status).toMatchObject({ status: "blocked", filesystem_written: false, arbitrary_command_executed: false })
+    expect(status.blockers.join(" ")).toContain("Git executable filters are configured and blocked")
+    const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
+    expect(diff).toMatchObject({ status: "blocked", filesystem_written: false, arbitrary_command_executed: false })
+    expect(diff.blockers.join(" ")).toContain("Git executable filters are configured and blocked")
+    await expect(Bun.file(join(dir, "git-filter-ran")).exists()).resolves.toBe(false)
+  })
+
+  test("Commander restricted Git status ignores submodules and respects output caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, "tracked.txt"), "tracked\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    const child = join(dir, "child-repo")
+    await mkdir(child)
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: child, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: child, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: child, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(child, "sub.txt"), "submodule\n")
+    await writeFile(join(child, ".gitattributes"), "*.txt filter=evil\n")
+    await writeFile(join(child, "marker.sh"), "#!/bin/sh\nprintf executed > ../submodule-filter-ran\ncat\n")
+    await chmod(join(child, "marker.sh"), 0o755)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "sub.txt"], cwd: child, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "sub initial"], cwd: child, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "filter.evil.clean", "./marker.sh"], cwd: child, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "-c", "protocol.file.allow=always", "submodule", "add", "./child-repo", "submodule"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "add submodule"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(child, "sub.txt"), "submodule changed\n")
+    for (let index = 0; index < 260; index += 1) {
+      await writeFile(join(dir, `very-long-untracked-path-${String(index).padStart(3, "0")}-${"x".repeat(180)}.txt`), "untracked\n")
+    }
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status.status).toBe("ready")
+    expect(status.result.truncated).toBe(true)
+    expect(status.output_bytes).toBeLessThanOrEqual(status.max_output_bytes)
+    expect(Buffer.byteLength(JSON.stringify(status.result))).toBeLessThanOrEqual(status.max_output_bytes)
+    expect(status.omitted_items).toBeGreaterThan(0)
+    await expect(Bun.file(join(dir, "submodule-filter-ran")).exists()).resolves.toBe(false)
+  })
+
+  test("Commander restricted Git reads disable configured fsmonitor hooks", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "tracked.txt"), "first\n")
+    await writeFile(join(dir, "fsmonitor-hook.sh"), "#!/bin/sh\nprintf touched > fsmonitor-ran\n")
+    await chmod(join(dir, "fsmonitor-hook.sh"), 0o755)
+    expect(Bun.spawnSync({ cmd: ["git", "init"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "core.fsmonitor", join(dir, "fsmonitor-hook.sh")], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const status = await server.command("runtime.commander_repo_git_status") as Record<string, any>
+    expect(status).toMatchObject({ tool_id: "repo.git_status", git_process_invoked: true, shell_used: false, arbitrary_command_executed: false })
+    await expect(Bun.file(join(dir, "fsmonitor-ran")).exists()).resolves.toBe(false)
+  })
+
+  test("Commander restricted Git reads disable lazy network fetches", () => {
+    expect(restrictedGitReadEnv()).toMatchObject({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_OPTIONAL_LOCKS: "0",
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+    })
+    expect(restrictedGitLogArgs(10)).toContain("--no-show-signature")
+  })
+
   test("Commander tool commands do not auto-start runtime clients", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -24289,6 +25100,8 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(client.command("runtime.preview_commander_tool_profile", { phase: "general_read" })).resolves.toMatchObject({ execution_enabled: false })
     await expect(client.command("runtime.preview_commander_tool_bootstrap", { phase: "general_read" })).resolves.toMatchObject({ execution_enabled: false })
     await expect(client.command("runtime.validate_commander_tool_registry")).resolves.toMatchObject({ status: "ready" })
+    await expect(client.command("runtime.commander_repo_tree", { path: "." })).resolves.toMatchObject({ tool_id: "repo.tree" })
+    await expect(client.command("runtime.search_commander_operational_memory", { query: "anything" })).resolves.toMatchObject({ tool_id: "continuity.search" })
     expect(adapter.startCalls).toBe(0)
     await client.shutdown()
   })

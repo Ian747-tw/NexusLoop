@@ -1,5 +1,4 @@
 import type { CommandAuthorityRisk, CommandPhaseStatus } from "../authority/command-authority-types"
-
 export type CommanderToolNamespace =
   | "core"
   | "authority"
@@ -18,6 +17,8 @@ export type CommanderToolAvailability = "implemented_read_surface" | "registry_o
 export type CommanderToolLoadPolicy = "always_loaded" | "deferred" | "never_exposed"
 export type CommanderToolPhase = "general_read" | "proposal_investigation" | "mid_mission_supervision" | "result_review" | "governance_review" | "emergency_inspection"
 export type CommanderToolInstructionSemantics = "none"
+export type CommanderToolExecutionBackend = "runtime_service" | "filesystem_read" | "restricted_git_read" | "future_external_gateway" | "future_governance"
+export type CommanderToolProcessPolicy = "none" | "fixed_git_read_only"
 
 export type CommanderToolJsonSchemaProperty = {
   type: "string" | "number" | "integer" | "boolean" | "array" | "object"
@@ -69,6 +70,8 @@ export type CommanderToolDescriptor = {
   requires_approval: boolean
   requires_run_lock: boolean
   creates_external_process: boolean
+  execution_backend: CommanderToolExecutionBackend
+  process_policy: CommanderToolProcessPolicy
   calls_provider: boolean
   mutates_events: boolean
   max_output_bytes: number
@@ -161,6 +164,10 @@ export type CommanderToolProfile = {
   warnings: string[]
   generated_at: string
   profile_hash: string
+  manual_internal_read_execution_enabled: boolean
+  provider_tool_loop_enabled: false
+  external_read_execution_enabled: false
+  governance_execution_enabled: false
 }
 
 export type CommanderToolBootstrapPreview = {
@@ -179,6 +186,10 @@ export type CommanderToolBootstrapPreview = {
   over_budget: boolean
   omitted_core_tools: string[]
   execution_enabled: false
+  manual_internal_read_execution_enabled?: boolean
+  provider_tool_loop_enabled?: false
+  external_read_execution_enabled?: false
+  governance_execution_enabled?: false
   blockers: string[]
   warnings: string[]
   generated_at: string

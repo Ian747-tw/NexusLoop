@@ -178,6 +178,54 @@ describe("TUI keyboard command model", () => {
     expect(applyKeyCommandWithEffects(dotState, { type: "submit" }).effects).toEqual([{ type: "send-user-message", message: ".tool-search query=memory" }])
   })
 
+  test("commander internal read slash commands route only exact whitelist commands", () => {
+    const searchState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/commander-repo-search query=CommanderToolService path=agentcore/runtime/src",
+    }
+
+    expect(applyKeyCommandWithEffects(searchState, { type: "submit" }).effects).toEqual([
+      { type: "send-command", command: "commander-repo-search", args: ["query=CommanderToolService", "path=agentcore/runtime/src"] },
+    ])
+
+    const readState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/commander-repo-read path=agentcore/runtime/src/server.ts start=1 end=20",
+    }
+    expect(applyKeyCommandWithEffects(readState, { type: "submit" }).effects).toEqual([
+      { type: "send-command", command: "commander-repo-read", args: ["path=agentcore/runtime/src/server.ts", "start=1", "end=20"] },
+    ])
+
+    const spacedPathState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      focus: "message-box",
+      messageDraft: "/commander-repo-read path=src/a b.ts start=1 end=20",
+    }
+    expect(applyKeyCommandWithEffects(spacedPathState, { type: "submit" }).effects).toEqual([
+      { type: "send-command", command: "commander-repo-read", args: ["path=src/a", "b.ts", "start=1", "end=20"] },
+    ])
+
+    const gitState: UiState = { ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: "/repo-git-diff scope=working_tree stat_only=true" }
+    expect(applyKeyCommandWithEffects(gitState, { type: "submit" }).effects).toEqual([
+      { type: "send-command", command: "repo-git-diff", args: ["scope=working_tree", "stat_only=true"] },
+    ])
+
+    const zeroContextGitState: UiState = { ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: "/commander-git-diff scope=working_tree context_lines=0" }
+    expect(applyKeyCommandWithEffects(zeroContextGitState, { type: "submit" }).effects).toEqual([
+      { type: "send-command", command: "commander-git-diff", args: ["scope=working_tree", "context_lines=0"] },
+    ])
+
+    for (const message of ["/tmp/repo-search", ".repo-read path=server.ts", ":repo-tree path=."]) {
+      const pathState: UiState = { ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: message }
+      expect(applyKeyCommandWithEffects(pathState, { type: "submit" }).effects).toEqual([{ type: "send-user-message", message }])
+    }
+  })
+
   test("research synthesis slash commands route only exact whitelist commands", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

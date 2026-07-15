@@ -6672,7 +6672,7 @@ describe("runtime UI effects", () => {
     expect(state.commanderTools?.search?.matches.every((match) => match.schema_loaded === false)).toBe(true)
     expect(state.commanderTools?.selected).toMatchObject({ tool_id: "memory.search", schema_metadata: expect.objectContaining({ schema_loaded: true }) })
     expect(state.commanderTools?.profile).toMatchObject({ phase: "mid_mission_supervision", execution_enabled: false })
-    expect(repoRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "repo.search_text", availability: "future_internal_read" })]))
+    expect(repoRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "repo.search_text", availability: "implemented_read_surface" })]))
     expect(githubRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "github.pr_checks", availability: "future_external_read" })]))
     expect(governanceRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "governance.stage_pr_merge", availability: "future_governance_intent" })]))
     expect(cappedListRecords).toHaveLength(50)
@@ -6687,5 +6687,102 @@ describe("runtime UI effects", () => {
     expect(filterOnlySearchState.commanderTools?.commandError).toContain("requires query")
     const runtimeErrorState = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-profile", args: ["phase=unknown"] })
     expect(runtimeErrorState.commanderTools?.commandError).toContain("commander tool phase is unsupported")
+  })
+
+  test("fake runtime renders Commander internal read surfaces", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-continuity-search", args: ["query=prior", "continuity", "decision"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-continuity-search", args: ["query=prior", "include_closed=false"] })
+    expect(state.commanderInternalReads?.commandError).toBeUndefined()
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-tree", args: ["path=agentcore/runtime/src/commander-tools", "depth=2"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-search", args: ["query=CommanderToolService", "path=agentcore/runtime/src"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-read", args: ["path=agentcore/runtime/src/commander-tools/commander-tool-service.ts", "start=1", "end=20"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-symbol", args: ["symbol=CommanderToolService", "path=agentcore/runtime/src"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-git-status" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-git-diff", args: ["scope=working_tree", "stat_only=true"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-git-log", args: ["limit=3"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-test-manifest" })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-dependency-manifest" })
+
+    expect(state.commanderInternalReads?.continuitySearch).toMatchObject({ tool_id: "continuity.search", trust_class: "runtime_authoritative", events_appended: false })
+    expect(state.commanderInternalReads?.repoTree).toMatchObject({ tool_id: "repo.tree", trust_class: "repository_content_untrusted", filesystem_written: false })
+    expect(state.commanderInternalReads?.repoSearch).toMatchObject({ tool_id: "repo.search_text", instruction_semantics: "none" })
+    expect(state.commanderInternalReads?.repoFile).toMatchObject({ tool_id: "repo.read_lines", provider_called: false, mcp_called: false, network_called: false })
+    expect(state.commanderInternalReads?.repoSymbol).toMatchObject({ tool_id: "repo.find_symbol" })
+    expect(state.commanderInternalReads?.gitStatus).toMatchObject({ tool_id: "repo.git_status", git_process_invoked: true, shell_used: false })
+    expect(state.commanderInternalReads?.gitDiff).toMatchObject({ tool_id: "repo.git_diff", git_process_invoked: true, arbitrary_command_executed: false })
+    expect(state.commanderInternalReads?.gitLog).toMatchObject({ tool_id: "repo.git_log", git_process_invoked: true })
+    expect(state.commanderInternalReads?.testManifest).toMatchObject({ tool_id: "repo.test_manifest" })
+    expect(state.commanderInternalReads?.dependencyManifest).toMatchObject({ tool_id: "repo.dependency_manifest" })
+    expect(state.commanderInternalReads?.lastResult).toMatchObject({ tool_id: "repo.dependency_manifest", mission_mutated: false, opencode_action_performed: false })
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Commander internal reads")
+    expect(snapshot).toContain("trust_class=repository_content_untrusted")
+    expect(snapshot).toContain("instruction_semantics=none")
+    expect(snapshot).toContain("git_process_invoked=true")
+    expect(snapshot).toContain("unstaged=agentcore/runtime/src/commander-tools/commander-tool-service.ts status=M")
+    expect(snapshot).toContain("conflicted=conflict.txt")
+    expect(snapshot).toContain("git_file=agentcore/runtime/src/commander-tools/commander-tool-service.ts additions=2 deletions=0 binary=false")
+    expect(snapshot).toContain("git_stat=commander-tool-service.ts +2/-0")
+    expect(snapshot).toContain("filesystem_written=false")
+    expect(snapshot).not.toContain("sk-test")
+
+    const errorState = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-search", args: [] })
+    expect(errorState.commanderInternalReads?.commandError).toContain("query is required")
+  })
+
+  test("Commander repo read parser preserves large line ranges", async () => {
+    const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        calls.push({ name, payload })
+        return {
+          call_id: "read-large-line-range",
+          tool_id: "repo.read_lines",
+          status: "ready",
+          trust_class: "repository_content_untrusted",
+          instruction_semantics: "none",
+          result: { path: "large.py", start_line: payload?.start, end_line: payload?.end, lines: [], content_hash: "hash", encoding: "utf-8", truncated: false },
+          evidence: [],
+          output_bytes: 2,
+          max_output_bytes: 32000,
+          truncated: false,
+          duration_ms: 0,
+          blockers: [],
+          warnings: [],
+          generated_at: "2026-07-13T00:00:00Z",
+          result_hash: "hash",
+          filesystem_written: false,
+          events_appended: false,
+          network_called: false,
+          provider_called: false,
+          mcp_called: false,
+          research_db_written: false,
+          mission_mutated: false,
+          proposal_mutated: false,
+          opencode_action_performed: false,
+          shell_used: false,
+          arbitrary_command_executed: false,
+          git_process_invoked: false,
+        }
+      },
+    }
+    const state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-read", args: ["path=large.py", "start=12000", "end=12100"] })
+    expect(calls[0]).toEqual({ name: "runtime.commander_repo_read_lines", payload: { path: "large.py", start: 12000, end: 12100 } })
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-read", args: ["path=src/a", "b.ts", "start=1", "end=2"] })
+    expect(calls[1]).toEqual({ name: "runtime.commander_repo_read_lines", payload: { path: "src/a b.ts", start: 1, end: 2 } })
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-search", args: ["query=needle", "path=src/a", "b.ts", "limit=5"] })
+    expect(calls[2]).toEqual({ name: "runtime.commander_repo_search_text", payload: { query: "needle", path: "src/a b.ts", limit: 5 } })
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-git-diff", args: ["scope=working_tree", "path=src/a", "b.ts", "stat_only=true"] })
+    expect(calls[3]).toEqual({ name: "runtime.commander_repo_git_diff", payload: { scope: "working_tree", path: "src/a b.ts", stat_only: true } })
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-repo-search", args: ["query=needle", "path=src/a", "b.ts", "context_lines=0"] })
+    expect(calls[4]).toEqual({ name: "runtime.commander_repo_search_text", payload: { query: "needle", path: "src/a b.ts", context_lines: 0 } })
+    await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-git-diff", args: ["scope=working_tree", "path=src/a", "b.ts", "context_lines=0"] })
+    expect(calls[5]).toEqual({ name: "runtime.commander_repo_git_diff", payload: { scope: "working_tree", path: "src/a b.ts", context_lines: 0 } })
   })
 })

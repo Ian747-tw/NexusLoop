@@ -63,6 +63,7 @@ import type {
   CommanderContinuitySectionSummary,
   CommanderContinuitySourceRefSummary,
   CommanderContinuityState,
+  CommanderInternalReadsState,
   CommanderToolsState,
   OpenCodeContinuityState,
   CommanderContinuitySummaryState,
@@ -2314,6 +2315,10 @@ export async function applyRuntimeUiEffect(
     if (isResearchIngestionEffect(effect)) return recordResearchIngestionCommandError(state, error)
     if (isCommanderContinuityEffect(effect)) return recordCommanderContinuityCommandError(state, error)
     if (isCommanderToolEffect(effect)) return recordCommanderToolCommandError(state, error)
+    if (effect.type === "send-command" && commanderInternalReadCommands.has(effect.command)) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ...state, commanderInternalReads: { ...commanderInternalReadsState(state), commandError: redactText(message) } }
+    }
     if (isResearchMemoryEffect(effect)) return recordResearchMemoryCommandError(state, error)
     if (isCommanderExecutorReviewEffect(effect)) return recordCommanderExecutorReviewCommandError(state, error)
     if (isExecutorReviewProposalDraftEffect(effect)) return recordExecutorReviewProposalDraftCommandError(state, error)
@@ -6035,6 +6040,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (researchIngestionCommands.has(command)) return { ...state, researchIngestions: { ...researchIngestionState(state), commandError: undefined } }
   if (commanderContinuityCommands.has(command)) return { ...state, commanderContinuity: { ...commanderContinuityState(state), commandError: undefined } }
   if (commanderToolCommands.has(command)) return { ...state, commanderTools: { ...commanderToolsState(state), commandError: undefined } }
+  if (commanderInternalReadCommands.has(command)) return { ...state, commanderInternalReads: { ...commanderInternalReadsState(state), commandError: undefined } }
   if (opencodeContinuityCommands.has(command)) return { ...state, opencodeContinuity: { ...opencodeContinuityState(state), commandError: undefined } }
   if (researchMemoryCommands.has(command)) return { ...state, researchMemory: { ...researchMemoryState(state), commandError: undefined } }
   if (commanderExecutorReviewCommands.has(command)) return { ...state, commanderExecutorReview: { ...commanderExecutorReviewState(state), commandError: undefined } }
@@ -6102,6 +6108,39 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
     case "commander-tool-registry-validate":
     case "tool-registry-validate":
       return executeCommanderToolCommand(commandState, runtime, "runtime.validate_commander_tool_registry", {}, "validation")
+    case "commander-continuity-search":
+    case "continuity-search":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.search_commander_operational_memory", parseFreeTextPayload(args, "query", ["query", "phase", "session", "session_id", "launch", "launch_id", "mission", "mission_id", "source_kinds", "statuses", "include_closed", "limit"]), "continuitySearch")
+    case "commander-repo-tree":
+    case "repo-tree":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_tree", parseCommanderRepoArgs(args), "repoTree")
+    case "commander-repo-search":
+    case "repo-search":
+    case "code-search":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_search_text", parseFreeTextPayload(args, "query", ["query", "path", "case_sensitive", "extensions", "include_upstream", "limit", "max_files", "context_lines"], ["query", "path"]), "repoSearch")
+    case "commander-repo-read":
+    case "repo-read":
+    case "code-read":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_read_lines", parseCommanderRepoArgs(args), "repoFile")
+    case "commander-repo-symbol":
+    case "repo-symbol":
+    case "code-symbol":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_find_symbol", parseFreeTextPayload(args, "symbol", ["symbol", "path", "language", "include_upstream", "limit"], ["symbol", "path"]), "repoSymbol")
+    case "commander-git-status":
+    case "repo-git-status":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_git_status", {}, "gitStatus")
+    case "commander-git-diff":
+    case "repo-git-diff":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_git_diff", parseCommanderRepoArgs(args), "gitDiff")
+    case "commander-git-log":
+    case "repo-git-log":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_git_log", parseCommanderRepoArgs(args), "gitLog")
+    case "commander-test-manifest":
+    case "test-manifest":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_test_manifest", parseCommanderRepoArgs(args), "testManifest")
+    case "commander-dependency-manifest":
+    case "dependency-manifest":
+      return executeCommanderInternalReadCommand(commandState, runtime, "runtime.commander_repo_dependency_manifest", parseCommanderRepoArgs(args), "dependencyManifest")
     case "apis":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-external-api-connectors", limit: EXTERNAL_API_LIMIT })
     case "api":
@@ -8160,6 +8199,19 @@ const commanderToolCommands = new Set([
   "tool-profile",
   "tool-bootstrap",
   "tool-registry-validate",
+])
+
+const commanderInternalReadCommands = new Set([
+  "commander-continuity-search", "continuity-search",
+  "commander-repo-tree", "repo-tree",
+  "commander-repo-search", "repo-search", "code-search",
+  "commander-repo-read", "repo-read", "code-read",
+  "commander-repo-symbol", "repo-symbol", "code-symbol",
+  "commander-git-status", "repo-git-status",
+  "commander-git-diff", "repo-git-diff",
+  "commander-git-log", "repo-git-log",
+  "commander-test-manifest", "test-manifest",
+  "commander-dependency-manifest", "dependency-manifest",
 ])
 
 const opencodeContinuityCommands = new Set([
@@ -16785,6 +16837,22 @@ function commanderToolsState(state: UiState): CommanderToolsState {
   return state.commanderTools ?? { summary: null, records: [], selected: null, search: null, profile: null, bootstrap: null, validation: null }
 }
 
+function commanderInternalReadsState(state: UiState): CommanderInternalReadsState {
+  return state.commanderInternalReads ?? {
+    continuitySearch: null,
+    repoTree: null,
+    repoSearch: null,
+    repoFile: null,
+    repoSymbol: null,
+    gitStatus: null,
+    gitDiff: null,
+    gitLog: null,
+    testManifest: null,
+    dependencyManifest: null,
+    lastResult: null,
+  }
+}
+
 function opencodeContinuityState(state: UiState): OpenCodeContinuityState {
   return state.opencodeContinuity ?? { sessionPacket: null, continuationPacket: null, refreshPreview: null, latestResult: null, records: [], selected: null, latest: null, summary: null }
 }
@@ -18782,6 +18850,50 @@ function parseCommanderToolSearchArgs(args: string[]): Record<string, unknown> {
   return payload
 }
 
+function parseCommanderRepoArgs(args: string[]): Record<string, unknown> {
+  const knownKeys = new Set(["path", "include_hidden", "include_upstream", "case_sensitive", "stat_only", "include_dev", "include_optional", "start", "end", "start_line", "end_line", "max_lines", "context_lines", "depth", "limit", "max_files", "max_file_bytes", "max_output_bytes", "scope"])
+  const freeTextKeys = new Set(["path"])
+  const payload: Record<string, unknown> = {}
+  let index = 0
+  while (index < args.length) {
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, knownKeys, freeTextKeys, "repo read args must use supported key=<value> filters")
+    index = nextIndex + 1
+    if (["include_hidden", "include_upstream", "case_sensitive", "stat_only", "include_dev", "include_optional"].includes(key)) payload[key] = readBooleanText(value, key)
+    else if (["start", "end", "start_line", "end_line"].includes(key)) payload[key] = readPositiveInteger(value, key, 1_000_000)
+    else if (["max_lines"].includes(key)) payload[key] = readPositiveInteger(value, key, 200)
+    else if (["context_lines"].includes(key)) payload[key] = readNonnegativeInteger(value, key, 10)
+    else if (["depth"].includes(key)) payload[key] = readPositiveInteger(value, key, 8)
+    else if (["limit", "max_files", "max_file_bytes", "max_output_bytes"].includes(key)) payload[key] = readPositiveInteger(value, key, 5000)
+    else payload[key] = value
+  }
+  return payload
+}
+
+function parseFreeTextPayload(args: string[], requiredKey: string, knownKeys: string[], freeTextKeysOverride?: string[]): Record<string, unknown> {
+  if (args.length === 0) throw new Error(`${requiredKey} is required`)
+  const known = new Set(knownKeys)
+  const freeTextKeys = new Set(freeTextKeysOverride ?? [requiredKey])
+  const payload: Record<string, unknown> = {}
+  let index = 0
+  while (index < args.length) {
+    const current = args[index]
+    if (!current.includes("=") && requiredKey && payload[requiredKey] === undefined) {
+      const values: string[] = []
+      while (index < args.length && !args[index].includes("=")) values.push(args[index++])
+      payload[requiredKey] = values.join(" ")
+      continue
+    }
+    const { key, value, nextIndex } = readKeyValueWithFreeText(args, index, known, freeTextKeys, `${requiredKey}=<text> is required`)
+    index = nextIndex + 1
+    if (["include_upstream", "case_sensitive", "include_closed"].includes(key)) payload[key] = readBooleanText(value, key)
+    else if (key === "context_lines") payload[key] = readNonnegativeInteger(value, key, 10)
+    else if (["limit", "max_files"].includes(key)) payload[key] = readPositiveInteger(value, key, 5000)
+    else payload[key] = value
+  }
+  if (!payload[requiredKey]) throw new Error(`${requiredKey} is required`)
+  return payload
+}
+
 async function executeCommanderToolCommand(state: UiState, runtime: RuntimeClient, runtimeCommand: string, payload: Record<string, unknown>, field: keyof CommanderToolsState): Promise<UiState> {
   try {
     const raw = await runtime.command(runtimeCommand, payload)
@@ -18789,6 +18901,17 @@ async function executeCommanderToolCommand(state: UiState, runtime: RuntimeClien
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return { ...state, commanderTools: { ...commanderToolsState(state), commandError: redactText(message) } }
+  }
+}
+
+async function executeCommanderInternalReadCommand(state: UiState, runtime: RuntimeClient, runtimeCommand: string, payload: Record<string, unknown>, field: keyof CommanderInternalReadsState): Promise<UiState> {
+  try {
+    const raw = await runtime.command(runtimeCommand, payload)
+    const value = redactUnknown(raw)
+    return { ...state, commanderInternalReads: { ...commanderInternalReadsState(state), [field]: value, lastResult: value as any, commandError: undefined } }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { ...state, commanderInternalReads: { ...commanderInternalReadsState(state), commandError: redactText(message) } }
   }
 }
 
@@ -18959,6 +19082,12 @@ function requiredIndex(args: string[], index: number): number {
 function readPositiveInteger(value: string, field: string, max: number): number {
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${field} must be a positive integer`)
+  return Math.min(parsed, max)
+}
+
+function readNonnegativeInteger(value: string, field: string, max: number): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${field} must be a nonnegative integer`)
   return Math.min(parsed, max)
 }
 
