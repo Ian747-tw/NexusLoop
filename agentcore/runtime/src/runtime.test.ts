@@ -24384,6 +24384,26 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(ordered.capped).toBe(false)
   })
 
+  test("Commander repository reads do not treat a hidden project root as hidden content", async () => {
+    const dir = await mkdtemp(join(tmpdir(), ".nxl-hidden-runtime-"))
+    cleanup.push(dir)
+    await makeProject(dir, { approvedSpec: true })
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(join(dir, "src", "visible.ts"), "export const HiddenRootNeedle = true\n")
+    await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test" }, dependencies: { zod: "^3.0.0" } }, null, 2))
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const tree = await server.command("runtime.commander_repo_tree", { path: ".", depth: 2 }) as Record<string, any>
+    expect(tree.result.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: ".", readable: true }),
+      expect.objectContaining({ path: "src", readable: true }),
+      expect.objectContaining({ path: "src/visible.ts", readable: true }),
+    ]))
+    const search = await server.command("runtime.commander_repo_search_text", { query: "HiddenRootNeedle", path: "." }) as Record<string, any>
+    expect(search.result.matches).toEqual([expect.objectContaining({ path: "src/visible.ts", line_number: 1 })])
+    const manifest = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
+    expect(manifest.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ source_path: "package.json", command_preview: "bun test" })]))
+  })
+
   test("Commander repository reads enforce path policy, bounds, redaction, and manifests", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

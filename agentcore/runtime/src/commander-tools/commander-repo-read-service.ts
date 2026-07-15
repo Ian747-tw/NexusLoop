@@ -643,7 +643,7 @@ function shouldSkip(rel: string, name: string, isDir: boolean, includeHidden: bo
   if (isDeniedPath(rel)) return true
   if (isDir && DEFAULT_EXCLUDED_DIRS.has(name)) return true
   if (!includeUpstream && !explicitUpstreamStart && (rel === "agentcore/upstream" || rel.startsWith("agentcore/upstream/"))) return true
-  if (!includeHidden && name.startsWith(".") && name !== ".github") return true
+  if (!includeHidden && rel !== "." && name.startsWith(".") && name !== ".github") return true
   return false
 }
 
