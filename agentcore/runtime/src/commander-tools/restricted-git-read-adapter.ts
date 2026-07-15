@@ -326,6 +326,13 @@ function filterSensitiveDiffSections(output: string): { output: string; omitted:
       denySection = isUnsafeDiffPath(header[1]) || isUnsafeDiffPath(header[2]) || isDeniedRepositoryPath(header[1]) || isDeniedRepositoryPath(header[2])
       continue
     }
+    const combinedHeader = line.match(/^diff --(?:cc|combined)\s+(.+)$/)
+    if (combinedHeader) {
+      flush()
+      section = [line]
+      denySection = isUnsafeDiffPath(combinedHeader[1]) || isDeniedRepositoryPath(combinedHeader[1])
+      continue
+    }
     if (section.length > 0) {
       section.push(line)
       if (/^(?:\+\+\+|---)\s+"/.test(line)) denySection = true

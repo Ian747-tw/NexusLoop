@@ -24800,6 +24800,33 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(status.result.unstaged)).not.toContain("conflict.txt")
   })
 
+  test("Commander restricted Git diff suppresses sensitive combined conflict sections", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "base.txt"), "base\n")
+    expect(Bun.spawnSync({ cmd: ["git", "init", "-b", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.email", "test@example.com"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "add", "base.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "base"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "checkout", "-b", "other"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, ".env"), "AWS_SECRET_ACCESS_KEY=SHOULD_NOT_LEAK_OTHER\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "other env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "checkout", "master"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    await writeFile(join(dir, ".env"), "AWS_SECRET_ACCESS_KEY=SHOULD_NOT_LEAK_MASTER\n")
+    expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "master env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
+    expect(Bun.spawnSync({ cmd: ["git", "merge", "other"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).not.toBe(0)
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const diff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree" }) as Record<string, any>
+    const rendered = JSON.stringify(diff.result)
+    expect(diff.status).toBe("ready")
+    expect(rendered).not.toContain(".env")
+    expect(rendered).not.toContain("SHOULD_NOT_LEAK")
+    expect(diff.warnings.join(" ")).toContain("Suppressed")
+  })
+
   test("Commander restricted Git status works on unborn HEAD", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
