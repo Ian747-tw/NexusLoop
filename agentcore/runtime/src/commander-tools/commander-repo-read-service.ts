@@ -296,7 +296,7 @@ export class CommanderRepoReadService {
       scannedManifestBytes += text.bytes
       if (basename(file) === "package.json") {
         try {
-          const json = JSON.parse(text.text) as Record<string, Record<string, string> | undefined>
+          const json = JSON.parse(text.raw_text) as Record<string, Record<string, string> | undefined>
           for (const [group, values] of Object.entries({ dependencies: json.dependencies, devDependencies: includeDev ? json.devDependencies : undefined, optionalDependencies: includeOptional ? json.optionalDependencies : undefined })) {
             for (const [name, version] of Object.entries(values ?? {})) dependencies.push({ ecosystem: "npm", manifest_path: rel, package_name: name, version_constraint: sanitizeDependencyConstraint(String(version)), dependency_group: group, direct: true, content_hash: text.source_sha256 })
           }
@@ -305,7 +305,7 @@ export class CommanderRepoReadService {
         }
       }
       if (basename(file) === "pyproject.toml") {
-        dependencies.push(...parsePyprojectDependencies(rel, text.text, includeDev, includeOptional).map((item) => ({ ...item, content_hash: text.source_sha256 })))
+        dependencies.push(...parsePyprojectDependencies(rel, text.raw_text, includeDev, includeOptional).map((item) => ({ ...item, content_hash: text.source_sha256 })))
       }
     }
     for (const name of ["bun.lockb", "bun.lock", "package-lock.json", "uv.lock", "poetry.lock"]) {
@@ -357,7 +357,7 @@ export class CommanderRepoReadService {
       scannedManifestBytes += text.bytes
       if (basename(file) === "package.json") {
         try {
-          const json = JSON.parse(text.text) as { scripts?: Record<string, string> }
+          const json = JSON.parse(text.raw_text) as { scripts?: Record<string, string> }
           for (const [name, command] of Object.entries(json.scripts ?? {})) {
             if (/test|check|typecheck|lint|e2e|integration|smoke|build/i.test(name)) entries.push({ source_path: rel, framework: "package.json", script_name: name, command_preview: bound(command, 260), test_paths: [], content_hash: text.source_sha256 })
           }
@@ -623,7 +623,9 @@ async function* streamDirectoryEntries(path: string): AsyncIterable<string> {
   }
 }
 
-async function readTextFile(path: string, maxBytes: number): Promise<{ text: string; bytes: number; source_sha256: string; rendered_sha256: string; size_bytes: number } | { error: string }> {
+type ReadTextFileSuccess = { text: string; raw_text: string; bytes: number; source_sha256: string; rendered_sha256: string; size_bytes: number }
+
+async function readTextFile(path: string, maxBytes: number): Promise<ReadTextFileSuccess | { error: string }> {
   const info = await stat(path)
   if (!info.isFile()) return { error: "path is not a file" }
   if (info.size > maxBytes) return { error: "file exceeds read cap" }
@@ -632,10 +634,10 @@ async function readTextFile(path: string, maxBytes: number): Promise<{ text: str
   const text = data.toString("utf8")
   if (text.includes("\uFFFD")) return { error: "non-UTF-8 files are not read" }
   const redacted = redactText(text)
-  return { text: redacted, bytes: data.byteLength, source_sha256: sha(data), rendered_sha256: sha(redacted), size_bytes: data.byteLength }
+  return { text: redacted, raw_text: text, bytes: data.byteLength, source_sha256: sha(data), rendered_sha256: sha(redacted), size_bytes: data.byteLength }
 }
 
-function hasReadError(value: { text: string; bytes: number; source_sha256: string; rendered_sha256: string; size_bytes: number } | { error: string }): value is { error: string } {
+function hasReadError(value: ReadTextFileSuccess | { error: string }): value is { error: string } {
   return "error" in value
 }
 

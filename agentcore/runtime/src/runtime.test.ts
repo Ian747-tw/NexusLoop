@@ -24438,7 +24438,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await writeFile(join(dir, "nested", ".terraform.d", "credentials.tfrc.json"), "{\"credentials\":\"SHOULD_NOT_LEAK\"}\n")
     await writeFile(join(dir, ".env"), "TOKEN=hidden")
     await writeFile(join(dir, "prod.env"), "DATABASE_URL=SHOULD_NOT_LEAK_DB\n")
-    await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0", "private-url": "git+https://user:SHOULD_NOT_LEAK@example.com/repo.git" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
+    await writeFile(join(dir, "package.json"), JSON.stringify({ auth: "SHOULD_NOT_BREAK_JSON", scripts: { test: "bun test", typecheck: "tsc --noEmit" }, dependencies: { zod: "^3.0.0", token: "^1.2.3", "private-url": "git+https://user:SHOULD_NOT_LEAK@example.com/repo.git" }, devDependencies: { typescript: "^5.0.0" } }, null, 2))
     const packageLockText = `{"lockfileVersion":3,"packages":{"large":"${"x".repeat(1_100_000)}"}}`
     await writeFile(join(dir, "package-lock.json"), packageLockText)
     await mkdir(join(dir, "oversized-manifest"), { recursive: true })
@@ -24586,6 +24586,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(tests.warnings.join(" ")).toContain("manifest read skipped for oversized-manifest/package.json: file exceeds read cap")
     const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "zod", direct: true })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "token", version_constraint: "^1.2.3", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "private-url", version_constraint: "git+https://[REDACTED]@example.com/repo.git" })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "click", dependency_group: "project.dependencies", direct: true })]))
     expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ package_name: "requests", dependency_group: "project.dependencies", version_constraint: "requests[security]>=2", direct: true })]))
@@ -24598,6 +24599,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(deps.warnings.join(" ")).toContain("manifest candidate collection capped before traversal completed")
     expect(deps.warnings.join(" ")).toContain("manifest read skipped for oversized-manifest/package.json: file exceeds read cap")
     expect(JSON.stringify(deps.result)).not.toContain("large")
+    expect(JSON.stringify(tests.result)).not.toContain("SHOULD_NOT_BREAK_JSON")
+    expect(JSON.stringify(deps.result)).not.toContain("SHOULD_NOT_BREAK_JSON")
     const runtimeOnlyDeps = await server.command("runtime.commander_repo_dependency_manifest", { include_optional: false }) as Record<string, any>
     expect(JSON.stringify(runtimeOnlyDeps.result.dependencies)).not.toContain("rich")
     expect(deps.result.lockfiles).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: "bun.lock" })]))
