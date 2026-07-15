@@ -595,7 +595,13 @@ export async function readBoundedDirectoryEntries(path: string, options: { maxEn
       if (next.done) return directoryBatch(names.sort((a, b) => a.localeCompare(b)), false)
       names.push(next.value)
     }
-    capped = true
+    if (!capped) {
+      if (now() - started > timeoutMs) capped = true
+      else {
+        const next = await iterator.next()
+        capped = !next.done
+      }
+    }
     return directoryBatch(names.sort((a, b) => a.localeCompare(b)), capped)
   } finally {
     await iterator.return?.()

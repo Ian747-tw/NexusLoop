@@ -24372,8 +24372,21 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(capped.names).toHaveLength(7)
     expect(capped.names).toEqual([...capped.names].sort((a, b) => a.localeCompare(b)))
     expect(capped.capped).toBe(true)
-    expect(yielded).toBe(7)
+    expect(yielded).toBe(8)
     expect(closed).toBe(true)
+
+    let exactYielded = 0
+    const exact = await readBoundedDirectoryEntries("/unused", { maxEntries: 3, reader: async function* () {
+      exactYielded += 1
+      yield "gamma.ts"
+      exactYielded += 1
+      yield "alpha.ts"
+      exactYielded += 1
+      yield "beta.ts"
+    } })
+    expect(exact.names).toEqual(["alpha.ts", "beta.ts", "gamma.ts"])
+    expect(exact.capped).toBe(false)
+    expect(exactYielded).toBe(3)
 
     const ordered = await readBoundedDirectoryEntries("/unused", { maxEntries: 10, reader: async function* () {
       yield "zeta.ts"
@@ -24412,7 +24425,7 @@ describe("ProcessOpenCodeAdapter", () => {
       "export class CommanderToolServiceSample {}",
       "const tokenName = 'not a secret assignment shape'",
       "const api_key = super-secret-value",
-      "export const CloudCredentialSample = { AWS_ACCESS_KEY_ID: CLOUDACCESS123, AWS_SECRET_ACCESS_KEY: CLOUDSECRET456, AWS_SESSION_TOKEN: CLOUDSESSION789, oauth_token: CLOUDOAUTH000, \"auth\":\"CLOUDJSONAUTH111\", \"client_secret\":\"CLOUDJSONCLIENT222\" }",
+      "export const CloudCredentialSample = { AWS_ACCESS_KEY_ID: CLOUDACCESS123, AWS_SECRET_ACCESS_KEY: CLOUDSECRET456, AWS_SESSION_TOKEN: CLOUDSESSION789, oauth_token: CLOUDOAUTH000, password: \"CORRECT HORSE BATTERY STAPLE\", \"auth\":\"CLOUDJSONAUTH111\", \"client_secret\":\"CLOUD JSON CLIENT 222\" }",
       "function runTests() { return true }",
     ].join("\n"))
     await writeFile(join(dir, "src", "whitespace.py"), "def outer():\n    if True:\n        return 'indented'\n")
@@ -24487,7 +24500,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDSESSION789")
     expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDOAUTH000")
     expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDJSONAUTH111")
-    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUDJSONCLIENT222")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CORRECT HORSE BATTERY STAPLE")
+    expect(JSON.stringify(cloudSearch.result)).not.toContain("CLOUD JSON CLIENT 222")
     expect(JSON.stringify(cloudSearch.result)).toContain("[REDACTED]")
     const missingQuerySearch = await server.command("runtime.commander_repo_search_text", { path: "." }) as Record<string, any>
     expect(missingQuerySearch.status).toBe("blocked")
@@ -24537,12 +24551,13 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDSESSION789")
     expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDOAUTH000")
     expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDJSONAUTH111")
-    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUDJSONCLIENT222")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CORRECT HORSE BATTERY STAPLE")
+    expect(JSON.stringify(cloudRead.result)).not.toContain("CLOUD JSON CLIENT 222")
     expect(cloudRead.result.content_hash).toBe(createHash("sha256").update([
       "export class CommanderToolServiceSample {}",
       "const tokenName = 'not a secret assignment shape'",
       "const api_key = super-secret-value",
-      "export const CloudCredentialSample = { AWS_ACCESS_KEY_ID: CLOUDACCESS123, AWS_SECRET_ACCESS_KEY: CLOUDSECRET456, AWS_SESSION_TOKEN: CLOUDSESSION789, oauth_token: CLOUDOAUTH000, \"auth\":\"CLOUDJSONAUTH111\", \"client_secret\":\"CLOUDJSONCLIENT222\" }",
+      "export const CloudCredentialSample = { AWS_ACCESS_KEY_ID: CLOUDACCESS123, AWS_SECRET_ACCESS_KEY: CLOUDSECRET456, AWS_SESSION_TOKEN: CLOUDSESSION789, oauth_token: CLOUDOAUTH000, password: \"CORRECT HORSE BATTERY STAPLE\", \"auth\":\"CLOUDJSONAUTH111\", \"client_secret\":\"CLOUD JSON CLIENT 222\" }",
       "function runTests() { return true }",
     ].join("\n")).digest("hex"))
     const whitespaceRead = await server.command("runtime.commander_repo_read_lines", { path: "src/whitespace.py", start_line: 1, end_line: 3 }) as Record<string, any>
@@ -24574,7 +24589,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDSESSION789")
     expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDOAUTH000")
     expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDJSONAUTH111")
-    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDJSONCLIENT222")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CORRECT HORSE BATTERY STAPLE")
+    expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUD JSON CLIENT 222")
     const missingSymbol = await server.command("runtime.commander_repo_find_symbol", { path: "." }) as Record<string, any>
     expect(missingSymbol.status).toBe("blocked")
     expect(missingSymbol.blockers).toContain("repo symbol lookup requires symbol")
@@ -24702,7 +24718,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(Bun.spawnSync({ cmd: ["git", "config", "user.name", "Test User"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
     expect(Bun.spawnSync({ cmd: ["git", "commit", "-m", "initial"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
-    await writeFile(join(dir, "tracked.txt"), `first\napi_key = top-secret\nAWS_ACCESS_KEY_ID = GITCLOUDACCESS123\nAWS_SECRET_ACCESS_KEY = GITCLOUDSECRET456\nAWS_SESSION_TOKEN = GITCLOUDSESSION789\n{"auth":"GITJSONAUTH123","client_secret":"GITJSONCLIENT456"}\n${Array.from({ length: 20 }, (_, index) => `added-${index}`).join("\n")}\n`)
+    await writeFile(join(dir, "tracked.txt"), `first\napi_key = top-secret\nAWS_ACCESS_KEY_ID = GITCLOUDACCESS123\nAWS_SECRET_ACCESS_KEY = GITCLOUDSECRET456\nAWS_SESSION_TOKEN = GITCLOUDSESSION789\npassword = "GIT CORRECT HORSE BATTERY"\n{"auth":"GITJSONAUTH123","client_secret":"GIT JSON CLIENT 456"}\n${Array.from({ length: 20 }, (_, index) => `added-${index}`).join("\n")}\n`)
     await writeFile(join(dir, ".env"), "aws_access_key_id = SHOULD_NOT_LEAK\n")
     await writeFile(join(dir, "prod.env"), "DATABASE_URL=SHOULD_NOT_LEAK_DB\n")
     expect(Bun.spawnSync({ cmd: ["git", "add", ".env"], cwd: dir, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(0)
@@ -24761,7 +24777,8 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(diff.result)).not.toContain("GITCLOUDSECRET456")
     expect(JSON.stringify(diff.result)).not.toContain("GITCLOUDSESSION789")
     expect(JSON.stringify(diff.result)).not.toContain("GITJSONAUTH123")
-    expect(JSON.stringify(diff.result)).not.toContain("GITJSONCLIENT456")
+    expect(JSON.stringify(diff.result)).not.toContain("GIT CORRECT HORSE BATTERY")
+    expect(JSON.stringify(diff.result)).not.toContain("GIT JSON CLIENT 456")
     const zeroContextDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", path: "tracked.txt", context_lines: 0 }) as Record<string, any>
     expect(zeroContextDiff.result.patch_preview).toContain("[REDACTED]")
     expect(zeroContextDiff.result.patch_preview).not.toContain("\n first\n")
@@ -24787,7 +24804,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(wholeDiff.result)).not.toContain("SHOULD_NOT_LEAK_QUOTED")
     expect(wholeDiff.warnings.join(" ")).toContain("Suppressed")
     const statOnlyDiff = await server.command("runtime.commander_repo_git_diff", { scope: "working_tree", stat_only: true }) as Record<string, any>
-    expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt", additions: 25, deletions: 0 })]))
+    expect(statOnlyDiff.result.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: "tracked.txt", additions: 26, deletions: 0 })]))
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain(".env")
     expect(JSON.stringify(statOnlyDiff.result)).not.toContain("secret.p12")
     expect(statOnlyDiff.warnings.join(" ")).toContain("Suppressed")
