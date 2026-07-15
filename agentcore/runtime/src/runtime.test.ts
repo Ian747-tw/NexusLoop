@@ -24575,6 +24575,10 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDOAUTH000")
     expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDJSONAUTH111")
     expect(JSON.stringify(cloudSymbol.result)).not.toContain("CLOUDJSONCLIENT222")
+    const missingSymbol = await server.command("runtime.commander_repo_find_symbol", { path: "." }) as Record<string, any>
+    expect(missingSymbol.status).toBe("blocked")
+    expect(missingSymbol.blockers).toContain("repo symbol lookup requires symbol")
+    expect(missingSymbol.scanned_items).toBe(0)
     const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
     expect(JSON.stringify(tests.result)).toContain("bun test")
     expect(tests.omitted_items).toBeGreaterThan(0)
@@ -24643,6 +24647,25 @@ describe("ProcessOpenCodeAdapter", () => {
     const hashSymbol = await server.command("runtime.commander_repo_find_symbol", { symbol: "visibleHashNeedle", path: "hashes" }) as Record<string, any>
     expect(hashSearch.result.matches.find((match: any) => match.path === "hashes/first.ts").content_hash).toBe(firstRead.result.content_hash)
     expect(hashSymbol.result.candidates.find((candidate: any) => candidate.path === "hashes/first.ts").content_hash).toBe(firstRead.result.content_hash)
+  })
+
+  test("Commander manifest readers prioritize root manifests before traversal caps", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "bun test" }, dependencies: { zod: "^3.0.0" } }, null, 2))
+    await writeFile(join(dir, "pyproject.toml"), "[project]\ndependencies = [\n  'click>=8',\n]\n")
+    await mkdir(join(dir, "aaa"), { recursive: true })
+    for (let index = 0; index < 2300; index += 1) {
+      await writeFile(join(dir, "aaa", `filler-${String(index).padStart(4, "0")}.txt`), "not a manifest\n")
+    }
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    const tests = await server.command("runtime.commander_repo_test_manifest", {}) as Record<string, any>
+    expect(tests.result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ source_path: "package.json", command_preview: "bun test" })]))
+    expect(tests.warnings.join(" ")).toContain("manifest candidate collection capped before traversal completed")
+    const deps = await server.command("runtime.commander_repo_dependency_manifest", {}) as Record<string, any>
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ manifest_path: "package.json", package_name: "zod" })]))
+    expect(deps.result.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ manifest_path: "pyproject.toml", package_name: "click" })]))
+    expect(deps.warnings.join(" ")).toContain("manifest candidate collection capped before traversal completed")
   })
 
   test("Commander repository symbol scans filter non-code before the file cap and report traversal caps", async () => {

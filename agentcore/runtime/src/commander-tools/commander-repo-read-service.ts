@@ -193,7 +193,7 @@ export class CommanderRepoReadService {
     const root = await rootInfo(this.options.projectDir)
     const checked = await resolveSafePath(root, path, { allowDirectory: true, includeUpstream })
     if (checked.error) blockers.push(checked.error)
-    const fileScan = !checked.error && checked.absolute ? await collectFiles(root, checked.absolute, includeUpstream, 3000, isCodePath) : { files: [], omitted: 0, capped: false }
+    const fileScan = blockers.length === 0 && !checked.error && checked.absolute ? await collectFiles(root, checked.absolute, includeUpstream, 3000, isCodePath) : { files: [], omitted: 0, capped: false }
     const files = fileScan.files
     const candidates: CommanderRepoSymbolResult["candidates"] = []
     const declaration = declarationPattern(symbol ?? "")
@@ -660,12 +660,29 @@ async function manifestFiles(root: RootInfo, includeUpstream: boolean): Promise<
     const name = basename(rel)
     return ["pyproject.toml", "pytest.ini", "tox.ini", "package.json", "bunfig.toml", "Makefile"].includes(name) || rel.startsWith(".github/workflows/")
   }
+  const priorityFiles: string[] = []
+  for (const rel of ["pyproject.toml", "pytest.ini", "tox.ini", "package.json", "bunfig.toml", "Makefile"]) {
+    const absolute = join(root.root, rel)
+    const info = await lstat(absolute).catch(() => undefined)
+    if (info?.isFile() && !info.isSymbolicLink() && !shouldSkip(rel, basename(rel), false, false, includeUpstream)) priorityFiles.push(absolute)
+  }
+  const workflows = join(root.root, ".github", "workflows")
+  const workflowInfo = await lstat(workflows).catch(() => undefined)
+  if (workflowInfo?.isDirectory() && !workflowInfo.isSymbolicLink()) {
+    const workflowEntries = await readBoundedDirectoryEntries(workflows, { maxEntries: 100 })
+    for (const entry of workflowEntries) {
+      const rel = `.github/workflows/${entry}`
+      const absolute = join(workflows, entry)
+      const info = await lstat(absolute).catch(() => undefined)
+      if (info?.isFile() && !info.isSymbolicLink() && isManifest(rel) && !shouldSkip(rel, basename(rel), false, false, includeUpstream)) priorityFiles.push(absolute)
+    }
+  }
   const scan = await collectFiles(root, root.root, includeUpstream, 1200, isManifest)
   const files = scan.files.filter((file) => {
     const rel = toRelative(root, file)
     return isManifest(rel)
   })
-  return { files, omitted: scan.omitted, capped: scan.capped }
+  return { files: [...new Set([...priorityFiles, ...files])], omitted: scan.omitted, capped: scan.capped }
 }
 
 function pushManifestSkipWarning(warnings: string[], rel: string, reason: string): void {
